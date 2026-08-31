@@ -5,9 +5,10 @@ from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
 from openai import AsyncOpenAI
-from mix_agent.providers.reasoning import request_options, show_summary
+
 from mix_agent.providers.catalog import get_preset
 from mix_agent.providers.metadata import context_limit, resolve
+from mix_agent.providers.reasoning import request_options, show_summary
 
 DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -23,6 +24,20 @@ CAPABILITIES = ("tools", "vision", "reasoning", "structured_output")
 
 class ProviderConfigurationError(ValueError):
     pass
+
+
+class ProviderContextLimitError(RuntimeError):
+    """A provider explicitly rejected the request for exceeding its context limit."""
+
+
+def is_context_limit_error(exc):
+    if isinstance(exc, ProviderContextLimitError):
+        return True
+    text = " ".join(str(value) for value in (exc, getattr(exc, "body", ""))).lower()
+    return any(marker in text for marker in (
+        "context length", "context window", "context limit", "maximum context",
+        "too many tokens", "input is too long", "prompt is too long",
+    ))
 
 
 class Adapter:
@@ -120,8 +135,13 @@ class Adapter:
         }.get(self.transport_id)
         if method is None:
             raise ValueError(f"Unsupported transport: {self.transport_id}")
-        async for event in method(model, messages, tools, mode, settings):
-            yield event
+        try:
+            async for event in method(model, messages, tools, mode, settings):
+                yield event
+        except Exception as exc:
+            if is_context_limit_error(exc):
+                raise ProviderContextLimitError("Provider rejected the request because its context limit was exceeded") from exc
+            raise
 
     async def _ollama(self, model, messages, tools, mode, settings):
         """Dedicated slot: Ollama's model discovery is native while its chat endpoint is compatible."""

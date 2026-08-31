@@ -54,17 +54,18 @@ def _scores(db, owner_id, profile):
 
 
 def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, tools_required,
-                      context_parts, reserved_output_tokens, request_key, attachment_bytes=0):
+                      context_parts, reserved_output_tokens, request_key, attachment_bytes=0,
+                      excluded_model_ids=()):
     """Return a selected Model plus auditable local routing details, or a reason."""
     profile = routing_profile(content, mode, artifact_mimes, tools_required)
     required_tokens = estimate_tokens(context_parts, attachment_bytes) + reserved_output_tokens
-    candidates, excluded = [], defaultdict(int)
+    candidates, excluded, skipped = [], defaultdict(int), set(excluded_model_ids)
     for model in db.scalars(select(Model).where(Model.owner_id == owner_id, Model.id.in_(allowed_ids))):
         data, caps = model.data, effective_capabilities(model.data)
-        if not data.get("context_window"):
-            excluded["context"] += 1
+        if model.id in skipped:
             continue
-        if required_tokens > data["context_window"]:
+        context_window = data.get("context_window")
+        if context_window and required_tokens > context_window:
             excluded["context"] += 1
             continue
         if any(mime.startswith("image/") for mime in artifact_mimes) and caps.get("vision") is not True:
@@ -73,20 +74,18 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
         if tools_required and caps.get("tools") is not True:
             excluded["tools"] += 1
             continue
-        candidates.append((model, caps))
+        candidates.append((model, caps, context_window))
     if not candidates:
         details = "、".join({"context": "Context Window", "vision": "Vision", "tools": "Tool Calling"}[k] for k in excluded)
-        if excluded and set(excluded) == {"context"}:
-            reason = "Auto候補のContext Windowが未設定、または現在の会話には不足しています。モデル設定でContext Windowを確認・設定してください。"
-        else:
-            reason = "Autoで使用可能なモデルに必要な " + (details or "条件") + " を満たすものがありません。"
+        reason = "Autoで使用可能なモデルに必要な " + (details or "条件") + " を満たすものがありません。"
         return None, {"profile": profile, "candidate_count": 0, "required_tokens": required_tokens,
                       "reason": reason}
 
     outcomes = _scores(db, owner_id, profile)
     total = sum(up + down for up, down in outcomes.values())
     ranked = []
-    for model, caps in candidates:
+    context_usage = {}
+    for model, caps, context_window in candidates:
         up, down = outcomes[model.id]
         count = up + down
         # Strong Beta(8, 8) prior prevents a single rating from dominating.
@@ -95,7 +94,16 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
             2 * math.log(total + 16 * len(candidates) + 1) / (count + 16)
         )
         reasoning_bonus = 0.04 if mode == "thinking" and caps.get("reasoning") is True else 0
-        ranked.append((mean + exploration + reasoning_bonus, model, up, down))
+        usage = required_tokens / context_window if context_window else None
+        # Known models above 50% capacity remain available, but increasingly
+        # lose preference to models with more demonstrated context headroom.
+        context_penalty = max(0, usage - 0.5) * 0.1 if usage is not None else 0
+        context_usage[model.id] = {
+            "window": context_window,
+            "usage_ratio": usage,
+            "penalty": context_penalty,
+        }
+        ranked.append((mean + exploration + reasoning_bonus - context_penalty, model, up, down))
     best = max(score for score, *_ in ranked)
     tied = [entry for entry in ranked if abs(entry[0] - best) < 1e-12]
     # Stable per request, while naturally distributing exact ties across requests.
@@ -104,7 +112,9 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
     return selected, {
         "profile": profile,
         "candidate_count": len(candidates),
+        "candidate_ids": [model.id for model, _, _ in candidates],
         "required_tokens": required_tokens,
+        "context_usage": context_usage,
         "feedback": {"up": up, "down": down},
-        "reason": "Auto: " + profile + " の実績と探索度から選択",
+        "reason": "Auto: " + profile + " の実績・探索度・既知Contextの余裕から選択",
     }

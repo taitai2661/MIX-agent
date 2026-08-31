@@ -618,6 +618,16 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
             "tool_count": 0,
         "request_hash": request_hash,
         "auto_selection": auto_selection,
+        "auto_routing": ({
+            "allowed_ids": allowed_ids,
+            "content": body.content,
+            "mode": body.mode,
+            "artifact_mimes": artifact_mimes,
+            "tools_required": tools_required,
+            "context_parts": [*prior_content, body.content, agent.get("system_prompt", "")],
+            "reserved_output_tokens": agent.get("model_settings", {}).get("max_output_tokens", 4096),
+            "attachment_bytes": sum(a.data.get("size", 0) for a in artifacts),
+        } if requested_model_id == "auto" else None),
         "requested_model_id": requested_model_id,
         },
     )

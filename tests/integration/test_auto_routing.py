@@ -1,3 +1,5 @@
+import asyncio
+
 from mix_agent.api import routes
 from mix_agent.db.models import (
     Conversation,
@@ -9,7 +11,9 @@ from mix_agent.db.models import (
     User,
 )
 from mix_agent.db.session import SessionLocal
+from mix_agent.providers.adapters import ProviderContextLimitError
 from mix_agent.routing import select_auto_model
+from mix_agent.runs import engine
 from sqlalchemy import select
 
 
@@ -48,20 +52,65 @@ def test_auto_settings_and_capability_filters(signed, monkeypatch):
         assert details["candidate_count"] == 1
 
 
-def test_manual_context_override_makes_unknown_model_usable_by_auto(signed, monkeypatch):
+def test_unknown_context_model_is_usable_by_auto_without_an_override(signed, monkeypatch):
     unknown = make_model({}, context=None, model_id="unknown")
     assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [unknown],
                                                   "allowed_domains": []}).status_code == 200
     monkeypatch.setattr(routes, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
-    blocked = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
-        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": conversation})
-    assert blocked.status_code == 422
-    assert "モデル設定でContext Window" in blocked.json()["detail"]
-    assert signed.patch(f"/api/v1/models/{unknown}", json={"context_window_override": 8192}).status_code == 200
     response = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
-        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "new-request-key"})
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": conversation})
     assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.data["auto_selection"]["candidate_ids"] == [unknown]
+        assert run.data["auto_selection"]["context_usage"][unknown]["window"] is None
+
+
+def test_context_usage_penalizes_known_models_above_half_capacity(signed):
+    tight = make_model({}, context=100, model_id="tight")
+    roomy = make_model({}, context=1000, model_id="roomy")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        selected, details = select_auto_model(
+            db, owner, [tight, roomy], "x" * 120, "chat", [], False, ["x" * 120], 10, "context-usage"
+        )
+    assert selected.id == roomy
+    assert details["context_usage"][tight]["usage_ratio"] > 0.5
+    assert details["context_usage"][tight]["penalty"] > 0
+
+
+def test_auto_retries_once_after_pre_output_context_error(signed, monkeypatch):
+    first = make_model({}, context=None, model_id="first")
+    second = make_model({}, context=None, model_id="second")
+    assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [first, second],
+                                                  "allowed_domains": []}).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "context-retry"})
+    assert queued.status_code == 200, queued.text
+    attempts = []
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            if len(attempts) == 1:
+                raise ProviderContextLimitError("context limit")
+            yield {"kind": "response", "message": {"role": "assistant", "content": "ok"}, "tool_calls": []}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        message = db.scalar(select(Message).where(Message.conversation_id == conversation, Message.data["role"].as_string() == "assistant"))
+        assert run.status == "completed"
+        assert len(attempts) == 2
+        assert len(run.data["auto_selection"]["attempts"]) == 2
+        assert message.data["auto_selection"]["model_id"] == attempts[-1]
 
 
 def test_ucb_feedback_is_profile_scoped_and_single_rating_is_smoothed(signed):

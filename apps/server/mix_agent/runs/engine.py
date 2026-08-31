@@ -1,13 +1,17 @@
 import asyncio
 import json
 from datetime import timedelta, timezone
-from sqlalchemy import select, func
-from mix_agent.db.session import SessionLocal
-from mix_agent.db.models import Run, Event, ToolCall, Approval, Message, Provider, Secret, now
+
+from sqlalchemy import func, select
+
 from mix_agent.auth.security import read_secret
-from mix_agent.providers.adapters import Adapter
-from mix_agent.tools.registry import registry, permission, fingerprint, call_scope
+from mix_agent.db.models import Approval, Event, Message, Provider, Run, ToolCall, now
+from mix_agent.db.session import SessionLocal
+from mix_agent.providers.adapters import Adapter, is_context_limit_error
+from mix_agent.providers.reasoning import resolve_reasoning
+from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.tools.execute import execute, runner_request
+from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
 
 TASKS = {}
 EXECUTION_LOCK = asyncio.Lock()
@@ -34,6 +38,50 @@ def finish(db, run, status, reason=None):
 def launch(run_id):
     if run_id not in TASKS or TASKS[run_id].done():
         TASKS[run_id] = asyncio.create_task(drive(run_id))
+
+
+def reroute_after_context_limit(db, run, request_key):
+    """Select one alternate Auto candidate after a pre-output context rejection."""
+    routing = run.data.get("auto_routing")
+    snapshot = run.data["snapshot"]
+    if not routing or run.data.get("auto_context_retry"):
+        return None
+    previous_id = snapshot["model_record_id"]
+    model, selection = select_auto_model(
+        db, run.owner_id, routing["allowed_ids"], routing["content"], routing["mode"],
+        routing["artifact_mimes"], routing["tools_required"], routing["context_parts"],
+        routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
+        excluded_model_ids=(previous_id,),
+    )
+    if not model:
+        return None
+    provider = db.get(Provider, model.data["provider_id"])
+    if not provider:
+        return None
+    try:
+        reasoning = resolve_reasoning(
+            provider.data["kind"], model.data["model_id"], effective_capabilities(model.data),
+            snapshot["mode"], snapshot.get("model_settings", {}),
+        )
+    except ValueError:
+        return None
+    updated_snapshot = {
+        **snapshot,
+        "model_id": model.data["model_id"],
+        "model_record_id": model.id,
+        "provider": provider.data,
+        "reasoning": reasoning,
+    }
+    attempts = [*(run.data.get("auto_selection", {}).get("attempts", [])), {
+        "model_record_id": previous_id,
+        "model_id": snapshot["model_id"],
+        "outcome": "context_limit_exceeded",
+    }, {"model_record_id": model.id, "model_id": model.data["model_id"], "outcome": "retry"}]
+    selection["attempts"] = attempts
+    update(run, snapshot=updated_snapshot, auto_selection=selection, auto_context_retry=True)
+    emit(db, run.id, "model_rerouted", {"from_model_record_id": previous_id, "selection": selection})
+    db.commit()
+    return updated_snapshot
 
 
 async def drive(run_id):
@@ -206,20 +254,31 @@ async def drive(run_id):
                 update(run, steps=steps + 1)
                 db.commit()
                 response = None
+                emitted_output = False
                 model_settings = {
                     k: v for k, v in snapshot.get("model_settings", {}).items() if k != "_resolved_reasoning"
                 }
                 if "reasoning" in snapshot:
                     model_settings["_resolved_reasoning"] = snapshot["reasoning"]
-                async with asyncio.timeout(max(1, snapshot.get("max_seconds", 900) - elapsed)):
-                    async for event in Adapter(provider, key).stream(
-                        snapshot["model_id"], history, available, mode, model_settings
-                    ):
-                        if event["kind"] == "response":
-                            response = event
-                        else:
-                            emit(db, run.id, event["kind"], {"text": event.get("text", "")})
-                            db.commit()
+                try:
+                    async with asyncio.timeout(max(1, snapshot.get("max_seconds", 900) - elapsed)):
+                        async for event in Adapter(provider, key).stream(
+                            snapshot["model_id"], history, available, mode, model_settings
+                        ):
+                            if event["kind"] == "response":
+                                response = event
+                            else:
+                                emitted_output = True
+                                emit(db, run.id, event["kind"], {"text": event.get("text", "")})
+                                db.commit()
+                except Exception as exc:
+                    rerouted = None if emitted_output or response else (
+                        reroute_after_context_limit(db, run, run.request_key) if is_context_limit_error(exc) else None
+                    )
+                    if not rerouted:
+                        raise
+                    snapshot = rerouted
+                    continue
                 if response is None:
                     raise RuntimeError("Incomplete model response")
                 message = response["message"]
