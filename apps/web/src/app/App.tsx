@@ -14,7 +14,7 @@ import {
   ChevronsLeft,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 
 import { Empty, ErrorBox, Logo } from "@/components/shared";
@@ -28,14 +28,25 @@ import { Settings } from "@/features/settings/Settings";
 import { Setup } from "@/features/setup/Setup";
 
 export function App() {
+  const sidebarMinimum = 220,
+    sidebarMaximum = 380,
+    sidebarDefault = 248;
   const [user, setUser] = useState<any>(null),
     [ready, setReady] = useState(false),
     [needsAdmin, setNeedsAdmin] = useState(false),
     [error, setError] = useState<unknown>(null),
     [sidebar, setSidebar] = useState(false),
-    [collapsed, setCollapsed] = useState(false);
+    [collapsed, setCollapsed] = useState(false),
+    [resizingSidebar, setResizingSidebar] = useState(false),
+    [sidebarWidth, setSidebarWidth] = useState(() => {
+      const stored = Number(localStorage.getItem("mix-agent-sidebar-width"));
+      return Number.isFinite(stored) && stored >= sidebarMinimum && stored <= sidebarMaximum ? stored : sidebarDefault;
+    });
   const navigate = useNavigate();
   const qc = useQueryClient();
+  useEffect(() => {
+    localStorage.setItem("mix-agent-sidebar-width", String(sidebarWidth));
+  }, [sidebarWidth]);
   useEffect(() => {
     Promise.all([api("/setup"), api("/auth/me").catch(() => null)])
       .then(([setup, me]) => {
@@ -72,9 +83,35 @@ export function App() {
     navigate("/");
     setSidebar(false);
   }
+  function resizeSidebar(event: PointerEvent<HTMLDivElement>) {
+    if (window.matchMedia("(max-width: 760px)").matches) return;
+    event.preventDefault();
+    const initialX = event.clientX;
+    const initialWidth = sidebarWidth;
+    setResizingSidebar(true);
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      setSidebarWidth(Math.min(sidebarMaximum, Math.max(sidebarMinimum, initialWidth + moveEvent.clientX - initialX)));
+    };
+    const onEnd = () => {
+      setResizingSidebar(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd, { once: true });
+  }
+  function resizeSidebarWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    const increment = event.shiftKey ? 24 : 8;
+    if (event.key === "ArrowLeft") setSidebarWidth((width) => Math.max(sidebarMinimum, width - increment));
+    else if (event.key === "ArrowRight") setSidebarWidth((width) => Math.min(sidebarMaximum, width + increment));
+    else if (event.key === "Home") setSidebarWidth(sidebarMinimum);
+    else if (event.key === "End") setSidebarWidth(sidebarMaximum);
+    else return;
+    event.preventDefault();
+  }
   return (
-    <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed" : "")}>
-      <aside id="main-navigation" className="sidebar" aria-label="メインメニュー">
+    <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed " : "") + (resizingSidebar ? "sidebar-resizing" : "")}>
+      <aside id="main-navigation" className="sidebar" aria-label="メインメニュー" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
           <Logo />
           <div className="sidebar-controls"><ThemeController /><button className="icon mobile" onClick={() => setSidebar(false)} aria-label="閉じる"><X size={18} /></button></div>
@@ -145,6 +182,7 @@ export function App() {
           </div>
         </div>
       </aside>
+      <div className="sidebar-resizer" role="separator" aria-label="サイドバーの幅を調整" aria-orientation="vertical" aria-valuemin={sidebarMinimum} aria-valuemax={sidebarMaximum} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={resizeSidebar} onKeyDown={resizeSidebarWithKeyboard} />
       <div className="main">
         <header className="topbar">
           <button

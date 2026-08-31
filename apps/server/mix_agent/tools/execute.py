@@ -86,7 +86,7 @@ async def execute(db, run, tool, args):
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.get(
                 "https://api.search.brave.com/res/v1/web/search",
-                params={"q": args["query"], "count": 5},
+                params={"q": args["query"], "count": max(1, min(20, (setting.data if setting else {}).get("web_search_count", 5)))},
                 headers={"X-Subscription-Token": key},
             )
             response.raise_for_status()

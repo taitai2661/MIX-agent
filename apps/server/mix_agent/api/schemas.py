@@ -12,6 +12,161 @@ class RecordView(BaseModel):
     created_at: str
 
 
+ChatMode = Literal["chat", "thinking", "agent"]
+RunStatus = Literal["queued", "running", "waiting_approval", "completed", "failed", "cancelled", "interrupted"]
+ApprovalDecision = Literal["once", "always", "denied"]
+ApprovalStatus = Literal["pending", "once", "always", "denied", "expired"]
+
+
+class ArtifactView(BaseModel):
+    artifact_id: str
+    name: str
+    mime: str
+    size: int
+
+
+class AutoSelectionView(BaseModel):
+    model_id: str
+    reason: str
+    model_record_id: str | None = None
+    profile: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MessageDataView(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+    artifact_ids: list[str] = Field(default_factory=list)
+    artifacts: list[ArtifactView] = Field(default_factory=list)
+    auto_selection: AutoSelectionView | None = None
+    feedback: Literal["up", "down"] | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MessageView(BaseModel):
+    id: str
+    data: MessageDataView
+    created_at: str
+
+
+class ConversationRunView(BaseModel):
+    id: str
+    status: RunStatus
+    reason: str | None = None
+    message_id: str | None = None
+
+
+class ConversationSelectionView(BaseModel):
+    model_id: str
+    agent_id: str = ""
+    mode: ChatMode = "chat"
+
+
+class ConversationMessagesView(BaseModel):
+    messages: list[MessageView]
+    runs: list[ConversationRunView]
+    selection: ConversationSelectionView | None = None
+
+
+class SendMessageView(BaseModel):
+    run_id: str
+
+
+class ToolCallActivityView(BaseModel):
+    label: str | None = None
+    detail: str | None = None
+    sources: list[dict[str, str]] = Field(default_factory=list)
+    remaining: int | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ToolCallRetryView(BaseModel):
+    available: bool
+    label: str
+
+
+class ToolCallApprovalView(BaseModel):
+    id: str
+    status: ApprovalStatus
+    tool: str | None = None
+    risk: str | None = None
+
+
+class ToolCallHistoryView(BaseModel):
+    id: str
+    run_id: str
+    status: Literal["completed", "failed", "running", "waiting_approval", "unknown"]
+    tool_name: str
+    activity: ToolCallActivityView | None = None
+    result_activity: ToolCallActivityView | None = None
+    created_at: str
+    result: object | None = None
+    failure: str | None = None
+    artifact: ArtifactView | None = None
+    approval: ToolCallApprovalView | None = None
+    retry: ToolCallRetryView
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ApprovalDataView(BaseModel):
+    tool: str
+    arguments: dict = Field(default_factory=dict)
+    scope: dict = Field(default_factory=dict)
+    risk: str | None = None
+    tool_version: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ApprovalView(BaseModel):
+    id: str
+    data: ApprovalDataView
+    created_at: str
+    status: ApprovalStatus
+
+
+class RunBudgetView(BaseModel):
+    max_seconds: int | None = None
+    max_steps: int | None = None
+    max_tool_calls: int | None = None
+
+
+class RunView(BaseModel):
+    id: str
+    status: RunStatus
+    reason: str | None = None
+    steps: int
+    tool_count: int
+    budget: RunBudgetView
+    approvals: list[ApprovalView]
+
+
+class ToolView(BaseModel):
+    id: str
+    default_permission: Literal["allow", "ask", "deny"] = "ask"
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PermissionRuleDataView(BaseModel):
+    agent_id: str = ""
+    tool_id: str
+    permission: Literal["allow", "ask", "deny"]
+    scope: dict = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PermissionRuleView(BaseModel):
+    id: str
+    data: PermissionRuleDataView
+    created_at: str
+
+
 class ModelSyncResult(BaseModel):
     status: Literal["ok", "failed", "skipped"]
     count: int
@@ -80,6 +235,7 @@ class AgentInput(Input):
     max_seconds: int = Field(default=3600, ge=30, le=86400)
     max_tool_calls: int = Field(default=500, ge=1, le=5000)
     model_settings: dict = Field(default_factory=dict)
+    tool_settings: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 class ConversationInput(Input):
@@ -131,6 +287,10 @@ class SettingsInput(Input):
     setup_complete: bool = False
     brave_api_key: str | None = None
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)
+    browser_enabled: bool = True
+    web_search_enabled: bool = True
+    web_search_count: int = Field(default=5, ge=1, le=20)
+    tool_settings: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 class FeedbackInput(Input):

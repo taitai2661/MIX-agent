@@ -3,8 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { CircleHelp } from "lucide-react";
 import { type ReactNode } from "react";
 
-export function useRows(path: string) {
-  return useQuery<Row[]>({ queryKey: [path], queryFn: () => api(path) });
+export function useRows<T = Row>(path: string) {
+  return useQuery<T[]>({ queryKey: [path], queryFn: () => api(path) });
 }
 export function ErrorBox({ error }: { error: unknown }) {
   return error ? (

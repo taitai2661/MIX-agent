@@ -85,6 +85,21 @@ def tool_capability(model_data):
     return {"supported": True, "unsupported": False}.get(status)
 
 
+def effective_tool_ids(settings, agent, requested):
+    global_settings = settings.data.get("tool_settings", {})
+    agent_settings = agent.get("tool_settings", {})
+    result = []
+    for tool_id in requested:
+        values = {**global_settings.get(tool_id, {}), **agent_settings.get(tool_id, {})}
+        if values.get("enabled", True) is not False:
+            result.append(tool_id)
+    if settings.data.get("browser_enabled", True) is False:
+        result = [x for x in result if not x.startswith("browser_")]
+    if settings.data.get("web_search_enabled", True) is False:
+        result = [x for x in result if x not in ("web_search", "web_fetch")]
+    return result
+
+
 async def verify_tool_capability(db, owner, model, provider, source):
     """Persist a safe, one-call tool support check without executing a tool."""
     try:
@@ -421,7 +436,8 @@ async def settings(ctx=Depends(context)):
     db, s = ctx
     view = public(own(db, Settings, "settings", s.owner_id))
     # Older profiles predate this preference; expose the compatible default.
-    view["data"] = {"auto_retry_count": 3, **view["data"]}
+    view["data"] = {"auto_retry_count": 3, "browser_enabled": True, "web_search_enabled": True,
+                     "web_search_count": 5, "tool_settings": {}, **view["data"]}
     return view
 
 
@@ -435,7 +451,8 @@ async def set_settings(body: SettingsInput, ctx=Depends(context)):
     if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", d) or "." not in d for d in domains):
         raise HTTPException(422, "通信許可先は正確なドメイン名で指定してください")
     update_values = body.model_dump(exclude={"brave_api_key", "auto_model_ids"})
-    data = {**row.data, **update_values, "allowed_domains": domains}
+    data = {**row.data, **update_values, "allowed_domains": domains,
+            "web_search_count": body.web_search_count, "tool_settings": body.tool_settings}
     if body.default_model_id:
         if body.default_model_id != "auto":
             own(db, Model, body.default_model_id, s.owner_id)
@@ -459,7 +476,7 @@ async def set_settings(body: SettingsInput, ctx=Depends(context)):
     return public(row)
 
 
-@router.get("/tools")
+@router.get("/tools", response_model=list[ToolView])
 async def tools_list(ctx=Depends(context)):
     db, s = ctx
     return list(registry(db, s.owner_id).values())
@@ -488,7 +505,7 @@ async def set_permission(body: PermissionInput, ctx=Depends(context)):
     return public(row)
 
 
-@router.get("/conversations/{key}/messages")
+@router.get("/conversations/{key}/messages", response_model=ConversationMessagesView)
 async def messages(key: str, ctx=Depends(context)):
     db, s = ctx
     conversation = own(db, Conversation, key, s.owner_id)
@@ -533,7 +550,7 @@ def _redact_tool_result(value):
     return value
 
 
-@router.get("/conversations/{key}/tool-calls")
+@router.get("/conversations/{key}/tool-calls", response_model=list[ToolCallHistoryView])
 async def conversation_tool_calls(key: str, ctx=Depends(context)):
     db, s = ctx
     own(db, Conversation, key, s.owner_id)
@@ -577,7 +594,7 @@ async def conversation_tool_calls(key: str, ctx=Depends(context)):
     return result
 
 
-@router.post("/conversations/{key}/messages")
+@router.post("/conversations/{key}/messages", response_model=SendMessageView)
 async def send_message(key: str, body: MessageInput, request: Request, ctx=Depends(context)):
     db, s = ctx
     conversation = own(db, Conversation, key, s.owner_id)
@@ -592,6 +609,7 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         if existing.data.get("request_hash") != request_hash:
             raise HTTPException(409, "同じIdempotency-Keyで異なる入力は送信できません")
         return {"run_id": existing.id}
+    settings = own(db, Settings, "settings", s.owner_id)
     agent = own(db, Agent, body.agent_id, s.owner_id).data if body.agent_id else {}
     candidate = memory.explicit_candidate(body.content)
     if candidate:
@@ -603,13 +621,13 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
     tool_ids = agent.get("tool_ids", [t["id"] for t in BUILTINS])
     if not body.agent_id and agent.get("auto_learn", True):
         tool_ids = list(dict.fromkeys([*tool_ids, "memory_search", "memory_add", "memory_update", "skill_search", "skill_add", "skill_update"]))
+    tool_ids = effective_tool_ids(settings, agent, tool_ids)
     tools_required = body.mode == "agent" and bool(tool_ids)
     prior_content = [m.data.get("content", "") for m in db.scalars(
         select(Message).where(Message.conversation_id == key).order_by(Message.created_at)
     )]
     requested_model_id = body.model_id
     auto_selection = None
-    settings = own(db, Settings, "settings", s.owner_id)
     if body.model_id == "auto":
         allowed_ids = settings.data.get("auto_model_ids", [])
         if not allowed_ids:
@@ -780,7 +798,7 @@ async def verify_model_tools(key: str, ctx=Depends(context)):
     return public(model)
 
 
-@router.get("/runs/{key}")
+@router.get("/runs/{key}", response_model=RunView)
 async def get_run(key: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
@@ -932,7 +950,7 @@ async def decide(key: str, body: DecisionInput, ctx=Depends(context)):
     return {"ok": True}
 
 
-@router.post("/artifacts")
+@router.post("/artifacts", response_model=ArtifactView)
 async def upload(file: UploadFile = File(...), ctx=Depends(context)):
     db, s = ctx
     content = await file.read(config.MAX_UPLOAD + 1)
@@ -1294,12 +1312,12 @@ async def delete_entity(collection: str, key: str, ctx=Depends(context)):
 
 
 # Concrete routes expose request/response schemas to generated TypeScript clients.
-def register_collection(name, schema):
+def register_collection(name, schema, view_schema=RecordView):
     async def listing(ctx=Depends(context)):
         return await list_collection(name, ctx)
 
     router.add_api_route(
-        "/" + name, listing, methods=["GET"], response_model=list[RecordView], name="list_" + name
+        "/" + name, listing, methods=["GET"], response_model=list[view_schema], name="list_" + name
     )
     if schema is None:
         return
@@ -1309,7 +1327,7 @@ def register_collection(name, schema):
 
     creating.__annotations__["body"] = schema
     router.add_api_route(
-        "/" + name, creating, methods=["POST"], response_model=RecordView, name="create_" + name
+        "/" + name, creating, methods=["POST"], response_model=view_schema, name="create_" + name
     )
     from pydantic import create_model
 
@@ -1324,9 +1342,13 @@ def register_collection(name, schema):
 
     editing.__annotations__["body"] = partial
     router.add_api_route(
-        "/" + name + "/{key}", editing, methods=["PATCH"], response_model=RecordView, name="edit_" + name
+        "/" + name + "/{key}", editing, methods=["PATCH"], response_model=view_schema, name="edit_" + name
     )
 
 
 for collection_name, (_, collection_schema) in COLLECTIONS.items():
-    register_collection(collection_name, collection_schema)
+    register_collection(
+        collection_name,
+        collection_schema,
+        PermissionRuleView if collection_name == "permission-rules" else RecordView,
+    )

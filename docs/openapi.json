@@ -559,7 +559,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolView"
+                  },
+                  "type": "array",
+                  "title": "Response Tools List Api V1 Tools Get"
+                }
               }
             }
           }
@@ -577,7 +583,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/RecordView"
+                    "$ref": "#/components/schemas/PermissionRuleView"
                   },
                   "type": "array",
                   "title": "Response List Permission Rules Api V1 Permission Rules Get"
@@ -642,7 +648,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMessagesView"
+                }
               }
             }
           },
@@ -687,7 +695,52 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{key}/tool-calls": {
+      "get": {
+        "summary": "Conversation Tool Calls",
+        "operationId": "conversation_tool_calls_api_v1_conversations__key__tool_calls_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ToolCallHistoryView"
+                  },
+                  "title": "Response Conversation Tool Calls Api V1 Conversations  Key  Tool Calls Get"
+                }
               }
             }
           },
@@ -808,7 +861,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
               }
             }
           },
@@ -1022,7 +1077,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactView"
+                }
               }
             }
           },
@@ -2276,6 +2333,155 @@
         "type": "object",
         "title": "AgentInputPatch"
       },
+      "ApprovalDataView": {
+        "properties": {
+          "tool": {
+            "type": "string",
+            "title": "Tool"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Arguments"
+          },
+          "scope": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scope"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk"
+          },
+          "tool_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Version"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "tool"
+        ],
+        "title": "ApprovalDataView"
+      },
+      "ApprovalView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ApprovalDataView"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "once",
+              "always",
+              "denied",
+              "expired"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "data",
+          "created_at",
+          "status"
+        ],
+        "title": "ApprovalView"
+      },
+      "ArtifactView": {
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "title": "Artifact Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "mime": {
+            "type": "string",
+            "title": "Mime"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "artifact_id",
+          "name",
+          "mime",
+          "size"
+        ],
+        "title": "ArtifactView"
+      },
+      "AutoSelectionView": {
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "model_record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Record Id"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "model_id",
+          "reason"
+        ],
+        "title": "AutoSelectionView"
+      },
       "BackupInput": {
         "properties": {
           "passphrase": {
@@ -2357,6 +2563,117 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ConversationInputPatch"
+      },
+      "ConversationMessagesView": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MessageView"
+            },
+            "type": "array",
+            "title": "Messages"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationRunView"
+            },
+            "type": "array",
+            "title": "Runs"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationSelectionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages",
+          "runs"
+        ],
+        "title": "ConversationMessagesView"
+      },
+      "ConversationRunView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "ConversationRunView"
+      },
+      "ConversationSelectionView": {
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id",
+            "default": ""
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "thinking",
+              "agent"
+            ],
+            "title": "Mode",
+            "default": "chat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_id"
+        ],
+        "title": "ConversationSelectionView"
       },
       "Credentials": {
         "properties": {
@@ -2548,6 +2865,68 @@
         ],
         "title": "MemoryInput"
       },
+      "MessageDataView": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Artifact Ids"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactView"
+            },
+            "type": "array",
+            "title": "Artifacts"
+          },
+          "auto_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoSelectionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "MessageDataView"
+      },
       "MessageInput": {
         "properties": {
           "content": {
@@ -2595,6 +2974,28 @@
           "model_id"
         ],
         "title": "MessageInput"
+      },
+      "MessageView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MessageDataView"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "data",
+          "created_at"
+        ],
+        "title": "MessageView"
       },
       "ModelInput": {
         "properties": {
@@ -2898,6 +3299,62 @@
         ],
         "title": "PermissionInput"
       },
+      "PermissionRuleDataView": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id",
+            "default": ""
+          },
+          "tool_id": {
+            "type": "string",
+            "title": "Tool Id"
+          },
+          "permission": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ],
+            "title": "Permission"
+          },
+          "scope": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scope"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "tool_id",
+          "permission"
+        ],
+        "title": "PermissionRuleDataView"
+      },
+      "PermissionRuleView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PermissionRuleDataView"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "data",
+          "created_at"
+        ],
+        "title": "PermissionRuleView"
+      },
       "ProviderInput": {
         "properties": {
           "name": {
@@ -3092,6 +3549,118 @@
         "type": "object",
         "title": "ResumeInput"
       },
+      "RunBudgetView": {
+        "properties": {
+          "max_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seconds"
+          },
+          "max_steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Steps"
+          },
+          "max_tool_calls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tool Calls"
+          }
+        },
+        "type": "object",
+        "title": "RunBudgetView"
+      },
+      "RunView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "completed",
+              "failed",
+              "cancelled",
+              "interrupted"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "steps": {
+            "type": "integer",
+            "title": "Steps"
+          },
+          "tool_count": {
+            "type": "integer",
+            "title": "Tool Count"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/RunBudgetView"
+          },
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalView"
+            },
+            "type": "array",
+            "title": "Approvals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "steps",
+          "tool_count",
+          "budget",
+          "approvals"
+        ],
+        "title": "RunView"
+      },
+      "SendMessageView": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id"
+        ],
+        "title": "SendMessageView"
+      },
       "SessionRevocationInput": {
         "properties": {
           "scope": {
@@ -3133,7 +3702,7 @@
           },
           "auto_retry_count": {
             "type": "integer",
-            "minimum": 0,
+            "minimum": 0.0,
             "title": "Auto Retry Count",
             "default": 3
           },
@@ -3199,6 +3768,250 @@
           "content"
         ],
         "title": "SkillInput"
+      },
+      "ToolCallActivityView": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "sources": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ToolCallActivityView"
+      },
+      "ToolCallApprovalView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "once",
+              "always",
+              "denied",
+              "expired"
+            ],
+            "title": "Status"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "ToolCallApprovalView"
+      },
+      "ToolCallHistoryView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "running",
+              "waiting_approval",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "tool_name": {
+            "type": "string",
+            "title": "Tool Name"
+          },
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallActivityView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallActivityView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "result": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "artifact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallApprovalView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retry": {
+            "$ref": "#/components/schemas/ToolCallRetryView"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "run_id",
+          "status",
+          "tool_name",
+          "created_at",
+          "retry"
+        ],
+        "title": "ToolCallHistoryView"
+      },
+      "ToolCallRetryView": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "label"
+        ],
+        "title": "ToolCallRetryView"
+      },
+      "ToolView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "default_permission": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ],
+            "title": "Default Permission",
+            "default": "ask"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "ToolView"
       },
       "UsernameChangeInput": {
         "properties": {

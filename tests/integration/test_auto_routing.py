@@ -1,5 +1,7 @@
 import asyncio
+
 import httpx
+from sqlalchemy import select
 
 from mix_agent.api import routes
 from mix_agent.db.models import (
@@ -13,16 +15,15 @@ from mix_agent.db.models import (
     User,
 )
 from mix_agent.db.session import SessionLocal
-from mix_agent.providers.adapters import ProviderContextLimitError
+from mix_agent.providers.adapters import ProviderContextLimitError, is_nvidia_nim_function_not_found
 from mix_agent.routing import select_auto_model
 from mix_agent.runs import engine
-from sqlalchemy import select
 
 
-def make_model(caps, context=20000, model_id="auto-test"):
+def make_model(caps, context=20000, model_id="auto-test", provider_data=None):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
-        provider = Provider(owner_id=owner, data={"kind": "openai"})
+        provider = Provider(owner_id=owner, data=provider_data or {"kind": "openai"})
         db.add(provider)
         db.flush()
         model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": model_id,
@@ -268,6 +269,97 @@ def test_auto_does_not_retry_not_found_or_when_retry_count_is_zero(signed, monke
         assert run.status == "failed"
         assert run.data["snapshot"]["auto_retry_count"] == 0
         assert len(attempts) == 1
+
+
+def test_auto_retries_nvidia_nim_function_not_found_and_reports_entitlement_failure(signed, monkeypatch):
+    nvidia = {"kind": "compatible", "preset_id": "nvidia-nim"}
+    first = make_model({}, context=None, model_id="nim-first", provider_data=nvidia)
+    second = make_model({}, context=None, model_id="nim-second", provider_data=nvidia)
+    assert signed.put("/api/v1/settings", json={
+        "default_model_id": "auto", "auto_model_ids": [first, second], "auto_retry_count": 3, "allowed_domains": [],
+    }).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat",
+    }, headers={"Idempotency-Key": "nvidia-nim-function-not-found"})
+    attempts = []
+
+    class NIMUnavailableAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            response = httpx.Response(
+                404,
+                json={"detail": "Function 'example' not found for account 'example'"},
+                request=httpx.Request("POST", "https://integrate.api.nvidia.com/v1/chat/completions"),
+            )
+            raise httpx.HTTPStatusError("not found", request=response.request, response=response)
+            yield
+
+    monkeypatch.setattr(engine, "Adapter", NIMUnavailableAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "failed"
+        assert len(attempts) == len(set(attempts)) == 2
+        assert [item["outcome"] for item in run.data["auto_selection"]["attempts"]] == ["provider_error", "retry"]
+        assert "NVIDIA NIM" in run.data["reason"]
+        assert "利用権限" in run.data["reason"]
+
+
+def test_nvidia_nim_function_not_found_does_not_retry_for_manual_selection(signed, monkeypatch):
+    nvidia = {"kind": "compatible", "preset_id": "nvidia-nim"}
+    model = make_model({}, context=None, model_id="nim-manual", provider_data=nvidia)
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": model, "content": "hello", "mode": "chat",
+    }, headers={"Idempotency-Key": "nvidia-nim-manual-not-found"})
+    attempts = []
+
+    class NIMUnavailableAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, selected, history, tools, mode, settings):
+            attempts.append(selected)
+            response = httpx.Response(
+                404,
+                json={"detail": "Function 'example' not found for account 'example'"},
+                request=httpx.Request("POST", "https://integrate.api.nvidia.com/v1/chat/completions"),
+            )
+            raise httpx.HTTPStatusError("not found", request=response.request, response=response)
+            yield
+
+    monkeypatch.setattr(engine, "Adapter", NIMUnavailableAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "failed"
+        assert attempts == ["nim-manual"]
+        assert "NVIDIA NIM" in run.data["reason"]
+
+
+def test_nvidia_nim_function_not_found_classification_is_limited_to_hosted_404():
+    response = httpx.Response(
+        404,
+        json={"detail": "Function 'example' not found for account 'example'"},
+        request=httpx.Request("POST", "https://integrate.api.nvidia.com/v1/chat/completions"),
+    )
+    unavailable = httpx.HTTPStatusError("not found", request=response.request, response=response)
+    assert is_nvidia_nim_function_not_found({"preset_id": "nvidia-nim"}, unavailable)
+    assert not is_nvidia_nim_function_not_found({"preset_id": "openai"}, unavailable)
+
+    unauthorized = httpx.Response(401, request=response.request)
+    auth_error = httpx.HTTPStatusError("unauthorized", request=response.request, response=unauthorized)
+    assert not is_nvidia_nim_function_not_found({"preset_id": "nvidia-nim"}, auth_error)
+
+    missing = httpx.Response(404, json={"detail": "model not found"}, request=response.request)
+    missing_error = httpx.HTTPStatusError("not found", request=response.request, response=missing)
+    assert not is_nvidia_nim_function_not_found({"preset_id": "nvidia-nim"}, missing_error)
 
 
 def test_ucb_feedback_is_profile_scoped_and_single_rating_is_smoothed(signed):

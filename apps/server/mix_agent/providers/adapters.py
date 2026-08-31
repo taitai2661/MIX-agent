@@ -41,6 +41,25 @@ def is_retryable_provider_error(exc):
     return False
 
 
+def is_nvidia_nim_function_not_found(provider, exc):
+    """Identify NVIDIA's catalog-visible but unavailable hosted-model response.
+
+    NVIDIA NIM may list a model while its hosted inference function is not
+    available to the current account.  Keep this narrow so ordinary 404s never
+    become Auto retry candidates.
+    """
+    if provider.get("preset_id") != "nvidia-nim":
+        return False
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    if status_code != 404:
+        return False
+    details = " ".join(
+        str(value) for value in (exc, getattr(exc, "body", ""), getattr(response, "text", "")) if value
+    ).casefold()
+    return "function" in details and "not found" in details
+
+
 def is_context_limit_error(exc):
     if isinstance(exc, ProviderContextLimitError):
         return True

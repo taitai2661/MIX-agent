@@ -8,7 +8,11 @@ from sqlalchemy import func, select
 from mix_agent.auth.security import read_secret
 from mix_agent.db.models import Approval, Event, Message, Provider, Run, ToolCall, now
 from mix_agent.db.session import SessionLocal
-from mix_agent.providers.adapters import Adapter, is_retryable_provider_error
+from mix_agent.providers.adapters import (
+    Adapter,
+    is_nvidia_nim_function_not_found,
+    is_retryable_provider_error,
+)
 from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.tools.execute import execute, runner_request
@@ -156,7 +160,14 @@ def reroute_after_provider_error(db, run, request_key, error):
         "retry_limit": retry_limit,
     }]
     selection["attempts"] = attempts
-    update(run, snapshot=updated_snapshot, auto_selection=selection)
+    # A retryable provider rejection produces no model output or tool work, so
+    # it must not consume the conversation's execution-step budget.
+    update(
+        run,
+        snapshot=updated_snapshot,
+        auto_selection=selection,
+        steps=max(0, run.data.get("steps", 0) - 1),
+    )
     emit(db, run.id, "model_rerouted", {
         "from_model_record_id": previous_id,
         "to_model_record_id": model.id,
@@ -168,11 +179,13 @@ def reroute_after_provider_error(db, run, request_key, error):
     return updated_snapshot
 
 
-def provider_failure_reason(exc):
+def provider_failure_reason(exc, provider=None):
     """Return a safe, actionable provider failure message without remote details."""
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
     error_name = type(exc).__name__
+    if is_nvidia_nim_function_not_found(provider or {}, exc):
+        return "NVIDIA NIMでこのアカウントに利用可能な推論機能が見つかりません。NVIDIA側の提供状況またはAPI Keyの利用権限を確認してください。"
     if status_code == 404 or error_name == "NotFoundError":
         return "選択したモデルがProviderに見つかりません。モデル一覧を更新するか、Providerの接続先とモデルIDを確認してください。"
     if status_code in (401, 403) or error_name in {"AuthenticationError", "PermissionDeniedError"}:
@@ -420,9 +433,10 @@ async def drive(run_id):
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
                 except Exception as exc:
+                    retryable = is_retryable_provider_error(exc) or is_nvidia_nim_function_not_found(provider, exc)
                     rerouted = (
                         reroute_after_provider_error(db, run, run.request_key, exc)
-                        if run.data.get("requested_model_id") == "auto" and is_retryable_provider_error(exc)
+                        if run.data.get("requested_model_id") == "auto" and retryable
                         else None
                     )
                     if not rerouted:
@@ -503,7 +517,7 @@ async def drive(run_id):
                     db,
                     run,
                     "failed",
-                    provider_failure_reason(exc),
+                    provider_failure_reason(exc, run.data.get("snapshot", {}).get("provider", {})),
                 )
     finally:
         TASKS.pop(run_id, None)

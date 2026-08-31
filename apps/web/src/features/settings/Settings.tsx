@@ -15,6 +15,7 @@ import { Backups } from "@/features/settings/Backups";
 import { Account } from "@/features/settings/Account";
 import { General } from "@/features/settings/General";
 import { Tools } from "@/features/tools/Tools";
+import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSettings";
 import { SettingsOverview } from "@/features/settings/Overview";
 
 export function Settings({
@@ -45,6 +46,8 @@ export function Settings({
         ))}
         <p className="settings-nav-label">接続と安全性</p>
         {[
+          ["browser", "Browser", Globe],
+          ["web-search", "Web検索", Globe],
           ["tools", "Tools・権限", ShieldCheck],
           ["mcp", "MCP", Globe],
           ["general", "一般・通信", Settings2],
@@ -63,6 +66,8 @@ export function Settings({
           <Route path="providers" element={<Providers />} />
           <Route path="models" element={<Models />} />
           <Route path="tools" element={<Tools />} />
+          <Route path="browser" element={<BrowserSettings />} />
+          <Route path="web-search" element={<WebSearchSettings />} />
           <Route path="mcp" element={<MCP />} />
           <Route path="general" element={<General />} />
           <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />

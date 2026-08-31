@@ -348,6 +348,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations/{key}/tool-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversation Tool Calls */
+        get: operations["conversation_tool_calls_api_v1_conversations__key__tool_calls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/messages/{key}/feedback": {
         parameters: {
             query?: never;
@@ -914,6 +931,62 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ApprovalDataView */
+        ApprovalDataView: {
+            /** Tool */
+            tool: string;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            /** Scope */
+            scope?: {
+                [key: string]: unknown;
+            };
+            /** Risk */
+            risk?: string | null;
+            /** Tool Version */
+            tool_version?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ApprovalView */
+        ApprovalView: {
+            /** Id */
+            id: string;
+            data: components["schemas"]["ApprovalDataView"];
+            /** Created At */
+            created_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "once" | "always" | "denied" | "expired";
+        };
+        /** ArtifactView */
+        ArtifactView: {
+            /** Artifact Id */
+            artifact_id: string;
+            /** Name */
+            name: string;
+            /** Mime */
+            mime: string;
+            /** Size */
+            size: number;
+        };
+        /** AutoSelectionView */
+        AutoSelectionView: {
+            /** Model Id */
+            model_id: string;
+            /** Reason */
+            reason: string;
+            /** Model Record Id */
+            model_record_id?: string | null;
+            /** Profile */
+            profile?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** BackupInput */
         BackupInput: {
             /** Passphrase */
@@ -943,6 +1016,44 @@ export interface components {
         ConversationInputPatch: {
             /** Title */
             title?: string | null;
+        };
+        /** ConversationMessagesView */
+        ConversationMessagesView: {
+            /** Messages */
+            messages: components["schemas"]["MessageView"][];
+            /** Runs */
+            runs: components["schemas"]["ConversationRunView"][];
+            selection?: components["schemas"]["ConversationSelectionView"] | null;
+        };
+        /** ConversationRunView */
+        ConversationRunView: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "interrupted";
+            /** Reason */
+            reason?: string | null;
+            /** Message Id */
+            message_id?: string | null;
+        };
+        /** ConversationSelectionView */
+        ConversationSelectionView: {
+            /** Model Id */
+            model_id: string;
+            /**
+             * Agent Id
+             * @default
+             */
+            agent_id: string;
+            /**
+             * Mode
+             * @default chat
+             * @enum {string}
+             */
+            mode: "chat" | "thinking" | "agent";
         };
         /** Credentials */
         Credentials: {
@@ -1024,6 +1135,25 @@ export interface components {
              */
             pinned: boolean;
         };
+        /** MessageDataView */
+        MessageDataView: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Artifact Ids */
+            artifact_ids?: string[];
+            /** Artifacts */
+            artifacts?: components["schemas"]["ArtifactView"][];
+            auto_selection?: components["schemas"]["AutoSelectionView"] | null;
+            /** Feedback */
+            feedback?: ("up" | "down") | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** MessageInput */
         MessageInput: {
             /** Content */
@@ -1048,6 +1178,14 @@ export interface components {
              * @default false
              */
             acknowledge_unknown_capability: boolean;
+        };
+        /** MessageView */
+        MessageView: {
+            /** Id */
+            id: string;
+            data: components["schemas"]["MessageDataView"];
+            /** Created At */
+            created_at: string;
         };
         /** ModelInput */
         ModelInput: {
@@ -1146,6 +1284,35 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** PermissionRuleDataView */
+        PermissionRuleDataView: {
+            /**
+             * Agent Id
+             * @default
+             */
+            agent_id: string;
+            /** Tool Id */
+            tool_id: string;
+            /**
+             * Permission
+             * @enum {string}
+             */
+            permission: "allow" | "ask" | "deny";
+            /** Scope */
+            scope?: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /** PermissionRuleView */
+        PermissionRuleView: {
+            /** Id */
+            id: string;
+            data: components["schemas"]["PermissionRuleDataView"];
+            /** Created At */
+            created_at: string;
+        };
         /** ProviderInput */
         ProviderInput: {
             /** Name */
@@ -1208,6 +1375,39 @@ export interface components {
             /** Max Tool Calls */
             max_tool_calls?: number | null;
         };
+        /** RunBudgetView */
+        RunBudgetView: {
+            /** Max Seconds */
+            max_seconds?: number | null;
+            /** Max Steps */
+            max_steps?: number | null;
+            /** Max Tool Calls */
+            max_tool_calls?: number | null;
+        };
+        /** RunView */
+        RunView: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "interrupted";
+            /** Reason */
+            reason?: string | null;
+            /** Steps */
+            steps: number;
+            /** Tool Count */
+            tool_count: number;
+            budget: components["schemas"]["RunBudgetView"];
+            /** Approvals */
+            approvals: components["schemas"]["ApprovalView"][];
+        };
+        /** SendMessageView */
+        SendMessageView: {
+            /** Run Id */
+            run_id: string;
+        };
         /** SessionRevocationInput */
         SessionRevocationInput: {
             /**
@@ -1256,6 +1456,82 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+        };
+        /** ToolCallActivityView */
+        ToolCallActivityView: {
+            /** Label */
+            label?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /** Sources */
+            sources?: {
+                [key: string]: string;
+            }[];
+            /** Remaining */
+            remaining?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ToolCallApprovalView */
+        ToolCallApprovalView: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "once" | "always" | "denied" | "expired";
+            /** Tool */
+            tool?: string | null;
+            /** Risk */
+            risk?: string | null;
+        };
+        /** ToolCallHistoryView */
+        ToolCallHistoryView: {
+            /** Id */
+            id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "failed" | "running" | "waiting_approval" | "unknown";
+            /** Tool Name */
+            tool_name: string;
+            activity?: components["schemas"]["ToolCallActivityView"] | null;
+            result_activity?: components["schemas"]["ToolCallActivityView"] | null;
+            /** Created At */
+            created_at: string;
+            /** Result */
+            result?: unknown | null;
+            /** Failure */
+            failure?: string | null;
+            artifact?: components["schemas"]["ArtifactView"] | null;
+            approval?: components["schemas"]["ToolCallApprovalView"] | null;
+            retry: components["schemas"]["ToolCallRetryView"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** ToolCallRetryView */
+        ToolCallRetryView: {
+            /** Available */
+            available: boolean;
+            /** Label */
+            label: string;
+        };
+        /** ToolView */
+        ToolView: {
+            /** Id */
+            id: string;
+            /**
+             * Default Permission
+             * @default ask
+             * @enum {string}
+             */
+            default_permission: "allow" | "ask" | "deny";
+        } & {
+            [key: string]: unknown;
         };
         /** UsernameChangeInput */
         UsernameChangeInput: {
@@ -1825,7 +2101,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ToolView"][];
                 };
             };
         };
@@ -1845,7 +2121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RecordView"][];
+                    "application/json": components["schemas"]["PermissionRuleView"][];
                 };
             };
         };
@@ -1900,7 +2176,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationMessagesView"];
                 };
             };
             /** @description Validation Error */
@@ -1935,7 +2211,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SendMessageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    conversation_tool_calls_api_v1_conversations__key__tool_calls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolCallHistoryView"][];
                 };
             };
             /** @description Validation Error */
@@ -2032,7 +2339,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RunView"];
                 };
             };
             /** @description Validation Error */
@@ -2199,7 +2506,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ArtifactView"];
                 };
             };
             /** @description Validation Error */
