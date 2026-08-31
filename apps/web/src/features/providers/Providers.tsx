@@ -14,6 +14,7 @@ type ProviderPreset = {
   default_url: string;
   api_key_required: boolean;
   allow_private_default: boolean;
+  extra_config_schema: { key: string; label: string; required?: boolean }[];
 };
 
 export function Providers() {
@@ -28,7 +29,8 @@ export function Providers() {
     [error, setError] = useState<unknown>(null),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
-    [filter, setFilter] = useState("");
+    [filter, setFilter] = useState(""),
+    [selectedPreset, setSelectedPreset] = useState<ProviderPreset | null>(null);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -45,6 +47,9 @@ export function Providers() {
           base_url: f.get("base_url"),
           api_key: f.get("api_key") || null,
           allow_private: f.has("allow_private"),
+          extra_config: Object.fromEntries((selectedPreset?.extra_config_schema || []).map((field) => [
+            field.key, f.get("extra_config." + field.key) || "",
+          ])),
         },
       );
       setOpen(false);
@@ -52,7 +57,10 @@ export function Providers() {
       if (sync?.status === "ok") {
         setNotice(`${sync.count}件のモデルを取得し、${sync.auto_count}件をAuto候補へ追加しました`);
       } else if (sync?.status === "failed") {
-        setNotice("Providerは保存しましたが、モデル取得に失敗しました。接続を確認して「モデル取得」で再試行してください。");
+        const missing = sync.error?.startsWith("missing_extra_config:")
+          ? "追加設定が不足しています: " + sync.error.slice("missing_extra_config:".length)
+          : "モデル取得に失敗しました。";
+        setNotice("Providerは保存しましたが、" + missing + " 接続を確認して「モデル取得」で再試行してください。");
       }
       qc.invalidateQueries({ queryKey: ["/providers"] });
       qc.invalidateQueries({ queryKey: ["/models"] });
@@ -66,6 +74,7 @@ export function Providers() {
   function openForm(row: Row | null) {
     setEditing(row);
     setFilter("");
+    setSelectedPreset(row ? presets.data?.find((preset) => preset.id === row.data.preset_id) || null : null);
     setOpen(true);
   }
   const filtered = presets.data?.filter((preset) =>
@@ -132,6 +141,7 @@ export function Providers() {
                 const preset = presets.data?.find((x) => x.id === e.target.value);
                 const form = e.currentTarget.form;
                 if (!preset || !form) return;
+                setSelectedPreset(preset);
                 const named = form.elements.namedItem("name") as HTMLInputElement | null;
                 const url = form.elements.namedItem("base_url") as HTMLInputElement | null;
                 const kind = form.elements.namedItem("kind") as HTMLSelectElement | null;
@@ -191,6 +201,12 @@ export function Providers() {
           >
             <input name="api_key" type="password" autoComplete="off" />
           </Field>
+          {selectedPreset?.extra_config_schema.map((field) => (
+            <Field key={field.key} label={field.label} hint="このProvider固有の接続設定です。">
+              <input name={"extra_config." + field.key} required={field.required}
+                defaultValue={editing?.data.extra_config?.[field.key] || ""} />
+            </Field>
+          ))}
           <label className="check">
             <input
               type="checkbox"

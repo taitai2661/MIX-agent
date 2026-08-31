@@ -168,7 +168,22 @@ export function App() {
           <Route path="/memory" element={<Memories />} />
           <Route path="/skills" element={<Skills />} />
           <Route path="/setup" element={<Setup />} />
-          <Route path="/settings/*" element={<Settings />} />
+          <Route
+            path="/settings/*"
+            element={
+              <Settings
+                user={user}
+                onUserChange={(value) => {
+                  setCSRF(value.csrf);
+                  setUser(value);
+                }}
+                onLogout={() => {
+                  setUser(null);
+                  qc.clear();
+                }}
+              />
+            }
+          />
           <Route path="*" element={<Empty>ページが見つかりません</Empty>} />
         </Routes>
       </div>

@@ -28,6 +28,21 @@ class Credentials(Input):
     password: str = Field(min_length=12, max_length=256)
 
 
+class PasswordChangeInput(Input):
+    current_password: str = Field(min_length=12, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+    revoke_all_sessions: bool = False
+
+
+class UsernameChangeInput(Input):
+    current_password: str = Field(min_length=12, max_length=256)
+    username: str = Field(min_length=1, max_length=100)
+
+
+class SessionRevocationInput(Input):
+    scope: Literal["others", "all"]
+
+
 class ProviderInput(Input):
     name: str = Field(min_length=1, max_length=100)
     # kind remains accepted for records created before the catalog existed.
@@ -35,6 +50,7 @@ class ProviderInput(Input):
     preset_id: str | None = Field(default=None, max_length=100)
     base_url: str = Field(default="", max_length=2000)
     api_key: str | None = Field(default=None, max_length=10000)
+    extra_config: dict[str, str | int | float | bool] = Field(default_factory=dict)
     allow_private: bool = False
 
 

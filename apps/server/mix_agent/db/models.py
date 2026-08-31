@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import String, Text, Integer, DateTime, JSON, ForeignKey, UniqueConstraint, Index
+from sqlalchemy import Boolean, String, Text, Integer, DateTime, JSON, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -41,6 +41,14 @@ class Session(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     csrf: Mapped[str] = mapped_column(String(64))
     expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LoginEvent(Base):
+    __tablename__ = "login_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    successful: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
 
 
 class Provider(Record, Base):

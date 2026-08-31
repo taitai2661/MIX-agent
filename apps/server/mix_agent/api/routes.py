@@ -14,7 +14,7 @@ from mix_agent import config
 from mix_agent.api.schemas import *
 from mix_agent.db.models import *
 from mix_agent.db.session import get_db, SessionLocal
-from mix_agent.auth.security import authenticate, passwords, new_session, store_secret, read_secret
+from mix_agent.auth.security import authenticate, passwords, new_session, new_session_csrf, store_secret, read_secret
 from mix_agent.providers.adapters import Adapter, DEFAULT_URLS
 from mix_agent.providers.catalog import CUSTOM_KINDS, KIND_VALUES, catalog, get_preset
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
@@ -50,6 +50,27 @@ def public(row):
 
 def audit(db, owner, action, target):
     db.add(Audit(owner_id=owner, data={"action": action, "target": target}))
+
+
+def record_login(db, owner_id, successful):
+    """Keep only the latest 100 outcomes for this account, without connection metadata."""
+    db.add(LoginEvent(owner_id=owner_id, successful=successful))
+    db.flush()
+    stale = db.scalars(
+        select(LoginEvent)
+        .where(LoginEvent.owner_id == owner_id)
+        .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
+        .offset(100)
+    )
+    for event in stale:
+        db.delete(event)
+
+
+def revoke_sessions(db, owner_id, current_session_id=None):
+    rows = db.scalars(select(Session).where(Session.owner_id == owner_id))
+    for row in rows:
+        if current_session_id is None or row.id != current_session_id:
+            db.delete(row)
 
 
 def tool_capability(model_data):
@@ -117,12 +138,17 @@ async def login(body: Credentials, request: Request, response: Response, db=Depe
     attempts[ip].append(time.monotonic())
     user = db.scalar(select(User).where(User.username == body.username))
     try:
-        if not user or not passwords.verify(user.password_hash, body.password):
-            raise ValueError()
+        valid = bool(user and passwords.verify(user.password_hash, body.password))
     except Exception:
+        valid = False
+    if not valid:
+        if user:
+            record_login(db, user.id, False)
+            db.commit()
         raise HTTPException(401, "ユーザー名またはパスワードが違います")
     attempts[ip].clear()
     session = new_session(db, user.id, response)
+    record_login(db, user.id, True)
     db.commit()
     return {"username": user.username, "csrf": session.csrf}
 
@@ -142,11 +168,82 @@ async def logout(response: Response, ctx=Depends(context)):
     return {"ok": True}
 
 
+@router.post("/auth/password")
+async def change_password(body: PasswordChangeInput, response: Response, ctx=Depends(context)):
+    db, session = ctx
+    user = db.get(User, session.owner_id)
+    try:
+        valid = passwords.verify(user.password_hash, body.current_password)
+    except Exception:
+        valid = False
+    if not valid:
+        raise HTTPException(401, "現在のパスワードが違います")
+    user.password_hash = passwords.hash(body.new_password)
+    audit(db, user.id, "password_changed", "account")
+    if body.revoke_all_sessions:
+        revoke_sessions(db, user.id)
+        db.commit()
+        response.delete_cookie("mix_session")
+        return {"ok": True, "relogin_required": True}
+    session.csrf = new_session_csrf()
+    db.commit()
+    return {"ok": True, "csrf": session.csrf, "relogin_required": False}
+
+
+@router.post("/auth/username")
+async def change_username(body: UsernameChangeInput, ctx=Depends(context)):
+    db, session = ctx
+    user = db.get(User, session.owner_id)
+    try:
+        valid = passwords.verify(user.password_hash, body.current_password)
+    except Exception:
+        valid = False
+    if not valid:
+        raise HTTPException(401, "現在のパスワードが違います")
+    existing = db.scalar(select(User).where(User.username == body.username))
+    if existing and existing.id != user.id:
+        raise HTTPException(409, "そのユーザー名はすでに使われています")
+    user.username = body.username
+    audit(db, user.id, "username_changed", "account")
+    db.commit()
+    return {"username": user.username, "csrf": session.csrf}
+
+
+@router.post("/auth/sessions/revoke")
+async def revoke_account_sessions(body: SessionRevocationInput, response: Response, ctx=Depends(context)):
+    db, session = ctx
+    revoke_sessions(db, session.owner_id, None if body.scope == "all" else session.id)
+    audit(db, session.owner_id, "sessions_revoked", body.scope)
+    db.commit()
+    if body.scope == "all":
+        response.delete_cookie("mix_session")
+    return {"ok": True, "relogin_required": body.scope == "all"}
+
+
+@router.get("/auth/login-history")
+async def login_history(ctx=Depends(context)):
+    db, session = ctx
+    rows = db.scalars(
+        select(LoginEvent)
+        .where(LoginEvent.owner_id == session.owner_id)
+        .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
+        .limit(100)
+    )
+    return [{"successful": row.successful, "created_at": row.created_at.isoformat()} for row in rows]
+
+
 async def provider_values(body, db, owner, previous=None):
     data = body.model_dump(exclude={"api_key", "kind"})
     preset = get_preset(body.preset_id) if body.preset_id else None
     if body.preset_id and not preset:
         raise HTTPException(422, "不明なProviderプリセットです")
+    if preset:
+        fields = {field["key"]: field for field in preset.get("extra_config_schema", [])}
+        if any(key not in fields for key in body.extra_config):
+            raise HTTPException(422, "このProviderでは使えない追加設定があります")
+        if any(field.get("required") and not body.extra_config.get(key) for key, field in fields.items()):
+            # Keep incomplete connections editable; sync/transport can explain the missing field.
+            pass
     if preset and preset["id"] == "custom":
         if body.kind not in CUSTOM_KINDS:
             raise HTTPException(422, "カスタムはOpenAI互換・Anthropic・Geminiから選択してください")
@@ -178,6 +275,7 @@ async def provider_values(body, db, owner, previous=None):
         except Exception:
             raise HTTPException(422, "LAN接続先は「プライベート接続を許可」を明示してください")
     data["base_url"] = url
+    data["extra_config"] = body.extra_config
     if previous:
         data["secret_id"] = previous.get("secret_id")
     if body.api_key is not None:
@@ -191,11 +289,12 @@ async def sync_provider_models(db, owner_id, provider):
     This deliberately leaves models without a known context window out of
     Auto.  They remain visible for a user to configure manually.
     """
-    adapter = Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
     try:
+        adapter = Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
         fetched = await adapter.list_models()
     except Exception as exc:  # Provider errors must not undo a saved connection.
-        return {"status": "failed", "count": 0, "auto_count": 0, "error": type(exc).__name__}
+        error = str(exc) if str(exc).startswith("missing_extra_config:") else type(exc).__name__
+        return {"status": "failed", "count": 0, "auto_count": 0, "error": error}
 
     existing = {
         m.data["model_id"]: m
@@ -217,6 +316,7 @@ async def sync_provider_models(db, owner_id, provider):
             if manual_context is None and model.data.get("context_source") == "manual":
                 manual_context = model.data.get("context_window")
             data["context_window_override"] = manual_context
+            data["metadata_overrides"] = model.data.get("metadata_overrides", {})
             if "tool_probe" in model.data:
                 data["tool_probe"] = model.data["tool_probe"]
         if data.get("context_window"):
@@ -225,6 +325,12 @@ async def sync_provider_models(db, owner_id, provider):
         if data.get("context_window_override"):
             data["context_window"] = data["context_window_override"]
             data["context_source"] = "manual"
+            data["context_confidence"] = "runtime"
+            data.setdefault("metadata", {})["context_window"] = {
+                "value": data["context_window_override"], "source": "manual", "confidence": "runtime",
+                "resolved_at": now().isoformat(),
+            }
+        if model:
             model.data = data
         else:
             model = Model(owner_id=owner_id, data=data)
@@ -280,7 +386,7 @@ async def edit_provider(key: str, body: ProviderInput, ctx=Depends(context)):
     row = own(db, Provider, key, s.owner_id)
     previous = dict(row.data)
     row.data = await provider_values(body, db, s.owner_id, row.data)
-    connection_changed = any(row.data.get(field) != previous.get(field) for field in ("kind", "base_url", "secret_id"))
+    connection_changed = any(row.data.get(field) != previous.get(field) for field in ("kind", "base_url", "secret_id", "extra_config"))
     audit(db, s.owner_id, "provider.update", key)
     db.commit()
     sync = await sync_provider_models(db, s.owner_id, row) if connection_changed else {
@@ -985,10 +1091,18 @@ def apply_context_override(value, previous=None):
     if value.get("context_window_override") is not None:
         value["context_window"] = value["context_window_override"]
         value["context_source"] = "manual"
+        value["context_confidence"] = "runtime"
+        value["metadata"] = {**(previous or {}).get("metadata", {}), "context_window": {
+            "value": value["context_window_override"], "source": "manual", "confidence": "runtime",
+            "resolved_at": now().isoformat(),
+        }}
         return value
     if previous and previous.get("provider_context_window"):
         value["context_window"] = previous["provider_context_window"]
         value["context_source"] = previous.get("provider_context_source") or "provider_api"
+        evidence = previous.get("metadata", {}).get("context_window")
+        if evidence:
+            value["context_confidence"] = evidence.get("confidence")
     return value
 
 

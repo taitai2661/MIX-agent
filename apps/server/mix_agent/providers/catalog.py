@@ -6,9 +6,23 @@ KIND_VALUES = ("openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudi
 CUSTOM_KINDS = ("compatible", "anthropic", "gemini")
 
 
-def preset(id, name, category, kind, url="", api_key=True, private=False):
+def preset(id, name, category, kind, url="", api_key=True, private=False, *, transport_id=None,
+           discovery_id=None, extra_config_schema=()):
+    transport_id = transport_id or {
+        "openai": "openai_responses", "anthropic": "anthropic_messages",
+        "gemini": "gemini_generate_content", "ollama": "ollama", "lmstudio": "lmstudio",
+        "openrouter": "openai_compatible", "compatible": "openai_compatible",
+    }[kind]
+    discovery_id = discovery_id or {
+        "openai": "openai_models", "anthropic": "anthropic_models",
+        "gemini": "gemini_models", "ollama": "ollama_tags", "lmstudio": "openai_models",
+        "openrouter": "openai_models", "compatible": "openai_models",
+    }[kind]
     return {"id": id, "name": name, "category": category, "kind": kind,
-            "default_url": url, "api_key_required": api_key, "allow_private_default": private}
+            "default_url": url, "api_key_required": api_key, "allow_private_default": private,
+            "transport_id": transport_id, "discovery_id": discovery_id,
+            "metadata_resolver_ids": ("provider_api", "official_catalog", "models_dev", "builtin"),
+            "extra_config_schema": list(extra_config_schema)}
 
 
 # A preset is only offered with a documented compatible endpoint.  Gateways or
@@ -34,7 +48,8 @@ PRESETS = (
     preset("ai21", "AI21", "OpenAI互換", "compatible", "https://api.ai21.com/studio/v1"),
     preset("cohere", "Cohere", "OpenAI互換", "compatible", "https://api.cohere.com/compatibility/v1"),
     preset("huggingface", "Hugging Face", "OpenAI互換", "compatible", "https://router.huggingface.co/v1"),
-    preset("cloudflare", "Cloudflare Workers AI", "OpenAI互換", "compatible"),
+    preset("cloudflare", "Cloudflare Workers AI", "OpenAI互換", "compatible", extra_config_schema=(
+        {"key": "account_id", "label": "Cloudflare Account ID", "required": True},)),
     preset("github-models", "GitHub Models", "OpenAI互換", "compatible", "https://models.github.ai/inference"),
     preset("vercel-ai-gateway", "Vercel AI Gateway", "ゲートウェイ", "compatible", "https://ai-gateway.vercel.sh/v1"),
     preset("litellm", "LiteLLM", "ゲートウェイ", "compatible"),
@@ -63,11 +78,14 @@ PRESETS = (
     preset("text-generation-webui", "text-generation-webui", "ローカル", "compatible", "http://host.docker.internal:5000/v1", False, True),
     preset("koboldcpp", "KoboldCpp", "ローカル", "compatible", "http://host.docker.internal:5001/v1", False, True),
     preset("elyza", "ELYZA", "国内", "compatible"),
-    preset("azure-ai-foundry", "Azure AI Foundry", "クラウド", "compatible"),
+    preset("azure-ai-foundry", "Azure AI Foundry", "クラウド", "compatible", extra_config_schema=(
+        {"key": "deployment_name", "label": "Deployment name", "required": True},
+        {"key": "api_version", "label": "API version", "required": False},)),
     preset("custom", "カスタム", "カスタム", "compatible"),
 )
 assert len(PRESETS) == 50
 BY_ID = {item["id"]: item for item in PRESETS}
+assert all(item["transport_id"] and item["discovery_id"] and item["metadata_resolver_ids"] for item in PRESETS)
 
 
 def catalog():

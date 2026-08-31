@@ -6,7 +6,8 @@ from google import genai
 from google.genai import types
 from openai import AsyncOpenAI
 from mix_agent.providers.reasoning import request_options, show_summary
-from mix_agent.providers.model_catalog import context_window as catalog_context_window
+from mix_agent.providers.catalog import get_preset
+from mix_agent.providers.metadata import context_limit, resolve
 
 DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -20,22 +21,8 @@ DEFAULT_URLS = {
 CAPABILITIES = ("tools", "vision", "reasoning", "structured_output")
 
 
-def context_limit(item):
-    """Read the common context-limit shapes used by provider model APIs."""
-    values = (
-        item.get("context_length"),
-        item.get("context_window"),
-        item.get("max_context_length"),
-        item.get("max_context_tokens"),
-        item.get("inputTokenLimit"),
-        item.get("limits", {}).get("context") if isinstance(item.get("limits"), dict) else None,
-    )
-    for value in values:
-        if isinstance(value, int) and value > 0:
-            return value
-        if isinstance(value, str) and value.isdecimal() and int(value) > 0:
-            return int(value)
-    return None
+class ProviderConfigurationError(ValueError):
+    pass
 
 
 class Adapter:
@@ -44,21 +31,32 @@ class Adapter:
         self.key = key
         self.kind = provider["kind"]
         self.url = provider.get("base_url") or DEFAULT_URLS[self.kind]
+        self.preset = get_preset(provider.get("preset_id"))
+        # Records created before presets retain a deliberate legacy mapping.
+        if not self.preset:
+            self.preset = get_preset({"openai": "openai", "anthropic": "anthropic", "gemini": "gemini",
+                                      "openrouter": "openrouter", "ollama": "ollama", "lmstudio": "lmstudio"}.get(self.kind, "custom"))
+        if not self.preset:
+            raise ValueError("Provider preset has no transport configuration")
+        self.transport_id = self.preset["transport_id"]
+        self.discovery_id = self.preset["discovery_id"]
+        missing = [field["key"] for field in self.preset.get("extra_config_schema", [])
+                   if field.get("required") and not provider.get("extra_config", {}).get(field["key"])]
+        if missing:
+            raise ProviderConfigurationError("missing_extra_config:" + ",".join(missing))
 
     async def list_models(self):
         headers = {"Authorization": "Bearer " + self.key} if self.key else {}
         url = self.url.rstrip("/") + "/models"
-        if self.kind == "anthropic":
+        if self.discovery_id == "anthropic_models":
             headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
             url = self.url.rstrip("/") + "/v1/models"
-        elif self.kind == "gemini":
+        elif self.discovery_id == "gemini_models":
             headers = {"x-goog-api-key": self.key}
             url = self.url.rstrip("/") + "/v1beta/models"
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
-            if self.kind == "ollama":
-                root = self.url.rstrip("/")
-                if root.endswith("/v1"):
-                    root = root[:-3]
+            if self.discovery_id == "ollama_tags":
+                root = self.url.rstrip("/").removesuffix("/v1")
                 response = await client.get(root + "/api/tags", headers=headers)
                 response.raise_for_status()
                 body = response.json()
@@ -93,19 +91,16 @@ class Adapter:
             modalities = item.get("architecture", {}).get("input_modalities")
             if modalities is not None:
                 caps["vision"] = "image" in modalities
-            reported_context = context_limit(item)
-            context_window = reported_context or catalog_context_window(self.kind, model_id)
-            result.append(
-                {
-                    "model_id": model_id,
-                    "name": item.get("displayName", item.get("name", model_id)),
-                    "capabilities": caps,
-                    "context_window": context_window,
-                    "context_source": "provider_api" if reported_context else ("catalog" if context_window else None),
-                    "source": "provider_api",
-                    "overrides": {},
-                }
-            )
+            resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"])
+            metadata = resolved["metadata"]
+            context = metadata.get("context_window")
+            result.append({
+                "model_id": model_id, "name": item.get("displayName", item.get("name", model_id)),
+                "capabilities": caps, "context_window": context["value"] if context else None,
+                "context_source": context["source"] if context else None,
+                "context_confidence": context["confidence"] if context else None,
+                "source": "provider_api", "overrides": {}, **resolved,
+            })
         return result
 
     async def test_connection(self):
@@ -115,16 +110,27 @@ class Adapter:
         return {**model.get("capabilities", {}), **model.get("overrides", {})}
 
     async def stream(self, model, messages, tools, mode, settings):
-        method = (
-            self._openai
-            if self.kind == "openai"
-            else self._anthropic
-            if self.kind == "anthropic"
-            else self._gemini
-            if self.kind == "gemini"
-            else self._compatible
-        )
+        method = {
+            "openai_responses": self._openai,
+            "openai_compatible": self._compatible,
+            "anthropic_messages": self._anthropic,
+            "gemini_generate_content": self._gemini,
+            "ollama": self._ollama,
+            "lmstudio": self._lmstudio,
+        }.get(self.transport_id)
+        if method is None:
+            raise ValueError(f"Unsupported transport: {self.transport_id}")
         async for event in method(model, messages, tools, mode, settings):
+            yield event
+
+    async def _ollama(self, model, messages, tools, mode, settings):
+        """Dedicated slot: Ollama's model discovery is native while its chat endpoint is compatible."""
+        async for event in self._compatible(model, messages, tools, mode, settings):
+            yield event
+
+    async def _lmstudio(self, model, messages, tools, mode, settings):
+        """Dedicated slot for future LM Studio extensions without implicit fallback."""
+        async for event in self._compatible(model, messages, tools, mode, settings):
             yield event
 
     async def probe_tools(self, model):

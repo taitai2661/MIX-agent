@@ -9,6 +9,7 @@ const cards = [
   ["models", "モデル", "会話で使うモデル", Sparkles],
   ["tools", "Tools・権限", "Agentの実行権限", ShieldCheck],
   ["mcp", "MCP", "外部サービスとの接続", Globe],
+  ["account", "アカウント・安全性", "認証とログイン履歴", ShieldCheck],
   ["backups", "バックアップ", "データを安全に保管", Database],
 ] as const;
 
@@ -23,6 +24,7 @@ export function SettingsOverview() {
     models: `${models.data?.length || 0} 件`,
     tools: `${tools.data?.length || 0} 件`,
     mcp: `${mcp.data?.filter((row) => row.data.enabled).length || 0} 件接続中`,
+    account: "変更・確認",
     backups: "作成・復元",
   };
   const defaultModel = models.data?.find((row) => row.id === settings.data?.data.default_model_id);

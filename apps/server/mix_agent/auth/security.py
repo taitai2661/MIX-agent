@@ -11,6 +11,10 @@ from mix_agent.db.models import Session, Secret, now
 passwords = PasswordHasher()
 
 
+def new_session_csrf():
+    return secrets.token_urlsafe(32)
+
+
 def encrypt(value: str, purpose: str):
     nonce = secrets.token_bytes(12)
     cipher = AESGCM((config.KEYS / "master.key").read_bytes()).encrypt(
@@ -51,7 +55,7 @@ def new_session(db, owner, response):
     row = Session(
         id=hashlib.sha256(token.encode()).hexdigest(),
         owner_id=owner,
-        csrf=secrets.token_urlsafe(32),
+        csrf=new_session_csrf(),
         expires=now() + timedelta(days=7),
     )
     db.add(row)

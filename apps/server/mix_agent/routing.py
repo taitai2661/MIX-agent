@@ -76,8 +76,12 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
         candidates.append((model, caps))
     if not candidates:
         details = "、".join({"context": "Context Window", "vision": "Vision", "tools": "Tool Calling"}[k] for k in excluded)
+        if excluded and set(excluded) == {"context"}:
+            reason = "Auto候補のContext Windowが未設定、または現在の会話には不足しています。モデル設定でContext Windowを確認・設定してください。"
+        else:
+            reason = "Autoで使用可能なモデルに必要な " + (details or "条件") + " を満たすものがありません。"
         return None, {"profile": profile, "candidate_count": 0, "required_tokens": required_tokens,
-                      "reason": "Autoで使用可能なモデルに必要な " + (details or "条件") + " を満たすものがありません。"}
+                      "reason": reason}
 
     outcomes = _scores(db, owner_id, profile)
     total = sum(up + down for up, down in outcomes.values())

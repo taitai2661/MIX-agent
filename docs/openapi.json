@@ -213,6 +213,130 @@
         }
       }
     },
+    "/api/v1/auth/password": {
+      "post": {
+        "summary": "Change Password",
+        "operationId": "change_password_api_v1_auth_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/username": {
+      "post": {
+        "summary": "Change Username",
+        "operationId": "change_username_api_v1_auth_username_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsernameChangeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/sessions/revoke": {
+      "post": {
+        "summary": "Revoke Account Sessions",
+        "operationId": "revoke_account_sessions_api_v1_auth_sessions_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRevocationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login-history": {
+      "get": {
+        "summary": "Login History",
+        "operationId": "login_history_api_v1_auth_login_history_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/providers": {
       "get": {
         "summary": "Providers",
@@ -2507,6 +2631,19 @@
             ],
             "title": "Context Window"
           },
+          "context_window_override": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 10000000.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window Override"
+          },
           "source": {
             "type": "string",
             "title": "Source",
@@ -2609,6 +2746,17 @@
             ],
             "title": "Context Window"
           },
+          "context_window_override": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window Override"
+          },
           "source": {
             "anyOf": [
               {
@@ -2663,6 +2811,34 @@
           "auto_count"
         ],
         "title": "ModelSyncResult"
+      },
+      "PasswordChangeInput": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Current Password"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "New Password"
+          },
+          "revoke_all_sessions": {
+            "type": "boolean",
+            "title": "Revoke All Sessions",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordChangeInput"
       },
       "PermissionInput": {
         "properties": {
@@ -2755,6 +2931,18 @@
               }
             ],
             "title": "Api Key"
+          },
+          "extra_config": {
+            "additionalProperties": {
+              "anyOf": [
+                { "type": "string" },
+                { "type": "integer" },
+                { "type": "number" },
+                { "type": "boolean" }
+              ]
+            },
+            "type": "object",
+            "title": "Extra Config"
           },
           "allow_private": {
             "type": "boolean",
@@ -2872,6 +3060,24 @@
         "type": "object",
         "title": "ResumeInput"
       },
+      "SessionRevocationInput": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "others",
+              "all"
+            ],
+            "title": "Scope"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "title": "SessionRevocationInput"
+      },
       "SettingsInput": {
         "properties": {
           "default_model_id": {
@@ -2955,6 +3161,29 @@
           "content"
         ],
         "title": "SkillInput"
+      },
+      "UsernameChangeInput": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Current Password"
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Username"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_password",
+          "username"
+        ],
+        "title": "UsernameChangeInput"
       },
       "ValidationError": {
         "properties": {

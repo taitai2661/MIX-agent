@@ -140,6 +140,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Password */
+        post: operations["change_password_api_v1_auth_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/username": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Username */
+        post: operations["change_username_api_v1_auth_username_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sessions/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Account Sessions */
+        post: operations["revoke_account_sessions_api_v1_auth_sessions_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Login History */
+        get: operations["login_history_api_v1_auth_login_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -990,6 +1058,8 @@ export interface components {
             };
             /** Context Window */
             context_window?: number | null;
+            /** Context Window Override */
+            context_window_override?: number | null;
             /**
              * Source
              * @default manual
@@ -1014,6 +1084,8 @@ export interface components {
             } | null;
             /** Context Window */
             context_window?: number | null;
+            /** Context Window Override */
+            context_window_override?: number | null;
             /** Source */
             source?: string | null;
         };
@@ -1030,6 +1102,18 @@ export interface components {
             auto_count: number;
             /** Error */
             error?: string | null;
+        };
+        /** PasswordChangeInput */
+        PasswordChangeInput: {
+            /** Current Password */
+            current_password: string;
+            /** New Password */
+            new_password: string;
+            /**
+             * Revoke All Sessions
+             * @default false
+             */
+            revoke_all_sessions: boolean;
         };
         /** PermissionInput */
         PermissionInput: {
@@ -1065,6 +1149,10 @@ export interface components {
             base_url: string;
             /** Api Key */
             api_key?: string | null;
+            /** Extra Config */
+            extra_config?: {
+                [key: string]: string | number | boolean;
+            };
             /**
              * Allow Private
              * @default false
@@ -1108,6 +1196,14 @@ export interface components {
             /** Max Tool Calls */
             max_tool_calls?: number | null;
         };
+        /** SessionRevocationInput */
+        SessionRevocationInput: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "others" | "all";
+        };
         /** SettingsInput */
         SettingsInput: {
             /**
@@ -1143,6 +1239,13 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+        };
+        /** UsernameChangeInput */
+        UsernameChangeInput: {
+            /** Current Password */
+            current_password: string;
+            /** Username */
+            username: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1359,6 +1462,125 @@ export interface operations {
         };
     };
     logout_api_v1_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    change_password_api_v1_auth_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChangeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_username_api_v1_auth_username_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsernameChangeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_account_sessions_api_v1_auth_sessions_revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionRevocationInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    login_history_api_v1_auth_login_history_get: {
         parameters: {
             query?: never;
             header?: never;

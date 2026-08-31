@@ -1,7 +1,9 @@
 import pytest
 import httpx
+from mix_agent.api import routes
 from mix_agent.providers.adapters import Adapter
-from mix_agent.providers.catalog import PRESETS
+from mix_agent.providers.catalog import PRESETS, get_preset
+from mix_agent.providers.metadata import resolve
 from mix_agent.db.models import Model, Provider, Settings, User
 from mix_agent.db.session import SessionLocal
 from sqlalchemy import select
@@ -10,6 +12,11 @@ from sqlalchemy import select
 async def test_model_discovery_conservative_capabilities(kind, monkeypatch):
     original = httpx.AsyncClient
     def handle(request):
+        if kind == "ollama":
+            if request.url.path == "/api/tags":
+                return httpx.Response(200, json={"models":[{"name":"example"}]})
+            if request.url.path == "/api/show":
+                return httpx.Response(200, json={"model_info": {}})
         if kind == "anthropic":
             assert request.headers["x-api-key"] == "test-key"
         if kind == "gemini":
@@ -69,9 +76,55 @@ async def test_known_context_is_filled_when_provider_omits_it(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
     models = await Adapter({"kind": "openai", "base_url": "https://provider.example/v1"}, "test-key").list_models()
     assert models[0]["context_window"] == 128000
-    assert models[0]["context_source"] == "catalog"
+    assert models[0]["context_source"] == "official_catalog"
     assert models[1]["context_window"] is None
 
+
+async def test_context_limit_normalizes_compatible_and_ollama_responses(monkeypatch):
+    original = httpx.AsyncClient
+
+    def compatible(request):
+        return httpx.Response(200, json={"data": [{"id": "compatible", "max_context_tokens": "32768"}]})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(compatible), **kw))
+    models = await Adapter({"kind": "compatible", "base_url": "https://provider.example/v1"}, "test-key").list_models()
+    assert models[0]["context_window"] == 32768
+    assert models[0]["context_source"] == "provider_api"
+
+    def ollama(request):
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "llama3"}]})
+        assert request.url.path == "/api/show"
+        return httpx.Response(200, json={"model_info": {"llama.context_length": 8192}})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(ollama), **kw))
+    models = await Adapter({"kind": "ollama", "base_url": "http://ollama.example:11434/v1"}, "").list_models()
+    assert models[0]["context_window"] == 8192
+    assert models[0]["context_source"] == "provider_api"
+
+
+def test_each_preset_declares_transport_discovery_and_metadata_chain():
+    assert len(PRESETS) == 50
+    for preset in PRESETS:
+        assert preset["transport_id"]
+        assert preset["discovery_id"]
+        assert preset["metadata_resolver_ids"]
+    assert get_preset("groq")["transport_id"] == "openai_compatible"
+    assert get_preset("anthropic")["transport_id"] == "anthropic_messages"
+    assert get_preset("ollama")["transport_id"] == "ollama"
+
+
+async def test_metadata_resolver_prefers_provider_api_and_records_evidence(monkeypatch):
+    async def empty_models_dev(kind, model_id):
+        return {}
+
+    monkeypatch.setattr("mix_agent.providers.metadata.models_dev", empty_models_dev)
+    result = await resolve("openai", "gpt-4o-mini", {"id": "gpt-4o-mini", "context_length": 64_000})
+    evidence = result["metadata"]["context_window"]
+    assert evidence["value"] == 64_000
+    assert evidence["source"] == "provider_api"
+    assert evidence["confidence"] == "official"
+    assert result["metadata_candidates"]["official_catalog"]["context_window"]["value"] == 128_000
 
 def test_provider_save_syncs_models_and_auto_candidates(signed, monkeypatch):
     async def list_models(self):
@@ -125,3 +178,64 @@ def test_auto_model_setting_accepts_more_than_one_hundred_ids(signed):
     response = signed.put("/api/v1/settings", json={"auto_model_ids": ids, "allowed_domains": []})
     assert response.status_code == 200, response.text
     assert len(response.json()["data"]["auto_model_ids"]) == 101
+
+
+@pytest.mark.asyncio
+async def test_provider_sync_preserves_manual_context_override(signed, monkeypatch):
+    async def list_models(self):
+        return [{"model_id": "custom", "name": "Custom", "capabilities": {}, "context_window": 8192,
+                 "context_source": "provider_api", "source": "provider_api", "overrides": {}}]
+
+    monkeypatch.setattr(Adapter, "list_models", list_models)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "custom",
+                                            "context_window": 16384, "context_window_override": 16384,
+                                            "context_source": "manual"})
+        db.add(model)
+        db.flush()
+        model_id = model.id
+        await routes.sync_provider_models(db, owner, provider)
+        db.commit()
+        refreshed = db.get(Model, model.id)
+        assert refreshed.data["context_window"] == 16384
+        assert refreshed.data["context_window_override"] == 16384
+        assert refreshed.data["context_source"] == "manual"
+        assert refreshed.data["provider_context_window"] == 8192
+
+    cleared = signed.patch(f"/api/v1/models/{model_id}", json={"context_window_override": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["context_window"] == 8192
+    assert cleared.json()["data"]["context_source"] == "provider_api"
+
+
+@pytest.mark.asyncio
+async def test_provider_sync_updates_existing_model_without_creating_a_duplicate(signed, monkeypatch):
+    async def list_models(self):
+        return [{"model_id": "custom", "name": "Custom", "capabilities": {}, "context_window": 16384,
+                 "context_source": "provider_api", "source": "provider_api", "overrides": {}}]
+
+    monkeypatch.setattr(Adapter, "list_models", list_models)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "custom",
+                                            "context_window": 8192, "context_source": "provider_api"})
+        db.add(model)
+        db.flush()
+        original_id = model.id
+
+        result = await routes.sync_provider_models(db, owner, provider)
+        db.commit()
+
+        models = [row for row in db.scalars(select(Model)) if row.data["provider_id"] == provider.id]
+        assert result["count"] == 1
+        assert len(models) == 1
+        assert models[0].id == original_id
+        assert models[0].data["context_window"] == 16384
+        assert models[0].data["provider_context_window"] == 16384

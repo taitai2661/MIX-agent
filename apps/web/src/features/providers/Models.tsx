@@ -33,6 +33,17 @@ export function Models() {
       setError(e);
     }
   }
+  async function updateContext(row: Row, raw: string) {
+    try {
+      await api("/models/" + row.id, "PATCH", {
+        context_window_override: raw.trim() ? Number(raw) : null,
+      });
+      qc.invalidateQueries({ queryKey: ["/models"] });
+      qc.invalidateQueries({ queryKey: ["/settings"] });
+    } catch (e) {
+      setError(e);
+    }
+  }
   return (
     <>
       <Title
@@ -57,6 +68,9 @@ export function Models() {
                 provider_id: f.get("provider_id"),
                 model_id: f.get("model_id"),
                 name: f.get("model_id"),
+                context_window_override: f.get("context_window_override")
+                  ? Number(f.get("context_window_override"))
+                  : null,
               });
               qc.invalidateQueries({ queryKey: ["/models"] });
               setOpen(false);
@@ -76,6 +90,9 @@ export function Models() {
           </Field>
           <Field label="モデルID">
             <input name="model_id" required placeholder="ProviderのモデルID" />
+          </Field>
+          <Field label="Context Window" hint="不明なモデルをAutoで使う場合に設定します。">
+            <input name="context_window_override" type="number" min="1024" max="10000000" step="1" placeholder="例: 128000" />
           </Field>
           <Button>追加</Button>
         </form>
@@ -99,6 +116,7 @@ export function Models() {
                 {row.data.context_window
                   ? row.data.context_window.toLocaleString() + " context"
                   : "Context不明"}
+                {row.data.context_source ? " · " + row.data.context_source : ""}
               </small>
             </div>
           </div>
@@ -129,6 +147,42 @@ export function Models() {
               );
             })}
           </div>
+          <div className="model-context">
+            <Field
+              label="Context Window"
+              hint={
+                row.data.context_source === "manual"
+                  ? "手動設定。空欄にして保存すると、API取得値に戻します。"
+                  : row.data.context_source === "official_catalog"
+                    ? "Provider公式カタログから補完されています。"
+                    : row.data.context_source === "models_dev"
+                      ? "models.devから補完されています。"
+                      : row.data.context_source === "builtin"
+                        ? "内蔵モデルDBから補完されています。"
+                    : row.data.context_window
+                      ? "Provider APIから取得しています。"
+                      : "未設定のモデルは、安全のためAutoの候補から除外されます。"
+              }
+            >
+              <input
+                key={`${row.id}:${row.data.context_window_override ?? "api"}`}
+                type="number"
+                min="1024"
+                max="10000000"
+                step="1"
+                defaultValue={row.data.context_window_override ?? ""}
+                placeholder={row.data.context_window ? String(row.data.context_window) : "例: 128000"}
+                onBlur={(e) => updateContext(row, e.currentTarget.value)}
+              />
+            </Field>
+          </div>
+          {!!row.data.metadata && (
+            <details className="model-metadata">
+              <summary>取得メタデータと根拠</summary>
+              <small>信頼度: {row.data.context_confidence || "unknown"}</small>
+              <pre>{JSON.stringify({ metadata: row.data.metadata, provider_metadata: row.data.provider_metadata }, null, 2)}</pre>
+            </details>
+          )}
           <div className="model-probe">
             <small>
               Tool Calling自動確認: {({

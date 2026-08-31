@@ -12,11 +12,20 @@ import { MCP } from "@/features/mcp/MCP";
 import { Models } from "@/features/providers/Models";
 import { Providers } from "@/features/providers/Providers";
 import { Backups } from "@/features/settings/Backups";
+import { Account } from "@/features/settings/Account";
 import { General } from "@/features/settings/General";
 import { Tools } from "@/features/tools/Tools";
 import { SettingsOverview } from "@/features/settings/Overview";
 
-export function Settings() {
+export function Settings({
+  user,
+  onUserChange,
+  onLogout,
+}: {
+  user: { username: string };
+  onUserChange: (user: any) => void;
+  onLogout: () => void;
+}) {
   return (
     <div className="settings-layout">
       <nav className="settings-nav">
@@ -39,6 +48,7 @@ export function Settings() {
           ["tools", "Tools・権限", ShieldCheck],
           ["mcp", "MCP", Globe],
           ["general", "一般・通信", Settings2],
+          ["account", "アカウント・安全性", ShieldCheck],
           ["backups", "バックアップ", Database],
         ].map(([path, label, Icon]: any) => (
           <NavLink key={path} to={"/settings/" + path}>
@@ -55,6 +65,7 @@ export function Settings() {
           <Route path="tools" element={<Tools />} />
           <Route path="mcp" element={<MCP />} />
           <Route path="general" element={<General />} />
+          <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />
           <Route path="backups" element={<Backups />} />
         </Routes>
       </main>

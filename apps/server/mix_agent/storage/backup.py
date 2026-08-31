@@ -56,7 +56,7 @@ async def create(db, password):
     payload = json.dumps(
         {
             "version": 1,
-            "schema": "0001",
+            "schema": "0002",
             "tables": tables,
             "artifacts": files,
             "workspace": workspace,
@@ -72,9 +72,13 @@ async def create(db, password):
 
 def validate(raw, password):
     payload = json.loads(unseal(raw, password))
-    if payload.get("version") != 1 or payload.get("schema") != "0001":
+    if payload.get("version") != 1 or payload.get("schema") not in ("0001", "0002"):
         raise ValueError("Unsupported backup version")
-    if set(payload["tables"]) != {t.name for t in Base.metadata.sorted_tables}:
+    expected_tables = {t.name for t in Base.metadata.sorted_tables}
+    backup_tables = set(payload["tables"])
+    if payload.get("schema") == "0001" and backup_tables == expected_tables - {"login_events"}:
+        payload["tables"]["login_events"] = []
+    if set(payload["tables"]) != expected_tables:
         raise ValueError("Schema mismatch")
     key = base64.b64decode(payload["master_key"], validate=True)
     if len(key) != 32:
