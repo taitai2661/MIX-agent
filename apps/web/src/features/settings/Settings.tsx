@@ -1,0 +1,63 @@
+import {
+  Database,
+  Globe,
+  Server,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
+import { NavLink, Route, Routes } from "react-router-dom";
+
+import { MCP } from "@/features/mcp/MCP";
+import { Models } from "@/features/providers/Models";
+import { Providers } from "@/features/providers/Providers";
+import { Backups } from "@/features/settings/Backups";
+import { General } from "@/features/settings/General";
+import { Tools } from "@/features/tools/Tools";
+import { SettingsOverview } from "@/features/settings/Overview";
+
+export function Settings() {
+  return (
+    <div className="settings-layout">
+      <nav className="settings-nav">
+        <div className="settings-nav-heading"><h2>設定</h2><p>ワークスペースを管理</p></div>
+        <NavLink className="settings-home" to="/settings" end>
+          <Settings2 size={17} /> 概要
+        </NavLink>
+        <p className="settings-nav-label">AI の設定</p>
+        {[
+          ["providers", "AI Providers", Server],
+          ["models", "モデル", Sparkles],
+        ].map(([path, label, Icon]: any) => (
+          <NavLink key={path} to={"/settings/" + path}>
+            <Icon size={17} />
+            {label}
+          </NavLink>
+        ))}
+        <p className="settings-nav-label">接続と安全性</p>
+        {[
+          ["tools", "Tools・権限", ShieldCheck],
+          ["mcp", "MCP", Globe],
+          ["general", "一般・通信", Settings2],
+          ["backups", "バックアップ", Database],
+        ].map(([path, label, Icon]: any) => (
+          <NavLink key={path} to={"/settings/" + path}>
+            <Icon size={17} />
+            {label}
+          </NavLink>
+        ))}
+      </nav>
+      <main className="settings-content">
+        <Routes>
+          <Route index element={<SettingsOverview />} />
+          <Route path="providers" element={<Providers />} />
+          <Route path="models" element={<Models />} />
+          <Route path="tools" element={<Tools />} />
+          <Route path="mcp" element={<MCP />} />
+          <Route path="general" element={<General />} />
+          <Route path="backups" element={<Backups />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}

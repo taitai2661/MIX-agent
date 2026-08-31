@@ -1,0 +1,135 @@
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class Input(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RecordView(BaseModel):
+    id: str
+    data: dict
+    created_at: str
+
+
+class ModelSyncResult(BaseModel):
+    status: Literal["ok", "failed", "skipped"]
+    count: int
+    auto_count: int
+    error: str | None = None
+
+
+class ProviderView(RecordView):
+    model_sync: ModelSyncResult
+
+
+class Credentials(Input):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class ProviderInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    # kind remains accepted for records created before the catalog existed.
+    kind: Literal["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"] | None = None
+    preset_id: str | None = Field(default=None, max_length=100)
+    base_url: str = Field(default="", max_length=2000)
+    api_key: str | None = Field(default=None, max_length=10000)
+    allow_private: bool = False
+
+
+class ModelInput(Input):
+    provider_id: str
+    model_id: str = Field(min_length=1, max_length=200)
+    name: str = Field(default="", max_length=200)
+    capabilities: dict[str, bool | None] = Field(default_factory=dict)
+    overrides: dict[str, bool | None] = Field(default_factory=dict)
+    context_window: int | None = Field(default=None, ge=1024, le=10000000)
+    # A user-supplied limit takes precedence over catalog/provider metadata and
+    # must survive the next provider refresh.
+    context_window_override: int | None = Field(default=None, ge=1024, le=10000000)
+    source: str = "manual"
+
+
+class AgentInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    system_prompt: str = Field(default="You are MIX, a helpful assistant.", max_length=50000)
+    model_id: str = ""
+    mode: Literal["chat", "thinking", "agent"] = "agent"
+    tool_ids: list[str] = Field(default_factory=list, max_length=100)
+    memory_scopes: list[str] = Field(default_factory=lambda: ["user"], max_length=20)
+    skill_ids: list[str] = Field(default_factory=list, max_length=100)
+    auto_learn: bool = True
+    max_steps: int = Field(default=200, ge=1, le=2000)
+    max_seconds: int = Field(default=3600, ge=30, le=86400)
+    max_tool_calls: int = Field(default=500, ge=1, le=5000)
+    model_settings: dict = Field(default_factory=dict)
+
+
+class ConversationInput(Input):
+    title: str = Field(default="新しいチャット", max_length=200)
+
+
+class MessageInput(Input):
+    content: str = Field(max_length=100000)
+    model_id: str
+    agent_id: str = ""
+    mode: Literal["chat", "thinking", "agent"] = "chat"
+    artifact_ids: list[str] = Field(default_factory=list, max_length=5)
+    acknowledge_unknown_capability: bool = False
+
+
+class DecisionInput(Input):
+    decision: Literal["once", "always", "denied"]
+
+
+class MemoryInput(Input):
+    content: str = Field(min_length=1, max_length=10000)
+    scope: str = Field(default="user", max_length=100)
+
+
+class SkillInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=1000)
+    content: str = Field(min_length=1, max_length=50000)
+    enabled: bool = True
+
+
+class MCPInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    transport: Literal["stdio", "http"]
+    url: str = Field(default="", max_length=2000)
+    command: str = Field(default="", max_length=1000)
+    args: list[str] = Field(default_factory=list, max_length=50)
+    credentials: dict[str, dict[str, str]] | None = None
+    enabled: bool = True
+
+
+class SettingsInput(Input):
+    default_model_id: str = ""
+    auto_model_ids: list[str] | None = None
+    setup_complete: bool = False
+    brave_api_key: str | None = None
+    allowed_domains: list[str] = Field(default_factory=list, max_length=100)
+
+
+class FeedbackInput(Input):
+    value: Literal["up", "down"] | None = None
+
+
+class PermissionInput(Input):
+    agent_id: str = ""
+    tool_id: str
+    permission: Literal["allow", "ask", "deny"]
+    scope: dict = Field(default_factory=dict)
+
+
+class ResumeInput(Input):
+    acknowledge_unknown_result: bool = False
+    max_seconds: int | None = Field(default=None, ge=30, le=86400)
+    max_steps: int | None = Field(default=None, ge=1, le=2000)
+    max_tool_calls: int | None = Field(default=None, ge=1, le=5000)
+
+
+class BackupInput(Input):
+    passphrase: str = Field(min_length=12, max_length=256)

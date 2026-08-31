@@ -1,0 +1,92 @@
+# MIX agent
+
+個人・LAN/VPN内向けのセルフホストAIワークスペース。React + FastAPI + PostgreSQL。
+
+**初期開発版です。インターネット公開・複数ユーザー・未知のコードを安全に実行する用途には使わないでください。**
+
+## Dockerで起動
+
+Docker Desktop、またはDocker EngineとCompose v2を用意します。初回ビルドはPlaywright用ブラウザを取得するため、十分なディスク空き容量が必要です（10GB以上を推奨）。
+
+```sh
+docker compose up -d --build
+```
+
+[http://localhost:8080](http://localhost:8080) を開いて管理者を作成します。環境変数やAPI Keyの事前設定は不要です。
+
+1. Providerを追加し、必要なAPI Keyを保存。保存後にモデル一覧を自動取得し、Context Windowを確認できるモデルをAuto候補へ追加します。
+2. 必要に応じて「接続テスト」または「モデル取得」を再実行。
+3. モデルの対応機能を確認。不明な機能は必要に応じて手動Override。
+4. 既定モデル、Toolsの権限、Runnerの通信許可ドメインを設定。
+5. 必要ならAgent・MCPを追加。
+
+ローカルのOllama/LM Studioには、Provider設定でプライベート接続を明示的に許可します。Docker内のlocalhostはホストPCではありません。標準URLでは `host.docker.internal` を使用します。ホスト側サービスの待受設定も確認してください。
+
+## 実装内容
+
+- Chat / Thinking / Agent、SSEストリーミング、会話履歴、添付
+- 50種類のProviderプリセット（OpenAI、Anthropic、Gemini、主要互換API、国内・ローカル実行系）と、OpenAI互換／Anthropic／Gemini用カスタム接続
+- 共通Tool Registry、Always Allow / Ask / Deny、永続化した承認
+- Web / Files / Terminal / Browser / Memory、ユーザー向けPlan
+- stdio / Streamable HTTP MCP、Filesystem導入テンプレート
+- Agent編集、Memory履歴・復元、暗号化Secret
+- 暗号化バックアップ、復元前退避、復元途中の再起動からの回復
+
+Knowledge/RAG、画像生成・編集、MCP OAuth、Registry Store、外部向けOpenAI Compatible APIは次段階です。Vision対応モデルへの画像添付・解析は初期版に含みます。
+
+### Chat / Thinking / Agent
+
+- **Chat**: 対応が確認されたモデルでは、必要に応じて思考・検索・作成・実行を使います。思考やTool Callingが未対応・未確認でも通常会話は可能です。
+- **Thinking**: 最大5ステップで、通常推論を使いながら必要に応じて検索・作成・実行を進めます。Reasoning対応モデルではProvider固有の思考機能も有効にしますが、非対応モデルでもThinkingは利用できます。毎回の検索や思考文の表示・長さを保証するものではありません。
+- **Agent**: 従来の思考設定と、長い作業向けの実行ループを維持します。
+
+標準では全モードに組み込みツールを提供します。プリセット選択時はそのツール一覧（空リストを含む）を優先し、MCPを自動追加しません。Ask / Deny・承認・Runner隔離はモードにかかわらず適用されます。Chatは最大3、Thinkingは5ステップ、どちらも最大8ツール呼出しです。長い作業はAgentを使ってください。
+
+Chat / ThinkingのProvider固有思考制御はOpenAI Responses、OpenRouter、識別可能なClaude 3.7 / 4系とGemini 2.5 / 3系に対応しています。Ollama / LM Studio / 汎用互換APIと未識別モデルでは、その専用パラメーターを送らず通常推論でThinkingを実行します。ThinkingでTool Callingが未確認の場合は、初回だけ副作用のないダミー関数を強制呼出しして互換性を確認します。結果は保存され、未確認・非対応時はツールなしで続行します。モデル設定の「Tool Callingを再確認」でだけ手動再試行できます。手動Overrideは自動確認より優先します。
+
+APIの `mode` は変更していません。`GET /models` の各レコードの `data.reasoning_control` は計算した制御方式またはnullで、`data.tool_probe` は保存済みのTool Calling確認結果です。`POST /models/{id}/verify-tools` は副作用のない再確認を実行します。Runには解決済みの思考方針とツール一覧を保存し、追加情報のない旧Runは従来動作を維持します。公開された思考要約だけを表示し、署名付きコンテキストはツール継続用に保持します。
+
+制御仕様の参照: [OpenAI](https://developers.openai.com/api/docs/guides/reasoning)、[Claude](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking)、[Gemini GenerateContent](https://ai.google.dev/gemini-api/docs/generate-content/thinking)、[OpenRouter](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)。実Providerでの確認範囲は検証記録を参照してください。
+
+## 安全上の境界
+
+- 標準では公開ポートはlocalhostの8080だけです。初期設定前のLAN公開は避けてください。
+- Terminalは専用workspace全体を操作できます。サブフォルダ間の強い隔離はありません。
+- Runnerはホスト・Docker Socket・Provider Key・DBパスワードをマウントしません。
+- TerminalとMCPは別コンテナ。MCP Server同士は単一管理者の信頼領域を共有します。
+- Runner通信は内部ネットワークとProxyを使用。許可ドメインは完全一致、private IPは拒否します。
+- 任意のShellコードを許可した場合、「パッケージ導入だけを完全に禁止する」保証はありません。
+- MCPパッケージ導入や通信許可先変更は管理者の操作です。AIからは設定を変更できません。
+- Dockerの隔離設定は専用OS/VMによる敵対的コード隔離の代わりではありません。
+- Providerに送るメッセージ・画像・Tool結果はProviderのデータ規約に従います。
+- プリセットは接続方式と既定URLを設定するための一覧です。実際のモデル対応・料金・利用規約は各Providerで確認してください。URLが空のプリセットは、組織またはローカル環境のBase URLを入力して接続します。
+
+## 開発
+
+Python 3.12以上、Node.js 22以上、pnpmを使用します。SQLiteは開発・テスト専用の既定値で、DockerではPostgreSQLを使います。
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install uv
+.venv/bin/uv sync --project apps/server --frozen
+cd apps/web
+pnpm install --frozen-lockfile
+pnpm build
+cd ../server
+.venv/bin/alembic upgrade head
+WEB_DIST=../web/dist .venv/bin/uvicorn mix_agent.main:app --host 127.0.0.1 --port 8080
+```
+
+Runnerがないローカル開発モードではTerminal・Browser・MCP・PDF抽出・完全バックアップは実行できません。自動でホストShellを使うフォールバックはありません。
+
+```sh
+# リポジトリルートから
+apps/server/.venv/bin/pytest -q
+cd apps/web
+pnpm test
+pnpm build
+```
+
+API仕様は `docs/openapi.json`、生成TypeScript型は `apps/web/src/generated/api.ts`。更新は `scripts/export-openapi.py` と `pnpm generate:api` で行います。
+
+詳しくは [アーキテクチャ](docs/architecture.md)、[運用](docs/operations.md)、[検証状況](docs/verification.md) を参照してください。
