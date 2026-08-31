@@ -1,3 +1,4 @@
+import asyncio
 from sqlalchemy import select
 import pytest
 from mix_agent.db.models import *
@@ -124,6 +125,113 @@ async def test_denied_tool_never_executes(signed, monkeypatch, mode):
         assert "denied" in call.data["result"]["error"]
 
 
+async def test_safe_tool_calls_share_a_model_turn_and_keep_provider_order(signed, monkeypatch):
+    run_id, read_file = make_run(tool_name="read_file")
+    search_files = next(tool for tool in BUILTINS if tool["id"] == "search_files")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        snapshot = {
+            **run.data["snapshot"],
+            "tool_ids": [*run.data["snapshot"]["tool_ids"], "search_files"],
+            "tools": [*run.data["snapshot"]["tools"], search_files],
+        }
+        run.data = {**run.data, "snapshot": snapshot}
+        for provider_call_id, tool, arguments in [
+            ("first", read_file, {"path": "first.txt"}),
+            ("second", search_files, {"query": "second"}),
+        ]:
+            db.add(
+                ToolCall(
+                    owner_id=run.owner_id,
+                    run_id=run.id,
+                    data={
+                        "tool_id": tool["id"], "tool_version": fingerprint(tool),
+                        "provider_call_id": provider_call_id,
+                        "name": tool["model_name"], "arguments": arguments,
+                    },
+                )
+            )
+        db.commit()
+
+    class CompleteAfterTools:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, *_):
+            yield {"kind": "response", "message": {"role": "assistant", "content": "done"}, "tool_calls": []}
+
+    active = 0
+    maximum = 0
+
+    async def delayed_execute(*args):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {"call": args[-1]}
+
+    monkeypatch.setattr(engine, "Adapter", CompleteAfterTools)
+    monkeypatch.setattr(engine, "execute", delayed_execute)
+    await engine.drive(run_id)
+    assert maximum == 2
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert [entry["call_id"] for entry in run.data["history"] if entry["role"] == "tool"] == ["first", "second"]
+
+
+async def test_serial_tool_calls_do_not_overlap(signed, monkeypatch):
+    run_id, read_file = make_run(tool_name="read_file")
+    update_plan = next(tool for tool in BUILTINS if tool["id"] == "update_plan")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        snapshot = {
+            **run.data["snapshot"],
+            "tool_ids": [*run.data["snapshot"]["tool_ids"], "update_plan"],
+            "tools": [*run.data["snapshot"]["tools"], update_plan],
+        }
+        run.data = {**run.data, "snapshot": snapshot}
+        for provider_call_id, tool, arguments in [
+            ("read", read_file, {"path": "read.txt"}),
+            ("plan", update_plan, {"steps": ["one"]}),
+        ]:
+            db.add(
+                ToolCall(
+                    owner_id=run.owner_id,
+                    run_id=run.id,
+                    data={
+                        "tool_id": tool["id"], "tool_version": fingerprint(tool),
+                        "provider_call_id": provider_call_id,
+                        "name": tool["model_name"], "arguments": arguments,
+                    },
+                )
+            )
+        db.commit()
+
+    class CompleteAfterTools:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, *_):
+            yield {"kind": "response", "message": {"role": "assistant", "content": "done"}, "tool_calls": []}
+
+    active = 0
+    maximum = 0
+
+    async def delayed_execute(*_):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"ok": True}
+
+    monkeypatch.setattr(engine, "Adapter", CompleteAfterTools)
+    monkeypatch.setattr(engine, "execute", delayed_execute)
+    await engine.drive(run_id)
+    assert maximum == 1
+
+
 def test_memory_revision_restore(signed):
     row = signed.post("/api/v1/memories", json={"content": "日本語を好む"}).json()
     key = row["id"]
@@ -136,6 +244,8 @@ def test_memory_revision_restore(signed):
     revisions = signed.get("/api/v1/memories/" + key + "/revisions").json()
     assert revisions[0]["data"]["previous"]["content"] == "日本語を好む"
     assert signed.delete("/api/v1/memories/" + key).status_code == 200
+    deleted = signed.get("/api/v1/memories?q=日本語").json()
+    assert deleted[0]["data"]["deleted"] is True
     assert (
         signed.post(
             "/api/v1/memories/" + key + "/restore/" + revisions[0]["id"]
@@ -144,6 +254,78 @@ def test_memory_revision_restore(signed):
     )
     rows = signed.get("/api/v1/memories?q=日本語").json()
     assert rows[0]["data"]["content"] == "日本語を好む"
+
+
+def test_memory_recall_ranks_pinned_relevant_entries_and_blocks_secrets(signed):
+    pinned = signed.post(
+        "/api/v1/memories",
+        json={"content": "回答は日本語で簡潔にする", "importance": 5, "pinned": True},
+    )
+    assert pinned.status_code == 200
+    duplicate = signed.post(
+        "/api/v1/memories",
+        json={"content": "回答は日本語で簡潔にする", "importance": 1},
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["deduplicated"] is True
+    signed.post("/api/v1/memories", json={"content": "Pythonでは型ヒントを使う", "importance": 3})
+    rows = signed.get("/api/v1/memories?q=日本語の回答").json()
+    assert rows[0]["data"]["pinned"] is True
+    assert rows[0]["data"]["category"] == "preference"
+    rejected = signed.post("/api/v1/memories", json={"content": "api_key=not-for-memory"})
+    assert rejected.status_code == 422
+
+
+def test_memory_explicit_capture_only_accepts_clear_requests():
+    from mix_agent.memory.service import explicit_candidate
+
+    assert explicit_candidate("覚えて: 回答は日本語で簡潔に") == "回答は日本語で簡潔に"
+    assert explicit_candidate("回答は日本語で簡潔にするを覚えておいて") == "回答は日本語で簡潔にする"
+    assert explicit_candidate("これを覚えて") is None
+    assert explicit_candidate("覚えて: api_key=private") is None
+
+
+def test_web_search_is_allowed_by_default_but_explicit_rules_win(signed):
+    run_id, tool = make_run(tool_name="web_search", mode="chat")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        arguments = {"query": "current technology news"}
+        assert permission(db, run, tool, arguments) == "allow"
+
+        db.add(
+            Permission(
+                owner_id=run.owner_id,
+                data={
+                    "agent_id": "",
+                    "tool_id": tool["id"],
+                    "tool_version": fingerprint(tool),
+                    "scope": call_scope(tool, arguments),
+                    "permission": "ask",
+                },
+            )
+        )
+        db.commit()
+        assert permission(db, run, tool, arguments) == "ask"
+
+
+def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(signed):
+    run_id, tool = make_run(tool_name="run_terminal", mode="chat")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        response = signed.post(
+            "/api/v1/permission-rules",
+            json={"tool_id": tool["id"], "permission": "deny"},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["scope"] == {"workspace": "/workspace"}
+        assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
+
+        legacy = next(
+            r for r in db.scalars(select(Permission)) if r.data.get("tool_id") == tool["id"]
+        )
+        legacy.data = {**legacy.data, "scope": {}}
+        db.commit()
+        assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
 
 
 def test_skill_revision_restore(signed):

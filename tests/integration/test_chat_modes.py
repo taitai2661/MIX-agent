@@ -38,6 +38,31 @@ def send(signed, monkeypatch, model_id, mode="chat", **kwargs):
     )
 
 
+def test_activity_summary_exposes_only_safe_search_metadata():
+    from mix_agent.runs.engine import activity_result, activity_summary
+
+    assert activity_summary("web_search", {"query": "  AI news  "}) == {
+        "icon": "search",
+        "label": "Webを検索中",
+        "detail": "AI news",
+    }
+    assert activity_summary("run_terminal", {"command": "cat private.txt"}) == {
+        "icon": "terminal",
+        "label": "コマンドを実行中",
+    }
+    assert activity_result("web_search", {
+        "results": [
+            {"url": "https://example.com/news"},
+            {"url": "file:///private.txt"},
+        ]
+    }) == {
+        "icon": "search",
+        "label": "1件のWebサイトを検索しました",
+        "sources": [{"host": "example.com", "url": "https://example.com/news"}],
+        "remaining": 0,
+    }
+
+
 @pytest.mark.parametrize("mode", ["chat", "thinking"])
 def test_default_tools_and_resolved_snapshot(signed, monkeypatch, mode):
     mid = create_model(caps={"reasoning": True, "tools": True})

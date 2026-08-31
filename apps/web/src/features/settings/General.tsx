@@ -72,6 +72,7 @@ export function General() {
               await api("/settings", "PUT", {
                 default_model_id: f.get("default_model_id"),
                 auto_model_ids: [...selectedModelIds],
+                auto_retry_count: Number(f.get("auto_retry_count")),
                 setup_complete: setting.data.data.setup_complete,
                 allowed_domains: String(f.get("domains"))
                   .split("\n")
@@ -122,6 +123,9 @@ export function General() {
                 {!filteredModels.length && <p className="auto-model-empty">該当するモデルがありません。</p>}
               </div>
             </div>
+          </Field>
+          <Field label="Auto実行の再試行回数" hint="一時的なProvider障害時に、未使用のAuto候補へ切り替える回数です。0なら再試行しません。モデル未検出・認証・設定エラーは再試行しません。">
+            <input name="auto_retry_count" type="number" min="0" step="1" defaultValue={setting.data.data.auto_retry_count ?? 3} />
           </Field>
           <Field
             label="Brave Search API Key"

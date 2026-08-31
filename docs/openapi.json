@@ -2515,6 +2515,30 @@
             "maxLength": 100,
             "title": "Scope",
             "default": "user"
+          },
+          "importance": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Importance",
+            "default": 2
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -2935,10 +2959,18 @@
           "extra_config": {
             "additionalProperties": {
               "anyOf": [
-                { "type": "string" },
-                { "type": "integer" },
-                { "type": "number" },
-                { "type": "boolean" }
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
               ]
             },
             "type": "object",
@@ -3098,6 +3130,12 @@
               }
             ],
             "title": "Auto Model Ids"
+          },
+          "auto_retry_count": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Auto Retry Count",
+            "default": 3
           },
           "setup_complete": {
             "type": "boolean",

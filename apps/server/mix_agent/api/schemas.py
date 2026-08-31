@@ -102,6 +102,9 @@ class DecisionInput(Input):
 class MemoryInput(Input):
     content: str = Field(min_length=1, max_length=10000)
     scope: str = Field(default="user", max_length=100)
+    importance: int = Field(default=2, ge=1, le=5)
+    category: str | None = Field(default=None, max_length=50)
+    pinned: bool = False
 
 
 class SkillInput(Input):
@@ -124,6 +127,7 @@ class MCPInput(Input):
 class SettingsInput(Input):
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
+    auto_retry_count: int = Field(default=3, ge=0)
     setup_complete: bool = False
     brave_api_key: str | None = None
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)

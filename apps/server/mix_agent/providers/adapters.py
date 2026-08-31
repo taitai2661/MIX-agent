@@ -30,6 +30,17 @@ class ProviderContextLimitError(RuntimeError):
     """A provider explicitly rejected the request for exceeding its context limit."""
 
 
+def is_retryable_provider_error(exc):
+    """Return whether a provider failure is safe to retry on another model."""
+    if is_context_limit_error(exc):
+        return True
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {408, 425, 429, 500, 502, 503, 504}
+    return False
+
+
 def is_context_limit_error(exc):
     if isinstance(exc, ProviderContextLimitError):
         return True

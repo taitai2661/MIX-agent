@@ -6,7 +6,9 @@ from sqlalchemy import select
 from mix_agent.db.models import Tool, Permission
 
 
-def definition(name, description, properties=None, required=None, permission="allow", executor="execution"):
+def definition(
+    name, description, properties=None, required=None, permission="allow", executor="execution", parallel_safe=False
+):
     return {
         "id": name,
         "model_name": name,
@@ -16,6 +18,8 @@ def definition(name, description, properties=None, required=None, permission="al
         "executor_ref": executor,
         "risk": "read" if permission == "allow" else "write",
         "default_permission": permission,
+        # Custom/MCP tools remain serial until their implementation opts in.
+        "parallel_safe": parallel_safe,
         "input_schema": {
             "type": "object",
             "properties": properties or {},
@@ -29,10 +33,20 @@ def definition(name, description, properties=None, required=None, permission="al
 S = {"type": "string", "maxLength": 100000}
 PATH = {"type": "string", "maxLength": 1024}
 BUILTINS = [
-    definition("web_search", "Search the public web", {"query": S}, ["query"], executor="builtin"),
-    definition("web_fetch", "Read a public web page", {"url": S}, ["url"], executor="builtin"),
-    definition("files_list", "List files in /workspace", {"path": PATH}),
-    definition("read_file", "Read a UTF-8 workspace file", {"path": PATH}, ["path"]),
+    # Public web search is read-only and needs no per-call approval by default.
+    # Explicit Ask/Deny permission rules still take precedence in permission().
+    definition(
+        "web_search",
+        "Search the public web",
+        {"query": S},
+        ["query"],
+        permission="allow",
+        executor="builtin",
+        parallel_safe=True,
+    ),
+    definition("web_fetch", "Read a public web page", {"url": S}, ["url"], executor="builtin", parallel_safe=True),
+    definition("files_list", "List files in /workspace", {"path": PATH}, parallel_safe=True),
+    definition("read_file", "Read a UTF-8 workspace file", {"path": PATH}, ["path"], parallel_safe=True),
     definition(
         "write_file",
         "Create or replace a workspace file",
@@ -48,7 +62,7 @@ BUILTINS = [
         "ask",
     ),
     definition("delete_file", "Delete a workspace file (not directories)", {"path": PATH}, ["path"], "ask"),
-    definition("search_files", "Search workspace text files", {"query": S}, ["query"]),
+    definition("search_files", "Search workspace text files", {"query": S}, ["query"], parallel_safe=True),
     definition(
         "run_terminal",
         "Run shell code in the dedicated workspace; no host access",
@@ -65,22 +79,22 @@ BUILTINS = [
     ),
     definition("browser_read", "Read the current browser page"),
     definition("browser_screenshot", "Capture the current browser page"),
-    definition("memory_search", "Search permitted long-term memory", {"query": S}, executor="builtin"),
+    definition("memory_search", "Search permitted long-term memory", {"query": S}, executor="builtin", parallel_safe=True),
     definition(
         "memory_add",
         "Remember a preference or decision, never credentials",
-        {"content": S},
+        {"content": S, "importance": {"type": "integer", "minimum": 1, "maximum": 5}, "category": {"type": "string", "maxLength": 50}, "pinned": {"type": "boolean"}},
         ["content"],
         executor="builtin",
     ),
     definition(
         "memory_update",
         "Update existing memory, retaining history",
-        {"id": S, "content": S},
+        {"id": S, "content": S, "importance": {"type": "integer", "minimum": 1, "maximum": 5}, "category": {"type": "string", "maxLength": 50}, "pinned": {"type": "boolean"}},
         ["id", "content"],
         executor="builtin",
     ),
-    definition("skill_search", "Search reusable work instructions", {"query": S}, executor="builtin"),
+    definition("skill_search", "Search reusable work instructions", {"query": S}, executor="builtin", parallel_safe=True),
     definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "content"], executor="builtin"),
     definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], executor="builtin"),
     definition("memory_delete", "Delete existing memory with approval", {"id": S}, ["id"], "ask", "builtin"),
@@ -103,7 +117,9 @@ def registry(db, owner):
 
 
 def fingerprint(tool):
-    return hashlib.sha256(json.dumps(tool, sort_keys=True).encode()).hexdigest()
+    # Scheduling metadata must not invalidate a user's existing permission rules.
+    versioned = {key: value for key, value in tool.items() if key != "parallel_safe"}
+    return hashlib.sha256(json.dumps(versioned, sort_keys=True).encode()).hexdigest()
 
 
 def call_scope(tool, args):
@@ -112,6 +128,14 @@ def call_scope(tool, args):
     if tool["source"] == "mcp":
         return {"connection_id": tool["source_ref"]}
     return {"tool": tool["id"]}
+
+
+def rule_scope(tool, stored_scope):
+    """Normalize scopes written by the settings UI and older clients."""
+    expected = call_scope(tool, {})
+    # Early versions stored {} from the settings form. Those rules were
+    # intended to be global, so keep them working at the tool's real scope.
+    return expected if not stored_scope else stored_scope
 
 
 def permission(db, run, tool, args):
@@ -129,7 +153,7 @@ def permission(db, run, tool, args):
         for r in rules
         if r.data.get("tool_id") == tool["id"]
         and r.data.get("agent_id", "") == snapshot.get("agent_id", "")
-        and r.data.get("scope") == call_scope(tool, args)
+        and rule_scope(tool, r.data.get("scope", {})) == call_scope(tool, args)
         and r.data.get("tool_version") == fingerprint(tool)
     ]
     if any(x["permission"] == "deny" for x in matching):

@@ -11,7 +11,6 @@ import {
   PanelLeft,
   Plus,
   Settings2,
-  ShieldCheck,
   ChevronsLeft,
   X,
 } from "lucide-react";
@@ -75,7 +74,7 @@ export function App() {
   }
   return (
     <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed" : "")}>
-      <aside className="sidebar" aria-label="メインメニュー">
+      <aside id="main-navigation" className="sidebar" aria-label="メインメニュー">
         <div className="sidebar-brand">
           <Logo />
           <div className="sidebar-controls"><ThemeController /><button className="icon mobile" onClick={() => setSidebar(false)} aria-label="閉じる"><X size={18} /></button></div>
@@ -131,7 +130,6 @@ export function App() {
             <span className="avatar">{user.username[0].toUpperCase()}</span>
             <div>
               <b>{user.username}</b>
-              <small>Personal workspace</small>
             </div>
             <button
               className="icon"
@@ -152,14 +150,13 @@ export function App() {
           <button
             className="icon"
             aria-label="メニュー"
+            aria-expanded={window.matchMedia("(max-width: 760px)").matches ? sidebar : undefined}
+            aria-controls="main-navigation"
             onClick={() => window.matchMedia("(max-width: 760px)").matches ? setSidebar(!sidebar) : setCollapsed(!collapsed)}
           >
             {collapsed ? <PanelLeft size={19} /> : <ChevronsLeft size={19} />}
           </button>
-          <span className="topbar-title"><b>MIX agent</b><small>Personal workspace</small></span>
-          <span className="private-label">
-            <ShieldCheck size={14} /> あなたの環境で、あなたのAIを。
-          </span>
+          <span className="topbar-title"><b>MIX agent</b></span>
         </header>
         <Routes>
           <Route path="/" element={<Chat />} />

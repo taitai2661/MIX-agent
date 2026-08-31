@@ -1011,6 +1011,18 @@ export interface components {
              * @default user
              */
             scope: string;
+            /**
+             * Importance
+             * @default 2
+             */
+            importance: number;
+            /** Category */
+            category?: string | null;
+            /**
+             * Pinned
+             * @default false
+             */
+            pinned: boolean;
         };
         /** MessageInput */
         MessageInput: {
@@ -1213,6 +1225,11 @@ export interface components {
             default_model_id: string;
             /** Auto Model Ids */
             auto_model_ids?: string[] | null;
+            /**
+             * Auto Retry Count
+             * @default 3
+             */
+            auto_retry_count: number;
             /**
              * Setup Complete
              * @default false

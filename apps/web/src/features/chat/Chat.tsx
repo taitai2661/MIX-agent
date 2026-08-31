@@ -27,13 +27,20 @@ import remarkGfm from "remark-gfm";
 import { Empty, ErrorBox, useRows } from "@/components/shared";
 import { ModelPicker } from "@/components/model-picker";
 import { ModeStatus, ReasoningSummary } from "./ModeStatus";
+import { ToolActivity, type ActivitySummary } from "./ToolActivity";
+import { ArtifactCard, type ChatArtifact } from "./ArtifactCard";
 
 export function Chat() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const models = useRows("/models"),
-    agents = useRows("/agents");
+    agents = useRows("/agents"),
+    tools = useQuery<any[]>({
+      queryKey: ["/tools"],
+      queryFn: () => api("/tools"),
+    }),
+    permissionRules = useRows("/permission-rules");
   const setting = useQuery({
     queryKey: ["/settings"],
     queryFn: () => api("/settings"),
@@ -49,6 +56,8 @@ export function Chat() {
     [streamText, setStreamText] = useState(""),
     [reasoning, setReasoning] = useState(""),
     [events, setEvents] = useState<any[]>([]),
+    [approvalEvents, setApprovalEvents] = useState<any[]>([]),
+    [activeActivity, setActiveActivity] = useState<ActivitySummary | null>(null),
     [showActivity, setShowActivity] = useState(
       () => window.matchMedia("(min-width:1100px)").matches,
     );
@@ -84,6 +93,8 @@ export function Chat() {
     setEvents([]);
     setStreamText("");
     setReasoning("");
+    setApprovalEvents([]);
+    setActiveActivity(null);
   }, [id]);
   useEffect(() => {
     if (history.data?.runs?.length) setRunId(history.data.runs.at(-1).id);
@@ -113,12 +124,19 @@ export function Chat() {
         setEvents((xs) => [...xs, v]);
       } else {
         setEvents((xs) => [...xs, v]);
-        if (v.kind === "approval") setShowActivity(true);
+        if (v.kind === "approval") {
+          setShowActivity(true);
+          setApprovalEvents((xs) => [...xs.filter((x) => x.id !== v.id), v]);
+          qc.invalidateQueries({ queryKey: ["run", runId] });
+        }
         if (v.kind === "message") {
           setStreamText("");
           qc.invalidateQueries({ queryKey: ["messages", id] });
         }
       }
+      if (v.kind === "tool_started" && v.activity) setActiveActivity(v.activity);
+      if (["tool_result", "model_started", "message"].includes(v.kind) ||
+          (v.kind === "status" && v.status !== "running")) setActiveActivity(null);
     });
     source.addEventListener("done", () => {
       source.close();
@@ -196,6 +214,17 @@ export function Chat() {
     }
   }
   const selected = models.data?.find((x) => x.id === model);
+  const permissionCounts = (tools.data || []).reduce(
+    (counts: Record<string, number>, tool) => {
+      const rule = permissionRules.data
+        ?.filter((r) => r.data.agent_id === agent && r.data.tool_id === tool.id)
+        .at(-1);
+      const value = rule?.data.permission || tool.default_permission || "ask";
+      counts[value] = (counts[value] || 0) + 1;
+      return counts;
+    },
+    {},
+  );
   async function rate(messageId: string, current: string | undefined, value: "up" | "down") {
     try {
       await api("/messages/" + messageId + "/feedback", "PUT", { value: current === value ? null : value });
@@ -210,6 +239,10 @@ export function Chat() {
         <ModelPicker models={models.data} value={model} onChange={setModel} />
         <span className="subtle">
           {selected ? "接続済みの設定" : "設定からProviderを追加してください"}
+        </span>
+        <span className="permission-summary" title="現在のAgentに適用されるTool権限">
+          <ShieldCheck size={14} />
+          権限: 許可 {permissionCounts.allow || 0} · 確認 {permissionCounts.ask || 0} · 拒否 {permissionCounts.deny || 0}
         </span>
         <button
           className="button toolbar-action"
@@ -229,11 +262,6 @@ export function Chat() {
               </div>
               <p className="eyebrow">A LITTLE HELP. MORE POSSIBILITIES.</p>
               <h1>今日は、何を進めましょう？</h1>
-              <p>
-                考える、調べる、つくる。
-                <br />
-                あなたのAIと、一つずつ。
-              </p>
               <div className="suggestions">
                 {[
                   ["考えを整理する", "アイデアを一緒に整理してください", Brain],
@@ -278,10 +306,10 @@ export function Chat() {
                       {m.data.content}
                     </Markdown>
                   </div>
-                  {m.data.artifact_ids?.map((a: string) => (
-                    <a key={a} href={"/api/v1/artifacts/" + a}>
-                      添付ファイル
-                    </a>
+                  {(m.data.artifacts as ChatArtifact[] | undefined)?.map((artifact) => (
+                    <ArtifactCard key={artifact.artifact_id} artifact={artifact} />
+                  )) || m.data.artifact_ids?.map((artifact_id: string) => (
+                    <ArtifactCard key={artifact_id} artifact={{ artifact_id }} />
                   ))}
                   {m.data.auto_selection && (
                     <div className="message-auto">
@@ -295,6 +323,12 @@ export function Chat() {
                 </article>
               ))}
               <ReasoningSummary text={reasoning} />
+              {events
+                .filter((event) => event.kind === "tool_result" && event.activity)
+                .map((event, index) => (
+                  <ToolActivity key={event.id || index} activity={event.activity} />
+                ))}
+              {activeActivity && <ToolActivity activity={activeActivity} running />}
               {streamText && (
                 <article className="message assistant">
                   <div className="message-label">
@@ -307,7 +341,7 @@ export function Chat() {
                   </div>
                 </article>
               )}
-              {active && !streamText && (
+              {active && !streamText && !activeActivity && (
                 <p className="processing">
                   <span className="pulse" />
                   {run.data.status === "waiting_approval"
@@ -347,7 +381,9 @@ export function Chat() {
             </div>
           )}
           <div className="composer-wrap">
-            <ErrorBox error={error || history.error || models.error} />
+            <ErrorBox
+              error={error || history.error || models.error || tools.error || permissionRules.error}
+            />
             <ModeStatus
               mode={mode}
               model={selected}
@@ -490,8 +526,10 @@ export function Chat() {
             {!events.length && (
               <Empty>Toolの実行や計画がここに表示されます。</Empty>
             )}
-            {run.data?.approvals
-              ?.filter((a: any) => a.status === "pending")
+            {[...(run.data?.approvals || []), ...approvalEvents]
+              .filter((a: any, index: number, xs: any[]) =>
+                a.status === "pending" && xs.findIndex((x) => x.id === a.id) === index,
+              )
               .map((a: any) => (
                 <div className="approval" key={a.id}>
                   <ShieldCheck size={20} />
@@ -538,6 +576,7 @@ export function Chat() {
                         {
                           model_started: "モデル呼び出し",
                           model_selected: "Autoモデルを選択",
+                          model_rerouted: "Autoモデルを再試行",
                           plan: "Plan",
                           status: "実行状態",
                         } as any

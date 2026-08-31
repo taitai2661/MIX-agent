@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 
 from mix_agent.api import routes
 from mix_agent.db.models import (
@@ -8,6 +9,7 @@ from mix_agent.db.models import (
     Model,
     Provider,
     Run,
+    Settings,
     User,
 )
 from mix_agent.db.session import SessionLocal
@@ -50,6 +52,14 @@ def test_auto_settings_and_capability_filters(signed, monkeypatch):
                                               ["look"], 10, "a-unique-request")
         assert selected.id == vision
         assert details["candidate_count"] == 1
+
+
+def test_auto_retry_count_defaults_to_three_for_legacy_settings(signed):
+    with SessionLocal() as db:
+        settings = db.get(Settings, "settings")
+        settings.data = {"setup_complete": False, "allowed_domains": []}
+        db.commit()
+    assert signed.get("/api/v1/settings").json()["data"]["auto_retry_count"] == 3
 
 
 def test_unknown_context_model_is_usable_by_auto_without_an_override(signed, monkeypatch):
@@ -111,6 +121,153 @@ def test_auto_retries_once_after_pre_output_context_error(signed, monkeypatch):
         assert len(attempts) == 2
         assert len(run.data["auto_selection"]["attempts"]) == 2
         assert message.data["auto_selection"]["model_id"] == attempts[-1]
+
+
+def test_auto_retries_transient_provider_error_but_not_auth_error(signed, monkeypatch):
+    first = make_model({}, context=None, model_id="transient-first")
+    second = make_model({}, context=None, model_id="transient-second")
+    assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [first, second],
+                                                  "allowed_domains": []}).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "transient-retry"})
+    attempts = []
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            response = httpx.Response(503, request=httpx.Request("POST", "https://provider.test"))
+            if len(attempts) == 1:
+                raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
+            yield {"kind": "response", "message": {"role": "assistant", "content": "ok"}, "tool_calls": []}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "completed"
+        assert len(attempts) == 2
+        assert run.data["auto_selection"]["attempts"][0]["outcome"] == "provider_error"
+
+    attempts.clear()
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "auth-no-retry"})
+
+    class AuthFailAdapter(FakeAdapter):
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            response = httpx.Response(401, request=httpx.Request("POST", "https://provider.test"))
+            raise httpx.HTTPStatusError("unauthorized", request=response.request, response=response)
+            yield
+
+    monkeypatch.setattr(engine, "Adapter", AuthFailAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "failed"
+        assert len(attempts) == 1
+
+
+def test_auto_retry_count_uses_each_candidate_once_and_is_snapshotted(signed, monkeypatch):
+    model_ids = [make_model({}, context=None, model_id=f"retry-{index}") for index in range(4)]
+    assert signed.put("/api/v1/settings", json={
+        "default_model_id": "auto", "auto_model_ids": model_ids, "auto_retry_count": 3, "allowed_domains": [],
+    }).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat",
+    }, headers={"Idempotency-Key": "three-auto-retries"})
+    assert queued.status_code == 200, queued.text
+    assert signed.put("/api/v1/settings", json={
+        "default_model_id": "auto", "auto_model_ids": model_ids, "auto_retry_count": 0, "allowed_domains": [],
+    }).status_code == 200
+    attempts = []
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            if len(attempts) <= 3:
+                response = httpx.Response(503, request=httpx.Request("POST", "https://provider.test"))
+                raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
+            yield {"kind": "response", "message": {"role": "assistant", "content": "ok"}, "tool_calls": []}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "completed"
+        assert run.data["snapshot"]["auto_retry_count"] == 3
+        assert len(attempts) == len(set(attempts)) == 4
+        retries = [item for item in run.data["auto_selection"]["attempts"] if item["outcome"] == "retry"]
+        assert [item["retry_number"] for item in retries] == [1, 2, 3]
+
+
+def test_auto_does_not_retry_not_found_or_when_retry_count_is_zero(signed, monkeypatch):
+    first = make_model({}, context=None, model_id="not-found-first")
+    second = make_model({}, context=None, model_id="not-found-second")
+    assert signed.put("/api/v1/settings", json={
+        "default_model_id": "auto", "auto_model_ids": [first, second], "auto_retry_count": 3, "allowed_domains": [],
+    }).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat",
+    }, headers={"Idempotency-Key": "not-found-no-retry"})
+    attempts = []
+
+    class NotFoundAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            error = type("NotFoundError", (Exception,), {})()
+            raise error
+            yield
+
+    monkeypatch.setattr(engine, "Adapter", NotFoundAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "failed"
+        assert len(attempts) == 1
+        assert "モデルがProviderに見つかりません" in run.data["reason"]
+
+    assert signed.put("/api/v1/settings", json={
+        "default_model_id": "auto", "auto_model_ids": [first, second], "auto_retry_count": 0, "allowed_domains": [],
+    }).status_code == 200
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat",
+    }, headers={"Idempotency-Key": "zero-retry"})
+    attempts.clear()
+
+    class TemporaryFailureAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            response = httpx.Response(503, request=httpx.Request("POST", "https://provider.test"))
+            raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
+            yield
+
+    monkeypatch.setattr(engine, "Adapter", TemporaryFailureAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        run = db.get(Run, queued.json()["run_id"])
+        assert run.status == "failed"
+        assert run.data["snapshot"]["auto_retry_count"] == 0
+        assert len(attempts) == 1
 
 
 def test_ucb_feedback_is_profile_scoped_and_single_rating_is_smoothed(signed):

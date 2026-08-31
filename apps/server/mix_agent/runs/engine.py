@@ -1,21 +1,84 @@
 import asyncio
 import json
 from datetime import timedelta, timezone
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
 from mix_agent.auth.security import read_secret
 from mix_agent.db.models import Approval, Event, Message, Provider, Run, ToolCall, now
 from mix_agent.db.session import SessionLocal
-from mix_agent.providers.adapters import Adapter, is_context_limit_error
+from mix_agent.providers.adapters import Adapter, is_retryable_provider_error
 from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.tools.execute import execute, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
 
 TASKS = {}
-EXECUTION_LOCK = asyncio.Lock()
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+PARALLEL_TOOL_LIMIT = 4
+
+
+def is_parallel_safe(tool):
+    """Keep user-configured and remote tools serial until the runner can attest safety."""
+    return bool(tool and tool.get("source") == "builtin" and tool.get("parallel_safe"))
+
+
+def activity_summary(tool_id, arguments):
+    """Return the small, safe status payload shown in the conversation UI."""
+    labels = {
+        "web_search": ("search", "Webを検索中"),
+        "web_fetch": ("globe", "Webページを確認中"),
+        "files_list": ("file", "ファイルを確認中"),
+        "read_file": ("file", "ファイルを読み込み中"),
+        "search_files": ("search", "ファイルを検索中"),
+        "write_file": ("file", "ファイルを変更中"),
+        "edit_file": ("file", "ファイルを変更中"),
+        "delete_file": ("file", "ファイルを削除中"),
+        "run_terminal": ("terminal", "コマンドを実行中"),
+        "process_list": ("terminal", "実行中の処理を確認中"),
+        "process_stop": ("terminal", "処理を停止中"),
+        "browser_open": ("globe", "ブラウザでページを開いています"),
+        "browser_click": ("globe", "ブラウザを操作中"),
+        "browser_type": ("globe", "ブラウザに入力中"),
+        "browser_read": ("globe", "ブラウザの内容を確認中"),
+        "browser_screenshot": ("globe", "画面を確認中"),
+        "memory_search": ("memory", "Memoryを検索中"),
+        "memory_add": ("memory", "Memoryを保存中"),
+        "memory_update": ("memory", "Memoryを更新中"),
+        "memory_delete": ("memory", "Memoryを削除中"),
+        "skill_search": ("memory", "Skillを検索中"),
+        "skill_add": ("memory", "Skillを保存中"),
+        "skill_update": ("memory", "Skillを更新中"),
+        "update_plan": ("plan", "作業計画を更新中"),
+    }
+    icon, label = labels.get(tool_id, ("tool", "ツールを実行中"))
+    summary = {"icon": icon, "label": label}
+    if tool_id == "web_search" and isinstance(arguments.get("query"), str):
+        query = arguments["query"].strip()
+        if query:
+            summary["detail"] = query[:160] + ("…" if len(query) > 160 else "")
+    return summary
+
+
+def activity_result(tool_id, result):
+    """Keep only public search source metadata for the compact result row."""
+    if tool_id != "web_search" or not isinstance(result, dict):
+        return None
+    sources = []
+    for item in result.get("results", []):
+        if not isinstance(item, dict) or not isinstance(item.get("url"), str):
+            continue
+        parsed = urlsplit(item["url"])
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            continue
+        sources.append({"host": parsed.hostname, "url": item["url"]})
+    return {
+        "icon": "search",
+        "label": f"{len(sources)}件のWebサイトを検索しました",
+        "sources": sources[:6],
+        "remaining": max(0, len(sources) - 6),
+    }
 
 
 def emit(db, run_id, kind, data):
@@ -40,18 +103,25 @@ def launch(run_id):
         TASKS[run_id] = asyncio.create_task(drive(run_id))
 
 
-def reroute_after_context_limit(db, run, request_key):
-    """Select one alternate Auto candidate after a pre-output context rejection."""
+def reroute_after_provider_error(db, run, request_key, error):
+    """Select an unused Auto candidate after a retryable provider failure."""
     routing = run.data.get("auto_routing")
     snapshot = run.data["snapshot"]
-    if not routing or run.data.get("auto_context_retry"):
+    attempts = run.data.get("auto_selection", {}).get("attempts", [])
+    failures = [attempt for attempt in attempts if attempt.get("outcome") == "provider_error"]
+    retry_limit = snapshot.get("auto_retry_count", 3)
+    if not routing or len(failures) >= retry_limit:
         return None
     previous_id = snapshot["model_record_id"]
+    used_model_ids = {
+        previous_id,
+        *(attempt["model_record_id"] for attempt in attempts if attempt.get("model_record_id")),
+    }
     model, selection = select_auto_model(
         db, run.owner_id, routing["allowed_ids"], routing["content"], routing["mode"],
         routing["artifact_mimes"], routing["tools_required"], routing["context_parts"],
         routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
-        excluded_model_ids=(previous_id,),
+        excluded_model_ids=tuple(used_model_ids),
     )
     if not model:
         return None
@@ -72,16 +142,105 @@ def reroute_after_context_limit(db, run, request_key):
         "provider": provider.data,
         "reasoning": reasoning,
     }
-    attempts = [*(run.data.get("auto_selection", {}).get("attempts", [])), {
+    retry_number = len(failures) + 1
+    attempts = [*attempts, {
         "model_record_id": previous_id,
         "model_id": snapshot["model_id"],
-        "outcome": "context_limit_exceeded",
-    }, {"model_record_id": model.id, "model_id": model.data["model_id"], "outcome": "retry"}]
+        "outcome": "provider_error",
+        "error_type": type(error).__name__,
+    }, {
+        "model_record_id": model.id,
+        "model_id": model.data["model_id"],
+        "outcome": "retry",
+        "retry_number": retry_number,
+        "retry_limit": retry_limit,
+    }]
     selection["attempts"] = attempts
-    update(run, snapshot=updated_snapshot, auto_selection=selection, auto_context_retry=True)
-    emit(db, run.id, "model_rerouted", {"from_model_record_id": previous_id, "selection": selection})
+    update(run, snapshot=updated_snapshot, auto_selection=selection)
+    emit(db, run.id, "model_rerouted", {
+        "from_model_record_id": previous_id,
+        "to_model_record_id": model.id,
+        "retry_number": retry_number,
+        "retry_limit": retry_limit,
+        "selection": selection,
+    })
     db.commit()
     return updated_snapshot
+
+
+def provider_failure_reason(exc):
+    """Return a safe, actionable provider failure message without remote details."""
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    error_name = type(exc).__name__
+    if status_code == 404 or error_name == "NotFoundError":
+        return "選択したモデルがProviderに見つかりません。モデル一覧を更新するか、Providerの接続先とモデルIDを確認してください。"
+    if status_code in (401, 403) or error_name in {"AuthenticationError", "PermissionDeniedError"}:
+        return "Providerの認証または権限が拒否されました。API Keyと利用権限を確認してください。"
+    if error_name == "ProviderConfigurationError":
+        return "Providerの接続設定が不足しています。Provider設定を確認してください。"
+    return "実行に失敗しました（" + error_name + "）。接続設定とモデル対応機能を確認してください。"
+
+
+def complete_tool_call(db, run, call, current, result):
+    """Persist one result in provider-call order after execution has settled."""
+    call.status = "completed"
+    summary = activity_result((current or {}).get("id", call.data["tool_id"]), result)
+    call.data = {**call.data, "result": result, **({"result_activity": summary} if summary else {})}
+    update(
+        run,
+        history=[
+            *run.data["history"],
+            {
+                "role": "tool",
+                "call_id": call.data["provider_call_id"],
+                "name": call.data["name"],
+                "content": json.dumps(result, ensure_ascii=False),
+            },
+        ],
+    )
+    artifact = result.get("artifact") if isinstance(result, dict) else None
+    if isinstance(artifact, dict) and artifact.get("artifact_id"):
+        existing = run.data.get("artifacts", [])
+        if not any(item.get("artifact_id") == artifact["artifact_id"] for item in existing):
+            update(run, artifacts=[*existing, artifact])
+    event_data = {"id": call.id, "name": call.data["name"], "result": result}
+    if summary:
+        event_data["activity"] = summary
+    emit(db, run.id, "plan" if call.data["name"] == "update_plan" else "tool_result", event_data)
+    db.commit()
+
+
+async def execute_prepared_calls(db, run, snapshot, prepared):
+    """Run a consecutive, already-authorized batch and preserve its result order."""
+    for call, current in prepared:
+        call.status = "executing"
+        emit(db, run.id, "tool_started", {
+            "id": call.id,
+            "name": current["model_name"],
+            "activity": activity_summary(current["id"], call.data["arguments"]),
+        })
+    db.commit()  # Write-ahead markers forbid replay after a crash.
+
+    async def one(call, current):
+        try:
+            remaining = max(
+                1,
+                snapshot.get("max_seconds", 900)
+                - (now() - run.created_at.replace(tzinfo=timezone.utc)).total_seconds(),
+            )
+            return await asyncio.wait_for(
+                execute(db, run, current, call.data["arguments"]), timeout=min(120, remaining)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Do not leak SDK headers, secrets, or remote response bodies.
+            return {"error": "Tool failed", "type": type(exc).__name__}
+
+    results = await asyncio.gather(*(one(call, current) for call, current in prepared))
+    for (call, current), result in zip(prepared, results):
+        complete_tool_call(db, run, call, current, result)
 
 
 async def drive(run_id):
@@ -112,6 +271,8 @@ async def drive(run_id):
                         .order_by(ToolCall.created_at)
                     )
                 )
+                prepared = []
+                waiting_for_approval = False
                 for call in calls:
                     current = registry(db, run.owner_id).get(call.data["tool_id"])
                     result = None
@@ -150,45 +311,32 @@ async def drive(run_id):
                                 approval.status = "expired"
                             if approval.status == "pending":
                                 call.status = "waiting_approval"
-                                run.status = "waiting_approval"
-                                db.commit()
-                                return
+                                waiting_for_approval = True
                             if approval.status not in ("once", "always"):
                                 result = {"error": "User denied the tool or approval expired"}
-                    if result is None:
-                        call.status = "executing"
-                        emit(db, run.id, "tool_started", {"id": call.id, "name": current["model_name"]})
-                        db.commit()  # The write-ahead marker forbids replay after a crash.
-                        try:
-                            async with EXECUTION_LOCK:
-                                result = await asyncio.wait_for(
-                                    execute(db, run, current, call.data["arguments"]),
-                                    timeout=min(120, snapshot.get("max_seconds", 900) - elapsed),
-                                )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as exc:
-                            # Do not leak SDK headers, secrets, or remote response bodies.
-                            result = {"error": "Tool failed", "type": type(exc).__name__}
-                    call.status = "completed"
-                    call.data = {**call.data, "result": result}
-                    history = [
-                        *run.data["history"],
-                        {
-                            "role": "tool",
-                            "call_id": call.data["provider_call_id"],
-                            "name": call.data["name"],
-                            "content": json.dumps(result, ensure_ascii=False),
-                        },
-                    ]
-                    update(run, history=history)
-                    emit(
-                        db,
-                        run.id,
-                        "plan" if call.data["name"] == "update_plan" else "tool_result",
-                        {"id": call.id, "name": call.data["name"], "result": result},
-                    )
+                    prepared.append((call, current, result))
+                if waiting_for_approval:
+                    run.status = "waiting_approval"
                     db.commit()
+                    return
+                index = 0
+                while index < len(prepared):
+                    call, current, result = prepared[index]
+                    if result is not None:
+                        complete_tool_call(db, run, call, current, result)
+                        index += 1
+                        continue
+                    # Only a consecutive sequence of explicitly-safe tools may overlap.
+                    batch = [(call, current)]
+                    index += 1
+                    if is_parallel_safe(current):
+                        while index < len(prepared) and len(batch) < PARALLEL_TOOL_LIMIT:
+                            next_call, next_current, next_result = prepared[index]
+                            if next_result is not None or not is_parallel_safe(next_current):
+                                break
+                            batch.append((next_call, next_current))
+                            index += 1
+                    await execute_prepared_calls(db, run, snapshot, batch)
                 mode = snapshot["mode"]
                 steps = run.data.get("steps", 0)
                 maximum = snapshot.get("max_steps", 20) if mode == "agent" else (3 if mode == "chat" else 5)
@@ -272,8 +420,10 @@ async def drive(run_id):
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
                 except Exception as exc:
-                    rerouted = None if emitted_output or response else (
-                        reroute_after_context_limit(db, run, run.request_key) if is_context_limit_error(exc) else None
+                    rerouted = (
+                        reroute_after_provider_error(db, run, run.request_key, exc)
+                        if run.data.get("requested_model_id") == "auto" and is_retryable_provider_error(exc)
+                        else None
                     )
                     if not rerouted:
                         raise
@@ -283,7 +433,12 @@ async def drive(run_id):
                     raise RuntimeError("Incomplete model response")
                 message = response["message"]
                 update(run, history=[*history, message])
-                message_data = {"role": "assistant", "content": message["content"], "run_id": run.id}
+                message_data = {
+                    "role": "assistant",
+                    "content": message["content"],
+                    "run_id": run.id,
+                    "artifacts": run.data.get("artifacts", []),
+                }
                 if run.data.get("auto_selection"):
                     message_data["auto_selection"] = {
                         **run.data["auto_selection"],
@@ -322,6 +477,9 @@ async def drive(run_id):
                             "provider_call_id": c["id"],
                             "name": c["name"],
                             "arguments": args,
+                            # Keep presentation metadata stable even when a Tool is edited later.
+                            "activity": activity_summary(tool["id"], args),
+                            "risk": tool.get("risk", "external"),
                         },
                     )
                     db.add(call)
@@ -345,9 +503,7 @@ async def drive(run_id):
                     db,
                     run,
                     "failed",
-                    "実行に失敗しました（"
-                    + type(exc).__name__
-                    + "）。接続設定とモデル対応機能を確認してください。",
+                    provider_failure_reason(exc),
                 )
     finally:
         TASKS.pop(run_id, None)

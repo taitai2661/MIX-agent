@@ -105,6 +105,9 @@ async def execute(db, run, tool, args):
             scope=scopes[0],
             source_run=run.id,
             scopes=scopes,
+            importance=args.get("importance", 2),
+            category=args.get("category"),
+            pinned=args.get("pinned", False),
         )
     elif name == "skill_search":
         result = {"skills": skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))}
