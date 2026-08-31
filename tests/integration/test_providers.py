@@ -177,6 +177,34 @@ def test_provider_save_syncs_models_and_auto_candidates(signed, monkeypatch):
         assert {model.data["model_id"] for model in models} == {"gpt-4o-mini", "unknown"}
 
 
+def test_provider_sync_excludes_known_special_purpose_models_from_auto(signed, monkeypatch):
+    async def list_models(self):
+        return [
+            {"model_id": "nvidia/nemotron-parse", "name": "Parse", "capabilities": {"chat": False},
+             "context_window": 8192, "context_source": "provider_api", "source": "provider_api", "overrides": {}},
+            {"model_id": "nvidia/llama-3.3-nemotron-super-49b-v1.5", "name": "Chat", "capabilities": {},
+             "context_window": 8192, "context_source": "provider_api", "source": "provider_api", "overrides": {}},
+        ]
+
+    monkeypatch.setattr(Adapter, "list_models", list_models)
+    response = signed.post("/api/v1/providers", json={
+        "name": "NVIDIA NIM", "preset_id": "nvidia-nim", "base_url": "", "api_key": "test-key", "allow_private": True,
+    })
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        settings = db.get(Settings, "settings")
+        models = {model.data["model_id"]: model for model in db.scalars(select(Model))}
+        assert models["nvidia/nemotron-parse"].id not in settings.data["auto_model_ids"]
+        assert models["nvidia/llama-3.3-nemotron-super-49b-v1.5"].id in settings.data["auto_model_ids"]
+
+        settings.data = {**settings.data, "auto_model_ids": [models["nvidia/nemotron-parse"].id]}
+        db.commit()
+        provider = db.scalar(select(Provider))
+        import asyncio
+        asyncio.run(routes.sync_provider_models(db, db.scalar(select(User.id)), provider))
+        assert models["nvidia/nemotron-parse"].id not in settings.data["auto_model_ids"]
+
+
 def test_provider_sync_failure_keeps_saved_provider(signed, monkeypatch):
     async def fail(self):
         raise RuntimeError("offline")

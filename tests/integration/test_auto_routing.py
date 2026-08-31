@@ -16,6 +16,7 @@ from mix_agent.db.models import (
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import (
     ProviderContextLimitError,
+    is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
 )
 from mix_agent.reliability import classify_failure, reliability, retry_after
@@ -58,6 +59,24 @@ def test_auto_settings_and_capability_filters(signed, monkeypatch):
                                               ["look"], 10, "a-unique-request")
         assert selected.id == vision
         assert details["candidate_count"] == 1
+
+
+def test_auto_excludes_known_special_purpose_models(signed):
+    parse = make_model({}, model_id="nvidia/nemotron-parse", provider_data={"kind": "nvidia"})
+    chat = make_model({}, model_id="nvidia/llama-3.3-nemotron-super-49b-v1.5", provider_data={"kind": "nvidia"})
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        selected, details = select_auto_model(
+            db, owner, [parse, chat], "hello", "chat", [], False, ["hello"], 10, "special-purpose",
+        )
+        assert selected.id == chat
+        assert details["candidate_count"] == 1
+
+        selected, details = select_auto_model(
+            db, owner, [parse], "hello", "chat", [], False, ["hello"], 10, "only-special-purpose",
+        )
+        assert selected is None
+        assert "通常チャット" in details["reason"]
 
 
 def test_auto_retry_count_defaults_to_three_for_legacy_settings(signed):
@@ -414,6 +433,15 @@ def test_nvidia_nim_function_not_found_classification_is_limited_to_hosted_404()
     missing = httpx.Response(404, json={"detail": "model not found"}, request=response.request)
     missing_error = httpx.HTTPStatusError("not found", request=response.request, response=missing)
     assert not is_nvidia_nim_function_not_found({"preset_id": "nvidia-nim"}, missing_error)
+
+
+def test_nvidia_nim_chat_incompatible_is_limited_to_known_models_and_400():
+    response = httpx.Response(400, request=httpx.Request("POST", "https://integrate.api.nvidia.com/v1/chat/completions"))
+    incompatible = httpx.HTTPStatusError("bad request", request=response.request, response=response)
+    provider = {"preset_id": "nvidia-nim"}
+    assert is_nvidia_nim_chat_incompatible(provider, "nvidia/nemotron-parse", incompatible)
+    assert not is_nvidia_nim_chat_incompatible(provider, "nvidia/llama-3.3-nemotron-super-49b-v1.5", incompatible)
+    assert not is_nvidia_nim_chat_incompatible({"preset_id": "openai"}, "nvidia/nemotron-parse", incompatible)
 
 
 def test_ucb_feedback_is_profile_scoped_and_single_rating_is_smoothed(signed):

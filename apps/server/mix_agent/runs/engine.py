@@ -10,6 +10,7 @@ from mix_agent.db.models import Approval, Event, Message, Provider, Run, ToolCal
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import (
     Adapter,
+    is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
     is_retryable_provider_error,
 )
@@ -447,7 +448,11 @@ async def drive(run_id):
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
                 except Exception as exc:
-                    retryable = is_retryable_provider_error(exc) or is_nvidia_nim_function_not_found(provider, exc)
+                    retryable = (
+                        is_retryable_provider_error(exc)
+                        or is_nvidia_nim_function_not_found(provider, exc)
+                        or is_nvidia_nim_chat_incompatible(provider, snapshot["model_id"], exc)
+                    )
                     classification = classify_failure(exc)
                     retry_until = retry_after(exc)
                     if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):

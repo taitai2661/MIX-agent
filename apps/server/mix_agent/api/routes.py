@@ -16,6 +16,7 @@ from mix_agent.db.models import *
 from mix_agent.db.session import get_db, SessionLocal
 from mix_agent.auth.security import authenticate, passwords, new_session, new_session_csrf, store_secret, read_secret
 from mix_agent.providers.adapters import Adapter, DEFAULT_URLS
+from mix_agent.providers.model_roles import is_auto_chat_eligible
 from mix_agent.providers.catalog import CUSTOM_KINDS, KIND_VALUES, catalog, get_preset
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.tools.registry import BUILTINS, registry, fingerprint, call_scope
@@ -353,10 +354,18 @@ async def sync_provider_models(db, owner_id, provider):
             model = Model(owner_id=owner_id, data=data)
             db.add(model)
             db.flush()
-        if data.get("context_window") and model.id not in auto_id_set:
+        if data.get("context_window") and is_auto_chat_eligible(data, provider.data.get("kind")) and model.id not in auto_id_set:
             auto_ids.append(model.id)
             auto_id_set.add(model.id)
             added_to_auto += 1
+
+    # ``existing`` contains every previously synced model for this provider and
+    # now points at its refreshed data. New special-purpose models were never
+    # added above, so only retained IDs need cleanup here.
+    provider_models_by_id = {model.id: model for model in existing.values()}
+    auto_ids = [model_id for model_id in auto_ids if model_id not in provider_models_by_id or is_auto_chat_eligible(
+        provider_models_by_id[model_id].data, provider.data.get("kind")
+    )]
 
     settings.data = {
         **settings.data,

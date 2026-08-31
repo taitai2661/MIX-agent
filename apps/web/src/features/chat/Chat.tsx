@@ -252,7 +252,7 @@ export function Chat() {
       <div className="chat-toolbar">
         <ModelPicker models={models.data} value={model} onChange={setModel} />
         <span className="subtle">
-          {selected ? "接続済みの設定" : "設定からProviderを追加してください"}
+          {selected || model === "auto" ? "接続済みの設定" : "設定からProviderを追加してください"}
         </span>
         <span className="permission-summary" title="現在のAgentに適用されるTool権限">
           <ShieldCheck size={14} />

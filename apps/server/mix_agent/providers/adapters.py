@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 
 from mix_agent.providers.catalog import get_preset
 from mix_agent.providers.metadata import context_limit, resolve
+from mix_agent.providers.model_roles import chat_capability
 from mix_agent.providers.reasoning import request_options, show_summary
 
 DEFAULT_URLS = {
@@ -19,7 +20,7 @@ DEFAULT_URLS = {
     "lmstudio": "http://host.docker.internal:1234/v1",
     "compatible": "",
 }
-CAPABILITIES = ("tools", "vision", "reasoning", "structured_output")
+CAPABILITIES = ("chat", "tools", "vision", "reasoning", "structured_output")
 
 
 class ProviderConfigurationError(ValueError):
@@ -58,6 +59,15 @@ def is_nvidia_nim_function_not_found(provider, exc):
         str(value) for value in (exc, getattr(exc, "body", ""), getattr(response, "text", "")) if value
     ).casefold()
     return "function" in details and "not found" in details
+
+
+def is_nvidia_nim_chat_incompatible(provider, model_id, exc):
+    """Identify a known NIM special-purpose model rejected by chat completions."""
+    if provider.get("preset_id") != "nvidia-nim" or chat_capability("nvidia", model_id) is not False:
+        return False
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    return status_code == 400
 
 
 def is_context_limit_error(exc):
@@ -132,6 +142,7 @@ class Adapter:
         for item in body.get("data", body.get("models", [])):
             model_id = item.get("id", item.get("name", "")).removeprefix("models/")
             caps = {k: None for k in CAPABILITIES}
+            caps["chat"] = chat_capability(self.kind, model_id)
             parameters = item.get("supported_parameters", [])
             if parameters:
                 caps.update(

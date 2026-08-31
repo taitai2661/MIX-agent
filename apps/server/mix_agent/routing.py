@@ -8,6 +8,7 @@ from collections import defaultdict
 from sqlalchemy import select
 
 from mix_agent.db.models import Feedback, Model
+from mix_agent.providers.model_roles import is_auto_chat_eligible
 from mix_agent.reliability import reliability, usage_scope
 
 CODING = re.compile(r"```|\b(?:python|javascript|typescript|react|sql|docker|api|bug|code|コード|実装|修正)\b", re.IGNORECASE)
@@ -65,6 +66,9 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
         data, caps = model.data, effective_capabilities(model.data)
         if model.id in skipped:
             continue
+        if not is_auto_chat_eligible(data):
+            excluded["chat"] += 1
+            continue
         context_window = data.get("context_window")
         if context_window and required_tokens > context_window:
             excluded["context"] += 1
@@ -77,7 +81,7 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
             continue
         candidates.append((model, caps, context_window))
     if not candidates:
-        details = "、".join({"context": "Context Window", "vision": "Vision", "tools": "Tool Calling"}[k] for k in excluded)
+        details = "、".join({"chat": "通常チャット", "context": "Context Window", "vision": "Vision", "tools": "Tool Calling"}[k] for k in excluded)
         reason = "Autoで使用可能なモデルに必要な " + (details or "条件") + " を満たすものがありません。"
         return None, {"profile": profile, "candidate_count": 0, "required_tokens": required_tokens,
                       "reason": reason}
