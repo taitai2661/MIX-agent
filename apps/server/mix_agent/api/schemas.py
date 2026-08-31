@@ -286,6 +286,7 @@ class SettingsInput(Input):
     auto_retry_count: int = Field(default=3, ge=0)
     setup_complete: bool = False
     brave_api_key: str | None = None
+    web_search_backend: Literal["ddgs", "brave"] = "ddgs"
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)
     browser_enabled: bool = True
     web_search_enabled: bool = True

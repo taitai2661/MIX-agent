@@ -95,10 +95,16 @@ class Adapter:
         url = self.url.rstrip("/") + "/models"
         if self.discovery_id == "anthropic_models":
             headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
-            url = self.url.rstrip("/") + "/v1/models"
+            # Accept both Anthropic's account-level URL and the commonly
+            # entered `/v1` URL.  The security validation intentionally keeps
+            # the path, so blindly appending `/v1` here made model discovery
+            # call `/v1/v1/models` after the validation changes.
+            root = self.url.rstrip("/")
+            url = root + ("/models" if root.endswith("/v1") else "/v1/models")
         elif self.discovery_id == "gemini_models":
             headers = {"x-goog-api-key": self.key}
-            url = self.url.rstrip("/") + "/v1beta/models"
+            root = self.url.rstrip("/")
+            url = root + ("/models" if root.endswith("/v1beta") else "/v1beta/models")
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             if self.discovery_id == "ollama_tags":
                 root = self.url.rstrip("/").removesuffix("/v1")

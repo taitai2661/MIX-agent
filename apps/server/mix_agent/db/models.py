@@ -85,6 +85,14 @@ class Feedback(Record, Base):
     message_id: Mapped[str] = mapped_column(ForeignKey("messages.id"), unique=True, index=True)
 
 
+class AutoReliabilityEvent(Record, Base):
+    """A privacy-minimal, time-bounded record of an Auto provider attempt."""
+    __tablename__ = "auto_reliability_events"
+    __table_args__ = (
+        Index("auto_reliability_owner_created", "owner_id", "created_at"),
+    )
+
+
 class Settings(Record, Base):
     __tablename__ = "app_settings"
 

@@ -80,6 +80,34 @@ async def test_known_context_is_filled_when_provider_omits_it(monkeypatch):
     assert models[1]["context_window"] is None
 
 
+async def test_anthropic_discovery_does_not_duplicate_v1_path(monkeypatch):
+    original = httpx.AsyncClient
+
+    def handle(request):
+        assert request.url.path == "/v1/models"
+        return httpx.Response(200, json={"data": [{"id": "claude-test"}]})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    models = await Adapter(
+        {"kind": "anthropic", "base_url": "https://provider.example/v1"}, "test-key"
+    ).list_models()
+    assert models[0]["model_id"] == "claude-test"
+
+
+async def test_gemini_discovery_does_not_duplicate_v1beta_path(monkeypatch):
+    original = httpx.AsyncClient
+
+    def handle(request):
+        assert request.url.path == "/v1beta/models"
+        return httpx.Response(200, json={"models": [{"name": "models/gemini-test"}]})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    models = await Adapter(
+        {"kind": "gemini", "base_url": "https://provider.example/v1beta"}, "test-key"
+    ).list_models()
+    assert models[0]["model_id"] == "gemini-test"
+
+
 async def test_context_limit_normalizes_compatible_and_ollama_responses(monkeypatch):
     original = httpx.AsyncClient
 

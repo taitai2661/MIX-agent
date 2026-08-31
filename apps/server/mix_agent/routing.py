@@ -8,6 +8,7 @@ from collections import defaultdict
 from sqlalchemy import select
 
 from mix_agent.db.models import Feedback, Model
+from mix_agent.reliability import reliability, usage_scope
 
 CODING = re.compile(r"```|\b(?:python|javascript|typescript|react|sql|docker|api|bug|code|コード|実装|修正)\b", re.IGNORECASE)
 REASONING = re.compile(r"\b(?:why|prove|derive|analy[sz]e|reason|比較|理由|証明|推論|考察|複雑)\b", re.IGNORECASE)
@@ -55,7 +56,7 @@ def _scores(db, owner_id, profile):
 
 def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, tools_required,
                       context_parts, reserved_output_tokens, request_key, attachment_bytes=0,
-                      excluded_model_ids=()):
+                      excluded_model_ids=(), prefer_other_provider_than=None):
     """Return a selected Model plus auditable local routing details, or a reason."""
     profile = routing_profile(content, mode, artifact_mimes, tools_required)
     required_tokens = estimate_tokens(context_parts, attachment_bytes) + reserved_output_tokens
@@ -85,6 +86,11 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
     total = sum(up + down for up, down in outcomes.values())
     ranked = []
     context_usage = {}
+    scope = usage_scope(mode, tools_required)
+    reliability_details = {}
+    has_other_provider = prefer_other_provider_than and any(
+        model.data.get("provider_id") != prefer_other_provider_than for model, _, _ in candidates
+    )
     for model, caps, context_window in candidates:
         up, down = outcomes[model.id]
         count = up + down
@@ -103,12 +109,24 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
             "usage_ratio": usage,
             "penalty": context_penalty,
         }
-        ranked.append((mean + exploration + reasoning_bonus - context_penalty, model, up, down))
+        health = reliability(db, owner_id, model.id, model.data.get("provider_id"), scope)
+        reliability_details[model.id] = health
+        provider_retry_penalty = 1.0 if has_other_provider and model.data.get("provider_id") == prefer_other_provider_than else 0
+        ranked.append((mean + exploration + reasoning_bonus - context_penalty - health["penalty"] - provider_retry_penalty,
+                       model, up, down))
     best = max(score for score, *_ in ranked)
     tied = [entry for entry in ranked if abs(entry[0] - best) < 1e-12]
     # Stable per request, while naturally distributing exact ties across requests.
     tied.sort(key=lambda entry: hashlib.sha256((request_key + entry[1].id).encode()).hexdigest())
     _, selected, up, down = tied[0]
+    selected_health = reliability_details[selected.id]
+    reason_parts = ["Auto: " + profile + " の実績・探索度・既知Contextの余裕から選択"]
+    if selected_health["reason"]:
+        reason_parts.append(selected_health["reason"])
+    avoided = [item["reason"] for key, item in reliability_details.items()
+               if key != selected.id and item["reason"]]
+    if avoided and not selected_health["reason"]:
+        reason_parts.append(avoided[0])
     return selected, {
         "profile": profile,
         "candidate_count": len(candidates),
@@ -116,5 +134,12 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
         "required_tokens": required_tokens,
         "context_usage": context_usage,
         "feedback": {"up": up, "down": down},
-        "reason": "Auto: " + profile + " の実績・探索度・既知Contextの余裕から選択",
+        "reliability": {
+            "scope": scope,
+            "success_probability": selected_health["success_probability"],
+            "model_cooldown": bool(selected_health["model_cooldown_until"]),
+            "provider_cooldown": bool(selected_health["provider_cooldown_until"]),
+            "summary": selected_health["reason"] or (avoided[0] if avoided else None),
+        },
+        "reason": "。".join(reason_parts),
     }

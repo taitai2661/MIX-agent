@@ -1437,6 +1437,8 @@ export interface components {
             setup_complete: boolean;
             /** Brave Api Key */
             brave_api_key?: string | null;
+            /** Web Search Backend */
+            web_search_backend: "ddgs" | "brave";
             /** Allowed Domains */
             allowed_domains?: string[];
         };

@@ -3722,6 +3722,15 @@
             ],
             "title": "Brave Api Key"
           },
+          "web_search_backend": {
+            "type": "string",
+            "enum": [
+              "ddgs",
+              "brave"
+            ],
+            "title": "Web Search Backend",
+            "default": "ddgs"
+          },
           "allowed_domains": {
             "items": {
               "type": "string"

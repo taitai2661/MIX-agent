@@ -437,7 +437,7 @@ async def settings(ctx=Depends(context)):
     view = public(own(db, Settings, "settings", s.owner_id))
     # Older profiles predate this preference; expose the compatible default.
     view["data"] = {"auto_retry_count": 3, "browser_enabled": True, "web_search_enabled": True,
-                     "web_search_count": 5, "tool_settings": {}, **view["data"]}
+                     "web_search_backend": "ddgs", "web_search_count": 5, "tool_settings": {}, **view["data"]}
     return view
 
 
@@ -675,6 +675,7 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         # Keep retry policy stable for this run even if general settings change.
         "auto_retry_count": settings.data.get("auto_retry_count", 3) if requested_model_id == "auto" else 0,
         "provider": provider.data,
+        "provider_record_id": provider.id,
         "tool_ids": tool_ids,
         "tools": [available[t] for t in tool_ids if t in available],
         "reasoning": reasoning,

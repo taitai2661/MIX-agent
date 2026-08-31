@@ -11,6 +11,11 @@ from mix_agent.tools.network import public_address
 POLICY = Path(os.getenv("POLICY_FILE", "/policy/policy.json"))
 
 
+def host_allowed(host, allowed_domains):
+    """An empty list means unrestricted public egress; otherwise use exact matches."""
+    return not allowed_domains or host in allowed_domains
+
+
 async def transfer(reader, writer):
     try:
         while chunk := await asyncio.wait_for(reader.read(65536), 120):
@@ -37,7 +42,8 @@ async def handle(reader, writer):
                 raise ValueError()
             host, port = parsed.hostname.lower(), parsed.port or 80
         policy = json.loads(POLICY.read_text()) if POLICY.exists() else {}
-        if host not in policy.get("allowed_domains", []) or port not in (80, 443):
+        allowed_domains = policy.get("allowed_domains", [])
+        if not host_allowed(host, allowed_domains) or port not in (80, 443):
             raise ValueError()
         ip = await public_address(host, port)
         remote, upstream = await asyncio.wait_for(asyncio.open_connection(ip, port), 10)

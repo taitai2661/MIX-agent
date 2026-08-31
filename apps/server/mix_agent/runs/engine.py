@@ -14,6 +14,8 @@ from mix_agent.providers.adapters import (
     is_retryable_provider_error,
 )
 from mix_agent.providers.reasoning import resolve_reasoning
+from mix_agent.reliability import classify_failure, retry_after, usage_scope
+from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.tools.execute import execute, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
@@ -107,7 +109,7 @@ def launch(run_id):
         TASKS[run_id] = asyncio.create_task(drive(run_id))
 
 
-def reroute_after_provider_error(db, run, request_key, error):
+async def reroute_after_provider_error(db, run, request_key, error, classification, retry_until):
     """Select an unused Auto candidate after a retryable provider failure."""
     routing = run.data.get("auto_routing")
     snapshot = run.data["snapshot"]
@@ -117,6 +119,7 @@ def reroute_after_provider_error(db, run, request_key, error):
     if not routing or len(failures) >= retry_limit:
         return None
     previous_id = snapshot["model_record_id"]
+    provider_id = snapshot.get("provider_record_id")
     used_model_ids = {
         previous_id,
         *(attempt["model_record_id"] for attempt in attempts if attempt.get("model_record_id")),
@@ -126,6 +129,7 @@ def reroute_after_provider_error(db, run, request_key, error):
         routing["artifact_mimes"], routing["tools_required"], routing["context_parts"],
         routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
         excluded_model_ids=tuple(used_model_ids),
+        prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout"} else None),
     )
     if not model:
         return None
@@ -144,6 +148,7 @@ def reroute_after_provider_error(db, run, request_key, error):
         "model_id": model.data["model_id"],
         "model_record_id": model.id,
         "provider": provider.data,
+        "provider_record_id": provider.id,
         "reasoning": reasoning,
     }
     retry_number = len(failures) + 1
@@ -152,6 +157,7 @@ def reroute_after_provider_error(db, run, request_key, error):
         "model_id": snapshot["model_id"],
         "outcome": "provider_error",
         "error_type": type(error).__name__,
+        "classification": classification,
     }, {
         "model_record_id": model.id,
         "model_id": model.data["model_id"],
@@ -176,6 +182,14 @@ def reroute_after_provider_error(db, run, request_key, error):
         "selection": selection,
     })
     db.commit()
+    # Cross-provider alternatives are immediate. When a Retry-After response left
+    # only this provider, respect it before making the next distinct-model attempt.
+    if retry_until and provider.id == provider_id:
+        delay = max(0, (retry_until - now()).total_seconds())
+        if delay:
+            await asyncio.sleep(delay)
+    elif classification in {"provider_5xx", "timeout"} and provider.id == provider_id:
+        await asyncio.sleep(min(4, 2 ** max(0, retry_number - 1)))
     return updated_snapshot
 
 
@@ -434,8 +448,16 @@ async def drive(run_id):
                                 db.commit()
                 except Exception as exc:
                     retryable = is_retryable_provider_error(exc) or is_nvidia_nim_function_not_found(provider, exc)
+                    classification = classify_failure(exc)
+                    retry_until = retry_after(exc)
+                    if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
+                        record_reliability(
+                            db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
+                            usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))),
+                            "failure", classification, retry_until,
+                        )
                     rerouted = (
-                        reroute_after_provider_error(db, run, run.request_key, exc)
+                        await reroute_after_provider_error(db, run, run.request_key, exc, classification, retry_until)
                         if run.data.get("requested_model_id") == "auto" and retryable
                         else None
                     )
@@ -445,6 +467,11 @@ async def drive(run_id):
                     continue
                 if response is None:
                     raise RuntimeError("Incomplete model response")
+                if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
+                    record_reliability(
+                        db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
+                        usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))), "success",
+                    )
                 message = response["message"]
                 update(run, history=[*history, message])
                 message_data = {

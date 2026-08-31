@@ -1,8 +1,7 @@
 import asyncio
+from datetime import timedelta
 
 import httpx
-from sqlalchemy import select
-
 from mix_agent.api import routes
 from mix_agent.db.models import (
     Conversation,
@@ -15,9 +14,15 @@ from mix_agent.db.models import (
     User,
 )
 from mix_agent.db.session import SessionLocal
-from mix_agent.providers.adapters import ProviderContextLimitError, is_nvidia_nim_function_not_found
+from mix_agent.providers.adapters import (
+    ProviderContextLimitError,
+    is_nvidia_nim_function_not_found,
+)
+from mix_agent.reliability import classify_failure, reliability, retry_after
+from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import select_auto_model
 from mix_agent.runs import engine
+from sqlalchemy import select
 
 
 def make_model(caps, context=20000, model_id="auto-test", provider_data=None):
@@ -61,6 +66,55 @@ def test_auto_retry_count_defaults_to_three_for_legacy_settings(signed):
         settings.data = {"setup_complete": False, "allowed_domains": []}
         db.commit()
     assert signed.get("/api/v1/settings").json()["data"]["auto_retry_count"] == 3
+
+
+def test_auto_reliability_is_scope_aware_and_success_clears_consecutive_cooldown(signed):
+    model_id = make_model({}, model_id="reliability")
+    with SessionLocal() as db:
+        model = db.get(Model, model_id)
+        owner = db.scalar(select(User.id))
+        base = engine.now()
+        # Thinking failures must not poison an otherwise healthy Chat route.
+        for offset in (0, 1):
+            record_reliability(db, owner, model.id, model.data["provider_id"], "thinking", "failure",
+                               "timeout", current=base + timedelta(minutes=offset))
+        db.commit()
+        chat = reliability(db, owner, model.id, model.data["provider_id"], "chat", base + timedelta(minutes=2))
+        thinking = reliability(db, owner, model.id, model.data["provider_id"], "thinking", base + timedelta(minutes=2))
+        assert chat["model_cooldown_until"] is None
+        assert thinking["model_cooldown_until"] is not None
+        record_reliability(db, owner, model.id, model.data["provider_id"], "thinking", "success",
+                           current=base + timedelta(minutes=3))
+        db.commit()
+        recovered = reliability(db, owner, model.id, model.data["provider_id"], "thinking", base + timedelta(minutes=3))
+        assert recovered["model_cooldown_until"] is None
+
+
+def test_auto_reliability_classifies_retryable_and_non_availability_errors(signed):
+    response = httpx.Response(429, headers={"retry-after": "30"}, request=httpx.Request("POST", "https://provider.test"))
+    assert classify_failure(httpx.HTTPStatusError("limited", request=response.request, response=response)) == "rate_limit"
+    assert classify_failure(ProviderContextLimitError("context limit")) == "context"
+    assert classify_failure(ValueError("tool calling is not supported")) == "tool"
+    unauthorized = httpx.Response(401, request=response.request)
+    assert classify_failure(httpx.HTTPStatusError("unauthorized", request=unauthorized.request, response=unauthorized)) == "auth"
+
+
+def test_auto_retry_prefers_another_provider_and_honors_retry_after(signed):
+    first = make_model({}, model_id="first-provider")
+    second = make_model({}, model_id="second-provider")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        first_model, second_model = db.get(Model, first), db.get(Model, second)
+        assert first_model.data["provider_id"] != second_model.data["provider_id"]
+        selected, _ = select_auto_model(
+            db, owner, [first, second], "hello", "chat", [], False, ["hello"], 10, "cross-provider",
+            excluded_model_ids=(), prefer_other_provider_than=first_model.data["provider_id"],
+        )
+        assert selected.id == second
+    base = engine.now()
+    response = httpx.Response(429, headers={"retry-after": "90"}, request=httpx.Request("POST", "https://provider.test"))
+    until = retry_after(httpx.HTTPStatusError("limited", request=response.request, response=response), base)
+    assert until == base + timedelta(seconds=90)
 
 
 def test_unknown_context_model_is_usable_by_auto_without_an_override(signed, monkeypatch):

@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import json
 import httpx
@@ -80,17 +81,20 @@ async def execute(db, run, tool, args):
         result = {"url": args["url"], "text": soup.get_text(" ", strip=True)}
     elif name == "web_search":
         setting = db.scalar(select(Settings).where(Settings.owner_id == run.owner_id))
-        key = read_secret(db, (setting.data if setting else {}).get("brave_secret_id"))
-        if not key:
-            raise ValueError("Web検索のAPI Keyが未設定です")
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": args["query"], "count": max(1, min(20, (setting.data if setting else {}).get("web_search_count", 5)))},
-                headers={"X-Subscription-Token": key},
-            )
-            response.raise_for_status()
-            result = {"results": response.json().get("web", {}).get("results", [])}
+        data = setting.data if setting else {}
+        count = max(1, min(20, data.get("web_search_count", 5)))
+        if data.get("web_search_backend", "ddgs") == "brave":
+            key = read_secret(db, data.get("brave_secret_id"))
+            if not key:
+                raise ValueError("Brave Search API Keyが未設定です")
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get("https://api.search.brave.com/res/v1/web/search", params={"q": args["query"], "count": count}, headers={"X-Subscription-Token": key})
+                response.raise_for_status()
+                result = {"results": response.json().get("web", {}).get("results", [])}
+        else:
+            from ddgs import DDGS
+            rows = await asyncio.wait_for(asyncio.to_thread(lambda: list(DDGS().text(args["query"], max_results=count))), timeout=20)
+            result = {"results": [{"title": row.get("title", ""), "url": row.get("href", ""), "description": row.get("body", "")} for row in rows]}
     elif name == "memory_search":
         result = {"memories": memory.search(db, run.owner_id, args.get("query", ""), scopes)}
     elif name.startswith("memory_"):

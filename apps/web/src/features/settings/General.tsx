@@ -79,6 +79,7 @@ export function General() {
                   .map((x) => x.trim())
                   .filter(Boolean),
                 brave_api_key: f.get("brave_api_key") || null,
+                web_search_backend: setting.data.data.web_search_backend || "ddgs",
               });
               setSaved(true);
               qc.invalidateQueries({ queryKey: ["/settings"] });
@@ -139,7 +140,7 @@ export function General() {
           </Field>
           <Field
             label="Runner通信許可先（1行1ドメイン）"
-            hint="完全一致。サブドメインは別途指定します。未設定ではRunnerの外向き通信を拒否します。"
+            hint="完全一致。サブドメインは別途指定します。未設定なら公開ドメインへの通信を許可します。入力すると指定ドメインだけに制限します。"
           >
             <textarea
               name="domains"
