@@ -230,6 +230,10 @@ def finish(db, run, status, reason=None):
             if not retry:
                 notify(db, run.owner_id, "schedule.completed" if status == "completed" else "schedule.failed", "定期実行: " + ("完了" if status == "completed" else "失敗"), scheduled)
     db.commit()
+    if run.data.get("temporary_mode"):
+        from mix_agent.api.routes import purge_temporary_run
+        purge_temporary_run(db, run)
+        db.commit()
 
 
 def launch(run_id):
@@ -705,6 +709,10 @@ async def drive(run_id):
                         "model_id": snapshot["model_id"],
                     }
                 db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data=message_data))
+                user_content = next((item.get("content", "") for item in reversed(run.data["history"]) if item.get("role") == "user"), "")
+                if not run.data.get("temporary_mode"):
+                    from mix_agent.memory.jobs import enqueue as enqueue_memory
+                    enqueue_memory(db, run, user_content, message["content"], run.data.get("memory_trace_ids", []))
                 conversation = db.get(Conversation, run.conversation_id)
                 if conversation:
                     conversation.data = {**conversation.data, "last_message_at": now().isoformat()}

@@ -783,6 +783,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/memories/{key}/associations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Memory Associations */
+        get: operations["memory_associations_api_v1_memories__key__associations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memories-debug/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Debug Memory Search */
+        get: operations["debug_memory_search_api_v1_memories_debug_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memories-debug/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Debug Memory Actions */
+        get: operations["debug_memory_actions_api_v1_memories_debug_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/memories/{key}": {
         parameters: {
             query?: never;
@@ -1371,6 +1422,26 @@ export interface components {
              * @default user
              */
             scope: string;
+            /** Gist */
+            gist?: string | null;
+            /** Strength */
+            strength?: number | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Salience */
+            salience?: number | null;
+            /** Lifecycle State */
+            lifecycle_state?: ("latent" | "established" | "superseded" | "archived" | "deleted") | null;
+            /** Entities */
+            entities?: string[] | null;
+            /** Concepts */
+            concepts?: string[] | null;
+            /** Temporal Context */
+            temporal_context?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Importance
              * @default 2
@@ -1778,6 +1849,46 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+            /**
+             * Memory Auto Formation
+             * @default true
+             */
+            memory_auto_formation: boolean;
+            /**
+             * Memory Seed Limit
+             * @default 24
+             */
+            memory_seed_limit: number;
+            /**
+             * Memory Max Candidates
+             * @default 96
+             */
+            memory_max_candidates: number;
+            /**
+             * Memory Result Limit
+             * @default 8
+             */
+            memory_result_limit: number;
+            /**
+             * Memory Min Association Weight
+             * @default 0.2
+             */
+            memory_min_association_weight: number;
+            /**
+             * Memory Activation Decay
+             * @default 0.55
+             */
+            memory_activation_decay: number;
+            /**
+             * Memory Retrieval Budget Ms
+             * @default 120
+             */
+            memory_retrieval_budget_ms: number;
+            /**
+             * Memory Max Depth
+             * @default 2
+             */
+            memory_max_depth: number;
         };
         /** SkillInput */
         SkillInput: {
@@ -3577,6 +3688,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                state?: string | null;
             };
             header?: never;
             path?: never;
@@ -3616,6 +3728,99 @@ export interface operations {
                 "application/json": components["schemas"]["MemoryInput"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    memory_associations_api_v1_memories__key__associations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    debug_memory_search_api_v1_memories_debug_search_get: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    debug_memory_actions_api_v1_memories_debug_actions_get: {
+        parameters: {
+            query?: {
+                run_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

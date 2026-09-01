@@ -1,12 +1,13 @@
 import { api } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, BarChart3, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, BarChart3, Brain, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const cards = [
   ["providers", "AI Providers", "接続済みのAIサービス", Server],
   ["models", "モデル", "会話で使うモデル", Sparkles],
+  ["memory", "Memory", "記憶の形成・想起・管理", Brain],
   ["tools", "Tools・権限", "Agentの実行権限", ShieldCheck],
   ["browser", "Browser", "Webページの操作と許可先", Globe],
   ["web-search", "Web検索", "検索サービスと結果数", Globe],

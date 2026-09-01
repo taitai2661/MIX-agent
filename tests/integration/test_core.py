@@ -4,6 +4,7 @@ import pytest
 from mix_agent.db.models import *
 from mix_agent.db.session import SessionLocal
 from mix_agent.tools.registry import BUILTINS, permission, fingerprint, call_scope
+from mix_agent.tools.execute import save_text_artifact
 from mix_agent.runs import engine
 
 
@@ -32,6 +33,27 @@ def make_run(tool_name="write_file", mode="agent"):
         db.add(run)
         db.commit()
         return run.id, tool
+
+
+def test_text_artifact_validation_and_metadata(tmp_path, monkeypatch):
+    from mix_agent import config
+
+    monkeypatch.setattr(config, "ARTIFACTS", tmp_path)
+    with SessionLocal() as db:
+        owner = uid()
+        artifact = save_text_artifact(db, owner, "watermark-poster.html", "text/html", "<h1>Hello</h1>")
+        db.commit()
+        assert artifact["name"] == "watermark-poster.html"
+        assert artifact["mime"] == "text/html"
+        assert artifact["size"] == len("<h1>Hello</h1>".encode())
+        assert (tmp_path / artifact["artifact_id"]).read_text() == "<h1>Hello</h1>"
+        for name in ("../escape.html", "nested/file.html", "", "bad<script>.html"):
+            with pytest.raises(ValueError):
+                save_text_artifact(db, owner, name, "text/html", "x")
+        with pytest.raises(ValueError):
+            save_text_artifact(db, owner, "empty.html", "text/html", "")
+        with pytest.raises(ValueError):
+            save_text_artifact(db, owner, "large.html", "text/html", "x" * (1024 * 1024 + 1))
 
 
 class FakeAdapter:
@@ -271,7 +293,9 @@ def test_memory_recall_ranks_pinned_relevant_entries_and_blocks_secrets(signed):
     signed.post("/api/v1/memories", json={"content": "Pythonでは型ヒントを使う", "importance": 3})
     rows = signed.get("/api/v1/memories?q=日本語の回答").json()
     assert rows[0]["data"]["pinned"] is True
-    assert rows[0]["data"]["category"] == "preference"
+    assert "category" not in rows[0]["data"]
+    assert rows[0]["data"]["lifecycle_state"] == "established"
+    assert rows[0]["data"]["strength"] > 0.8
     rejected = signed.post("/api/v1/memories", json={"content": "api_key=not-for-memory"})
     assert rejected.status_code == 422
 
@@ -381,16 +405,19 @@ def test_message_requires_idempotency_key(signed):
     assert response.status_code == 422
 
 
-def test_memory_scope_isolation(signed):
+def test_memory_scope_is_a_soft_retrieval_signal(signed):
     from mix_agent.memory import service
 
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
-        service.change(db, owner, "user preference")
-        service.change(db, owner, "agent-only decision", scope="agent:one")
+        service.change(db, owner, "user preference", confidence=.9)
+        service.change(db, owner, "agent-only decision", scope="agent:one", confidence=.9)
         db.commit()
-        assert len(service.search(db, owner, scopes=["user"])) == 1
-        assert len(service.search(db, owner, scopes=["user", "agent:one"])) == 2
+        user_ranked = service.search(db, owner, scopes=["user"])
+        agent_ranked = service.search(db, owner, scopes=["agent:one"])
+        assert {row["content"] for row in user_ranked} == {"user preference", "agent-only decision"}
+        assert user_ranked[0]["content"] == "user preference"
+        assert agent_ranked[0]["content"] == "agent-only decision"
 
 
 def test_message_retry_and_saved_selection(signed, monkeypatch):

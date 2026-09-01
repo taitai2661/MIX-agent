@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import httpx
+import re
 from bs4 import BeautifulSoup
 from mix_agent import config
 from mix_agent.db.models import Artifact, MCPConnection, Settings
@@ -42,6 +43,23 @@ def save_artifact(db, owner, content, name, mime="text/plain"):
     db.add(row)
     db.flush()
     return {"artifact_id": key, **row.data}
+
+
+def save_text_artifact(db, owner, name, mime, content):
+    """Validate and persist a user-downloadable text artifact."""
+    if not isinstance(name, str) or not name.strip() or name != name.strip():
+        raise ValueError("Artifact filename is required")
+    if len(name) > 255 or name in {".", ".."} or "/" in name or "\\" in name or ".." in name:
+        raise ValueError("Artifact filename must be a single safe filename")
+    if not re.fullmatch(r"[\w .()\-]+", name, re.UNICODE):
+        raise ValueError("Artifact filename contains unsupported characters")
+    if not isinstance(mime, str) or len(mime) > 120 or ";" in mime or not re.fullmatch(r"[\w.+-]+/[\w.+-]+", mime):
+        raise ValueError("Artifact MIME type is invalid")
+    if not isinstance(content, str) or not content:
+        raise ValueError("Artifact content is required")
+    if len(content.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Artifact content is too large")
+    return save_artifact(db, owner, content.encode("utf-8"), name, mime)
 
 
 async def execute(db, run, tool, args):
@@ -96,7 +114,8 @@ async def execute(db, run, tool, args):
             rows = await asyncio.wait_for(asyncio.to_thread(lambda: list(DDGS().text(args["query"], max_results=count))), timeout=20)
             result = {"results": [{"title": row.get("title", ""), "url": row.get("href", ""), "description": row.get("body", "")} for row in rows]}
     elif name == "memory_search":
-        result = {"memories": memory.search(db, run.owner_id, args.get("query", ""), scopes)}
+        searched = memory.search(db, run.owner_id, args.get("query", ""), scopes, debug=bool(args.get("debug")))
+        result = searched if args.get("debug") else {"memories": searched}
     elif name.startswith("memory_"):
         if not scopes:
             raise ValueError("Memory is disabled for this agent")
@@ -112,6 +131,10 @@ async def execute(db, run, tool, args):
             importance=args.get("importance", 2),
             category=args.get("category"),
             pinned=args.get("pinned", False),
+            confidence=args.get("confidence"),
+            salience=args.get("salience"),
+            entities=args.get("entities"),
+            concepts=args.get("concepts"),
         )
     elif name == "skill_search":
         result = {"skills": skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))}
@@ -121,6 +144,8 @@ async def execute(db, run, tool, args):
         result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
     elif name == "update_plan":
         result = {"steps": args["steps"]}
+    elif name == "create_artifact":
+        result = {"artifact": save_text_artifact(db, run.owner_id, args["name"], args["mime"], args["content"])}
     else:
         raise ValueError("Unknown tool")
     raw = json.dumps(result, ensure_ascii=False)

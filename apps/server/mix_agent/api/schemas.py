@@ -317,6 +317,8 @@ class MessageInput(Input):
     mode: Literal["chat", "thinking", "agent"] = "chat"
     artifact_ids: list[str] = Field(default_factory=list, max_length=5)
     acknowledge_unknown_capability: bool = False
+    temporary_mode: bool = False
+    allow_tools: bool = False
 
 
 class DecisionInput(Input):
@@ -326,6 +328,16 @@ class DecisionInput(Input):
 class MemoryInput(Input):
     content: str = Field(min_length=1, max_length=10000)
     scope: str = Field(default="user", max_length=100)
+    gist: str | None = Field(default=None, max_length=1000)
+    strength: float | None = Field(default=None, ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    salience: float | None = Field(default=None, ge=0, le=1)
+    lifecycle_state: Literal["latent", "established", "superseded", "archived", "deleted"] | None = None
+    entities: list[str] | None = Field(default=None, max_length=50)
+    concepts: list[str] | None = Field(default=None, max_length=50)
+    temporal_context: str | None = Field(default=None, max_length=200)
+    metadata: dict | None = None
+    # Deprecated compatibility inputs. Category is retained only as legacy metadata.
     importance: int = Field(default=2, ge=1, le=5)
     category: str | None = Field(default=None, max_length=50)
     pinned: bool = False
@@ -360,6 +372,14 @@ class SettingsInput(Input):
     web_search_enabled: bool = True
     web_search_count: int = Field(default=5, ge=1, le=20)
     tool_settings: dict[str, dict[str, object]] = Field(default_factory=dict)
+    memory_auto_formation: bool = True
+    memory_seed_limit: int = Field(default=24, ge=4, le=64)
+    memory_max_candidates: int = Field(default=96, ge=8, le=256)
+    memory_result_limit: int = Field(default=8, ge=1, le=30)
+    memory_min_association_weight: float = Field(default=0.2, ge=0.05, le=1)
+    memory_activation_decay: float = Field(default=0.55, ge=0.1, le=0.95)
+    memory_retrieval_budget_ms: int = Field(default=120, ge=20, le=1000)
+    memory_max_depth: int = Field(default=2, ge=0, le=3)
 
 
 class FeedbackInput(Input):

@@ -14,15 +14,18 @@ from mix_agent.runs.engine import scheduler, TASKS
 @asynccontextmanager
 async def lifespan(app):
     from mix_agent.storage.backup import recover_interrupted
+    from mix_agent.memory.jobs import scheduler as memory_scheduler
 
     await recover_interrupted()
     task = asyncio.create_task(scheduler())
+    memory_task = asyncio.create_task(memory_scheduler())
     yield
     task.cancel()
+    memory_task.cancel()
     # Shutdown leaves running markers for crash-safe recovery; do not report success.
     for pending in list(TASKS.values()):
         pending.cancel()
-    await asyncio.gather(task, *list(TASKS.values()), return_exceptions=True)
+    await asyncio.gather(task, memory_task, *list(TASKS.values()), return_exceptions=True)
 
 
 app = FastAPI(title="MIX agent", version="0.1.0", lifespan=lifespan)

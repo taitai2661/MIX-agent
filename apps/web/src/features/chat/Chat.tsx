@@ -56,6 +56,8 @@ export function Chat() {
     }),
     permissionRules = useRows<PermissionRule>("/permission-rules");
   const [model, setModel] = useState("auto"),
+    [temporaryMode, setTemporaryMode] = useState(false),
+    [allowTools, setAllowTools] = useState(false),
     [mode, setMode] = useState<ChatMode>("chat"),
     [agent, setAgent] = useState(""),
     [text, setText] = useState(""),
@@ -169,6 +171,8 @@ export function Chat() {
         agent_id: agent,
         artifact_ids: attachments.map((a) => a.artifact_id),
         acknowledge_unknown_capability: false,
+        temporary_mode: temporaryMode,
+        allow_tools: allowTools,
       };
       const signature = JSON.stringify({ id, ...body });
       if (!pendingSend.current || pendingSend.current.signature !== signature) {
@@ -408,7 +412,7 @@ export function Chat() {
                   <div className="assistant-settings-panel">
                     <div className="assistant-setting-row">
                       <span>モデル</span>
-                      <ModelPicker models={models.data} value={model} onChange={setModel} />
+                      <ModelPicker models={models.data} value={model} onChange={setModel} temporaryMode={temporaryMode} allowTools={allowTools} onTemporaryModeChange={setTemporaryMode} onAllowToolsChange={setAllowTools} />
                     </div>
                     <div className="assistant-setting-row mode-row">
                       <span>応答方法</span>

@@ -19,24 +19,31 @@ export function ToolHistory({ calls, onApproval }: { calls: ToolCallHistory[]; o
       {calls.map((call) => {
         const state = presentation[call.status];
         const StateIcon = state.Icon;
+        const sourceCount = call.result_activity?.sources?.length || 0;
+        const hasDetails = !!(call.activity?.detail || sourceCount || call.result_activity?.remaining || call.artifact || call.retry.label || call.result !== undefined);
         return <article className={'tool-history-card ' + call.status} key={call.id}>
-          <header>
-            <span className="tool-history-status"><StateIcon size={16} />{state.label}</span>
-            <b>{call.activity?.label || call.tool_name}</b>
-            <time dateTime={call.created_at}>{new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date(call.created_at))}</time>
-          </header>
-          {call.activity?.detail && <p className="tool-history-detail">{call.activity.detail}</p>}
+          <details className="tool-history-details" open={call.status === "waiting_approval" || call.status === "failed"}>
+            <summary>
+              <span className="tool-history-status"><StateIcon size={15} />{state.label}</span>
+              <b>{call.activity?.label || call.tool_name}</b>
+              {(sourceCount > 0 || call.artifact) && <span className="tool-history-badges">{sourceCount > 0 && `${sourceCount}件のソース`}{call.artifact && "成果物"}</span>}
+              <time dateTime={call.created_at}>{new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date(call.created_at))}</time>
+            </summary>
+            {hasDetails && <div className="tool-history-detail-content">
+              {call.activity?.detail && <p className="tool-history-detail">{call.activity.detail}</p>}
+              {call.result_activity?.sources?.length ? <div className="tool-history-sources">
+                {call.result_activity.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer"><ExternalLink size={12} />{source.host}</a>)}
+                {!!call.result_activity.remaining && <span>あと {call.result_activity.remaining} 件</span>}
+              </div> : null}
+              {call.artifact && <a className="tool-history-artifact" href={'/api/v1/artifacts/' + call.artifact.artifact_id}>成果物をダウンロード</a>}
+              <p className="tool-history-retry"><RotateCcw size={13} /> {call.retry.label}</p>
+              {call.result !== undefined && call.result !== null && <div className="tool-history-result"><span>結果の詳細</span><pre>{JSON.stringify(call.result, null, 2)}</pre></div>}
+            </div>}
+          </details>
           {call.failure && <p className="tool-history-failure"><AlertTriangle size={14} /> {call.failure}</p>}
-          {call.result_activity?.sources?.length ? <div className="tool-history-sources">
-            {call.result_activity.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer"><ExternalLink size={12} />{source.host}</a>)}
-            {!!call.result_activity.remaining && <span>あと {call.result_activity.remaining} 件</span>}
-          </div> : null}
-          {call.artifact && <a className="tool-history-artifact" href={'/api/v1/artifacts/' + call.artifact.artifact_id}>成果物をダウンロード</a>}
           {call.approval && <div className="tool-history-approval"><ShieldCheck size={15} /> 承認が必要です
             <span><button onClick={() => onApproval(call.approval!.id, "once")}>今回のみ</button><button onClick={() => onApproval(call.approval!.id, "always")}>常に許可</button><button onClick={() => onApproval(call.approval!.id, "denied")}>拒否</button></span>
           </div>}
-          <p className="tool-history-retry"><RotateCcw size={13} /> {call.retry.label}</p>
-          {call.result !== undefined && call.result !== null && <details><summary>結果の詳細</summary><pre>{JSON.stringify(call.result, null, 2)}</pre></details>}
         </article>;
       })}
     </section>

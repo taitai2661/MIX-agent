@@ -1904,6 +1904,22 @@
               "default": "",
               "title": "Q"
             }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
           }
         ],
         "responses": {
@@ -1940,6 +1956,124 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memories/{key}/associations": {
+      "get": {
+        "summary": "Memory Associations",
+        "operationId": "memory_associations_api_v1_memories__key__associations_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memories-debug/search": {
+      "get": {
+        "summary": "Debug Memory Search",
+        "operationId": "debug_memory_search_api_v1_memories_debug_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memories-debug/actions": {
+      "get": {
+        "summary": "Debug Memory Actions",
+        "operationId": "debug_memory_actions_api_v1_memories_debug_actions_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3600,6 +3734,129 @@
             "title": "Scope",
             "default": "user"
           },
+          "gist": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gist"
+          },
+          "strength": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strength"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "salience": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salience"
+          },
+          "lifecycle_state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "latent",
+                  "established",
+                  "superseded",
+                  "archived",
+                  "deleted"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle State"
+          },
+          "entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities"
+          },
+          "concepts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concepts"
+          },
+          "temporal_context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temporal Context"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
           "importance": {
             "type": "integer",
             "maximum": 5.0,
@@ -4653,6 +4910,60 @@
             },
             "type": "object",
             "title": "Tool Settings"
+          },
+          "memory_auto_formation": {
+            "type": "boolean",
+            "title": "Memory Auto Formation",
+            "default": true
+          },
+          "memory_seed_limit": {
+            "type": "integer",
+            "maximum": 64.0,
+            "minimum": 4.0,
+            "title": "Memory Seed Limit",
+            "default": 24
+          },
+          "memory_max_candidates": {
+            "type": "integer",
+            "maximum": 256.0,
+            "minimum": 8.0,
+            "title": "Memory Max Candidates",
+            "default": 96
+          },
+          "memory_result_limit": {
+            "type": "integer",
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Memory Result Limit",
+            "default": 8
+          },
+          "memory_min_association_weight": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.05,
+            "title": "Memory Min Association Weight",
+            "default": 0.2
+          },
+          "memory_activation_decay": {
+            "type": "number",
+            "maximum": 0.95,
+            "minimum": 0.1,
+            "title": "Memory Activation Decay",
+            "default": 0.55
+          },
+          "memory_retrieval_budget_ms": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 20.0,
+            "title": "Memory Retrieval Budget Ms",
+            "default": 120
+          },
+          "memory_max_depth": {
+            "type": "integer",
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Memory Max Depth",
+            "default": 2
           }
         },
         "additionalProperties": false,

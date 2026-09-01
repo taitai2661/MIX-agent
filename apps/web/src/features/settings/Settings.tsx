@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Sparkles,
   BarChart3,
+  Brain,
 } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
@@ -19,6 +20,7 @@ import { Tools } from "@/features/tools/Tools";
 import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSettings";
 import { SettingsOverview } from "@/features/settings/Overview";
 import { Statistics } from "@/features/settings/Statistics";
+import { Memories } from "@/features/memory/Memories";
 
 export function Settings({
   user,
@@ -40,6 +42,7 @@ export function Settings({
         {[
           ["providers", "AI Providers", Server],
           ["models", "モデル", Sparkles],
+          ["memory", "Memory", Brain],
         ].map(([path, label, Icon]: any) => (
           <NavLink key={path} to={"/settings/" + path}>
             <Icon size={17} />
@@ -68,6 +71,7 @@ export function Settings({
           <Route index element={<SettingsOverview />} />
           <Route path="providers" element={<Providers />} />
           <Route path="models" element={<Models />} />
+          <Route path="memory" element={<Memories />} />
           <Route path="tools" element={<Tools />} />
           <Route path="browser" element={<BrowserSettings />} />
           <Route path="web-search" element={<WebSearchSettings />} />

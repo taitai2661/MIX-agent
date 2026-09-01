@@ -3,7 +3,7 @@ import { Check, ChevronDown, Search, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-export function ModelPicker({ models, value, onChange }: { models?: Row[]; value: string; onChange: (id: string) => void }) {
+export function ModelPicker({ models, value, onChange, temporaryMode, allowTools, onTemporaryModeChange, onAllowToolsChange }: { models?: Row[]; value: string; onChange: (id: string) => void; temporaryMode: boolean; allowTools: boolean; onTemporaryModeChange: (value: boolean) => void; onAllowToolsChange: (value: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -60,6 +60,14 @@ export function ModelPicker({ models, value, onChange }: { models?: Row[]; value
             {value === item.id && <Check size={16} />}
           </button>)}
           {!filtered.length && <div className="model-empty"><p>利用できるモデルがありません</p><button type="button" onClick={() => navigate("/settings/models")}>モデルを設定</button></div>}
+        </div>
+        <div className="temporary-settings">
+          <label><input type="checkbox" checked={temporaryMode} onChange={(event) => onTemporaryModeChange(event.target.checked)} /> 一時モード</label>
+          {temporaryMode && <>
+            <small>Memoryを使わず、この会話と添付を保存しません</small>
+            <label><input type="checkbox" checked={allowTools} onChange={(event) => onAllowToolsChange(event.target.checked)} /> Toolを許可</label>
+            {allowTools && <small>Toolの外部送信や副作用は残る場合があります</small>}
+          </>}
         </div>
       </div>}
     </div>
