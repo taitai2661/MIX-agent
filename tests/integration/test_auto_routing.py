@@ -4,6 +4,7 @@ from datetime import timedelta
 import httpx
 from mix_agent.api import routes
 from mix_agent.db.models import (
+    AutoReliabilityEvent,
     Conversation,
     Feedback,
     Message,
@@ -19,9 +20,9 @@ from mix_agent.providers.adapters import (
     is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
 )
-from mix_agent.reliability import classify_failure, reliability, retry_after
+from mix_agent.reliability import classify_failure, reliability, retry_after, speed
 from mix_agent.reliability import record as record_reliability
-from mix_agent.routing import select_auto_model
+from mix_agent.routing import routing_profile, select_auto_model
 from mix_agent.runs import engine
 from sqlalchemy import select
 
@@ -116,6 +117,149 @@ def test_auto_reliability_classifies_retryable_and_non_availability_errors(signe
     assert classify_failure(ValueError("tool calling is not supported")) == "tool"
     unauthorized = httpx.Response(401, request=response.request)
     assert classify_failure(httpx.HTTPStatusError("unauthorized", request=unauthorized.request, response=unauthorized)) == "auth"
+
+
+def test_auto_speed_uses_decayed_scope_specific_timings_and_normalizes_output(signed):
+    fast = make_model({}, model_id="fast")
+    slow = make_model({}, model_id="slow")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        fast_model, slow_model = db.get(Model, fast), db.get(Model, slow)
+        base = engine.now()
+        for offset in range(4):
+            current = base + timedelta(minutes=offset)
+            record_reliability(
+                db, owner, fast, fast_model.data["provider_id"], "chat", "success", current=current,
+                first_output_ms=100, completion_ms=1_000, output_tokens=100,
+            )
+            record_reliability(
+                db, owner, slow, slow_model.data["provider_id"], "chat", "success", current=current,
+                first_output_ms=1_000, completion_ms=10_000, output_tokens=100,
+            )
+        # Thinking evidence must not affect the chat route.
+        record_reliability(
+            db, owner, slow, slow_model.data["provider_id"], "thinking", "success", current=base,
+            first_output_ms=10, completion_ms=100, output_tokens=100,
+        )
+        db.commit()
+        selected, details = select_auto_model(
+            db, owner, [fast, slow], "hello", "chat", [], False, ["hello"], 10, "speed-preference",
+        )
+        fast_speed = speed(db, owner, fast, fast_model.data["provider_id"], "chat", base + timedelta(minutes=4))
+        assert selected.id == fast
+        assert details["speed"]["score"] > 0
+        assert "応答速度の実績" in details["reason"]
+        assert fast_speed["completion_normalized"] is True
+        assert fast_speed["completion_value"] == 10
+
+
+def test_auto_speed_falls_back_without_usage_and_ignores_failures(signed):
+    model_id = make_model({}, model_id="speed-fallback")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        model = db.get(Model, model_id)
+        record_reliability(
+            db, owner, model_id, model.data["provider_id"], "chat", "failure", "timeout",
+            first_output_ms=1, completion_ms=1, output_tokens=1,
+        )
+        record_reliability(
+            db, owner, model_id, model.data["provider_id"], "chat", "success",
+            first_output_ms=200, completion_ms=2_000,
+        )
+        db.commit()
+        details = speed(db, owner, model_id, model.data["provider_id"], "chat")
+        assert round(details["first_output_ms"]) == 200
+        assert round(details["completion_value"]) == 2_000
+        assert details["completion_normalized"] is False
+
+
+def test_auto_speed_needs_enough_comparable_evidence(signed):
+    first = make_model({}, model_id="one-sample-fast")
+    second = make_model({}, model_id="one-sample-slow")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        first_model, second_model = db.get(Model, first), db.get(Model, second)
+        profile = routing_profile("hello", "chat", [], False, 13)
+        record_reliability(db, owner, first, first_model.data["provider_id"], "chat", "success",
+                           first_output_ms=10, completion_ms=10, output_tokens=1, profile=profile)
+        record_reliability(db, owner, second, second_model.data["provider_id"], "chat", "success",
+                           first_output_ms=10_000, completion_ms=10_000, output_tokens=1, profile=profile)
+        db.commit()
+        _, details = select_auto_model(db, owner, [first, second], "hello", "chat", [], False,
+                                       ["hello"], 10, "one-sample-speed")
+        assert details["speed"]["score"] == 0
+
+
+def test_auto_avoids_unknown_context_after_matching_context_failure(signed):
+    model_id = make_model({}, context=None, model_id="unknown-context-failure")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        model = db.get(Model, model_id)
+        record_reliability(db, owner, model_id, model.data["provider_id"], "chat", "failure", "context",
+                           required_tokens=100)
+        db.commit()
+        selected, details = select_auto_model(db, owner, [model_id], "x" * 200, "chat", [], False,
+                                              ["x" * 200], 10, "known-context-failure")
+        assert selected is None
+        assert "Context Window" in details["reason"]
+
+
+def test_auto_retries_only_before_visible_output(signed, monkeypatch):
+    first = make_model({}, context=None, model_id="partial-first")
+    second = make_model({}, context=None, model_id="partial-second")
+    assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [first, second],
+                                                  "allowed_domains": []}).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "partial-output"})
+    attempts = []
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            yield {"kind": "text", "text": "partial"}
+            response = httpx.Response(503, request=httpx.Request("POST", "https://provider.test"))
+            raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        assert db.get(Run, queued.json()["run_id"]).status == "failed"
+    assert len(attempts) == 1
+
+
+def test_auto_success_records_first_output_and_completion_timings(signed, monkeypatch):
+    model_id = make_model({}, model_id="timed")
+    assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [model_id],
+                                                  "allowed_domains": []}).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "timed-auto"})
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            yield {"kind": "text", "text": "hello"}
+            yield {"kind": "response", "message": {"role": "assistant", "content": "hello"},
+                   "tool_calls": [], "usage": {"output_tokens": 5}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        event = db.scalar(select(AutoReliabilityEvent).where(
+            AutoReliabilityEvent.data["model_id"].as_string() == model_id,
+            AutoReliabilityEvent.data["outcome"].as_string() == "success",
+        ))
+        assert event.data["first_output_ms"] >= 1
+        assert event.data["completion_ms"] >= event.data["first_output_ms"]
+        assert event.data["output_tokens"] == 5
 
 
 def test_auto_retry_prefers_another_provider_and_honors_retry_after(signed):

@@ -71,7 +71,9 @@ def now() -> datetime:
 
 def record(db, owner_id: str, model_id: str, provider_id: str, scope: str, outcome: str,
            classification: str | None = None, retry_after_until: datetime | None = None,
-           current: datetime | None = None) -> AutoReliabilityEvent:
+           current: datetime | None = None, first_output_ms: int | None = None,
+           completion_ms: int | None = None, output_tokens: int | None = None,
+           profile: str | None = None, required_tokens: int | None = None) -> AutoReliabilityEvent:
     current = current or now()
     # Opportunistic bounded retention keeps this independent of a scheduler.
     db.execute(delete(AutoReliabilityEvent).where(
@@ -81,7 +83,15 @@ def record(db, owner_id: str, model_id: str, provider_id: str, scope: str, outco
     event = AutoReliabilityEvent(owner_id=owner_id, data={
         "model_id": model_id, "provider_id": provider_id, "scope": scope,
         "outcome": outcome, "classification": classification,
+        # Profile and token estimate contain no prompt text.  They keep route
+        # evidence local and prevent unlike requests from being compared.
+        "profile": profile, "required_tokens": required_tokens,
         "retry_after_until": retry_after_until.isoformat() if retry_after_until else None,
+        # Timings are recorded only for successful model calls. They deliberately
+        # exclude queueing, tool execution, approvals and retry backoff.
+        "first_output_ms": first_output_ms if outcome == "success" else None,
+        "completion_ms": completion_ms if outcome == "success" else None,
+        "output_tokens": output_tokens if outcome == "success" else None,
     }, created_at=current)
     db.add(event)
     return event
@@ -110,6 +120,76 @@ def _rate(events, current: datetime) -> tuple[float, float]:
         elif event.data.get("classification") in {"rate_limit", "provider_5xx", "timeout"}:
             failure += weight
     return success, failure
+
+
+def speed(db, owner_id: str, model_id: str, provider_id: str, scope: str,
+          current: datetime | None = None, profile: str | None = None) -> dict:
+    """Return decayed, privacy-minimal speed evidence for one Auto route."""
+    current = current or now()
+    events = [event for event in _events(db, owner_id, current) if (
+        event.data.get("model_id") == model_id
+        and event.data.get("provider_id") == provider_id
+        and event.data.get("scope") == scope
+        and event.data.get("outcome") == "success"
+        # Unprofiled records are legacy evidence.  They remain a fallback while
+        # all new records stay isolated by the exact profile.
+        and (profile is None or event.data.get("profile") in {profile, None})
+    )]
+
+    def robust_average(values):
+        weighted = [(value, _weight(event.created_at, current)) for event, value in values]
+        total = sum(weight for _, weight in weighted)
+        if not total:
+            return None, 0.0
+        # A weighted median is deliberately insensitive to one pathological
+        # provider response while retaining recency weighting.
+        running = 0.0
+        for value, weight in sorted(weighted):
+            running += weight
+            if running >= total / 2:
+                return value, total
+        return weighted[-1][0], total
+
+    first_output = robust_average([
+        (event, event.data["first_output_ms"])
+        for event in events if isinstance(event.data.get("first_output_ms"), (int, float)) and event.data["first_output_ms"] > 0
+    ])
+    normalized_completion = robust_average([
+        (event, event.data["completion_ms"] / event.data["output_tokens"])
+        for event in events
+        if isinstance(event.data.get("completion_ms"), (int, float)) and event.data["completion_ms"] > 0
+        and isinstance(event.data.get("output_tokens"), int) and event.data["output_tokens"] > 0
+    ])
+    completion = robust_average([
+        (event, event.data["completion_ms"])
+        for event in events if isinstance(event.data.get("completion_ms"), (int, float)) and event.data["completion_ms"] > 0
+    ])
+    # Prefer output-normalized duration; raw completion is a weaker fallback for
+    # providers that do not report usage.
+    completion_value, completion_evidence = normalized_completion
+    normalized = completion_value is not None
+    if completion_value is None:
+        completion_value, completion_evidence = completion
+    return {
+        "first_output_ms": first_output[0],
+        "first_output_evidence": first_output[1],
+        "completion_value": completion_value,
+        "completion_evidence": completion_evidence,
+        "completion_normalized": normalized,
+    }
+
+
+def context_failure_ceiling(db, owner_id: str, model_id: str, current: datetime | None = None) -> int | None:
+    """Smallest recent request known to exceed an otherwise unknown window."""
+    current = current or now()
+    failures = [
+        event.data.get("required_tokens") for event in _events(db, owner_id, current)
+        if event.data.get("model_id") == model_id
+        and event.data.get("classification") == "context"
+        and isinstance(event.data.get("required_tokens"), int)
+        and event.data["required_tokens"] > 0
+    ]
+    return min(failures) if failures else None
 
 
 def _cooldowns(events, model_id: str, provider_id: str, scope: str, current: datetime):
@@ -156,16 +236,21 @@ def _cooldowns(events, model_id: str, provider_id: str, scope: str, current: dat
 
 
 def reliability(db, owner_id: str, model_id: str, provider_id: str, scope: str,
-                current: datetime | None = None) -> dict:
+                current: datetime | None = None, profile: str | None = None) -> dict:
     current = current or now()
     events = _events(db, owner_id, current)
     # Hierarchical, decayed evidence. Small direct samples are deliberately shrunk
     # toward broader model/provider evidence and a conservative beta prior.
+    def matches_profile(event):
+        return profile is None or event.data.get("profile") in {profile, None}
+
     groups = (
-        (4.0, [e for e in events if e.data.get("model_id") == model_id and e.data.get("provider_id") == provider_id and e.data.get("scope") == scope]),
-        (2.0, [e for e in events if e.data.get("model_id") == model_id]),
-        (1.0, [e for e in events if e.data.get("provider_id") == provider_id and e.data.get("scope") == scope]),
-        (0.5, [e for e in events if e.data.get("provider_id") == provider_id]),
+        (4.0, [e for e in events if e.data.get("model_id") == model_id and e.data.get("provider_id") == provider_id
+               and e.data.get("scope") == scope and matches_profile(e)]),
+        (2.0, [e for e in events if e.data.get("model_id") == model_id and matches_profile(e)]),
+        (1.0, [e for e in events if e.data.get("provider_id") == provider_id and e.data.get("scope") == scope
+               and matches_profile(e)]),
+        (0.5, [e for e in events if e.data.get("provider_id") == provider_id and matches_profile(e)]),
     )
     success, failure = 8.0, 1.0
     for multiplier, group in groups:

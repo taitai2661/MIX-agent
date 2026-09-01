@@ -31,6 +31,17 @@ def is_parallel_safe(tool):
     return bool(tool and tool.get("source") == "builtin" and tool.get("parallel_safe"))
 
 
+def output_tokens(usage):
+    """Read common provider usage shapes without retaining the full payload."""
+    if not isinstance(usage, dict):
+        return None
+    for key in ("output_tokens", "completion_tokens", "candidates_token_count"):
+        value = usage.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
 def activity_summary(tool_id, arguments):
     """Return the small, safe status payload shown in the conversation UI."""
     labels = {
@@ -430,7 +441,8 @@ async def drive(run_id):
                 update(run, steps=steps + 1)
                 db.commit()
                 response = None
-                emitted_output = False
+                provider_started_at = now()
+                first_output_at = None
                 model_settings = {
                     k: v for k, v in snapshot.get("model_settings", {}).items() if k != "_resolved_reasoning"
                 }
@@ -444,7 +456,8 @@ async def drive(run_id):
                             if event["kind"] == "response":
                                 response = event
                             else:
-                                emitted_output = True
+                                if event["kind"] == "text" and first_output_at is None:
+                                    first_output_at = now()
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
                 except Exception as exc:
@@ -460,10 +473,12 @@ async def drive(run_id):
                             db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
                             usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))),
                             "failure", classification, retry_until,
+                            profile=run.data.get("auto_selection", {}).get("profile"),
+                            required_tokens=run.data.get("auto_selection", {}).get("required_tokens"),
                         )
                     rerouted = (
                         await reroute_after_provider_error(db, run, run.request_key, exc, classification, retry_until)
-                        if run.data.get("requested_model_id") == "auto" and retryable
+                        if run.data.get("requested_model_id") == "auto" and retryable and first_output_at is None
                         else None
                     )
                     if not rerouted:
@@ -473,9 +488,16 @@ async def drive(run_id):
                 if response is None:
                     raise RuntimeError("Incomplete model response")
                 if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
+                    completed_at = now()
+                    first_output_at = first_output_at or completed_at
                     record_reliability(
                         db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
                         usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))), "success",
+                        first_output_ms=max(1, round((first_output_at - provider_started_at).total_seconds() * 1000)),
+                        completion_ms=max(1, round((completed_at - provider_started_at).total_seconds() * 1000)),
+                        output_tokens=output_tokens(response.get("usage", {})),
+                        profile=run.data.get("auto_selection", {}).get("profile"),
+                        required_tokens=run.data.get("auto_selection", {}).get("required_tokens"),
                     )
                 message = response["message"]
                 update(run, history=[*history, message])
