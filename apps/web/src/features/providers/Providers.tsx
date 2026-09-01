@@ -47,6 +47,8 @@ export function Providers() {
           base_url: f.get("base_url"),
           api_key: f.get("api_key") || null,
           allow_private: f.has("allow_private"),
+          rate_limit_rpm: Number(f.get("rate_limit_rpm") || 0),
+          rate_limit_period: f.get("rate_limit_period") || "minute",
           extra_config: Object.fromEntries((selectedPreset?.extra_config_schema || []).map((field) => [
             field.key, f.get("extra_config." + field.key) || "",
           ])),
@@ -207,6 +209,19 @@ export function Providers() {
                 defaultValue={editing?.data.extra_config?.[field.key] || ""} />
             </Field>
           ))}
+          <details className="provider-advanced">
+            <summary>詳細設定</summary>
+            <Field label="要求回数の上限" hint="Providerへの要求を制限します。0は無制限です。">
+              <div className="rate-limit-input">
+                <input name="rate_limit_rpm" type="number" min="0" max="10000" step="1"
+                  defaultValue={editing?.data.rate_limit_rpm || 0} />
+                <select name="rate_limit_period" defaultValue={editing?.data.rate_limit_period || "minute"}>
+                  <option value="minute">回 / 分</option>
+                  <option value="second">回 / 秒</option>
+                </select>
+              </div>
+            </Field>
+          </details>
           <label className="check">
             <input
               type="checkbox"

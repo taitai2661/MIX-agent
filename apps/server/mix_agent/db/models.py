@@ -75,6 +75,10 @@ class Conversation(Record, Base):
     __tablename__ = "conversations"
 
 
+class ConversationFolder(Record, Base):
+    __tablename__ = "conversation_folders"
+
+
 class Message(Record, Base):
     __tablename__ = "messages"
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)

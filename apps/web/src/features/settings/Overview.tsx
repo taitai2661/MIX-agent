@@ -1,7 +1,7 @@
 import { api } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, BarChart3, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const cards = [
@@ -13,6 +13,7 @@ const cards = [
   ["mcp", "MCP", "外部サービスとの接続", Globe],
   ["account", "アカウント・安全性", "認証とログイン履歴", ShieldCheck],
   ["backups", "バックアップ", "データを安全に保管", Database],
+  ["statistics", "統計", "モデルの成功率と失敗傾向", BarChart3],
 ] as const;
 
 export function SettingsOverview() {
@@ -28,6 +29,7 @@ export function SettingsOverview() {
     mcp: `${mcp.data?.filter((row) => row.data.enabled).length || 0} 件接続中`,
     account: "変更・確認",
     backups: "作成・復元",
+    statistics: "30日間",
   };
   const defaultModel = models.data?.find((row) => row.id === settings.data?.data.default_model_id);
   return <div className="settings-overview">

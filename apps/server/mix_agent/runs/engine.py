@@ -1,12 +1,13 @@
 import asyncio
 import json
+from collections import defaultdict, deque
 from datetime import timedelta, timezone
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
 from mix_agent.auth.security import read_secret
-from mix_agent.db.models import Approval, Event, Message, Provider, Run, ToolCall, now
+from mix_agent.db.models import Approval, Conversation, Event, Message, Provider, Run, ToolCall, now
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import (
     Adapter,
@@ -24,6 +25,29 @@ from mix_agent.tools.registry import call_scope, fingerprint, permission, regist
 TASKS = {}
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 PARALLEL_TOOL_LIMIT = 4
+SAME_TOOL_ARGUMENT_LIMIT = 3
+_PROVIDER_RATE_LOCK = asyncio.Lock()
+_PROVIDER_REQUESTS = defaultdict(deque)
+
+
+async def wait_for_provider_slot(provider):
+    """Apply the optional per-process provider requests/minute limit."""
+    limit = provider.get("rate_limit_rpm", 0)
+    if not isinstance(limit, int) or limit <= 0:
+        return
+    period = 1 if provider.get("rate_limit_period", "minute") == "second" else 60
+    key = provider.get("id") or provider.get("base_url") or provider.get("kind", "unknown")
+    while True:
+        async with _PROVIDER_RATE_LOCK:
+            current = asyncio.get_running_loop().time()
+            requests = _PROVIDER_REQUESTS[key]
+            while requests and current - requests[0] >= period:
+                requests.popleft()
+            if len(requests) < limit:
+                requests.append(current)
+                return
+            delay = max(0.05, period - (current - requests[0]))
+        await asyncio.sleep(delay)
 
 
 def is_parallel_safe(tool):
@@ -97,6 +121,86 @@ def activity_result(tool_id, result):
         "sources": sources[:6],
         "remaining": max(0, len(sources) - 6),
     }
+
+
+def model_tool_result(result):
+    """Return a safe, explicit outcome envelope for the next model turn."""
+    if isinstance(result, dict) and result.get("error"):
+        error_type = result.get("type")
+        code = result.get("code")
+        error = {"code": code if isinstance(code, str) and code.isidentifier() else "tool_failed"}
+        if isinstance(error_type, str) and error_type.isidentifier():
+            error["type"] = error_type
+        messages = {
+            "tool_loop_detected": "The same tool and arguments have already been attempted three times. Choose a different action or answer using the available results.",
+            "tool_call_limit_reached": "The tool-call limit for this run has been reached. Answer using the available information.",
+            "tool_denied": "The tool could not run because permission was not granted.",
+            "tool_definition_changed": "The tool definition changed before execution. Review it and make a new call if still needed.",
+            "tool_timeout": "The tool did not finish before its time limit.",
+        }
+        error["message"] = messages.get(error["code"], "The tool execution failed. Choose an appropriate next action or answer from the information already available.")
+        return {
+            "status": "failed",
+            "error": error,
+            "next_step": "Choose an appropriate next action or answer from the information already available.",
+        }
+    return {"status": "succeeded", "result": result}
+
+
+def tool_attempt_key(tool_id, arguments):
+    """Use stable JSON so logically identical object arguments share a retry budget."""
+    try:
+        return tool_id, json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return tool_id, repr(arguments)
+
+
+def completed_tool_attempts(db, run_id):
+    """Return executed attempts only; pending calls must not consume the retry budget."""
+    attempts = defaultdict(int)
+    calls = db.scalars(select(ToolCall).where(ToolCall.run_id == run_id, ToolCall.status == "completed"))
+    for call in calls:
+        if "result" in call.data:
+            attempts[tool_attempt_key(call.data["tool_id"], call.data.get("arguments", {}))] += 1
+    return attempts
+
+
+def is_user_facing_answer(content):
+    """Reject blank and tool-payload-only model turns as final chat answers."""
+    if not isinstance(content, str) or not content.strip():
+        return False
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return True
+    return not isinstance(payload, (dict, list))
+
+
+def tool_attempts_for_fallback(history):
+    """Summarize attempted tools without exposing their arguments or result bodies."""
+    attempts = []
+    for message in history:
+        if message.get("role") != "tool":
+            continue
+        try:
+            result = json.loads(message.get("content", "{}"))
+        except (TypeError, ValueError):
+            result = {}
+        state = "失敗" if isinstance(result, dict) and (
+            result.get("error") or result.get("status") == "failed"
+        ) else "完了"
+        name = message.get("name")
+        if isinstance(name, str) and name:
+            attempts.append(f"{name}（{state}）")
+    return "、".join(attempts[-6:]) or "利用可能な情報の確認"
+
+
+def answer_fallback(history):
+    return (
+        "回答を作成するために " + tool_attempts_for_fallback(history) + " を試しましたが、"
+        "ユーザー向けの本文を生成できませんでした。取得済みの情報だけでは確実な回答にできないため、"
+        "知りたい条件や対象をもう少し具体的にして、もう一度依頼してください。"
+    )
 
 
 def emit(db, run_id, kind, data):
@@ -234,7 +338,7 @@ def complete_tool_call(db, run, call, current, result):
                 "role": "tool",
                 "call_id": call.data["provider_call_id"],
                 "name": call.data["name"],
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": json.dumps(model_tool_result(result), ensure_ascii=False),
             },
         ],
     )
@@ -275,7 +379,11 @@ async def execute_prepared_calls(db, run, snapshot, prepared):
             raise
         except Exception as exc:
             # Do not leak SDK headers, secrets, or remote response bodies.
-            return {"error": "Tool failed", "type": type(exc).__name__}
+            return {
+                "error": "Tool failed",
+                "code": "tool_timeout" if isinstance(exc, TimeoutError) else "tool_failed",
+                "type": type(exc).__name__,
+            }
 
     results = await asyncio.gather(*(one(call, current) for call, current in prepared))
     for (call, current), result in zip(prepared, results):
@@ -312,47 +420,53 @@ async def drive(run_id):
                 )
                 prepared = []
                 waiting_for_approval = False
+                attempt_counts = completed_tool_attempts(db, run.id)
                 for call in calls:
                     current = registry(db, run.owner_id).get(call.data["tool_id"])
                     result = None
                     if not current or fingerprint(current) != call.data["tool_version"]:
-                        result = {"error": "Tool definition changed; execute a new call after review"}
+                        result = {"error": "Tool definition changed", "code": "tool_definition_changed", "type": "tool_definition_changed"}
                     else:
-                        try:
-                            decision = permission(db, run, current, call.data["arguments"])
-                        except Exception:
-                            decision = "deny"
-                        if decision == "deny":
-                            result = {"error": "Tool is denied by policy"}
-                        elif decision == "ask":
-                            approval = db.scalar(select(Approval).where(Approval.tool_call_id == call.id))
-                            if not approval:
-                                approval = Approval(
-                                    owner_id=run.owner_id,
-                                    run_id=run.id,
-                                    tool_call_id=call.id,
-                                    expires=now() + timedelta(hours=24),
-                                    data={
-                                        "tool": current["model_name"],
-                                        "arguments": call.data["arguments"],
-                                        "tool_version": fingerprint(current),
-                                        "scope": call_scope(current, call.data["arguments"]),
-                                        "risk": current["risk"],
-                                    },
-                                )
-                                db.add(approval)
-                                db.flush()
-                                emit(db, run.id, "approval", {"id": approval.id, **approval.data})
-                            if (
-                                approval.expires.replace(tzinfo=timezone.utc) < now()
-                                and approval.status == "pending"
-                            ):
-                                approval.status = "expired"
-                            if approval.status == "pending":
-                                call.status = "waiting_approval"
-                                waiting_for_approval = True
-                            if approval.status not in ("once", "always"):
-                                result = {"error": "User denied the tool or approval expired"}
+                        key = tool_attempt_key(current["id"], call.data["arguments"])
+                        if attempt_counts[key] >= SAME_TOOL_ARGUMENT_LIMIT:
+                            result = {"error": "Tool loop detected", "code": "tool_loop_detected", "type": "tool_loop_detected"}
+                        else:
+                            attempt_counts[key] += 1
+                            try:
+                                decision = permission(db, run, current, call.data["arguments"])
+                            except Exception:
+                                decision = "deny"
+                            if decision == "deny":
+                                result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
+                            elif decision == "ask":
+                                approval = db.scalar(select(Approval).where(Approval.tool_call_id == call.id))
+                                if not approval:
+                                    approval = Approval(
+                                        owner_id=run.owner_id,
+                                        run_id=run.id,
+                                        tool_call_id=call.id,
+                                        expires=now() + timedelta(hours=24),
+                                        data={
+                                            "tool": current["model_name"],
+                                            "arguments": call.data["arguments"],
+                                            "tool_version": fingerprint(current),
+                                            "scope": call_scope(current, call.data["arguments"]),
+                                            "risk": current["risk"],
+                                        },
+                                    )
+                                    db.add(approval)
+                                    db.flush()
+                                    emit(db, run.id, "approval", {"id": approval.id, **approval.data})
+                                if (
+                                    approval.expires.replace(tzinfo=timezone.utc) < now()
+                                    and approval.status == "pending"
+                                ):
+                                    approval.status = "expired"
+                                if approval.status == "pending":
+                                    call.status = "waiting_approval"
+                                    waiting_for_approval = True
+                                if approval.status not in ("once", "always"):
+                                    result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
                     prepared.append((call, current, result))
                 if waiting_for_approval:
                     run.status = "waiting_approval"
@@ -378,30 +492,21 @@ async def drive(run_id):
                     await execute_prepared_calls(db, run, snapshot, batch)
                 mode = snapshot["mode"]
                 steps = run.data.get("steps", 0)
-                maximum = snapshot.get("max_steps", 20) if mode == "agent" else (3 if mode == "chat" else 5)
                 count = run.data.get("tool_count", 0)
-                call_limit = snapshot.get("max_tool_calls", 50) if mode == "agent" else 8
-                if steps >= maximum or count >= call_limit:
-                    finish(
-                        db,
-                        run,
-                        "interrupted",
-                        "実行ステップ／Tool回数の上限に到達しました。途中成果を確認してください。"
-                        + ("長い作業にはAgentモードを利用してください。" if mode != "agent" else ""),
-                    )
-                    return
+                call_limit = snapshot.get("max_tool_calls", 50 if mode == "agent" else 8)
                 provider = snapshot["provider"]
                 # Credentials are resolved at use time, never copied into run snapshots.
                 key = read_secret(db, provider.get("secret_id"))
                 available = [t for t in snapshot["tools"] if t["id"] in registry(db, run.owner_id)]
-                if mode != "agent" and steps == maximum - 1:
+                tool_limit_reached = count >= call_limit
+                if tool_limit_reached:
                     available = []
                 history = run.data["history"]
                 # Compact only previous turns. Current-turn tool calls and signed native blocks stay intact.
                 context_size = sum(len(m.get("content", "")) for m in history)
                 if context_size > snapshot.get("context_char_limit", 180000):
                     boundary = max((i for i, m in enumerate(history) if m["role"] == "user"), default=1)
-                    if boundary <= 2 or steps + 1 >= maximum:
+                    if boundary <= 2:
                         finish(
                             db,
                             run,
@@ -411,7 +516,6 @@ async def drive(run_id):
                         return
                     summary = ""
                     emit(db, run.id, "context_summary", {"status": "started"})
-                    update(run, steps=steps + 1)
                     db.commit()
                     summary_input = [
                         {
@@ -434,7 +538,6 @@ async def drive(run_id):
                         *history[boundary:],
                     ]
                     update(run, history=history)
-                    steps += 1
                     emit(db, run.id, "context_summary", {"status": "completed", "summary": summary})
                     db.commit()
                 emit(db, run.id, "model_started", {"step": steps + 1, "mode": mode})
@@ -450,8 +553,12 @@ async def drive(run_id):
                     model_settings["_resolved_reasoning"] = snapshot["reasoning"]
                 try:
                     async with asyncio.timeout(max(1, snapshot.get("max_seconds", 900) - elapsed)):
+                        await wait_for_provider_slot({**provider, "id": snapshot.get("provider_record_id")})
                         async for event in Adapter(provider, key).stream(
-                            snapshot["model_id"], history, available, mode, model_settings
+                            snapshot["model_id"], (
+                                [*history, {"role": "user", "content": "The tool-call limit for this run has been reached. Do not request more tools; answer the original request using the available information."}]
+                                if tool_limit_reached else history
+                            ), available, mode, model_settings
                         ):
                             if event["kind"] == "response":
                                 response = event
@@ -501,6 +608,57 @@ async def drive(run_id):
                     )
                 message = response["message"]
                 update(run, history=[*history, message])
+                tool_calls = response.get("tool_calls", [])
+                if tool_calls:
+                    by_name = {t["model_name"]: t for t in available}
+                    remaining_calls = max(0, call_limit - count)
+                    for index, c in enumerate(tool_calls):
+                        tool = by_name.get(c["name"])
+                        if not tool:
+                            raise ValueError("Model requested an unavailable tool")
+                        args = json.loads(c["arguments"]) if isinstance(c["arguments"], str) else c["arguments"]
+                        call = ToolCall(
+                            owner_id=run.owner_id,
+                            run_id=run.id,
+                            data={
+                                "tool_id": tool["id"],
+                                "tool_version": fingerprint(tool),
+                                "provider_call_id": c["id"],
+                                "name": c["name"],
+                                "arguments": args,
+                                # Keep presentation metadata stable even when a Tool is edited later.
+                                "activity": activity_summary(tool["id"], args),
+                                "risk": tool.get("risk", "external"),
+                            },
+                        )
+                        db.add(call)
+                        db.flush()
+                        if index >= remaining_calls:
+                            complete_tool_call(
+                                db, run, call, tool,
+                                {"error": "Tool call limit reached", "code": "tool_call_limit_reached", "type": "tool_call_limit_reached"},
+                            )
+                    update(run, tool_count=min(call_limit, count + len(tool_calls)))
+                    db.commit()
+                    continue
+                if not is_user_facing_answer(message["content"]):
+                    repairs = run.data.get("answer_repair_attempts", 0)
+                    if repairs < 1:
+                        update(
+                            run,
+                            answer_repair_attempts=repairs + 1,
+                            history=[
+                                *run.data["history"],
+                                {
+                                    "role": "user",
+                                    "content": "The previous turn did not provide a user-facing answer. Now either answer the original request using the available tool results, ask a necessary clarifying question, or call another useful tool. Do not return raw JSON, a URL alone, or an empty response.",
+                                },
+                            ],
+                        )
+                        db.commit()
+                        continue
+                    message = {"role": "assistant", "content": answer_fallback(run.data["history"])}
+                    update(run, history=[*history, message])
                 message_data = {
                     "role": "assistant",
                     "content": message["content"],
@@ -513,46 +671,13 @@ async def drive(run_id):
                         "model_record_id": snapshot["model_record_id"],
                         "model_id": snapshot["model_id"],
                     }
-                db.add(
-                    Message(
-                        owner_id=run.owner_id,
-                        conversation_id=run.conversation_id,
-                        data=message_data,
-                    )
-                )
-                emit(
-                    db, run.id, "message", {"content": message["content"], "usage": response.get("usage", {})}
-                )
-                tool_calls = response.get("tool_calls", [])
-                if not tool_calls:
-                    finish(db, run, "completed")
-                    return
-                if len(tool_calls) + count > call_limit:
-                    finish(db, run, "interrupted", "Tool回数の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。")
-                    return
-                by_name = {t["model_name"]: t for t in available}
-                for c in tool_calls:
-                    tool = by_name.get(c["name"])
-                    if not tool:
-                        raise ValueError("Model requested an unavailable tool")
-                    args = json.loads(c["arguments"]) if isinstance(c["arguments"], str) else c["arguments"]
-                    call = ToolCall(
-                        owner_id=run.owner_id,
-                        run_id=run.id,
-                        data={
-                            "tool_id": tool["id"],
-                            "tool_version": fingerprint(tool),
-                            "provider_call_id": c["id"],
-                            "name": c["name"],
-                            "arguments": args,
-                            # Keep presentation metadata stable even when a Tool is edited later.
-                            "activity": activity_summary(tool["id"], args),
-                            "risk": tool.get("risk", "external"),
-                        },
-                    )
-                    db.add(call)
-                update(run, tool_count=count + len(tool_calls))
-                db.commit()
+                db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data=message_data))
+                conversation = db.get(Conversation, run.conversation_id)
+                if conversation:
+                    conversation.data = {**conversation.data, "last_message_at": now().isoformat()}
+                emit(db, run.id, "message", {"content": message["content"], "usage": response.get("usage", {})})
+                finish(db, run, "completed")
+                return
     except asyncio.CancelledError:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
@@ -588,6 +713,8 @@ async def scheduler():
             await asyncio.sleep(2)
             continue
         with SessionLocal() as db:
+            from mix_agent.api.routes import purge_expired_conversations
+            purge_expired_conversations(db)
             for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
                 if run.status == "queued":
                     launch(run.id)

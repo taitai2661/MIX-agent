@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Paperclip,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Square,
   ThumbsDown,
@@ -40,7 +41,6 @@ import {
 
 type ChatModel = Row & { data: { capabilities?: Record<string, boolean | null>; overrides?: Record<string, boolean | null>; reasoning_control?: boolean; tool_probe?: { status?: string } } };
 type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string; tool_ids?: string[] } };
-type Settings = Row & { data: { default_model_id?: string } };
 type Feedback = components["schemas"]["FeedbackInput"]["value"];
 const modes = ["chat", "thinking", "agent"] as const satisfies readonly ChatMode[];
 
@@ -55,11 +55,7 @@ export function Chat() {
       queryFn: () => api("/tools"),
     }),
     permissionRules = useRows<PermissionRule>("/permission-rules");
-  const setting = useQuery<Settings>({
-    queryKey: ["/settings"],
-    queryFn: () => api("/settings"),
-  });
-  const [model, setModel] = useState(""),
+  const [model, setModel] = useState("auto"),
     [mode, setMode] = useState<ChatMode>("chat"),
     [agent, setAgent] = useState(""),
     [text, setText] = useState(""),
@@ -97,10 +93,6 @@ export function Chat() {
     enabled: !!id,
     refetchInterval: run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval" ? 1500 : false,
   });
-  useEffect(() => {
-    if (!model && setting.data?.data.default_model_id)
-      setModel(setting.data.data.default_model_id);
-  }, [setting.data, model]);
   useEffect(() => {
     restoredConversation.current = undefined;
     setRunId("");
@@ -228,6 +220,9 @@ export function Chat() {
     }
   }
   const selected = models.data?.find((x) => x.id === model);
+  const selectedAgent = agents.data?.find((a) => a.id === agent);
+  const modeLabel = mode === "chat" ? "通常" : mode === "thinking" ? "深く考える" : "長い作業";
+  const modelLabel = model === "auto" ? "Auto" : selected?.data.name || selected?.data.model_id || "モデルを選択";
   const permissionCounts = (tools.data || []).reduce(
     (counts: Record<string, number>, tool) => {
       const rule = permissionRules.data
@@ -249,16 +244,6 @@ export function Chat() {
   }
   return (
     <div className="chat-page">
-      <div className="chat-toolbar">
-        <ModelPicker models={models.data} value={model} onChange={setModel} />
-        <span className="subtle">
-          {selected || model === "auto" ? "接続済みの設定" : "設定からProviderを追加してください"}
-        </span>
-        <span className="permission-summary" title="現在のAgentに適用されるTool権限">
-          <ShieldCheck size={14} />
-          権限: 許可 {permissionCounts.allow || 0} · 確認 {permissionCounts.ask || 0} · 拒否 {permissionCounts.deny || 0}
-        </span>
-      </div>
       <div className="chat-body">
         <div className="conversation">
           {!id && !history.data?.messages?.length ? (
@@ -266,11 +251,10 @@ export function Chat() {
               <div className="welcome-icon">
                 <Sparkles size={30} />
               </div>
-              <p className="eyebrow">A LITTLE HELP. MORE POSSIBILITIES.</p>
-              <h1>今日は、何を進めましょう？</h1>
+              <p className="eyebrow">MIX</p>
+              <h1>何をお手伝いできますか？</h1>
               <div className="welcome-note">
-                <ShieldCheck size={14} />{" "}
-                Toolsは設定された権限の範囲で動作します
+                <ShieldCheck size={14} /> 必要なときだけ、確認のうえで作業を進めます
               </div>
             </section>
           ) : (
@@ -377,11 +361,6 @@ export function Chat() {
             <ErrorBox
               error={error || history.error || models.error || tools.error || permissionRules.error}
             />
-            <ModeStatus
-              mode={mode}
-              model={selected}
-              agent={agents.data?.find((a) => a.id === agent)}
-            />
             <form className="composer" onSubmit={send}>
               {attachments.length > 0 && (
                 <div className="attachments">
@@ -419,46 +398,45 @@ export function Chat() {
                 }}
               />
               <div className="composer-bottom">
-                <div className="mode-switch">
-                  {modes.map((m) => (
-                    <button
-                      type="button"
-                      key={m}
-                      className={mode === m ? "selected" : ""}
-                      aria-pressed={mode === m}
-                      onClick={() => setMode(m)}
-                    >
-                      {m === "chat" ? (
-                        <MessageSquare size={13} />
-                      ) : m === "thinking" ? (
-                        <Brain size={13} />
-                      ) : (
-                        <Bot size={13} />
-                      )}{" "}
-                      {m[0].toUpperCase() + m.slice(1)}
-                    </button>
-                  ))}
-                </div>
-                <select
-                  className="agent-select"
-                  aria-label="Agent"
-                  value={agent}
-                  onChange={(e) => {
-                    setAgent(e.target.value);
-                    const a = agents.data?.find((x) => x.id === e.target.value);
-                    if (a) {
-                      setMode(a.data.mode);
-                      if (a.data.model_id) setModel(a.data.model_id);
-                    }
-                  }}
-                >
-                  <option value="">標準</option>
-                  {agents.data?.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.data.name}
-                    </option>
-                  ))}
-                </select>
+                <details className="assistant-settings">
+                  <summary><SlidersHorizontal size={15} /> {modelLabel} · {modeLabel}</summary>
+                  <div className="assistant-settings-panel">
+                    <div className="assistant-setting-row">
+                      <span>モデル</span>
+                      <ModelPicker models={models.data} value={model} onChange={setModel} />
+                    </div>
+                    <div className="assistant-setting-row mode-row">
+                      <span>応答方法</span>
+                      <div className="mode-switch">
+                        {modes.map((m) => (
+                          <button type="button" key={m} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => setMode(m)}>
+                            {m === "chat" ? <MessageSquare size={13} /> : m === "thinking" ? <Brain size={13} /> : <Bot size={13} />}
+                            {m === "chat" ? "通常" : m === "thinking" ? "深く考える" : "長い作業"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="assistant-setting-row">
+                      <span>アシスタント</span>
+                      <select className="agent-select" value={agent} onChange={(e) => {
+                        setAgent(e.target.value);
+                        const next = agents.data?.find((x) => x.id === e.target.value);
+                        if (next) {
+                          setMode(next.data.mode);
+                          if (next.data.model_id) setModel(next.data.model_id);
+                        }
+                      }}>
+                        <option value="">標準</option>
+                        {agents.data?.map((a) => <option key={a.id} value={a.id}>{a.data.name}</option>)}
+                      </select>
+                    </label>
+                    <div className="assistant-permissions" title="現在のアシスタントに適用されるTool権限">
+                      <ShieldCheck size={14} />
+                      <span>ツール権限: 許可 {permissionCounts.allow || 0} · 確認 {permissionCounts.ask || 0} · 拒否 {permissionCounts.deny || 0}</span>
+                    </div>
+                    <ModeStatus mode={mode} model={selected} agent={selectedAgent} />
+                  </div>
+                </details>
                 <div className="composer-actions">
                   <button
                     type="button"
@@ -494,7 +472,7 @@ export function Chat() {
                       className="send"
                       aria-label="送信"
                       disabled={
-                        busy || !model || (!text.trim() && !attachments.length)
+                        busy || (!text.trim() && !attachments.length)
                       }
                     >
                       <ArrowUp size={19} />

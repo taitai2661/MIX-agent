@@ -12,6 +12,9 @@ import {
   Plus,
   Settings2,
   ChevronsLeft,
+  Archive,
+  Folder,
+  Trash2,
   X,
 } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
@@ -22,6 +25,7 @@ import { ThemeController } from "@/components/theme";
 import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
 import { Chat } from "@/features/chat/Chat";
+import { Conversations } from "@/features/chat/Conversations";
 import { Memories } from "@/features/memory/Memories";
 import { Skills } from "@/features/skills/Skills";
 import { Settings } from "@/features/settings/Settings";
@@ -61,7 +65,7 @@ export function App() {
   }, []);
   const conversations = useQuery<Row[]>({
     queryKey: ["/conversations"],
-    queryFn: () => api("/conversations"),
+    queryFn: () => api("/conversations?state=active"),
     enabled: !!user,
   });
   async function authenticated(value: any) {
@@ -139,9 +143,9 @@ export function App() {
             {ja.skills}
           </NavLink>
         </nav>
-        <div className="sidebar-label">最近のチャット</div>
+        <div className="sidebar-label">ピン留め</div>
         <div className="history">
-          {conversations.data?.map((c) => (
+          {conversations.data?.filter((c) => c.data.pinned).map((c) => (
             <NavLink
               onClick={() => setSidebar(false)}
               key={c.id}
@@ -150,9 +154,11 @@ export function App() {
               {c.data.title}
             </NavLink>
           ))}
-          {!conversations.data?.length && (
-            <small>会話はここに保存されます</small>
-          )}
+          {!conversations.data?.some((c) => c.data.pinned) && <small>ピン留めした会話が表示されます</small>}
+          <div className="sidebar-label compact"><Folder size={12} />最近のチャット</div>
+          {conversations.data?.filter((c) => !c.data.pinned).map((c) => <NavLink onClick={() => setSidebar(false)} key={c.id} to={"/chat/" + c.id}>{c.data.title}</NavLink>)}
+          <NavLink className="conversation-manage-link" to="/history"><Archive size={15} />会話を管理</NavLink>
+          <NavLink className="conversation-manage-link" to="/history/trash"><Trash2 size={15} />ごみ箱</NavLink>
         </div>
         <div className="sidebar-bottom">
           <div className="local-badge">
@@ -199,6 +205,8 @@ export function App() {
         <Routes>
           <Route path="/" element={<Chat />} />
           <Route path="/chat/:id" element={<Chat />} />
+          <Route path="/history" element={<Conversations />} />
+          <Route path="/history/:state" element={<Conversations />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/memory" element={<Memories />} />
           <Route path="/skills" element={<Skills />} />

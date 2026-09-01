@@ -5,6 +5,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  BarChart3,
 } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
@@ -17,6 +18,7 @@ import { General } from "@/features/settings/General";
 import { Tools } from "@/features/tools/Tools";
 import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSettings";
 import { SettingsOverview } from "@/features/settings/Overview";
+import { Statistics } from "@/features/settings/Statistics";
 
 export function Settings({
   user,
@@ -45,6 +47,7 @@ export function Settings({
           </NavLink>
         ))}
         <p className="settings-nav-label">接続と安全性</p>
+        <NavLink to="/settings/statistics"><BarChart3 size={17} /> 統計</NavLink>
         {[
           ["browser", "Browser", Globe],
           ["web-search", "Web検索", Globe],
@@ -72,6 +75,7 @@ export function Settings({
           <Route path="general" element={<General />} />
           <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />
           <Route path="backups" element={<Backups />} />
+          <Route path="statistics" element={<Statistics />} />
         </Routes>
       </main>
     </div>

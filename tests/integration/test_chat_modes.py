@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 from mix_agent.api import routes
-from mix_agent.db.models import Model, Provider, Run, User
+from mix_agent.db.models import Message, Model, Provider, Run, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.tools.registry import BUILTINS
@@ -39,7 +39,7 @@ def send(signed, monkeypatch, model_id, mode="chat", **kwargs):
 
 
 def test_activity_summary_exposes_only_safe_search_metadata():
-    from mix_agent.runs.engine import activity_result, activity_summary
+    from mix_agent.runs.engine import activity_result, activity_summary, is_user_facing_answer
 
     assert activity_summary("web_search", {"query": "  AI news  "}) == {
         "icon": "search",
@@ -61,6 +61,9 @@ def test_activity_summary_exposes_only_safe_search_metadata():
         "sources": [{"host": "example.com", "url": "https://example.com/news"}],
         "remaining": 0,
     }
+    assert not is_user_facing_answer('{"url":"https://example.com"}')
+    assert not is_user_facing_answer('[{"title":"search result"}]')
+    assert is_user_facing_answer("検索結果を要約しました。")
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking"])
@@ -247,10 +250,8 @@ def test_agent_preserves_legacy_policy():
     }
 
 
-@pytest.mark.parametrize("mode,limit", [("chat", 3), ("thinking", 5)])
-async def test_run_uses_resolved_policy_and_keeps_step_limit(
-    signed, monkeypatch, mode, limit
-):
+@pytest.mark.parametrize("mode", ["chat", "thinking"])
+async def test_run_uses_resolved_policy_without_enforcing_step_limit(signed, monkeypatch, mode):
     from mix_agent.runs import engine
 
     mid = create_model(caps={"reasoning": True, "tools": True})
@@ -269,7 +270,7 @@ async def test_run_uses_resolved_policy_and_keeps_step_limit(
                 "kind": "response",
                 "message": {
                     "role": "assistant",
-                    "content": "done" if not tools else "",
+                    "content": "done" if len(requests) == 3 else "",
                 },
                 "tool_calls": [
                     {
@@ -278,7 +279,7 @@ async def test_run_uses_resolved_policy_and_keeps_step_limit(
                         "arguments": {"query": "test"},
                     }
                 ]
-                if tools
+                if tools and len(requests) < 3
                 else [],
             }
 
@@ -287,9 +288,13 @@ async def test_run_uses_resolved_policy_and_keeps_step_limit(
 
     monkeypatch.setattr(engine, "Adapter", RepeatedSearch)
     monkeypatch.setattr(engine, "execute", execute)
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        run.data = {**run.data, "snapshot": {**run.data["snapshot"], "max_steps": 1}}
+        db.commit()
     await engine.drive(run_id)
-    assert len(requests) == limit
-    assert requests[0][0] and not requests[-1][0]
+    assert len(requests) == 3
+    assert all(tools for tools, _ in requests)
     assert all(
         s["_resolved_reasoning"]["policy"] == ("auto" if mode == "chat" else "required")
         for _, s in requests
@@ -333,7 +338,8 @@ async def test_tool_failure_is_reported_back_to_model(signed, monkeypatch, mode)
 
         async def stream(self, model, history, tools, actual_mode, settings):
             if history[-1]["role"] == "tool":
-                assert "Tool failed" in history[-1]["content"]
+                assert '"status": "failed"' in history[-1]["content"]
+                assert '"code": "tool_failed"' in history[-1]["content"]
                 assert "secret-example" not in history[-1]["content"]
                 yield {
                     "kind": "response",
@@ -361,6 +367,172 @@ async def test_tool_failure_is_reported_back_to_model(signed, monkeypatch, mode)
     await engine.drive(run_id)
     with SessionLocal() as db:
         assert db.get(Run, run_id).status == "completed"
+
+
+@pytest.mark.parametrize("mode", ["chat", "thinking"])
+async def test_tool_failure_can_lead_to_another_tool_then_a_user_answer(signed, monkeypatch, mode):
+    """Tool failures remain model-visible, but intermediate turns never become chat messages."""
+    from mix_agent.runs import engine
+
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    response = send(signed, monkeypatch, mid, mode)
+    run_id = response.json()["run_id"]
+    calls = []
+
+    class AdaptiveAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, actual_mode, settings):
+            calls.append(history)
+            if len(calls) == 1:
+                yield {"kind": "response", "message": {"role": "assistant", "content": "検索します"}, "tool_calls": [{"id": "first", "name": "web_search", "arguments": {"query": "test"}}]}
+            elif len(calls) == 2:
+                tool = history[-1]
+                assert '"status": "failed"' in tool["content"]
+                assert "secret-example" not in tool["content"]
+                yield {"kind": "response", "message": {"role": "assistant", "content": ""}, "tool_calls": [{"id": "second", "name": "web_search", "arguments": {"query": "alternative"}}]}
+            else:
+                yield {"kind": "response", "message": {"role": "assistant", "content": "代替の情報を確認できました。"}, "tool_calls": []}
+
+    async def execute(*args):
+        if len(calls) == 1:
+            raise RuntimeError("secret-example")
+        return {"results": [{"title": "Alternative"}]}
+
+    monkeypatch.setattr(engine, "Adapter", AdaptiveAdapter)
+    monkeypatch.setattr(engine, "execute", execute)
+    await engine.drive(run_id)
+    with SessionLocal() as db:
+        messages = list(db.scalars(select(Message).where(Message.conversation_id == db.get(Run, run_id).conversation_id)))
+        assert [message.data["content"] for message in messages] == ["test", "代替の情報を確認できました。"]
+
+
+@pytest.mark.parametrize("mode", ["chat", "thinking"])
+async def test_same_tool_and_arguments_are_blocked_after_three_attempts(signed, monkeypatch, mode):
+    from mix_agent.runs import engine
+
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    run_id = send(signed, monkeypatch, mid, mode).json()["run_id"]
+    attempts = 0
+
+    class RepeatingAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, actual_mode, settings):
+            nonlocal attempts
+            if history[-1]["role"] == "tool" and '"code": "tool_loop_detected"' in history[-1]["content"]:
+                yield {"kind": "response", "message": {"role": "assistant", "content": "同じ検索はこれ以上繰り返さず、ここまでの結果を案内します。"}, "tool_calls": []}
+                return
+            attempts += 1
+            yield {"kind": "response", "message": {"role": "assistant", "content": ""}, "tool_calls": [{"id": str(attempts), "name": "web_search", "arguments": {"query": "same"}}]}
+
+    executions = []
+
+    async def execute(*args):
+        executions.append(args[-1])
+        return {"results": []}
+
+    monkeypatch.setattr(engine, "Adapter", RepeatingAdapter)
+    monkeypatch.setattr(engine, "execute", execute)
+    await engine.drive(run_id)
+    assert len(executions) == 3
+    with SessionLocal() as db:
+        history = db.get(Run, run_id).data["history"]
+        assert any('"code": "tool_loop_detected"' in item.get("content", "") for item in history)
+        assert db.get(Run, run_id).status == "completed"
+
+
+@pytest.mark.parametrize("mode", ["chat", "thinking"])
+async def test_tool_call_limit_gives_model_a_final_turn_without_tools(signed, monkeypatch, mode):
+    from mix_agent.runs import engine
+
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    agent = signed.post("/api/v1/agents", json={"name": "One tool", "tool_ids": ["web_search"], "max_tool_calls": 1}).json()
+    run_id = send(signed, monkeypatch, mid, mode, agent_id=agent["id"]).json()["run_id"]
+    requests = []
+
+    class LimitAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, actual_mode, settings):
+            requests.append((history, tools))
+            if len(requests) == 1:
+                yield {"kind": "response", "message": {"role": "assistant", "content": ""}, "tool_calls": [
+                    {"id": "one", "name": "web_search", "arguments": {"query": "one"}},
+                    {"id": "two", "name": "web_search", "arguments": {"query": "two"}},
+                ]}
+            else:
+                yield {"kind": "response", "message": {"role": "assistant", "content": "利用可能な検索結果をもとに回答します。"}, "tool_calls": []}
+
+    async def execute(*args):
+        return {"results": []}
+
+    monkeypatch.setattr(engine, "Adapter", LimitAdapter)
+    monkeypatch.setattr(engine, "execute", execute)
+    await engine.drive(run_id)
+    assert len(requests) == 2
+    assert requests[1][1] == []
+    assert "tool-call limit" in requests[1][0][-1]["content"]
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run.status == "completed", run.data.get("reason")
+        assert run.data["tool_count"] == 1
+        assert any('"code": "tool_call_limit_reached"' in item.get("content", "") for item in run.data["history"])
+
+
+@pytest.mark.parametrize("mode", ["chat", "thinking"])
+async def test_empty_or_url_json_final_turn_is_repaired_before_persisting(signed, monkeypatch, mode):
+    from mix_agent.runs import engine
+
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    response = send(signed, monkeypatch, mid, mode)
+    run_id = response.json()["run_id"]
+    requests = []
+
+    class EmptyAnswerAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, actual_mode, settings):
+            requests.append(history)
+            if len(requests) == 1:
+                yield {"kind": "response", "message": {"role": "assistant", "content": '{"url":"https://example.com"}'}, "tool_calls": []}
+            else:
+                assert "did not provide a user-facing answer" in history[-1]["content"]
+                yield {"kind": "response", "message": {"role": "assistant", "content": "明日の天気を確認するには地域を指定してください。"}, "tool_calls": []}
+
+    monkeypatch.setattr(engine, "Adapter", EmptyAnswerAdapter)
+    await engine.drive(run_id)
+    with SessionLocal() as db:
+        messages = list(db.scalars(select(Message).where(Message.conversation_id == db.get(Run, run_id).conversation_id)))
+        assert [message.data["content"] for message in messages] == ["test", "明日の天気を確認するには地域を指定してください。"]
+
+
+async def test_repeated_empty_final_turn_uses_safe_fallback(signed, monkeypatch):
+    from mix_agent.runs import engine
+
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    response = send(signed, monkeypatch, mid)
+    run_id = response.json()["run_id"]
+
+    class EmptyAnswerAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, *_):
+            yield {"kind": "response", "message": {"role": "assistant", "content": ""}, "tool_calls": []}
+
+    monkeypatch.setattr(engine, "Adapter", EmptyAnswerAdapter)
+    await engine.drive(run_id)
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        messages = list(db.scalars(select(Message).where(Message.conversation_id == run.conversation_id)))
+        assert run.status == "completed"
+        assert len(messages) == 2
+        assert "ユーザー向けの本文を生成できませんでした" in messages[-1].data["content"]
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking"])

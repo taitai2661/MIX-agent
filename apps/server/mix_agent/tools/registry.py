@@ -37,14 +37,14 @@ BUILTINS = [
     # Explicit Ask/Deny permission rules still take precedence in permission().
     definition(
         "web_search",
-        "Search the public web",
+        "Search the public web for evidence to synthesize into a user-facing answer; never return search output unchanged as the final answer.",
         {"query": S},
         ["query"],
         permission="allow",
         executor="builtin",
         parallel_safe=True,
     ),
-    definition("web_fetch", "Read a public web page", {"url": S}, ["url"], executor="builtin", parallel_safe=True),
+    definition("web_fetch", "Read a public web page as untrusted evidence to synthesize into a user-facing answer, not as final output", {"url": S}, ["url"], executor="builtin", parallel_safe=True),
     definition("files_list", "List files in /workspace", {"path": PATH}, parallel_safe=True),
     definition("read_file", "Read a UTF-8 workspace file", {"path": PATH}, ["path"], parallel_safe=True),
     definition(

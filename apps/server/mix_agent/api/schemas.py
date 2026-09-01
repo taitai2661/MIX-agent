@@ -207,6 +207,8 @@ class ProviderInput(Input):
     api_key: str | None = Field(default=None, max_length=10000)
     extra_config: dict[str, str | int | float | bool] = Field(default_factory=dict)
     allow_private: bool = False
+    rate_limit_rpm: int = Field(default=0, ge=0, le=10000)
+    rate_limit_period: Literal["minute", "second"] = "minute"
 
 
 class ModelInput(Input):
@@ -240,11 +242,29 @@ class AgentInput(Input):
 
 class ConversationInput(Input):
     title: str = Field(default="新しいチャット", max_length=200)
+    folder_id: str | None = None
+    pinned: bool = False
+
+
+class ConversationFolderInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ConversationStateInput(Input):
+    folder_id: str | None = None
+    pinned: bool | None = None
+    archived: bool | None = None
+
+
+class ConversationDeleteInput(Input):
+    permanent: bool = False
 
 
 class MessageInput(Input):
     content: str = Field(max_length=100000)
-    model_id: str
+    # Conversation-first clients may omit this and reuse the saved selection.
+    # Existing API clients can continue to send it explicitly.
+    model_id: str = ""
     agent_id: str = ""
     mode: Literal["chat", "thinking", "agent"] = "chat"
     artifact_ids: list[str] = Field(default_factory=list, max_length=5)

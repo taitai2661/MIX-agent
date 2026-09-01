@@ -424,3 +424,35 @@ def test_message_retry_and_saved_selection(signed, monkeypatch):
     history = signed.get(url).json()
     assert len(history["messages"]) == len(history["runs"]) == 1
     assert history["selection"]["model_id"] == model_id
+
+
+def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    assert signed.put("/api/v1/settings", json={
+        "default_model_id": "auto", "auto_model_ids": [model_id],
+    }).status_code == 200
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    first = signed.post(url, json={"content": "hello"}, headers={"Idempotency-Key": "auto-first"})
+    assert first.status_code == 200, first.text
+    with SessionLocal() as db:
+        db.get(Run, first.json()["run_id"]).status = "completed"
+        db.commit()
+    second = signed.post(url, json={"content": "again"}, headers={"Idempotency-Key": "auto-second"})
+    assert second.status_code == 200, second.text
+    history = signed.get(url).json()
+    assert history["selection"] == {"model_id": "auto", "agent_id": "", "mode": "chat"}
+    with SessionLocal() as db:
+        assert db.get(Run, first.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"
+        assert db.get(Run, second.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"
