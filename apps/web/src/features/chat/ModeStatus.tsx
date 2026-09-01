@@ -19,10 +19,10 @@ export function ModeStatus({
   return (
     <p className="mode-status" role="status">
       {mode === "chat"
-        ? "必要に応じて思考・検索・作成・実行を使います。"
+        ? "すばやく直接答え、必要な場合だけ思考・検索・作成・実行を使います。"
         : mode === "thinking"
-          ? "思考機能を有効にし、必要に応じて検索・作成・実行を使います。"
-          : "複数の手順が必要な長い作業を進めます。"}
+          ? "前提・別案・見落としを深く検討し、重要な結論を確認してから答えます。"
+          : "計画・実行・途中検証・修正を繰り返し、完了または本当の停止条件まで進めます。"}
       {model && mode !== "agent" && !canThink && (
         <span>
           {mode === "thinking"

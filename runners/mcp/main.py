@@ -2,16 +2,23 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import secrets
 from contextlib import AsyncExitStack
 from pathlib import Path
+
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
-import httpx
+
+try:
+    from mcp_protocol import call as modern_call
+    from mcp_protocol import discover as modern_discover
+except ImportError:  # Source-tree tests.
+    from mix_agent.mcp.protocol import call as modern_call
+    from mix_agent.mcp.protocol import discover as modern_discover
 
 app = FastAPI(docs_url=None, redoc_url=None)
 CONNECTIONS = {}
@@ -150,6 +157,25 @@ async def serve(connection, queue):
 
 async def invoke(action, body):
     connection = body["connection"]
+    if connection.get("transport") == "http" and connection.get("protocol_generation") == "2026-07-28":
+        credentials = connection.get("credentials", {})
+        headers = credentials.get("headers", {})
+        try:
+            if action == "discover":
+                result = await modern_discover(connection["url"], headers)
+                tools = result.get("tools", result.get("capabilities", {}).get("tools", []))
+                return {"tools": tools, "protocol_generation": "2026-07-28", "cache": {key: result.get(key) for key in ("ttlMs", "cacheScope") if key in result}}
+            return await modern_call(connection["url"], body["tool"], body.get("arguments", {}), headers)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code in (401, 403):
+                raise HTTPException(error.response.status_code, "MCP authorization is required")
+            if not connection.get("allow_legacy", True):
+                raise HTTPException(502, "MCP 2026-07-28 operation failed")
+            # Compatibility adapter below owns all initialize/session behavior.
+        except Exception:
+            if not connection.get("allow_legacy", True):
+                raise HTTPException(502, "MCP 2026-07-28 operation failed")
+            # Compatibility adapter below owns all initialize/session behavior.
     key = hashlib.sha256(json.dumps(connection, sort_keys=True).encode()).hexdigest()
     if key not in CONNECTIONS or CONNECTIONS[key][1].done():
         queue = asyncio.Queue()

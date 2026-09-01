@@ -4,6 +4,7 @@ import pytest
 from cryptography.exceptions import InvalidTag
 from mix_agent.auth.security import encrypt, decrypt
 from mix_agent.storage.backup import seal, unseal, validate
+from mix_agent.tools import network
 from mix_agent.tools.network import public_address, fetch_public
 
 
@@ -89,6 +90,50 @@ async def test_private_network_blocked(host):
 async def test_non_http_fetch_blocked():
     with pytest.raises(ValueError):
         await fetch_public("file:///etc/passwd")
+
+
+async def test_public_fetch_passes_string_sni_hostname(monkeypatch):
+    captured = {}
+
+    class Response:
+        is_redirect = False
+
+        def raise_for_status(self):
+            pass
+
+        async def aiter_bytes(self):
+            yield b"page"
+
+    class Stream:
+        async def __aenter__(self):
+            return Response()
+
+        async def __aexit__(self, *args):
+            pass
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            captured.update(kwargs)
+            return Stream()
+
+    async def address(host, port):
+        return "93.184.216.34"
+
+    monkeypatch.setattr(network, "public_address", address)
+    monkeypatch.setattr(network.httpx, "AsyncClient", Client)
+
+    assert await fetch_public("https://example.com/page") == "page"
+    assert captured["extensions"]["sni_hostname"] == "example.com"
+    assert isinstance(captured["extensions"]["sni_hostname"], str)
 
 
 def test_setup_only_once_and_csrf(signed):

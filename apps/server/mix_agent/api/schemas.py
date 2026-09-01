@@ -360,6 +360,26 @@ class MCPInput(Input):
     enabled: bool = True
 
 
+class MCPInstallInput(Input):
+    registry_id: str = Field(min_length=1, max_length=255)
+    version: str = Field(default="latest", min_length=1, max_length=255)
+    network_capability: Literal["none", "restricted", "public_web"] = "none"
+    allowed_domains: list[str] = Field(default_factory=list, max_length=100)
+    configuration: dict[str, str] = Field(default_factory=dict)
+    secrets: dict[str, str] | None = None
+
+
+class MCPOAuthStartInput(Input):
+    client_id: str = Field(default="", max_length=2000)
+    client_secret: str = Field(default="", max_length=4000)
+    scopes: list[str] = Field(default_factory=list, max_length=100)
+
+
+class MCPUninstallInput(Input):
+    delete_volume: bool
+    confirm_volume: str = Field(default="", max_length=255)
+
+
 class SettingsInput(Input):
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None

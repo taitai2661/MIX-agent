@@ -63,7 +63,10 @@ def test_activity_summary_exposes_only_safe_search_metadata():
     }
     assert not is_user_facing_answer('{"url":"https://example.com"}')
     assert not is_user_facing_answer('[{"title":"search result"}]')
+    assert not is_user_facing_answer("承知しました。確認します。")
+    assert not is_user_facing_answer("I'll investigate this now.")
     assert is_user_facing_answer("検索結果を要約しました。")
+    assert is_user_facing_answer("確認しますか？必要なら対象を教えてください。")
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking"])
@@ -533,6 +536,38 @@ async def test_repeated_empty_final_turn_uses_safe_fallback(signed, monkeypatch)
         assert run.status == "completed"
         assert len(messages) == 2
         assert "ユーザー向けの本文を生成できませんでした" in messages[-1].data["content"]
+
+
+@pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])
+async def test_progress_promise_does_not_stop_the_run(signed, monkeypatch, mode):
+    from mix_agent.runs import engine
+
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    response = send(signed, monkeypatch, mid, mode)
+    run_id = response.json()["run_id"]
+    requests = []
+
+    class ProgressThenAnswerAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, actual_mode, settings):
+            requests.append(history)
+            if len(requests) == 1:
+                yield {"kind": "text", "text": "承知しました。確認します。"}
+                yield {"kind": "response", "message": {"role": "assistant", "content": "承知しました。確認します。"}, "tool_calls": []}
+            else:
+                assert "does not complete the user's request" in history[-1]["content"]
+                yield {"kind": "response", "message": {"role": "assistant", "content": "確認が完了し、結果をまとめました。"}, "tool_calls": []}
+
+    monkeypatch.setattr(engine, "Adapter", ProgressThenAnswerAdapter)
+    await engine.drive(run_id)
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        messages = list(db.scalars(select(Message).where(Message.conversation_id == run.conversation_id)))
+        assert run.status == "completed"
+        assert len(requests) == 2
+        assert [message.data["content"] for message in messages] == ["test", "確認が完了し、結果をまとめました。"]
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking"])

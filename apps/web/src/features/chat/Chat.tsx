@@ -225,7 +225,7 @@ export function Chat() {
   }
   const selected = models.data?.find((x) => x.id === model);
   const selectedAgent = agents.data?.find((a) => a.id === agent);
-  const modeLabel = mode === "chat" ? "通常" : mode === "thinking" ? "深く考える" : "長い作業";
+  const modeLabel = mode === "chat" ? "通常" : mode === "thinking" ? "深く考える" : "長作業";
   const modelLabel = model === "auto" ? "Auto" : selected?.data.name || selected?.data.model_id || "モデルを選択";
   const permissionCounts = (tools.data || []).reduce(
     (counts: Record<string, number>, tool) => {
@@ -420,7 +420,7 @@ export function Chat() {
                         {modes.map((m) => (
                           <button type="button" key={m} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => setMode(m)}>
                             {m === "chat" ? <MessageSquare size={13} /> : m === "thinking" ? <Brain size={13} /> : <Bot size={13} />}
-                            {m === "chat" ? "通常" : m === "thinking" ? "深く考える" : "長い作業"}
+                            {m === "chat" ? "通常" : m === "thinking" ? "深く考える" : "長作業"}
                           </button>
                         ))}
                       </div>

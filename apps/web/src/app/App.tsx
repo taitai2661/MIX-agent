@@ -188,15 +188,15 @@ export function App() {
               <Plus size={17} />
             </button>
           </div>
-          <NavLink to="/agents">
+          <NavLink to="/agents" onClick={() => setSidebar(false)}>
             <Bot size={18} />
             {ja.agents}
           </NavLink>
-          <NavLink to="/skills">
+          <NavLink to="/skills" onClick={() => setSidebar(false)}>
             <BookOpen size={18} />
             {ja.skills}
           </NavLink>
-          <NavLink to="/schedules"><Clock3 size={18} />定期実行</NavLink>
+          <NavLink to="/schedules" onClick={() => setSidebar(false)}><Clock3 size={18} />定期実行</NavLink>
         </nav>
         <div className="sidebar-label">ピン留め</div>
         <div className="history">
@@ -204,15 +204,15 @@ export function App() {
           {!conversations.data?.some((c) => c.data.pinned) && <small>ピン留めした会話が表示されます</small>}
           <div className="sidebar-label compact"><Folder size={12} />最近のチャット</div>
           {conversations.data?.filter((c) => !c.data.pinned).map(conversationItem)}
-          <NavLink className="conversation-manage-link" to="/history"><Archive size={15} />会話を管理</NavLink>
-          <NavLink className="conversation-manage-link" to="/history/trash"><Trash2 size={15} />ごみ箱</NavLink>
+          <NavLink className="conversation-manage-link" to="/history" onClick={() => setSidebar(false)}><Archive size={15} />会話を管理</NavLink>
+          <NavLink className="conversation-manage-link" to="/history/trash" onClick={() => setSidebar(false)}><Trash2 size={15} />ごみ箱</NavLink>
         </div>
         <div className="sidebar-bottom">
           <div className="local-badge">
             <span />
             SELF-HOSTED<span className="version">v0.1</span>
           </div>
-          <NavLink to="/settings/providers">
+          <NavLink to="/settings/providers" onClick={() => setSidebar(false)}>
             <Settings2 size={18} />
             {ja.settings}
           </NavLink>
@@ -235,6 +235,7 @@ export function App() {
           </div>
         </div>
       </aside>
+      {sidebar && <button className="sidebar-backdrop" type="button" aria-label="メニューを閉じる" onClick={() => setSidebar(false)} />}
       <div className="sidebar-resizer" role="separator" aria-label="サイドバーの幅を調整" aria-orientation="vertical" aria-valuemin={sidebarMinimum} aria-valuemax={sidebarMaximum} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={resizeSidebar} onKeyDown={resizeSidebarWithKeyboard} />
       <div className="main">
         <header className="topbar">
@@ -245,7 +246,7 @@ export function App() {
             aria-controls="main-navigation"
             onClick={() => window.matchMedia("(max-width: 760px)").matches ? setSidebar(!sidebar) : setCollapsed(!collapsed)}
           >
-            {collapsed ? <PanelLeft size={19} /> : <ChevronsLeft size={19} />}
+            {sidebar ? <X size={19} /> : collapsed ? <PanelLeft size={19} /> : <ChevronsLeft size={19} />}
           </button>
           <span className="topbar-title"><b>MIX agent</b></span>
         </header>

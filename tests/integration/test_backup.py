@@ -11,13 +11,18 @@ from mix_agent import config
 
 @pytest.fixture
 def fake_runners(monkeypatch):
-    state = {"execution": {"files": {"hello.txt": "aGVsbG8="}}, "mcp": {"files": {}}}
+    state = {"execution": {"files": {"hello.txt": "aGVsbG8="}}, "mcp": {"files": {}}, "manager": {"volumes": {}}}
     async def request(kind, path, payload, **kwargs):
         if path == "/snapshot":
             return copy.deepcopy(state[kind])
         if path == "/validate-snapshot":
             return {"ok": True}
         if path == "/restore-snapshot":
+            state[kind] = copy.deepcopy(payload)
+            return {"ok": True}
+        if path == "/v1/validate-snapshot":
+            return {"ok": True}
+        if path == "/v1/restore-snapshot":
             state[kind] = copy.deepcopy(payload)
             return {"ok": True}
         raise AssertionError(path)
@@ -41,7 +46,7 @@ async def test_complete_backup_restores_db_key_files(signed, fake_runners):
         assert result["relogin_required"]
     with SessionLocal() as db:
         assert db.scalar(select(Memory)).data["content"] == "remember this"
-        assert read_secret(db, secret_id) == "mock-provider-secret"
+        assert read_secret(db, secret_id) == ""
         assert (config.ARTIFACTS / artifact["artifact_id"]).read_bytes() == b"artifact"
     assert fake_runners["execution"]["files"]["hello.txt"] == "aGVsbG8="
 

@@ -2478,6 +2478,278 @@
         }
       }
     },
+    "/api/v1/mcp/registry": {
+      "get": {
+        "summary": "Mcp Registry Search",
+        "operationId": "mcp_registry_search_api_v1_mcp_registry_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/registry/detail": {
+      "get": {
+        "summary": "Mcp Registry Detail",
+        "operationId": "mcp_registry_detail_api_v1_mcp_registry_detail_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "latest",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/registry/install": {
+      "post": {
+        "summary": "Install Registry Mcp",
+        "operationId": "install_registry_mcp_api_v1_mcp_registry_install_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/oauth/client-metadata.json": {
+      "get": {
+        "summary": "Mcp Oauth Client Metadata",
+        "operationId": "mcp_oauth_client_metadata_api_v1_mcp_oauth_client_metadata_json_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/connections/{key}/oauth/start": {
+      "post": {
+        "summary": "Start Mcp Oauth",
+        "operationId": "start_mcp_oauth_api_v1_mcp_connections__key__oauth_start_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPOAuthStartInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/oauth/callback": {
+      "get": {
+        "summary": "Mcp Oauth Callback",
+        "operationId": "mcp_oauth_callback_api_v1_mcp_oauth_callback_get",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "State"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Code"
+            }
+          },
+          {
+            "name": "iss",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Iss"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mcp/connections/{key}": {
       "patch": {
         "summary": "Update Mcp",
@@ -2546,6 +2818,173 @@
             "schema": {
               "type": "string",
               "title": "Action"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/connections/{key}/runtime/{action}": {
+      "post": {
+        "summary": "Mcp Runtime Action",
+        "operationId": "mcp_runtime_action_api_v1_mcp_connections__key__runtime__action__post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Action"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/connections/{key}/update": {
+      "post": {
+        "summary": "Update Registry Mcp",
+        "operationId": "update_registry_mcp_api_v1_mcp_connections__key__update_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/connections/{key}/uninstall": {
+      "post": {
+        "summary": "Uninstall Mcp",
+        "operationId": "uninstall_mcp_api_v1_mcp_connections__key__uninstall_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPUninstallInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp/connections/{key}/reinstall": {
+      "post": {
+        "summary": "Reinstall Mcp",
+        "operationId": "reinstall_mcp_api_v1_mcp_connections__key__reinstall_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
             }
           }
         ],
@@ -3720,6 +4159,115 @@
         ],
         "title": "MCPInput"
       },
+      "MCPInstallInput": {
+        "properties": {
+          "registry_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Registry Id"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Version",
+            "default": "latest"
+          },
+          "network_capability": {
+            "type": "string",
+            "enum": [
+              "none",
+              "restricted",
+              "public_web"
+            ],
+            "title": "Network Capability",
+            "default": "none"
+          },
+          "allowed_domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Allowed Domains"
+          },
+          "configuration": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Configuration"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "registry_id"
+        ],
+        "title": "MCPInstallInput"
+      },
+      "MCPOAuthStartInput": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Client Id",
+            "default": ""
+          },
+          "client_secret": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Client Secret",
+            "default": ""
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Scopes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "MCPOAuthStartInput"
+      },
+      "MCPUninstallInput": {
+        "properties": {
+          "delete_volume": {
+            "type": "boolean",
+            "title": "Delete Volume"
+          },
+          "confirm_volume": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Confirm Volume",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "delete_volume"
+        ],
+        "title": "MCPUninstallInput"
+      },
       "MemoryInput": {
         "properties": {
           "content": {
@@ -3999,6 +4547,16 @@
           "acknowledge_unknown_capability": {
             "type": "boolean",
             "title": "Acknowledge Unknown Capability",
+            "default": false
+          },
+          "temporary_mode": {
+            "type": "boolean",
+            "title": "Temporary Mode",
+            "default": false
+          },
+          "allow_tools": {
+            "type": "boolean",
+            "title": "Allow Tools",
             "default": false
           }
         },

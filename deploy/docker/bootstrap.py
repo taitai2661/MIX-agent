@@ -7,6 +7,7 @@ for directory in (
     "/db-secret",
     "/execution-token",
     "/mcp-token",
+    "/manager-token",
     "/data",
     "/policy",
     "/workspace",
@@ -21,6 +22,7 @@ for filename, binary in (
     ("/db-secret/password", False),
     ("/execution-token/execution.token", False),
     ("/mcp-token/mcp.token", False),
+    ("/manager-token/manager.token", False),
 ):
     file = Path(filename)
     try:

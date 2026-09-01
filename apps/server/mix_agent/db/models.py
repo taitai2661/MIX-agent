@@ -138,6 +138,11 @@ class MCPConnection(Record, Base):
     __tablename__ = "mcp_connections"
 
 
+class MCPAuthState(Record, Base):
+    __tablename__ = "mcp_auth_states"
+    __table_args__ = (Index("mcp_auth_state_owner_created", "owner_id", "created_at"),)
+
+
 class Permission(Record, Base):
     __tablename__ = "permission_rules"
 

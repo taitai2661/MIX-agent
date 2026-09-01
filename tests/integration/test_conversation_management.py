@@ -25,6 +25,22 @@ def test_folder_state_search_export_and_trash(signed):
     assert signed.get("/api/v1/conversations").json()[0]["data"].get("folder_id") is None
 
 
+def test_conversations_are_sorted_by_recent_activity_with_pinned_first(signed):
+    old = signed.post("/api/v1/conversations", json={"title": "古い会話"}).json()
+    recent = signed.post("/api/v1/conversations", json={"title": "新しい会話"}).json()
+    pinned = signed.post("/api/v1/conversations", json={"title": "ピン留め会話"}).json()
+    with SessionLocal() as db:
+        for key, timestamp in ((old["id"], "2026-09-01T01:00:00+00:00"), (recent["id"], "2026-09-01T03:00:00+00:00"), (pinned["id"], "2026-09-01T02:00:00+00:00")):
+            row = db.get(Conversation, key)
+            row.data = {**row.data, "last_message_at": timestamp}
+        db.get(Conversation, pinned["id"]).data = {**db.get(Conversation, pinned["id"]).data, "pinned": True}
+        db.commit()
+
+    rows = signed.get("/api/v1/conversations").json()
+    expected = {old["id"], recent["id"], pinned["id"]}
+    assert [row["id"] for row in rows if row["id"] in expected] == [pinned["id"], recent["id"], old["id"]]
+
+
 def test_expired_trash_is_purged(signed):
     conversation = signed.post("/api/v1/conversations", json={}).json()
     key = conversation["id"]

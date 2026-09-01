@@ -1,24 +1,27 @@
-import base64
 import asyncio
+import base64
 import hashlib
 import json
-import httpx
 import re
+
+import httpx
 from bs4 import BeautifulSoup
+from sqlalchemy import select
+
 from mix_agent import config
+from mix_agent.auth.security import read_secret, store_secret
 from mix_agent.db.models import Artifact, MCPConnection, Settings
-from mix_agent.auth.security import read_secret
+from mix_agent.mcp import oauth as mcp_oauth
 from mix_agent.memory import service as memory
 from mix_agent.skills import service as skills
 from mix_agent.tools.network import fetch_public
-from sqlalchemy import select
 
 
 async def runner_request(kind, path, payload, timeout=120):
     token = config.runner_token(kind)
     if not token:
         raise RuntimeError("Runner is not configured. Start the Docker deployment.")
-    url = config.RUNNER_URL if kind == "execution" else config.MCP_URL
+    url = {"execution": config.RUNNER_URL, "mcp": config.MCP_URL, "manager": config.MCP_MANAGER_URL}[kind]
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         response = await client.post(url + path, json=payload, headers={"Authorization": "Bearer " + token})
         response.raise_for_status()
@@ -69,19 +72,30 @@ async def execute(db, run, tool, args):
         conn = db.get(MCPConnection, tool["source_ref"])
         if not conn or not conn.data.get("enabled", True):
             raise ValueError("MCP connection is disabled")
-        result = await runner_request(
-            "mcp",
-            "/call",
-            {
-                "connection": {
-                    **conn.data,
-                    "credentials": json.loads(read_secret(db, conn.data.get("secret_id")) or "{}"),
-                },
-                "tool": tool["remote_name"],
-                "arguments": args,
-                "run_id": run.id,
-            },
-        )
+        credentials = json.loads(read_secret(db, conn.data.get("secret_id")) or "{}")
+        oauth = credentials.get("oauth")
+        if oauth and int(oauth.get("obtained_at", 0)) + int(oauth.get("expires_in", 0)) <= int(__import__("time").time()) + 60:
+            try:
+                oauth = await mcp_oauth.refresh(oauth, credentials.get("oauth_registration", {}))
+                credentials = {**credentials, "oauth": oauth, "headers": {**credentials.get("headers", {}), "Authorization": "Bearer " + oauth["access_token"]}}
+                conn.data = {**conn.data, "secret_id": store_secret(db, conn.owner_id, json.dumps(credentials), "mcp")}
+                db.commit()
+            except Exception:
+                conn.data = {**conn.data, "state": "needs_authorization", "authorization_required": True, "enabled": False}
+                db.commit()
+                raise ValueError("MCPの再認証が必要です")
+        if conn.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi"):
+            result = await runner_request(
+                "manager",
+                f"/v1/call/{conn.id}",
+                {"credentials": credentials, "arguments": conn.data.get("runtime_arguments", []), "tool": tool["remote_name"], "arguments_value": args},
+            )
+        else:
+            result = await runner_request(
+                "mcp",
+                "/call",
+                {"connection": {**conn.data, "credentials": credentials}, "tool": tool["remote_name"], "arguments": args, "run_id": run.id},
+            )
     elif tool["executor_ref"] == "execution":
         result = await runner_request(
             "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id}

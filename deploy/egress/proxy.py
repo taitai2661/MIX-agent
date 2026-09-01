@@ -1,14 +1,15 @@
 """Minimal HTTP CONNECT gateway. Exact-host ACL, public-IP validation and DNS pinning."""
 
 import asyncio
-import ipaddress
 import json
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
+
 from mix_agent.tools.network import public_address
 
 POLICY = Path(os.getenv("POLICY_FILE", "/policy/policy.json"))
+MCP_POLICY = Path(os.getenv("MCP_POLICY_FILE", "/policy/mcp-policy.json"))
 
 
 def host_allowed(host, allowed_domains):
@@ -42,8 +43,13 @@ async def handle(reader, writer):
                 raise ValueError()
             host, port = parsed.hostname.lower(), parsed.port or 80
         policy = json.loads(POLICY.read_text()) if POLICY.exists() else {}
-        allowed_domains = policy.get("allowed_domains", [])
-        if not host_allowed(host, allowed_domains) or port not in (80, 443):
+        source = writer.get_extra_info("peername")
+        source_ip = source[0] if source else ""
+        mcp_policy = json.loads(MCP_POLICY.read_text()) if MCP_POLICY.exists() else {}
+        source_policy = mcp_policy.get("source_policies", {}).get(source_ip)
+        mode = source_policy.get("mode") if source_policy else "public_web"
+        allowed_domains = source_policy.get("allowed_domains", []) if source_policy else policy.get("allowed_domains", [])
+        if mode == "none" or not host_allowed(host, allowed_domains) or port not in (80, 443):
             raise ValueError()
         ip = await public_address(host, port)
         remote, upstream = await asyncio.wait_for(asyncio.open_connection(ip, port), 10)

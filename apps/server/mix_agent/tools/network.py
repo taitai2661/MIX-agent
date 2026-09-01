@@ -33,7 +33,10 @@ async def fetch_public(url, max_bytes=2_000_000):
                 "GET",
                 target,
                 headers={"Host": parsed.netloc},
-                extensions={"sni_hostname": parsed.hostname.encode()},
+                # httpcore passes this value through to the TLS backend, which
+                # expects a hostname string.  Bytes fail there with an
+                # AttributeError before the page can be opened.
+                extensions={"sni_hostname": parsed.hostname},
             ) as response:
                 if response.is_redirect:
                     from urllib.parse import urljoin
@@ -48,3 +51,34 @@ async def fetch_public(url, max_bytes=2_000_000):
                         raise ValueError("Page exceeds size limit")
                 return bytes(content).decode("utf-8", errors="replace")
     raise ValueError("Too many redirects")
+
+
+async def request_public(method, url, *, headers=None, data=None, json=None, max_bytes=2_000_000):
+    """Issue one pinned public HTTP(S) request without following redirects."""
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.port not in (None, 443)
+    ):
+        raise ValueError("Only public HTTPS endpoints are allowed")
+    ip = await public_address(parsed.hostname, 443)
+    target = httpx.URL(url).copy_with(host=ip)
+    request_headers = {"Host": parsed.netloc, **(headers or {})}
+    async with httpx.AsyncClient(timeout=20, trust_env=False, follow_redirects=False) as client:
+        async with client.stream(
+            method,
+            target,
+            headers=request_headers,
+            data=data,
+            json=json,
+            extensions={"sni_hostname": parsed.hostname},
+        ) as response:
+            content = bytearray()
+            async for block in response.aiter_bytes():
+                content.extend(block)
+                if len(content) > max_bytes:
+                    raise ValueError("Response exceeds size limit")
+            return response.status_code, dict(response.headers), bytes(content)

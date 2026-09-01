@@ -17,6 +17,7 @@ if os.getenv("DB_PASSWORD_FILE"):
     )
 RUNNER_URL = os.getenv("RUNNER_URL", "http://execution-runner:8001")
 MCP_URL = os.getenv("MCP_URL", "http://mcp-runner:8002")
+MCP_MANAGER_URL = os.getenv("MCP_MANAGER_URL", "http://mcp-manager:8003")
 PUBLIC_ORIGIN = os.getenv("PUBLIC_ORIGIN", "http://localhost:8080").rstrip("/")
 COOKIE_SECURE = PUBLIC_ORIGIN.startswith("https://")
 MAX_UPLOAD = 20 * 1024 * 1024

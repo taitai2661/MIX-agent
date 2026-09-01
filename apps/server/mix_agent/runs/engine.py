@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from collections import defaultdict, deque
 from datetime import timedelta, timezone
 from urllib.parse import urlsplit
@@ -166,9 +167,45 @@ def completed_tool_attempts(db, run_id):
     return attempts
 
 
+_TRANSITIONAL_ACTION = re.compile(
+    r"^(?:(?:これから|まず|では|引き続き|少々)?\s*)?"
+    r"(?:確認|調査|検索|調べ|作業|対応|処理|実行|作成|修正|検証|分析|開始|続行|進行|(?:対応を)?進め)"
+    r"(?:して(?:いき)?ます|します|を始めます|を続けます)$"
+)
+_TRANSITIONAL_ENGLISH = re.compile(
+    r"^(?:(?:i(?:'ll| will)|let me)\s+)?(?:check|investigate|search|work on|handle|process|run|create|fix|verify|analyze|continue|start)(?:\s+(?:this|it|that|the task))?(?:\s+(?:now|next|first))?$",
+    re.IGNORECASE,
+)
+
+
+def is_transitional_only(content):
+    """Detect a short progress promise that does not itself satisfy the request."""
+    if not isinstance(content, str) or len(content.strip()) > 240:
+        return False
+    sentences = [
+        part.strip(" \t\r\n。.!！")
+        for part in re.split(r"[。.!！]+", content.strip())
+        if part.strip(" \t\r\n。.!！")
+    ]
+    acknowledgements = {
+        "承知しました", "了解しました", "かしこまりました", "わかりました",
+        "understood", "sure", "okay", "ok",
+    }
+    actions = [sentence for sentence in sentences if sentence.casefold() not in acknowledgements]
+    if not actions:
+        return False
+    return all(
+        bool(_TRANSITIONAL_ACTION.fullmatch(sentence) or _TRANSITIONAL_ENGLISH.fullmatch(sentence))
+        or sentence in {"少々お待ちください", "しばらくお待ちください"}
+        for sentence in actions
+    )
+
+
 def is_user_facing_answer(content):
-    """Reject blank and tool-payload-only model turns as final chat answers."""
+    """Reject blank, tool-payload-only, and progress-promise-only final turns."""
     if not isinstance(content, str) or not content.strip():
+        return False
+    if is_transitional_only(content):
         return False
     try:
         payload = json.loads(content)
@@ -669,7 +706,7 @@ async def drive(run_id):
                                 *run.data["history"],
                                 {
                                     "role": "user",
-                                    "content": "The previous turn did not provide a user-facing answer. Now either answer the original request using the available tool results, ask a necessary clarifying question, or call another useful tool. Do not return raw JSON, a URL alone, or an empty response.",
+                                    "content": "The previous turn did not provide a user-facing answer. A progress announcement such as 'I will check' does not complete the user's request and is not a final answer. Continue now: perform the announced action with an available tool when appropriate, answer the original request using the available results, or ask a genuinely necessary clarifying question. Do not return another progress promise, raw JSON, a URL alone, or an empty response.",
                                 },
                             ],
                         )

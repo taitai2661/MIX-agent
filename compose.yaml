@@ -20,6 +20,7 @@ services:
       - db-secret:/db-secret
       - execution-token:/execution-token
       - mcp-token:/mcp-token
+      - manager-token:/manager-token
       - data:/data
       - policy:/policy
       - workspace:/workspace
@@ -58,7 +59,8 @@ services:
       - db-secret:/db-secret:ro
       - execution-token:/execution-keys:ro
       - mcp-token:/mcp-keys:ro
-    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
+      - manager-token:/manager-keys:ro
+    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
     networks: [database, execution, mcp, internet]
     extra_hosts: ["host.docker.internal:host-gateway"]
     mem_limit: 1g
@@ -95,9 +97,33 @@ services:
     cpus: 1
     depends_on:
       init: {condition: service_completed_successfully}
+  mcp-manager:
+    <<: *restricted
+    image: mix-agent-mcp-runtime:local
+    user: "1000:1000"
+    group_add: ["0"]
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: mcp-runtime}
+    environment:
+      TOKEN_FILE: /tokens/manager.token
+      POLICY_FILE: /policy/mcp-policy.json
+      MCP_RUNTIME_IMAGE: mix-agent-mcp-runtime:local
+      MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - manager-token:/tokens:ro
+      - policy:/policy
+    command: ["uvicorn", "mcp_manager:app", "--host", "0.0.0.0", "--port", "8003"]
+    networks: [mcp]
+    mem_limit: 384m
+    cpus: 0.5
+    depends_on:
+      init: {condition: service_completed_successfully}
+      egress-proxy: {condition: service_started}
   egress-proxy:
     <<: *restricted
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: egress}
+    environment:
+      MCP_POLICY_FILE: /policy/mcp-policy.json
     volumes: ["policy:/policy:ro"]
     networks: [execution, mcp, internet]
     mem_limit: 256m
@@ -117,6 +143,7 @@ volumes:
   db-secret:
   execution-token:
   mcp-token:
+  manager-token:
   data:
   policy:
   workspace:
