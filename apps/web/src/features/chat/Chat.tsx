@@ -281,6 +281,11 @@ export function Chat() {
                   )) || m.data.artifact_ids?.map((artifact_id: string) => (
                     <ArtifactCard key={artifact_id} artifact={{ artifact_id }} />
                   ))}
+                  {m.data.performance && (
+                    <div className="message-performance" title={`出力 ${m.data.performance.output_tokens} tokens / 生成 ${m.data.performance.generation_ms}ms`}>
+                      {m.data.performance.tokens_per_second.toFixed(1)} tokens/s
+                    </div>
+                  )}
                   {m.data.auto_selection && (
                     <div className="message-auto">
                       <small>Auto: {m.data.auto_selection.model_id}</small>

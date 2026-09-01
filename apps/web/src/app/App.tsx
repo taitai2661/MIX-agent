@@ -11,6 +11,7 @@ import {
   PanelLeft,
   Plus,
   Settings2,
+  Clock3,
   ChevronsLeft,
   Archive,
   Folder,
@@ -30,6 +31,7 @@ import { Memories } from "@/features/memory/Memories";
 import { Skills } from "@/features/skills/Skills";
 import { Settings } from "@/features/settings/Settings";
 import { Setup } from "@/features/setup/Setup";
+import { Schedules } from "@/features/schedules/Schedules";
 
 export function App() {
   const sidebarMinimum = 220,
@@ -142,6 +144,7 @@ export function App() {
             <BookOpen size={18} />
             {ja.skills}
           </NavLink>
+          <NavLink to="/schedules"><Clock3 size={18} />定期実行</NavLink>
         </nav>
         <div className="sidebar-label">ピン留め</div>
         <div className="history">
@@ -210,6 +213,7 @@ export function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/memory" element={<Memories />} />
           <Route path="/skills" element={<Skills />} />
+          <Route path="/schedules" element={<Schedules />} />
           <Route path="/setup" element={<Setup />} />
           <Route
             path="/settings/*"

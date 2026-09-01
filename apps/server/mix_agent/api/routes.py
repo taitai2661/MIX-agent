@@ -58,6 +58,55 @@ def _conversation_title(content):
     return (text[:77] + "…") if len(text) > 78 else (text or "新しいチャット")
 
 
+def enqueue_scheduled_run(db, owner_id, job, scheduled):
+    """Create a normal engine Run from a scheduled job using current settings."""
+    data = job.data
+    if data["target_type"] == "conversation":
+        conversation = own(db, Conversation, data["target_id"], owner_id)
+    else:
+        conversation = db.scalar(select(Conversation).where(
+            Conversation.owner_id == owner_id,
+            Conversation.data["scheduled_job_id"].as_string() == job.id,
+        ))
+        if not conversation:
+            conversation = Conversation(owner_id=owner_id, data={
+                "title": data["name"], "scheduled_job_id": job.id, "cron_hidden": True,
+            })
+            db.add(conversation); db.flush()
+    settings = own(db, Settings, "settings", owner_id)
+    agent = own(db, Agent, data["target_id"], owner_id).data if data["target_type"] == "agent" else {}
+    selection = conversation.data.get("selection", {}) if data["target_type"] == "conversation" else {}
+    requested_model_id = agent.get("model_id") or selection.get("model_id") or settings.data.get("default_model_id") or "auto"
+    mode = agent.get("mode") or selection.get("mode") or "agent"
+    if requested_model_id == "auto":
+        allowed = settings.data.get("auto_model_ids", [])
+        model, auto_selection = select_auto_model(db, owner_id, allowed, data["prompt"], mode, [], bool(agent.get("tool_ids")), [data["prompt"]], agent.get("model_settings", {}).get("max_output_tokens", 4096), scheduled.id, 0)
+        if not model: raise HTTPException(422, (auto_selection or {}).get("reason", "Autoモデルを選択できません"))
+    else:
+        model, auto_selection = own(db, Model, requested_model_id, owner_id), None
+    provider = own(db, Provider, model.data["provider_id"], owner_id)
+    tool_ids = effective_tool_ids(settings, agent, agent.get("tool_ids", []))
+    if tool_ids and tool_capability(model.data) is not True: tool_ids = []
+    snapshot = {**agent, "agent_id": data["target_id"] if data["target_type"] == "agent" else selection.get("agent_id", ""), "mode": mode,
+        "model_id": model.data["model_id"], "model_record_id": model.id, "requested_model_id": requested_model_id,
+        "provider": provider.data, "provider_record_id": provider.id, "tool_ids": tool_ids,
+        "tools": [registry(db, owner_id)[t] for t in tool_ids if t in registry(db, owner_id)],
+        "reasoning": resolve_reasoning(provider.data["kind"], model.data["model_id"], effective_capabilities(model.data), mode, agent.get("model_settings", {})),
+    }
+    prompt = agent.get("system_prompt", "You are MIX, a helpful assistant. Respond in the user's language.")
+    prompt += "\nThis is an unattended scheduled run. Use only already-allowed tools; never request approval. Give a concise user-facing result."
+    history = [{"role": "system", "content": prompt}]
+    for message in db.scalars(select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)):
+        history.append({"role": message.data["role"], "content": message.data["content"]})
+    history.append({"role": "user", "content": data["prompt"]})
+    attempt = int(scheduled.data.get("attempt", 0))
+    run = Run(owner_id=owner_id, conversation_id=conversation.id, request_key=f"schedule-{scheduled.id}-{attempt}", data={"snapshot": snapshot, "history": history, "steps": 0, "tool_count": 0, "scheduled_run_id": scheduled.id, "auto_selection": auto_selection})
+    db.add(run); db.add(Message(owner_id=owner_id, conversation_id=conversation.id, data={"role": "user", "content": data["prompt"], "scheduled_run_id": scheduled.id}))
+    db.flush(); scheduled.run_id = run.id; scheduled.status = "running"; scheduled.data = {**scheduled.data, "snapshot": snapshot}
+    conversation.data = {**conversation.data, "last_message_at": now().isoformat()}
+    return run
+
+
 def _conversation_artifact_ids(messages):
     ids = set()
     for message in messages:
@@ -500,7 +549,7 @@ async def settings(ctx=Depends(context)):
     return view
 
 
-@router.get("/settings/statistics")
+@router.get("/settings/statistics", response_model=StatisticsView)
 async def settings_statistics(ctx=Depends(context)):
     """Return privacy-minimal, local reliability statistics for the account."""
     db, s = ctx
@@ -509,10 +558,15 @@ async def settings_statistics(ctx=Depends(context)):
         AutoReliabilityEvent.owner_id == s.owner_id,
         AutoReliabilityEvent.created_at >= since,
     )))
+    performance_events = list(db.scalars(select(PerformanceEvent).where(
+        PerformanceEvent.owner_id == s.owner_id,
+        PerformanceEvent.created_at >= since,
+    )))
     models = {row.id: row.data for row in db.scalars(select(Model).where(Model.owner_id == s.owner_id))}
     def blank(label):
         return {"key": label, "total": 0, "success": 0, "failure": 0, "failure_rate": 0,
-                "first_output_ms": None, "completion_ms": None, "classifications": {}}
+                "first_output_ms": None, "completion_ms": None, "tokens_per_second": None,
+                "tps_count": 0, "classifications": {}}
     groups = {}
     for event in events:
         data = event.data or {}
@@ -535,11 +589,26 @@ async def settings_statistics(ctx=Depends(context)):
             if isinstance(value, (int, float)) and value > 0:
                 values = item.setdefault(f"_{target}_values", [])
                 values.append(value)
+    for event in performance_events:
+        data = event.data or {}
+        model_id = data.get("model_id") or "unknown"
+        provider_id = data.get("provider_id") or "unknown"
+        mode = data.get("mode") or "chat"
+        key = f"{model_id}:{provider_id}:{mode}"
+        item = groups.setdefault(key, blank(key))
+        item.update({"model_id": model_id, "provider_id": provider_id, "scope": mode,
+                     "model_name": models.get(model_id, {}).get("name") or models.get(model_id, {}).get("model_id") or model_id})
+        value = data.get("tokens_per_second")
+        if isinstance(value, (int, float)) and value > 0:
+            item.setdefault("_tps_values", []).append(value)
     for item in groups.values():
         item["failure_rate"] = round(item["failure"] / item["total"] * 100, 1) if item["total"] else 0
         for target in ("first_output_ms", "completion_ms"):
             values = item.pop(f"_{target}_values", [])
             item[target] = round(sum(values) / len(values)) if values else None
+        tps_values = item.pop("_tps_values", [])
+        item["tps_count"] = len(tps_values)
+        item["tokens_per_second"] = round(sum(tps_values) / len(tps_values), 1) if tps_values else None
     total = blank("all")
     total["model_name"] = "全体"
     for item in groups.values():
@@ -547,6 +616,10 @@ async def settings_statistics(ctx=Depends(context)):
         total["failure"] += item["failure"]
         for key, value in item["classifications"].items(): total["classifications"][key] = total["classifications"].get(key, 0) + value
     total["failure_rate"] = round(total["failure"] / total["total"] * 100, 1) if total["total"] else 0
+    tps_values = [event.data.get("tokens_per_second") for event in performance_events
+                  if isinstance(event.data.get("tokens_per_second"), (int, float)) and event.data["tokens_per_second"] > 0]
+    total["tps_count"] = len(tps_values)
+    total["tokens_per_second"] = round(sum(tps_values) / len(tps_values), 1) if tps_values else None
     return {"retention_days": 30, "total": total, "groups": sorted(groups.values(), key=lambda x: (-x["total"], x["model_name"]))}
 
 
@@ -658,13 +731,92 @@ async def list_conversations(state: str = "active", folder_id: str | None = None
         is_deleted, is_archived = bool(data.get("deleted_at")), bool(data.get("archived_at"))
         if state == "trash" and not is_deleted: continue
         if state == "archived" and (is_deleted or not is_archived): continue
-        if state == "active" and (is_deleted or is_archived): continue
+        if state == "active" and (is_deleted or is_archived or data.get("cron_hidden")): continue
         if folder_id is not None and data.get("folder_id") != folder_id: continue
         if query:
             contents = "\n".join(message.data.get("content", "") for message in db.scalars(select(Message).where(Message.conversation_id == row.id)))
             if query not in (data.get("title", "") + "\n" + contents).casefold(): continue
         result.append(public(row))
     return sorted(result, key=lambda row: (not row["data"].get("pinned", False), row["data"].get("last_message_at") or row["created_at"], row["id"]), reverse=False)
+
+
+@router.get("/scheduled-jobs")
+async def list_scheduled_jobs(ctx=Depends(context)):
+    db, s = ctx
+    from mix_agent.schedules import next_at
+    rows = []
+    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.owner_id == s.owner_id).order_by(ScheduledJob.created_at.desc())):
+        value = public(job)
+        try: value["data"]["next_at"] = next_at(job.data["cron"], job.data["timezone"]).isoformat() if job.data.get("enabled") else None
+        except ValueError: value["data"]["next_at"] = None
+        rows.append(value)
+    return rows
+
+
+@router.post("/scheduled-jobs")
+async def create_scheduled_job(body: ScheduledJobInput, ctx=Depends(context)):
+    db, s = ctx
+    from mix_agent.schedules import next_at
+    try: next_at(body.cron, body.timezone)
+    except ValueError as exc: raise HTTPException(422, str(exc))
+    if body.target_type == "agent": own(db, Agent, body.target_id, s.owner_id)
+    else: own(db, Conversation, body.target_id, s.owner_id)
+    row = ScheduledJob(owner_id=s.owner_id, data=body.model_dump())
+    db.add(row); audit(db, s.owner_id, "scheduled-job.create", row.id); db.commit()
+    return public(row)
+
+
+@router.patch("/scheduled-jobs/{key}")
+async def edit_scheduled_job(key: str, body: ScheduledJobInput, ctx=Depends(context)):
+    db, s = ctx; row = own(db, ScheduledJob, key, s.owner_id)
+    from mix_agent.schedules import next_at
+    try: next_at(body.cron, body.timezone)
+    except ValueError as exc: raise HTTPException(422, str(exc))
+    if body.target_type == "agent": own(db, Agent, body.target_id, s.owner_id)
+    else: own(db, Conversation, body.target_id, s.owner_id)
+    row.data = body.model_dump(); audit(db, s.owner_id, "scheduled-job.update", key); db.commit(); return public(row)
+
+
+@router.delete("/scheduled-jobs/{key}")
+async def delete_scheduled_job(key: str, ctx=Depends(context)):
+    db, s = ctx; row = own(db, ScheduledJob, key, s.owner_id)
+    db.delete(row); audit(db, s.owner_id, "scheduled-job.delete", key); db.commit(); return {"ok": True}
+
+
+@router.post("/scheduled-jobs/{key}/run")
+async def run_scheduled_job(key: str, ctx=Depends(context)):
+    db, s = ctx; job = own(db, ScheduledJob, key, s.owner_id)
+    from mix_agent.schedules import claim
+    scheduled = claim(db, job, now())
+    if not scheduled: raise HTTPException(409, "この実行はすでに開始されています")
+    run = enqueue_scheduled_run(db, s.owner_id, job, scheduled); audit(db, s.owner_id, "scheduled-job.run", key); db.commit(); launch(run.id)
+    return {"scheduled_run_id": scheduled.id, "run_id": run.id}
+
+
+@router.get("/scheduled-jobs/{key}/runs")
+async def list_scheduled_runs(key: str, ctx=Depends(context)):
+    db, s = ctx; own(db, ScheduledJob, key, s.owner_id)
+    rows = []
+    for row in db.scalars(select(ScheduledRun).where(ScheduledRun.job_id == key).order_by(ScheduledRun.scheduled_at.desc()).limit(100)):
+        value = public(row); value["scheduled_at"] = row.scheduled_at.isoformat(); value["status"] = row.status
+        if row.run_id:
+            message = db.scalar(select(Message).where(Message.data["run_id"].as_string() == row.run_id))
+            value["answer"] = message.data.get("content") if message else None
+        rows.append(value)
+    return rows
+
+
+@router.get("/notifications")
+async def list_notifications(unread: bool = False, ctx=Depends(context)):
+    db, s = ctx; query = select(Notification).where(Notification.owner_id == s.owner_id)
+    if unread: query = query.where(Notification.read_at.is_(None))
+    return [public(row) for row in db.scalars(query.order_by(Notification.created_at.desc()).limit(100))]
+
+
+@router.patch("/notifications/{key}")
+async def read_notification(key: str, body: NotificationReadInput, ctx=Depends(context)):
+    db, s = ctx; row = own(db, Notification, key, s.owner_id)
+    row.read_at = now() if body.read else None; db.commit(); return public(row)
 
 
 @router.patch("/conversations/{key}/state")

@@ -34,12 +34,19 @@ class AutoSelectionView(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class PerformanceView(BaseModel):
+    output_tokens: int
+    generation_ms: int
+    tokens_per_second: float
+
+
 class MessageDataView(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     artifact_ids: list[str] = Field(default_factory=list)
     artifacts: list[ArtifactView] = Field(default_factory=list)
     auto_selection: AutoSelectionView | None = None
+    performance: PerformanceView | None = None
     feedback: Literal["up", "down"] | None = None
 
     model_config = ConfigDict(extra="allow")
@@ -145,6 +152,32 @@ class RunView(BaseModel):
     approvals: list[ApprovalView]
 
 
+class StatisticsSummaryView(BaseModel):
+    key: str
+    total: int
+    success: int
+    failure: int
+    failure_rate: float
+    first_output_ms: int | None = None
+    completion_ms: int | None = None
+    tokens_per_second: float | None = None
+    tps_count: int
+    classifications: dict[str, int] = Field(default_factory=dict)
+
+
+class StatisticsGroupView(StatisticsSummaryView):
+    model_id: str
+    provider_id: str
+    scope: str
+    model_name: str
+
+
+class StatisticsView(BaseModel):
+    retention_days: int
+    total: StatisticsSummaryView
+    groups: list[StatisticsGroupView]
+
+
 class ToolView(BaseModel):
     id: str
     default_permission: Literal["allow", "ask", "deny"] = "ask"
@@ -244,6 +277,21 @@ class ConversationInput(Input):
     title: str = Field(default="新しいチャット", max_length=200)
     folder_id: str | None = None
     pinned: bool = False
+
+
+class ScheduledJobInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    target_type: Literal["agent", "conversation"]
+    target_id: str = Field(min_length=1, max_length=100)
+    prompt: str = Field(min_length=1, max_length=100000)
+    cron: str = Field(min_length=9, max_length=100)
+    timezone: str = Field(default="Asia/Tokyo", max_length=100)
+    enabled: bool = True
+    catch_up: bool = False
+
+
+class NotificationReadInput(Input):
+    read: bool = True
 
 
 class ConversationFolderInput(Input):

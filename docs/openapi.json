@@ -560,7 +560,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsView"
+                }
               }
             }
           }
@@ -861,6 +863,297 @@
                 "schema": {
                   "$ref": "#/components/schemas/RecordView"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scheduled-jobs": {
+      "get": {
+        "summary": "List Scheduled Jobs",
+        "operationId": "list_scheduled_jobs_api_v1_scheduled_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Scheduled Job",
+        "operationId": "create_scheduled_job_api_v1_scheduled_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledJobInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scheduled-jobs/{key}": {
+      "patch": {
+        "summary": "Edit Scheduled Job",
+        "operationId": "edit_scheduled_job_api_v1_scheduled_jobs__key__patch",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledJobInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Scheduled Job",
+        "operationId": "delete_scheduled_job_api_v1_scheduled_jobs__key__delete",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scheduled-jobs/{key}/run": {
+      "post": {
+        "summary": "Run Scheduled Job",
+        "operationId": "run_scheduled_job_api_v1_scheduled_jobs__key__run_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scheduled-jobs/{key}/runs": {
+      "get": {
+        "summary": "List Scheduled Runs",
+        "operationId": "list_scheduled_runs_api_v1_scheduled_jobs__key__runs_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "summary": "List Notifications",
+        "operationId": "list_notifications_api_v1_notifications_get",
+        "parameters": [
+          {
+            "name": "unread",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Unread"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{key}": {
+      "patch": {
+        "summary": "Read Notification",
+        "operationId": "read_notification_api_v1_notifications__key__patch",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationReadInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -3377,6 +3670,16 @@
               }
             ]
           },
+          "performance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "feedback": {
             "anyOf": [
               {
@@ -3711,6 +4014,18 @@
         ],
         "title": "ModelSyncResult"
       },
+      "NotificationReadInput": {
+        "properties": {
+          "read": {
+            "type": "boolean",
+            "title": "Read",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "NotificationReadInput"
+      },
       "PasswordChangeInput": {
         "properties": {
           "current_password": {
@@ -3738,6 +4053,29 @@
           "new_password"
         ],
         "title": "PasswordChangeInput"
+      },
+      "PerformanceView": {
+        "properties": {
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "generation_ms": {
+            "type": "integer",
+            "title": "Generation Ms"
+          },
+          "tokens_per_second": {
+            "type": "number",
+            "title": "Tokens Per Second"
+          }
+        },
+        "type": "object",
+        "required": [
+          "output_tokens",
+          "generation_ms",
+          "tokens_per_second"
+        ],
+        "title": "PerformanceView"
       },
       "PermissionInput": {
         "properties": {
@@ -4138,6 +4476,68 @@
         ],
         "title": "RunView"
       },
+      "ScheduledJobInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "target_type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "conversation"
+            ],
+            "title": "Target Type"
+          },
+          "target_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Target Id"
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Prompt"
+          },
+          "cron": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 9,
+            "title": "Cron"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Timezone",
+            "default": "Asia/Tokyo"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "catch_up": {
+            "type": "boolean",
+            "title": "Catch Up",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "target_type",
+          "target_id",
+          "prompt",
+          "cron"
+        ],
+        "title": "ScheduledJobInput"
+      },
       "SendMessageView": {
         "properties": {
           "run_id": {
@@ -4292,6 +4692,207 @@
           "content"
         ],
         "title": "SkillInput"
+      },
+      "StatisticsGroupView": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success"
+          },
+          "failure": {
+            "type": "integer",
+            "title": "Failure"
+          },
+          "failure_rate": {
+            "type": "number",
+            "title": "Failure Rate"
+          },
+          "first_output_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Output Ms"
+          },
+          "completion_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Ms"
+          },
+          "tokens_per_second": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Per Second"
+          },
+          "tps_count": {
+            "type": "integer",
+            "title": "Tps Count"
+          },
+          "classifications": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Classifications"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "total",
+          "success",
+          "failure",
+          "failure_rate",
+          "tps_count",
+          "model_id",
+          "provider_id",
+          "scope",
+          "model_name"
+        ],
+        "title": "StatisticsGroupView"
+      },
+      "StatisticsSummaryView": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success"
+          },
+          "failure": {
+            "type": "integer",
+            "title": "Failure"
+          },
+          "failure_rate": {
+            "type": "number",
+            "title": "Failure Rate"
+          },
+          "first_output_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Output Ms"
+          },
+          "completion_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Ms"
+          },
+          "tokens_per_second": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Per Second"
+          },
+          "tps_count": {
+            "type": "integer",
+            "title": "Tps Count"
+          },
+          "classifications": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Classifications"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "total",
+          "success",
+          "failure",
+          "failure_rate",
+          "tps_count"
+        ],
+        "title": "StatisticsSummaryView"
+      },
+      "StatisticsView": {
+        "properties": {
+          "retention_days": {
+            "type": "integer",
+            "title": "Retention Days"
+          },
+          "total": {
+            "$ref": "#/components/schemas/StatisticsSummaryView"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsGroupView"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "retention_days",
+          "total",
+          "groups"
+        ],
+        "title": "StatisticsView"
       },
       "ToolCallActivityView": {
         "properties": {

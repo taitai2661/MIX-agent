@@ -404,6 +404,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scheduled-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Scheduled Jobs */
+        get: operations["list_scheduled_jobs_api_v1_scheduled_jobs_get"];
+        put?: never;
+        /** Create Scheduled Job */
+        post: operations["create_scheduled_job_api_v1_scheduled_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scheduled-jobs/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Scheduled Job */
+        delete: operations["delete_scheduled_job_api_v1_scheduled_jobs__key__delete"];
+        options?: never;
+        head?: never;
+        /** Edit Scheduled Job */
+        patch: operations["edit_scheduled_job_api_v1_scheduled_jobs__key__patch"];
+        trace?: never;
+    };
+    "/api/v1/scheduled-jobs/{key}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Scheduled Job */
+        post: operations["run_scheduled_job_api_v1_scheduled_jobs__key__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scheduled-jobs/{key}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Scheduled Runs */
+        get: operations["list_scheduled_runs_api_v1_scheduled_jobs__key__runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Notifications */
+        get: operations["list_notifications_api_v1_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Read Notification */
+        patch: operations["read_notification_api_v1_notifications__key__patch"];
+        trace?: never;
+    };
     "/api/v1/conversations/{key}/state": {
         parameters: {
             query?: never;
@@ -1294,6 +1398,7 @@ export interface components {
             /** Artifacts */
             artifacts?: components["schemas"]["ArtifactView"][];
             auto_selection?: components["schemas"]["AutoSelectionView"] | null;
+            performance?: components["schemas"]["PerformanceView"] | null;
             /** Feedback */
             feedback?: ("up" | "down") | null;
         } & {
@@ -1401,6 +1506,14 @@ export interface components {
             /** Error */
             error?: string | null;
         };
+        /** NotificationReadInput */
+        NotificationReadInput: {
+            /**
+             * Read
+             * @default true
+             */
+            read: boolean;
+        };
         /** PasswordChangeInput */
         PasswordChangeInput: {
             /** Current Password */
@@ -1412,6 +1525,15 @@ export interface components {
              * @default false
              */
             revoke_all_sessions: boolean;
+        };
+        /** PerformanceView */
+        PerformanceView: {
+            /** Output Tokens */
+            output_tokens: number;
+            /** Generation Ms */
+            generation_ms: number;
+            /** Tokens Per Second */
+            tokens_per_second: number;
         };
         /** PermissionInput */
         PermissionInput: {
@@ -1562,6 +1684,37 @@ export interface components {
             /** Approvals */
             approvals: components["schemas"]["ApprovalView"][];
         };
+        /** ScheduledJobInput */
+        ScheduledJobInput: {
+            /** Name */
+            name: string;
+            /**
+             * Target Type
+             * @enum {string}
+             */
+            target_type: "agent" | "conversation";
+            /** Target Id */
+            target_id: string;
+            /** Prompt */
+            prompt: string;
+            /** Cron */
+            cron: string;
+            /**
+             * Timezone
+             * @default Asia/Tokyo
+             */
+            timezone: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Catch Up
+             * @default false
+             */
+            catch_up: boolean;
+        };
         /** SendMessageView */
         SendMessageView: {
             /** Run Id */
@@ -1642,6 +1795,72 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+        };
+        /** StatisticsGroupView */
+        StatisticsGroupView: {
+            /** Key */
+            key: string;
+            /** Total */
+            total: number;
+            /** Success */
+            success: number;
+            /** Failure */
+            failure: number;
+            /** Failure Rate */
+            failure_rate: number;
+            /** First Output Ms */
+            first_output_ms?: number | null;
+            /** Completion Ms */
+            completion_ms?: number | null;
+            /** Tokens Per Second */
+            tokens_per_second?: number | null;
+            /** Tps Count */
+            tps_count: number;
+            /** Classifications */
+            classifications?: {
+                [key: string]: number;
+            };
+            /** Model Id */
+            model_id: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Scope */
+            scope: string;
+            /** Model Name */
+            model_name: string;
+        };
+        /** StatisticsSummaryView */
+        StatisticsSummaryView: {
+            /** Key */
+            key: string;
+            /** Total */
+            total: number;
+            /** Success */
+            success: number;
+            /** Failure */
+            failure: number;
+            /** Failure Rate */
+            failure_rate: number;
+            /** First Output Ms */
+            first_output_ms?: number | null;
+            /** Completion Ms */
+            completion_ms?: number | null;
+            /** Tokens Per Second */
+            tokens_per_second?: number | null;
+            /** Tps Count */
+            tps_count: number;
+            /** Classifications */
+            classifications?: {
+                [key: string]: number;
+            };
+        };
+        /** StatisticsView */
+        StatisticsView: {
+            /** Retention Days */
+            retention_days: number;
+            total: components["schemas"]["StatisticsSummaryView"];
+            /** Groups */
+            groups: components["schemas"]["StatisticsGroupView"][];
         };
         /** ToolCallActivityView */
         ToolCallActivityView: {
@@ -2287,7 +2506,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StatisticsView"];
                 };
             };
         };
@@ -2537,6 +2756,253 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecordView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scheduled_jobs_api_v1_scheduled_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_scheduled_job_api_v1_scheduled_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduledJobInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_scheduled_job_api_v1_scheduled_jobs__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_scheduled_job_api_v1_scheduled_jobs__key__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduledJobInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_scheduled_job_api_v1_scheduled_jobs__key__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scheduled_runs_api_v1_scheduled_jobs__key__runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_notifications_api_v1_notifications_get: {
+        parameters: {
+            query?: {
+                unread?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_notification_api_v1_notifications__key__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationReadInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

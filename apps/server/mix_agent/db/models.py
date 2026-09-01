@@ -97,6 +97,34 @@ class AutoReliabilityEvent(Record, Base):
     )
 
 
+class PerformanceEvent(Record, Base):
+    """A privacy-minimal, time-bounded measurement of a completed answer."""
+    __tablename__ = "performance_events"
+    __table_args__ = (
+        Index("performance_event_owner_created", "owner_id", "created_at"),
+    )
+
+
+class ScheduledJob(Record, Base):
+    __tablename__ = "scheduled_jobs"
+    __table_args__ = (Index("scheduled_job_owner_enabled", "owner_id", "created_at"),)
+
+
+class ScheduledRun(Record, Base):
+    __tablename__ = "scheduled_runs"
+    job_id: Mapped[str] = mapped_column(ForeignKey("scheduled_jobs.id"), index=True)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True, index=True)
+    __table_args__ = (UniqueConstraint("job_id", "scheduled_at"),)
+
+
+class Notification(Record, Base):
+    __tablename__ = "notifications"
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    __table_args__ = (Index("notification_owner_read", "owner_id", "read_at"),)
+
+
 class Settings(Record, Base):
     __tablename__ = "app_settings"
 
@@ -115,6 +143,61 @@ class Permission(Record, Base):
 
 class Memory(Record, Base):
     __tablename__ = "memories"
+    lifecycle_state: Mapped[str] = mapped_column(String(20), default="established", index=True)
+    strength: Mapped[float] = mapped_column(default=0.6)
+    confidence: Mapped[float] = mapped_column(default=0.7)
+    salience: Mapped[float] = mapped_column(default=0.5)
+    activation_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (Index("memory_owner_state_created", "owner_id", "lifecycle_state", "created_at"),)
+
+
+class MemoryAssociation(Record, Base):
+    __tablename__ = "memory_associations"
+    source_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"), index=True)
+    target_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"), index=True)
+    weight: Mapped[float] = mapped_column(default=0.2, index=True)
+    confidence: Mapped[float] = mapped_column(default=0.5)
+    coactivation_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_memory_id", "target_memory_id"),
+        Index("memory_assoc_source_weight", "owner_id", "source_memory_id", "weight"),
+    )
+
+
+class MemoryFeature(Record, Base):
+    __tablename__ = "memory_features"
+    memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    value: Mapped[str] = mapped_column(String(160))
+    weight: Mapped[float] = mapped_column(default=1.0)
+    __table_args__ = (
+        UniqueConstraint("memory_id", "kind", "value"),
+        Index("memory_feature_lookup", "owner_id", "kind", "value"),
+    )
+
+
+class MemoryProcessingJob(Record, Base):
+    __tablename__ = "memory_processing_jobs"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("run_id"), Index("memory_job_status_created", "status", "created_at"))
+
+
+class MemoryActionEvent(Record, Base):
+    __tablename__ = "memory_action_events"
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True, index=True)
+    candidate_index: Mapped[int] = mapped_column(Integer, default=0)
+    action_version: Mapped[int] = mapped_column(Integer, default=1)
+    __table_args__ = (
+        UniqueConstraint("run_id", "candidate_index", "action_version"),
+        Index("memory_action_owner_created", "owner_id", "created_at"),
+    )
 
 
 class MemoryRevision(Record, Base):

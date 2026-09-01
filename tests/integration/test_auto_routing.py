@@ -9,6 +9,7 @@ from mix_agent.db.models import (
     Feedback,
     Message,
     Model,
+    PerformanceEvent,
     Provider,
     Run,
     Settings,
@@ -260,6 +261,77 @@ def test_auto_success_records_first_output_and_completion_timings(signed, monkey
         assert event.data["first_output_ms"] >= 1
         assert event.data["completion_ms"] >= event.data["first_output_ms"]
         assert event.data["output_tokens"] == 5
+
+
+def test_completed_answers_record_tps_for_manual_models_and_statistics(signed, monkeypatch):
+    model_id = make_model({}, model_id="manual-timed")
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": model_id, "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "manual-timed"})
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            yield {"kind": "text", "text": "hello"}
+            yield {"kind": "response", "message": {"role": "assistant", "content": "hello"},
+                   "tool_calls": [], "usage": {"output_tokens": 5}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        event = db.scalar(select(PerformanceEvent).where(
+            PerformanceEvent.data["model_id"].as_string() == model_id,
+        ))
+        assert event.data["output_tokens"] == 5
+        assert event.data["generation_ms"] >= 1
+        assert event.data["tokens_per_second"] > 0
+        message = db.scalar(select(Message).where(Message.conversation_id == conversation,
+                                                   Message.data["role"].as_string() == "assistant"))
+        assert message.data["performance"] == {
+            "output_tokens": 5,
+            "generation_ms": event.data["generation_ms"],
+            "tokens_per_second": event.data["tokens_per_second"],
+        }
+        assert not db.scalar(select(AutoReliabilityEvent).where(
+            AutoReliabilityEvent.data["model_id"].as_string() == model_id,
+        ))
+    statistics = signed.get("/api/v1/settings/statistics")
+    assert statistics.status_code == 200
+    group = next(item for item in statistics.json()["groups"] if item["model_id"] == model_id)
+    assert group["tps_count"] == 1
+    assert group["tokens_per_second"] > 0
+
+
+def test_completed_answer_without_usage_does_not_record_tps(signed, monkeypatch):
+    model_id = make_model({}, model_id="manual-no-usage")
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": model_id, "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "manual-no-usage"})
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            yield {"kind": "text", "text": "hello"}
+            yield {"kind": "response", "message": {"role": "assistant", "content": "hello"},
+                   "tool_calls": [], "usage": {}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        assert not db.scalar(select(PerformanceEvent).where(
+            PerformanceEvent.data["model_id"].as_string() == model_id,
+        ))
+        message = db.scalar(select(Message).where(Message.conversation_id == conversation,
+                                                   Message.data["role"].as_string() == "assistant"))
+        assert "performance" not in message.data
 
 
 def test_auto_retry_prefers_another_provider_and_honors_retry_after(signed):

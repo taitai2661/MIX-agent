@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import func, select
 
 from mix_agent.auth.security import read_secret
-from mix_agent.db.models import Approval, Conversation, Event, Message, Provider, Run, ToolCall, now
+from mix_agent.db.models import Approval, Conversation, Event, Message, Provider, Run, ToolCall, ScheduledRun, now
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import (
     Adapter,
@@ -18,6 +18,7 @@ from mix_agent.providers.adapters import (
 from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
+from mix_agent.performance import record as record_performance
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.tools.execute import execute, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
@@ -217,6 +218,17 @@ def finish(db, run, status, reason=None):
     run.status = status
     update(run, reason=reason)
     emit(db, run.id, "status", {"status": status, "reason": reason})
+    scheduled_id = run.data.get("scheduled_run_id")
+    if scheduled_id:
+        scheduled = db.get(ScheduledRun, scheduled_id)
+        if scheduled:
+            retry = status == "failed" and int(scheduled.data.get("attempt", 0)) == 0
+            scheduled.status = "retrying" if retry else ("completed" if status == "completed" else "failed")
+            scheduled.data = {**scheduled.data, "reason": reason, "finished_at": now().isoformat(),
+                              **({"attempt": 1, "retry_at": (now() + timedelta(seconds=30)).isoformat()} if retry else {})}
+            from mix_agent.schedules import notify
+            if not retry:
+                notify(db, run.owner_id, "schedule.completed" if status == "completed" else "schedule.failed", "定期実行: " + ("完了" if status == "completed" else "失敗"), scheduled)
     db.commit()
 
 
@@ -438,6 +450,8 @@ async def drive(run_id):
                                 decision = "deny"
                             if decision == "deny":
                                 result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
+                            elif decision == "ask" and run.data.get("scheduled_run_id"):
+                                result = {"error": "Scheduled runs require an always-allowed tool", "code": "tool_denied", "type": "tool_denied"}
                             elif decision == "ask":
                                 approval = db.scalar(select(Approval).where(Approval.tool_call_id == call.id))
                                 if not approval:
@@ -659,12 +673,31 @@ async def drive(run_id):
                         continue
                     message = {"role": "assistant", "content": answer_fallback(run.data["history"])}
                     update(run, history=[*history, message])
+                performance = None
+                output_count = output_tokens(response.get("usage", {}))
+                # A provider's final usage is authoritative.  The first visible
+                # text timestamp excludes request setup and initial waiting time.
+                if output_count and first_output_at is not None:
+                    completed_at = now()
+                    generation_ms = max(1, round((completed_at - first_output_at).total_seconds() * 1000))
+                    event = record_performance(
+                        db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
+                        mode, output_count, generation_ms,
+                    )
+                    db.add(event)
+                    performance = {
+                        "output_tokens": output_count,
+                        "generation_ms": generation_ms,
+                        "tokens_per_second": event.data["tokens_per_second"],
+                    }
                 message_data = {
                     "role": "assistant",
                     "content": message["content"],
                     "run_id": run.id,
                     "artifacts": run.data.get("artifacts", []),
                 }
+                if performance:
+                    message_data["performance"] = performance
                 if run.data.get("auto_selection"):
                     message_data["auto_selection"] = {
                         **run.data["auto_selection"],
@@ -706,6 +739,8 @@ async def scheduler():
     with SessionLocal() as db:
         for run in db.scalars(select(Run).where(Run.status == "running")):
             finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
+        from mix_agent.schedules import reconcile
+        reconcile(db, launch)
     while True:
         from mix_agent.storage import backup
 
@@ -715,6 +750,8 @@ async def scheduler():
         with SessionLocal() as db:
             from mix_agent.api.routes import purge_expired_conversations
             purge_expired_conversations(db)
+            from mix_agent.schedules import tick
+            tick(db, launch)
             for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
                 if run.status == "queued":
                     launch(run.id)
