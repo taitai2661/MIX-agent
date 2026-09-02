@@ -5269,7 +5269,36 @@
             "type": "integer",
             "title": "Tool Count"
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "thinking",
+              "agent"
+            ],
+            "title": "Mode"
+          },
+          "policy": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Policy"
+          },
           "budget": {
+            "$ref": "#/components/schemas/RunBudgetView"
+          },
+          "remaining": {
             "$ref": "#/components/schemas/RunBudgetView"
           },
           "approvals": {
@@ -5286,7 +5315,10 @@
           "status",
           "steps",
           "tool_count",
+          "mode",
+          "policy",
           "budget",
+          "remaining",
           "approvals"
         ],
         "title": "RunView"

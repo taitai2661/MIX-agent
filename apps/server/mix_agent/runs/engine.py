@@ -253,7 +253,15 @@ def update(run, **fields):
 
 def finish(db, run, status, reason=None):
     run.status = status
-    update(run, reason=reason)
+    fields = {"reason": reason}
+    if run.data.get("snapshot", {}).get("policy", {}).get("checkpointing"):
+        fields["checkpoint"] = {
+            "status": status,
+            "steps": run.data.get("steps", 0),
+            "tool_count": run.data.get("tool_count", 0),
+            "finished_at": now().isoformat(),
+        }
+    update(run, **fields)
     emit(db, run.id, "status", {"status": status, "reason": reason})
     scheduled_id = run.data.get("scheduled_run_id")
     if scheduled_id:
@@ -460,7 +468,10 @@ async def drive(run_id):
                     return
                 elapsed = (now() - run.created_at.replace(tzinfo=timezone.utc)).total_seconds()
                 if elapsed >= snapshot.get("max_seconds", 900):
-                    finish(db, run, "interrupted", "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。")
+                    if snapshot.get("policy", {}).get("checkpointing"):
+                        finish(db, run, "interrupted", "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。")
+                    else:
+                        finish(db, run, "completed", "このモードの実行時間上限に到達したため、取得済みの結果で終了しました。長い作業には長作業モードを使用してください。")
                     return
                 calls = list(
                     db.scalars(
@@ -556,6 +567,12 @@ async def drive(run_id):
                 tool_limit_reached = count >= call_limit
                 if tool_limit_reached:
                     available = []
+                step_limit_reached = steps >= snapshot.get("max_steps", 8)
+                if step_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
+                    finish(db, run, "interrupted", "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。")
+                    return
+                if step_limit_reached:
+                    available = []
                 history = run.data["history"]
                 # Compact only previous turns. Current-turn tool calls and signed native blocks stay intact.
                 context_size = sum(len(m.get("content", "")) for m in history)
@@ -611,8 +628,8 @@ async def drive(run_id):
                         await wait_for_provider_slot({**provider, "id": snapshot.get("provider_record_id")})
                         async for event in Adapter(provider, key).stream(
                             snapshot["model_id"], (
-                                [*history, {"role": "user", "content": "The tool-call limit for this run has been reached. Do not request more tools; answer the original request using the available information."}]
-                                if tool_limit_reached else history
+                                [*history, {"role": "user", "content": "The step or tool-call limit for this response mode has been reached. Do not request more tools; answer the original request using the available information and recommend Long work mode if sustained work remains."}]
+                                if tool_limit_reached or step_limit_reached else history
                             ), available, mode, model_settings
                         ):
                             if event["kind"] == "response":
@@ -694,6 +711,8 @@ async def drive(run_id):
                                 {"error": "Tool call limit reached", "code": "tool_call_limit_reached", "type": "tool_call_limit_reached"},
                             )
                     update(run, tool_count=min(call_limit, count + len(tool_calls)))
+                    if snapshot.get("policy", {}).get("checkpointing"):
+                        update(run, checkpoint={"status": "working", "steps": steps + 1, "tool_count": min(call_limit, count + len(tool_calls))})
                     db.commit()
                     continue
                 if not is_user_facing_answer(message["content"]):

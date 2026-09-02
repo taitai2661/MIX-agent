@@ -16,6 +16,11 @@ export function ModeStatus({
     caps.tools === true || (caps.tools == null && probe?.status === "supported");
   const noTools =
     Array.isArray(agent?.data.tool_ids) && agent.data.tool_ids.length === 0;
+  const budget = mode === "chat"
+    ? "15分・8ステップ・8 Tool Call"
+    : mode === "thinking"
+      ? "30分・16ステップ・16 Tool Call"
+      : "既定60分・200ステップ・500 Tool Call";
   return (
     <p className="mode-status" role="status">
       {mode === "chat"
@@ -23,6 +28,8 @@ export function ModeStatus({
         : mode === "thinking"
           ? "前提・別案・見落としを深く検討し、重要な結論を確認してから答えます。"
           : "計画・実行・途中検証・修正を繰り返し、完了または本当の停止条件まで進めます。"}
+      <span>実行予算: {budget}。選択したモードは実行中に変わりません。</span>
+      {mode !== "agent" && <span>計画・委任・バックグラウンド処理・再開・自動Skill学習は長作業専用です。</span>}
       {model && mode !== "agent" && !canThink && (
         <span>
           {mode === "thinking"

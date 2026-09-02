@@ -338,6 +338,14 @@ export function Chat() {
               {run.data?.reason && (
                 <div className="notice">{run.data.reason}</div>
               )}
+              {run.data && active && (
+                <p className="run-budget" role="status">
+                  {run.data.mode === "chat" ? "通常" : run.data.mode === "thinking" ? "深く考える" : "長作業"}
+                  {" · 残り "}{run.data.remaining.max_seconds ?? 0}秒
+                  {" · "}{run.data.remaining.max_steps ?? 0}ステップ
+                  {" · "}{run.data.remaining.max_tool_calls ?? 0} Tool Call
+                </p>
+              )}
               {run.data?.status === "interrupted" && (
                 <Button
                   variant="outline"
@@ -418,7 +426,7 @@ export function Chat() {
                       <span>応答方法</span>
                       <div className="mode-switch">
                         {modes.map((m) => (
-                          <button type="button" key={m} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => setMode(m)}>
+                          <button type="button" key={m} disabled={active} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => setMode(m)}>
                             {m === "chat" ? <MessageSquare size={13} /> : m === "thinking" ? <Brain size={13} /> : <Bot size={13} />}
                             {m === "chat" ? "通常" : m === "thinking" ? "深く考える" : "長作業"}
                           </button>

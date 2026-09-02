@@ -103,10 +103,11 @@ export function Agents() {
             </Field>
             <Field label="モード">
               <select name="mode" defaultValue={editing?.data.mode || "agent"}>
-                {["chat", "thinking", "agent"].map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
+                <option value="chat">通常</option>
+                <option value="thinking">深く考える</option>
+                <option value="agent">長作業</option>
               </select>
+              <small>通常と深く考えるは固定予算です。下の実行予算は長作業で使用します。</small>
             </Field>
             <Field label="最大モデル呼び出し回数">
               <input
@@ -235,7 +236,7 @@ export function Agents() {
             <h3>{a.data.name}</h3>
             <p>{a.data.system_prompt?.slice(0, 100)}</p>
             <div>
-              <span className="tag">{a.data.mode}</span>
+              <span className="tag">{a.data.mode === "chat" ? "通常" : a.data.mode === "thinking" ? "深く考える" : "長作業"}</span>
               <span>{a.data.tool_ids.length} tools</span>
             </div>
           </button>

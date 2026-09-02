@@ -6,6 +6,7 @@ from mix_agent.db.models import Message, Model, Provider, Run, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.tools.registry import BUILTINS
+from mix_agent.runs.mode_policy import tool_allowed
 from sqlalchemy import select
 
 
@@ -76,13 +77,33 @@ def test_default_tools_and_resolved_snapshot(signed, monkeypatch, mode):
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
         snapshot = db.get(Run, response.json()["run_id"]).data["snapshot"]
-        assert snapshot["tool_ids"] == [t["id"] for t in BUILTINS]
+        assert snapshot["tool_ids"] == [t["id"] for t in BUILTINS if tool_allowed(mode, t)]
+        assert snapshot["mode"] == mode
+        assert snapshot["policy"]["planning"] is False
         assert snapshot["reasoning"]["policy"] == (
             "auto" if mode == "chat" else "required"
         )
     assert (
         signed.get("/api/v1/models").json()[0]["data"]["reasoning_control"] == "openai"
     )
+    view = signed.get("/api/v1/runs/" + response.json()["run_id"])
+    assert view.status_code == 200
+    assert view.json()["mode"] == mode
+    assert view.json()["policy"]["planning"] is False
+    assert view.json()["remaining"]["max_steps"] == view.json()["budget"]["max_steps"]
+
+
+def test_long_work_snapshots_autonomous_policy_and_tools(signed, monkeypatch):
+    mid = create_model(caps={"reasoning": True, "tools": True})
+    response = send(signed, monkeypatch, mid, "agent", acknowledge_unknown_capability=True)
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        run = db.get(Run, response.json()["run_id"])
+        snapshot = run.data["snapshot"]
+        assert snapshot["policy"]["planning"] is True
+        assert snapshot["policy"]["checkpointing"] is True
+        assert "update_plan" in snapshot["tool_ids"]
+        assert run.data["checkpoint"]["status"] == "started"
 
 
 @pytest.mark.parametrize("tool_ids", [[], ["web_search"]])
@@ -296,8 +317,11 @@ async def test_run_uses_resolved_policy_without_enforcing_step_limit(signed, mon
         run.data = {**run.data, "snapshot": {**run.data["snapshot"], "max_steps": 1}}
         db.commit()
     await engine.drive(run_id)
+    # The second call is the budget-limited final turn; the third is the
+    # existing one-shot user-facing-answer repair because this fake returned empty text.
     assert len(requests) == 3
-    assert all(tools for tools, _ in requests)
+    assert requests[0][0]
+    assert requests[1][0] == requests[2][0] == []
     assert all(
         s["_resolved_reasoning"]["policy"] == ("auto" if mode == "chat" else "required")
         for _, s in requests
@@ -454,6 +478,12 @@ async def test_tool_call_limit_gives_model_a_final_turn_without_tools(signed, mo
     mid = create_model(caps={"reasoning": True, "tools": True})
     agent = signed.post("/api/v1/agents", json={"name": "One tool", "tool_ids": ["web_search"], "max_tool_calls": 1}).json()
     run_id = send(signed, monkeypatch, mid, mode, agent_id=agent["id"]).json()["run_id"]
+    # Short modes intentionally ignore an Agent's long-work budget. Override
+    # the frozen snapshot here to exercise the engine's final-turn behavior.
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        run.data = {**run.data, "snapshot": {**run.data["snapshot"], "max_tool_calls": 1}}
+        db.commit()
     requests = []
 
     class LimitAdapter:

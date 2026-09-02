@@ -1982,7 +1982,17 @@ export interface components {
             steps: number;
             /** Tool Count */
             tool_count: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "chat" | "thinking" | "agent";
+            /** Policy */
+            policy: {
+                [key: string]: string | number | boolean;
+            };
             budget: components["schemas"]["RunBudgetView"];
+            remaining: components["schemas"]["RunBudgetView"];
             /** Approvals */
             approvals: components["schemas"]["ApprovalView"][];
         };

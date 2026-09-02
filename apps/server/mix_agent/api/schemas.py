@@ -148,7 +148,10 @@ class RunView(BaseModel):
     reason: str | None = None
     steps: int
     tool_count: int
+    mode: Literal["chat", "thinking", "agent"]
+    policy: dict[str, str | int | bool]
     budget: RunBudgetView
+    remaining: RunBudgetView
     approvals: list[ApprovalView]
 
 

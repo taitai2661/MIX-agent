@@ -7,7 +7,8 @@ from mix_agent.db.models import Tool, Permission
 
 
 def definition(
-    name, description, properties=None, required=None, permission="allow", executor="execution", parallel_safe=False
+    name, description, properties=None, required=None, permission="allow", executor="execution", parallel_safe=False,
+    allowed_modes=("chat", "thinking", "agent"),
 ):
     return {
         "id": name,
@@ -20,6 +21,7 @@ def definition(
         "default_permission": permission,
         # Custom/MCP tools remain serial until their implementation opts in.
         "parallel_safe": parallel_safe,
+        "allowed_modes": list(allowed_modes),
         "input_schema": {
             "type": "object",
             "properties": properties or {},
@@ -82,8 +84,8 @@ BUILTINS = [
         ["command"],
         "ask",
     ),
-    definition("process_list", "List workspace processes"),
-    definition("process_stop", "Stop a workspace process group", {"process_id": S}, ["process_id"], "ask"),
+    definition("process_list", "List workspace processes", allowed_modes=("agent",)),
+    definition("process_stop", "Stop a workspace process group", {"process_id": S}, ["process_id"], "ask", allowed_modes=("agent",)),
     definition("browser_open", "Open a permitted public URL", {"url": S}, ["url"], "ask"),
     definition("browser_click", "Click a Playwright locator", {"selector": S}, ["selector"], "ask"),
     definition(
@@ -107,8 +109,8 @@ BUILTINS = [
         executor="builtin",
     ),
     definition("skill_search", "Search reusable work instructions", {"query": S}, executor="builtin", parallel_safe=True),
-    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "content"], executor="builtin"),
-    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], executor="builtin"),
+    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "content"], executor="builtin", allowed_modes=("agent",)),
+    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], executor="builtin", allowed_modes=("agent",)),
     definition("memory_delete", "Delete existing memory with approval", {"id": S}, ["id"], "ask", "builtin"),
     definition(
         "update_plan",
@@ -116,6 +118,7 @@ BUILTINS = [
         {"steps": {"type": "array", "maxItems": 20, "items": S}},
         ["steps"],
         executor="builtin",
+        allowed_modes=("agent",),
     ),
 ]
 
@@ -151,8 +154,12 @@ def rule_scope(tool, stored_scope):
 
 
 def permission(db, run, tool, args):
+    from mix_agent.runs.mode_policy import tool_allowed
+
     Draft202012Validator(tool["input_schema"]).validate(args)
     snapshot = run.data["snapshot"]
+    if not tool_allowed(snapshot.get("mode", "chat"), tool, args):
+        return "deny"
     if tool["id"] not in snapshot["tool_ids"]:
         return "deny"
     if "path" in args:
