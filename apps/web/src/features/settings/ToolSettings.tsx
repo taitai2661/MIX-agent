@@ -14,12 +14,19 @@ export function BrowserSettings() {
   const [error, setError] = useState<unknown>(null);
   if (!query.data) return <ErrorBox error={query.error} />;
   const data = query.data.data;
-  const payload = (form: FormData) => ({ default_model_id: data.default_model_id || "", auto_model_ids: data.auto_model_ids || null, auto_retry_count: data.auto_retry_count ?? 3, setup_complete: data.setup_complete ?? false, browser_enabled: form.get("enabled") === "on", web_search_enabled: data.web_search_enabled !== false, web_search_backend: data.web_search_backend || "ddgs", web_search_count: data.web_search_count ?? 5, tool_settings: data.tool_settings || {}, allowed_domains: String(form.get("domains")).split("\n").map((x) => x.trim()).filter(Boolean), brave_api_key: null });
-  return <><Title title="Browser" sub="Browser Toolの利用可否と、アクセスを許可するドメインを設定します。" />
+  const payload = (form: FormData) => ({ browser_enabled: form.get("enabled") === "on", browser_timeout_ms: Number(form.get("timeout")), browser_locale: String(form.get("locale") || "ja-JP").trim(), browser_user_agent: String(form.get("userAgent") || "").trim(), browser_viewport_width: Number(form.get("viewportWidth")), browser_viewport_height: Number(form.get("viewportHeight")), browser_block_images: form.get("blockImages") === "on", allowed_domains: String(form.get("domains")).split("\n").map((x) => x.trim()).filter(Boolean) });
+  return <><Title title="Browser" sub="Docker内のPlaywright ChromiumでWebページを操作します。" />
     <ErrorBox error={error || query.error} />
     <form className="card" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api("/settings", "PUT", payload(form)); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } }}>
       <Field label="Browserを有効にする"><input name="enabled" type="checkbox" defaultChecked={data.browser_enabled !== false} /></Field>
+      <section className="notice"><b>実行方式:</b> Playwright + Chromium（ヘッドレス）。専用Dockerコンテナからegress proxy経由で通信し、ホスト、Docker Socket、ローカルネットワークにはアクセスできません。</section>
+      <Field label="操作タイムアウト" hint="要素のクリック・入力・ページ読み込みを待つ上限です。3〜60秒。"><input name="timeout" type="number" min="3000" max="60000" step="1000" defaultValue={data.browser_timeout_ms ?? 15000} /> ms</Field>
+      <Field label="ページの言語"><input name="locale" defaultValue={data.browser_locale || "ja-JP"} placeholder="ja-JP" /></Field>
+      <Field label="画面サイズ" hint="Webサイトへ渡す仮想ブラウザの表示領域です。"><div className="inline-fields"><input name="viewportWidth" type="number" min="320" max="2560" defaultValue={data.browser_viewport_width ?? 1280} /><span>×</span><input name="viewportHeight" type="number" min="320" max="2560" defaultValue={data.browser_viewport_height ?? 720} /></div></Field>
+      <Field label="User-Agent（任意）" hint="空欄ならChromium標準のUser-Agentを使います。"><input name="userAgent" defaultValue={data.browser_user_agent || ""} placeholder="標準を使用" /></Field>
+      <Field label="画像を読み込まない" hint="帯域を抑え、テキスト中心の確認を速くします。"><input name="blockImages" type="checkbox" defaultChecked={data.browser_block_images === true} /></Field>
       <Field label="許可ドメイン（1行1ドメイン）" hint="未設定なら公開ドメインへの通信を許可します。入力すると、BrowserとRunnerは指定ドメインだけに接続します。"><textarea name="domains" rows={8} defaultValue={data.allowed_domains?.join("\n")} placeholder="example.com" /></Field>
+      <p className="muted">ダウンロード、Service Worker、HTTP(S)以外のURLは無効です。Cookieやページ状態はRunnerの再起動・設定変更時に破棄され、バックアップにも含まれません。</p>
       <Button>保存</Button>
     </form></>;
 }

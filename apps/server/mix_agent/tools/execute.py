@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from mix_agent import config
 from mix_agent.auth.security import read_secret, store_secret
-from mix_agent.db.models import Artifact, MCPConnection, Settings
+from mix_agent.db.models import Agent, Artifact, Conversation, MCPConnection, ScheduledJob, Settings, now
 from mix_agent.mcp import oauth as mcp_oauth
 from mix_agent.memory import service as memory
 from mix_agent.skills import service as skills
@@ -97,8 +97,11 @@ async def execute(db, run, tool, args):
                 {"connection": {**conn.data, "credentials": credentials}, "tool": tool["remote_name"], "arguments": args, "run_id": run.id},
             )
     elif tool["executor_ref"] == "execution":
+        setting = db.scalar(select(Settings).where(Settings.owner_id == run.owner_id))
+        browser_settings = setting.data if setting else {}
         result = await runner_request(
-            "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id}
+            "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
+                                      "browser_settings": browser_settings}
         )
         if "image_base64" in result:
             artifact = save_artifact(
@@ -158,6 +161,66 @@ async def execute(db, run, tool, args):
         result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
     elif name == "update_plan":
         result = {"steps": args["steps"]}
+    elif name == "schedule_list":
+        from mix_agent.schedules import next_at
+
+        jobs = []
+        for job in db.scalars(select(ScheduledJob).where(ScheduledJob.owner_id == run.owner_id).order_by(ScheduledJob.created_at.desc())):
+            data = dict(job.data)
+            try:
+                data["next_at"] = next_at(data["cron"], data["timezone"]).isoformat() if data.get("enabled") else None
+            except ValueError:
+                data["next_at"] = None
+            jobs.append({"id": job.id, **data})
+        result = {"jobs": jobs}
+    elif name in ("schedule_create", "schedule_update", "schedule_delete", "schedule_run"):
+        from mix_agent.schedules import claim, next_at
+
+        def owned_job(key):
+            job = db.get(ScheduledJob, key)
+            if not job or job.owner_id != run.owner_id:
+                raise ValueError("Scheduled job was not found")
+            return job
+
+        def validate_target(data):
+            model = Agent if data["target_type"] == "agent" else Conversation
+            target = db.get(model, data["target_id"])
+            if not target or target.owner_id != run.owner_id:
+                raise ValueError("Scheduled job target was not found")
+
+        if name == "schedule_create":
+            data = {"name": args["name"], "target_type": args["target_type"], "target_id": args["target_id"], "prompt": args["prompt"], "cron": args["cron"], "timezone": args.get("timezone", "Asia/Tokyo"), "enabled": args.get("enabled", True), "catch_up": args.get("catch_up", False)}
+            validate_target(data)
+            next_at(data["cron"], data["timezone"])
+            job = ScheduledJob(owner_id=run.owner_id, data=data)
+            db.add(job); db.flush()
+            result = {"id": job.id, "created": True, **data}
+        elif name == "schedule_update":
+            job = owned_job(args["id"])
+            data = {**job.data, **{key: value for key, value in args.items() if key != "id"}}
+            validate_target(data)
+            next_at(data["cron"], data["timezone"])
+            job.data = data
+            result = {"id": job.id, "updated": True, **data}
+        elif name == "schedule_delete":
+            job = owned_job(args["id"])
+            job_id = job.id
+            db.delete(job)
+            result = {"id": job_id, "deleted": True}
+        else:
+            job = owned_job(args["id"])
+            scheduled = claim(db, job, now())
+            if not scheduled:
+                raise ValueError("This scheduled run has already started")
+            from mix_agent.api.routes import enqueue_scheduled_run
+            from mix_agent.runs.engine import launch
+
+            scheduled_run = enqueue_scheduled_run(db, run.owner_id, job, scheduled)
+            # The launched run uses a separate session, so make its job and run
+            # visible before handing it to the background engine.
+            db.commit()
+            launch(scheduled_run.id)
+            result = {"id": job.id, "scheduled_run_id": scheduled.id, "run_id": scheduled_run.id, "started": True}
     elif name == "create_artifact":
         result = {"artifact": save_text_artifact(db, run.owner_id, args["name"], args["mime"], args["content"])}
     else:

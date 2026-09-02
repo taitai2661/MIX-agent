@@ -3,6 +3,11 @@ from datetime import datetime, timezone
 import pytest
 
 from mix_agent.schedules import matches, next_at, parse
+from mix_agent.tools.execute import execute
+from mix_agent.tools.registry import BUILTINS
+from sqlalchemy import select
+from mix_agent.db.models import Conversation, Run, ScheduledJob, User, uid
+from mix_agent.db.session import SessionLocal
 
 
 def test_five_field_cron_validation_and_next_time():
@@ -28,3 +33,24 @@ def test_scheduled_job_api_validates_and_persists_per_owner(signed):
     assert listing.status_code == 200
     assert listing.json()[0]["data"]["name"] == "朝の確認"
     assert signed.post("/api/v1/scheduled-jobs", json={**payload, "cron": "bad"}).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_agent_schedule_tools_manage_only_owned_jobs(signed):
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        conversation = Conversation(owner_id=owner, data={"title": "Test"})
+        run = Run(owner_id=owner, conversation_id=conversation.id, request_key=uid(), data={"snapshot": {}})
+        db.add_all((conversation, run)); db.flush()
+        create = next(tool for tool in BUILTINS if tool["id"] == "schedule_create")
+        created = await execute(db, run, create, {"name": "朝", "target_type": "conversation", "target_id": conversation.id, "prompt": "確認して", "cron": "0 9 * * *"})
+        assert created["created"] is True
+        job = db.get(ScheduledJob, created["id"])
+        assert job and job.data["timezone"] == "Asia/Tokyo"
+        update = next(tool for tool in BUILTINS if tool["id"] == "schedule_update")
+        updated = await execute(db, run, update, {"id": job.id, "enabled": False})
+        assert updated["enabled"] is False
+        listing = await execute(db, run, next(tool for tool in BUILTINS if tool["id"] == "schedule_list"), {})
+        assert listing["jobs"][0]["id"] == job.id
+        deleted = await execute(db, run, next(tool for tool in BUILTINS if tool["id"] == "schedule_delete"), {"id": job.id})
+        assert deleted == {"id": job.id, "deleted": True}

@@ -392,6 +392,12 @@ class SettingsInput(Input):
     web_search_backend: Literal["ddgs", "brave"] = "ddgs"
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)
     browser_enabled: bool = True
+    browser_timeout_ms: int = Field(default=15000, ge=3000, le=60000)
+    browser_locale: str = Field(default="ja-JP", min_length=2, max_length=35)
+    browser_user_agent: str = Field(default="", max_length=500)
+    browser_viewport_width: int = Field(default=1280, ge=320, le=2560)
+    browser_viewport_height: int = Field(default=720, ge=320, le=2560)
+    browser_block_images: bool = False
     web_search_enabled: bool = True
     web_search_count: int = Field(default=5, ge=1, le=20)
     tool_settings: dict[str, dict[str, object]] = Field(default_factory=dict)

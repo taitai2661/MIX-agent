@@ -120,6 +120,28 @@ BUILTINS = [
         executor="builtin",
         allowed_modes=("agent",),
     ),
+    definition(
+        "schedule_list",
+        "List this user's configured recurring jobs, including their target, schedule, enabled state, and next run time.",
+        executor="builtin",
+        parallel_safe=True,
+        allowed_modes=("agent",),
+    ),
+    definition(
+        "schedule_create",
+        "Create a recurring job that runs an owned agent or conversation. Confirm the target, prompt, cron expression, and timezone with the user before calling.",
+        {"name": {"type": "string", "minLength": 1, "maxLength": 100}, "target_type": {"type": "string", "enum": ["agent", "conversation"]}, "target_id": {"type": "string", "minLength": 1, "maxLength": 100}, "prompt": S, "cron": {"type": "string", "minLength": 9, "maxLength": 100}, "timezone": {"type": "string", "minLength": 1, "maxLength": 100}, "enabled": {"type": "boolean"}, "catch_up": {"type": "boolean"}},
+        ["name", "target_type", "target_id", "prompt", "cron"],
+        "ask", "builtin", allowed_modes=("agent",),
+    ),
+    definition(
+        "schedule_update",
+        "Update an existing recurring job owned by the user. Include only fields that need changing.",
+        {"id": S, "name": {"type": "string", "minLength": 1, "maxLength": 100}, "target_type": {"type": "string", "enum": ["agent", "conversation"]}, "target_id": {"type": "string", "minLength": 1, "maxLength": 100}, "prompt": S, "cron": {"type": "string", "minLength": 9, "maxLength": 100}, "timezone": {"type": "string", "minLength": 1, "maxLength": 100}, "enabled": {"type": "boolean"}, "catch_up": {"type": "boolean"}},
+        ["id"], "ask", "builtin", allowed_modes=("agent",),
+    ),
+    definition("schedule_delete", "Delete an existing recurring job owned by the user.", {"id": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
+    definition("schedule_run", "Start one existing recurring job immediately.", {"id": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
 ]
 
 

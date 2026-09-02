@@ -17,7 +17,9 @@ app = FastAPI(docs_url=None, redoc_url=None)
 ROOT = Path(os.getenv("WORKSPACE", "/workspace"))
 PROCESSES = {}
 BROWSER = None
+CONTEXT = None
 PAGE = None
+BROWSER_CONFIG = None
 LOCK = asyncio.Lock()
 
 
@@ -115,18 +117,38 @@ def stop(entry):
         pass
 
 
-async def page():
-    global BROWSER, PAGE
-    if PAGE is None:
+def browser_config(values):
+    values = values or {}
+    return {
+        "timeout": max(3000, min(60000, int(values.get("browser_timeout_ms", 15000)))),
+        "locale": str(values.get("browser_locale", "ja-JP"))[:35] or "ja-JP",
+        "user_agent": str(values.get("browser_user_agent", ""))[:500],
+        "viewport": {"width": max(320, min(2560, int(values.get("browser_viewport_width", 1280)))),
+                     "height": max(320, min(2560, int(values.get("browser_viewport_height", 720))))},
+        "block_images": bool(values.get("browser_block_images", False)),
+    }
+
+
+async def page(values=None):
+    global BROWSER, CONTEXT, PAGE, BROWSER_CONFIG
+    config = browser_config(values)
+    if BROWSER is None:
         playwright = await async_playwright().start()
         BROWSER = await playwright.chromium.launch(
             headless=True,
             proxy={"server": os.getenv("HTTPS_PROXY", "http://egress-proxy:3128")},
             args=["--disable-dev-shm-usage", "--proxy-bypass-list=<-loopback>"],
         )
-        context = await BROWSER.new_context(
-            accept_downloads=False, service_workers="block"
-        )
+    if PAGE is None or BROWSER_CONFIG != config:
+        if CONTEXT is not None:
+            await CONTEXT.close()
+        context_args = {
+            "accept_downloads": False, "service_workers": "block", "locale": config["locale"],
+            "viewport": config["viewport"],
+        }
+        if config["user_agent"]:
+            context_args["user_agent"] = config["user_agent"]
+        CONTEXT = await BROWSER.new_context(**context_args)
 
         async def guard(route):
             from urllib.parse import urlsplit
@@ -136,9 +158,16 @@ async def page():
             else:
                 await route.continue_()
 
-        await context.route("**/*", guard)
-        PAGE = await context.new_page()
-        PAGE.set_default_timeout(15000)
+        async def block_images(route):
+            if config["block_images"] and route.request.resource_type == "image":
+                await route.abort()
+            else:
+                await guard(route)
+
+        await CONTEXT.route("**/*", block_images)
+        PAGE = await CONTEXT.new_page()
+        PAGE.set_default_timeout(config["timeout"])
+        BROWSER_CONFIG = config
     return PAGE
 
 
@@ -146,6 +175,7 @@ class Execute(BaseModel):
     name: str
     arguments: dict
     run_id: str
+    browser_settings: dict = Field(default_factory=dict)
 
 
 @app.post("/execute")
@@ -273,7 +303,7 @@ async def execute(body: Execute):
                 stop(PROCESSES[args["process_id"]])
                 return {"ok": True}
             if name.startswith("browser_"):
-                p = await page()
+                p = await page(body.browser_settings)
                 if name == "browser_open":
                     from urllib.parse import urlsplit
 

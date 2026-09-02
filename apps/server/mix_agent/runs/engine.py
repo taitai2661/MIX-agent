@@ -95,6 +95,11 @@ def activity_summary(tool_id, arguments):
         "skill_add": ("memory", "Skillを保存中"),
         "skill_update": ("memory", "Skillを更新中"),
         "update_plan": ("plan", "作業計画を更新中"),
+        "schedule_list": ("clock", "定期実行を確認中"),
+        "schedule_create": ("clock", "定期実行を作成中"),
+        "schedule_update": ("clock", "定期実行を更新中"),
+        "schedule_delete": ("clock", "定期実行を削除中"),
+        "schedule_run": ("clock", "定期実行を開始中"),
     }
     icon, label = labels.get(tool_id, ("tool", "ツールを実行中"))
     summary = {"icon": icon, "label": label}

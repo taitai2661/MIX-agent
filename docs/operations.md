@@ -13,6 +13,12 @@ docker compose stop
 
 Docker初回起動時のinitがDBパスワード、内部トークン、暗号鍵を生成します。既存の値は上書きしません。Runnerはread-only filesystem、非root、Capability削除、メモリ/CPU/PID上限で起動します。
 
+## Browser Runtimeの更新
+
+Browser Toolは専用RunnerのPlaywright Chromiumを使います。依存関係の更新候補はDependabotが毎週作成します。更新を取り込んだら、通常どおり `docker compose up -d --build` でexecution-runnerを再ビルドしてください。これによりPlaywrightと対応するChromium shellも一緒に更新されます。
+
+実行中のRunnerがインターネットから自己更新したり、ホストのDocker Socketを操作したりすることはありません。更新はレビュー可能な依存関係変更とDockerイメージ再ビルドに限定します。
+
 アプリDBはCompose内のPostgreSQL専用です。DBポートはホストへ公開せず、アプリはDBのhealthcheckとAlembic migration完了後に起動します。テストは `docker compose --profile test run --rm test`、画面確認は `docker compose --profile preview up --build preview` を使い、それぞれ使い捨てPostgreSQLを使用します。
 
 ## LAN/VPNとTLS

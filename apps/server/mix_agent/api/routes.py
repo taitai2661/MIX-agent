@@ -582,7 +582,10 @@ async def settings(ctx=Depends(context)):
     db, s = ctx
     view = public(own(db, Settings, "settings", s.owner_id))
     # Older profiles predate these preferences; expose compatible defaults.
-    view["data"] = {"auto_retry_count": 3, "browser_enabled": True, "web_search_enabled": True,
+    view["data"] = {"auto_retry_count": 3, "browser_enabled": True,
+                     "browser_timeout_ms": 15000, "browser_locale": "ja-JP", "browser_user_agent": "",
+                     "browser_viewport_width": 1280, "browser_viewport_height": 720, "browser_block_images": False,
+                     "web_search_enabled": True,
                      "web_search_backend": "ddgs", "web_search_count": 5, "tool_settings": {},
                      "memory_auto_formation": True, "memory_seed_limit": 24,
                      "memory_max_candidates": 96, "memory_result_limit": 8,
