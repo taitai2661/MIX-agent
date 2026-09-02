@@ -225,7 +225,7 @@ export function Chat() {
   }
   const selected = models.data?.find((x) => x.id === model);
   const selectedAgent = agents.data?.find((a) => a.id === agent);
-  const modeLabel = mode === "chat" ? "通常" : mode === "thinking" ? "深く考える" : "長作業";
+  const modeLabel = mode;
   const modelLabel = model === "auto" ? "Auto" : selected?.data.name || selected?.data.model_id || "モデルを選択";
   const permissionCounts = (tools.data || []).reduce(
     (counts: Record<string, number>, tool) => {
@@ -340,7 +340,7 @@ export function Chat() {
               )}
               {run.data && active && (
                 <p className="run-budget" role="status">
-                  {run.data.mode === "chat" ? "通常" : run.data.mode === "thinking" ? "深く考える" : "長作業"}
+                  {run.data.mode}
                   {" · 残り "}{run.data.remaining.max_seconds ?? 0}秒
                   {" · "}{run.data.remaining.max_steps ?? 0}ステップ
                   {" · "}{run.data.remaining.max_tool_calls ?? 0} Tool Call
@@ -428,7 +428,7 @@ export function Chat() {
                         {modes.map((m) => (
                           <button type="button" key={m} disabled={active} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => setMode(m)}>
                             {m === "chat" ? <MessageSquare size={13} /> : m === "thinking" ? <Brain size={13} /> : <Bot size={13} />}
-                            {m === "chat" ? "通常" : m === "thinking" ? "深く考える" : "長作業"}
+                            {m}
                           </button>
                         ))}
                       </div>
