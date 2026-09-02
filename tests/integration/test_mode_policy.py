@@ -4,10 +4,10 @@ from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, mode_po
 def test_each_mode_has_a_distinct_execution_policy():
     prompts = {mode: mode_prompt(mode) for mode in ("chat", "thinking", "agent")}
     assert len(set(prompts.values())) == 3
-    assert "direct" in prompts["chat"]
+    assert "immediate request" in prompts["chat"]
     assert "cross-check" in prompts["thinking"]
     assert "update_plan" in prompts["agent"]
-    assert "validate intermediate results" in prompts["agent"]
+    assert "observable success" in prompts["agent"]
 
 
 def test_mode_defaults_expand_autonomous_work_budgets():
@@ -32,8 +32,8 @@ def test_explicit_agent_limits_are_preserved():
 
 def test_short_modes_cannot_inherit_long_work_limits():
     configured = {"max_steps": 200, "max_seconds": 3600, "max_tool_calls": 500}
-    assert apply_mode_defaults(configured, "chat")["max_steps"] == 8
-    assert apply_mode_defaults(configured, "thinking")["max_tool_calls"] == 16
+    assert apply_mode_defaults(configured, "chat")["max_steps"] == 12
+    assert apply_mode_defaults(configured, "thinking")["max_tool_calls"] == 24
 
 
 def test_mode_restrictions_cannot_be_bypassed_with_arguments():

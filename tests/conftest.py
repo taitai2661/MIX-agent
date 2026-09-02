@@ -1,12 +1,11 @@
 import os
-import tempfile
 from pathlib import Path
 import pytest
 
-ROOT = Path(tempfile.mkdtemp(prefix="mix-tests-"))
+ROOT = Path("/tmp/mix-tests")
 os.environ["MIX_DATA"] = str(ROOT)
 os.environ["MIX_KEYS"] = str(ROOT / "keys")
-os.environ["DATABASE_URL"] = "sqlite:///" + str(ROOT / "test.db")
+os.environ["DATABASE_URL"] = "postgresql+psycopg://mix:test-only-password@postgres-test/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://testserver"
 
 from mix_agent.db.session import engine, SessionLocal

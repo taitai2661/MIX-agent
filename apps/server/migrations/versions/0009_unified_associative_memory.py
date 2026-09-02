@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision = "0009"
@@ -23,7 +24,6 @@ def upgrade():
         sa.Column("activation_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_activated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_reinforced_at", sa.DateTime(timezone=True), nullable=True),
-        # SQLite cannot ALTER TABLE with a non-constant CURRENT_TIMESTAMP default.
         # Existing rows are backfilled below and ORM writes always provide a value.
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
     )
@@ -50,7 +50,7 @@ def upgrade():
         data["metadata"] = metadata
         state = "deleted" if data.get("deleted") else "established"
         update_sql = "UPDATE memories SET data=:data, lifecycle_state=:state, strength=:strength, confidence=:confidence, salience=:salience, updated_at=:updated WHERE id=:id"
-        bind.execute(sa.text(update_sql).bindparams(sa.bindparam("data", type_=sa.JSON())), {
+        bind.execute(sa.text(update_sql).bindparams(sa.bindparam("data", type_=JSONB)), {
             "id": row["id"], "data": data, "state": state, "strength": strength,
             "confidence": 0.9 if data.get("source_run") == "explicit-user-request" else 0.7,
             "salience": salience, "updated": row["created_at"],

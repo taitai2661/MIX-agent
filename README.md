@@ -37,10 +37,10 @@ Knowledge/RAG、画像生成・編集、MCP OAuth、Registry Store、外部向�
 ### Chat / Thinking / Agent
 
 - **Chat**: 対応が確認されたモデルでは、必要に応じて思考・検索・作成・実行を使います。思考やTool Callingが未対応・未確認でも通常会話は可能です。
-- **Thinking**: 最大5ステップで、通常推論を使いながら必要に応じて検索・作成・実行を進めます。Reasoning対応モデルではProvider固有の思考機能も有効にしますが、非対応モデルでもThinkingは利用できます。毎回の検索や思考文の表示・長さを保証するものではありません。
+- **Thinking**: 通常推論を使いながら必要に応じて検索・作成・実行を進めます。Reasoning対応モデルではProvider固有の思考機能も有効にしますが、非対応モデルでもThinkingは利用できます。毎回の検索や思考文の表示・長さを保証するものではありません。
 - **Agent**: 従来の思考設定と、長い作業向けの実行ループを維持します。
 
-標準では全モードに組み込みツールを提供します。プリセット選択時はそのツール一覧（空リストを含む）を優先し、MCPを自動追加しません。Ask / Deny・承認・Runner隔離はモードにかかわらず適用されます。Chatは最大3、Thinkingは5ステップ、どちらも最大8ツール呼出しです。長い作業はAgentを使ってください。
+標準では全モードに組み込みツールを提供します。プリセット選択時はそのツール一覧（空リストを含む）を優先し、MCPを自動追加しません。Ask / Deny・承認・Runner隔離はモードにかかわらず適用されます。上限はChatが20分・12ステップ・12 Tool Call、Thinkingが45分・24ステップ・24 Tool Call、Agentが90分・300ステップ・750 Tool Callです。長い作業はAgentを使ってください。
 
 Chat / ThinkingのProvider固有思考制御はOpenAI Responses、OpenRouter、識別可能なClaude 3.7 / 4系とGemini 2.5 / 3系に対応しています。Ollama / LM Studio / 汎用互換APIと未識別モデルでは、その専用パラメーターを送らず通常推論でThinkingを実行します。ThinkingでTool Callingが未確認の場合は、初回だけ副作用のないダミー関数を強制呼出しして互換性を確認します。結果は保存され、未確認・非対応時はツールなしで続行します。モデル設定の「Tool Callingを再確認」でだけ手動再試行できます。手動Overrideは自動確認より優先します。
 
@@ -63,25 +63,21 @@ APIの `mode` は変更していません。`GET /models` の各レコードの 
 
 ## 開発
 
-Python 3.12以上、Node.js 22以上、pnpmを使用します。SQLiteは開発・テスト専用の既定値で、DockerではPostgreSQLを使います。
+Node.js 22以上、pnpmを使用します。アプリケーションDBはPostgreSQL専用で、起動はDocker Compose経由です。
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install uv
-.venv/bin/uv sync --project apps/server --frozen
 cd apps/web
 pnpm install --frozen-lockfile
 pnpm build
-cd ../server
-.venv/bin/alembic upgrade head
-WEB_DIST=../web/dist .venv/bin/uvicorn mix_agent.main:app --host 127.0.0.1 --port 8080
+cd ../..
+docker compose up -d --build
 ```
 
-Runnerがないローカル開発モードではTerminal・Browser・MCP・PDF抽出・完全バックアップは実行できません。自動でホストShellを使うフォールバックはありません。
+DBを含むアプリ起動はCompose内で完結します。ホストShellを使うRunnerフォールバックはありません。
 
 ```sh
-# リポジトリルートから
-apps/server/.venv/bin/pytest -q
+# リポジトリルートから。使い捨てPostgreSQLでmigration後に実行します。
+docker compose --profile test run --rm test
 cd apps/web
 pnpm test
 pnpm build

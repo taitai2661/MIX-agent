@@ -21,7 +21,7 @@ export function Agents() {
   return (
     <main className="page">
       <Title
-        title="Agents"
+        title="アシスタント設定"
         sub="役割と使えるToolを決めて、自分に合ったアシスタントに。"
         action={
           <Button
@@ -31,7 +31,7 @@ export function Agents() {
             }}
           >
             <Plus size={16} />
-            Agentを作成
+            設定を追加
           </Button>
         }
       />
@@ -244,7 +244,7 @@ export function Agents() {
       </div>
       {!rows.data?.length && !open && (
         <Empty>
-          役割を持ったAgentを作成できます。標準のAgentモードは作成せずに利用できます。
+          用途別のアシスタント設定を作成できます。標準のAgentモードは設定を作成せずに利用できます。
         </Empty>
       )}
     </main>

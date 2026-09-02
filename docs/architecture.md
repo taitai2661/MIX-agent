@@ -22,7 +22,7 @@ FastAPIは1プロセスで起動します。メモリ内のTask管理・承認�
 
 RunとMessageはConversationに、Event/ToolCall/ApprovalはRunに関連付けます。会話単位の有効なRunは部分ユニークIndexにより1件に制限します。EventはRun単位の連番です。
 
-MigrationはAlembicの `0001`。開発SQLiteと本番PostgreSQLの両方を扱います。PostgreSQLではMemory本文にpg_trgm Indexを作成し、部分一致検索を行います。
+MigrationはAlembicで管理し、PostgreSQL専用です。Memory本文にはpg_trgm Indexを作成し、部分一致検索を行います。
 
 ## Provider
 

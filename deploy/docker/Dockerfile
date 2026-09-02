@@ -21,6 +21,17 @@ ENV WEB_DIST=/web MIX_DATA=/data MIX_KEYS=/keys PYTHONPATH=/app
 USER 1000:1000
 CMD ["sh", "-c", "alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
 
+FROM runtime AS test
+RUN uv sync --frozen --dev --no-install-project
+COPY apps/server/ /app/
+COPY tests/ /workspace/tests/
+COPY runners/ /workspace/runners/
+COPY packages/ /workspace/packages/
+COPY deploy/ /workspace/deploy/
+WORKDIR /workspace
+ENV PYTHONPATH=/app:/workspace
+USER 1000:1000
+
 FROM runtime AS execution
 USER root
 RUN --mount=type=cache,target=/root/.cache/ms-playwright apt-get update && apt-get install -y --no-install-recommends git && playwright install --with-deps --only-shell chromium && rm -rf /var/lib/apt/lists/* && cp -a /root/.cache/ms-playwright /opt/playwright

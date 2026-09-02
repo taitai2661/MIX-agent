@@ -130,6 +130,65 @@ services:
     cpus: 0.5
     depends_on:
       init: {condition: service_completed_successfully}
+  postgres-test:
+    image: postgres:17.5-bookworm
+    profiles: [test]
+    environment:
+      POSTGRES_DB: mix
+      POSTGRES_USER: mix
+      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
+    secrets: [test-db-password]
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U mix -d mix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  test:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
+    profiles: [test]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mix:test-only-password@postgres-test/mix
+      MIX_DATA: /tmp/mix-tests
+      MIX_KEYS: /tmp/mix-tests/keys
+      PUBLIC_ORIGIN: http://testserver
+    command: [sh, -c, "cd /app && alembic upgrade head && pytest -c /app/pyproject.toml -p no:cacheprovider -q /workspace/tests"]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks: [database]
+    depends_on:
+      postgres-test: {condition: service_healthy}
+  preview-db:
+    image: postgres:17.5-bookworm
+    profiles: [preview]
+    environment:
+      POSTGRES_DB: mix
+      POSTGRES_USER: mix
+      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
+    secrets: [test-db-password]
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U mix -d mix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  preview:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
+    profiles: [preview]
+    ports: ["127.0.0.1:18080:18080"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mix:test-only-password@preview-db/mix
+      MIX_DATA: /tmp/mix-chat-preview
+      MIX_KEYS: /tmp/mix-chat-preview/keys
+      PUBLIC_ORIGIN: http://127.0.0.1:18080
+    command: [sh, -c, "cd /app && alembic upgrade head && uvicorn --app-dir /workspace/tests/fixtures chat_preview:app --host 0.0.0.0 --port 18080"]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks: [database, internet]
+    depends_on:
+      preview-db: {condition: service_healthy}
 
 networks:
   database: {internal: true}
@@ -149,3 +208,7 @@ volumes:
   workspace:
   packages:
   mcp-shared:
+
+secrets:
+  test-db-password:
+    file: ./deploy/docker/test-db-password

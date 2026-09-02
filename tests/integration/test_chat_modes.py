@@ -6,7 +6,7 @@ from mix_agent.db.models import Message, Model, Provider, Run, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.tools.registry import BUILTINS
-from mix_agent.runs.mode_policy import tool_allowed
+from mix_agent.runs.mode_policy import mode_prompt, tool_allowed
 from sqlalchemy import select
 
 
@@ -79,6 +79,7 @@ def test_default_tools_and_resolved_snapshot(signed, monkeypatch, mode):
         snapshot = db.get(Run, response.json()["run_id"]).data["snapshot"]
         assert snapshot["tool_ids"] == [t["id"] for t in BUILTINS if tool_allowed(mode, t)]
         assert snapshot["mode"] == mode
+        assert snapshot["mode_prompt"] == mode_prompt(mode)
         assert snapshot["policy"]["planning"] is False
         assert snapshot["reasoning"]["policy"] == (
             "auto" if mode == "chat" else "required"
@@ -102,6 +103,7 @@ def test_long_work_snapshots_autonomous_policy_and_tools(signed, monkeypatch):
         snapshot = run.data["snapshot"]
         assert snapshot["policy"]["planning"] is True
         assert snapshot["policy"]["checkpointing"] is True
+        assert snapshot["mode_prompt"] == mode_prompt("agent")
         assert "update_plan" in snapshot["tool_ids"]
         assert run.data["checkpoint"]["status"] == "started"
 

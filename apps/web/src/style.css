@@ -1106,7 +1106,7 @@ svg {
 .run-budget {
   width: fit-content;
   padding: 6px 10px;
-  margin: -8px 0 14px;
+  margin: 0 0 14px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);

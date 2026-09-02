@@ -1,22 +1,20 @@
 """Disposable browser QA app. No real provider, runner, or existing user data.
 
-Run from repository root:
-  .venv/bin/uvicorn --app-dir tests/fixtures chat_preview:app --host 127.0.0.1 --port 18080
+Run with Docker Compose:
+  docker compose --profile preview up --build preview
 Sign in with preview / preview-only-password.
 """
 
 import asyncio
 import json
 import os
-import tempfile
 from pathlib import Path
 
-root = Path(tempfile.mkdtemp(prefix="mix-chat-preview-"))
+root = Path("/tmp/mix-chat-preview")
 os.environ["MIX_DATA"] = str(root)
 os.environ["MIX_KEYS"] = str(root / "keys")
-os.environ["DATABASE_URL"] = "sqlite:///" + str(root / "preview.db")
+os.environ["DATABASE_URL"] = "postgresql+psycopg://mix:test-only-password@preview-db/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://127.0.0.1:18080"
-os.environ.pop("DB_PASSWORD_FILE", None)
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -26,7 +24,11 @@ from mix_agent.db.session import engine, SessionLocal
 from mix_agent.auth.security import passwords, store_secret
 from mix_agent.runs import engine as runs
 
+# This profile's PostgreSQL database is disposable; reset it before loading
+# deterministic preview data so restarting the service cannot reuse a user.
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
+
 with SessionLocal() as db:
     user = User(
         username="preview", password_hash=passwords.hash("preview-only-password")

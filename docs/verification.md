@@ -11,7 +11,7 @@
 - 非対応ReasoningモデルのThinking通常推論フォールバック、初回Tool Callingプローブ、結果保存、手動再確認はHTTPモックの統合テストで確認。実Providerとブラウザでの受入確認は未実施。
 - 390×844のviewportで思考要約・モード選択・入力欄を目視確認。実機キーボードは未確認。
 
-今回の画面検証は `tests/fixtures/chat_preview.py` を使用。起動ごとに一時ディレクトリへ新しいSQLite DBを作り、Providerはローカルの固定応答、ツール実行はモックに置き換える。既存データ、実AI、実ファイル操作、実コマンド、実Web検索は使用しない。実Provider各接続方式の課金・応答・思考品質と実Runnerの操作は未検証。
+今回の画面検証は `tests/fixtures/chat_preview.py` を使用。Compose profile `preview` が起動ごとに使い捨てPostgreSQLを作り、Providerはローカルの固定応答、ツール実行はモックに置き換える。既存データ、実AI、実ファイル操作、実コマンド、実Web検索は使用しない。実Provider各接続方式の課金・応答・思考品質と実Runnerの操作は未検証。
 
 全体Lintには既存のFastAPI Depends / wildcard import等の指摘が残る。Python未定義名チェックと、新規の思考解決・回帰テストファイルのLintは成功。Git管理外のフォルダのため `git diff --check` は実行できない。
 
@@ -25,14 +25,14 @@
 - Codex内ブラウザで管理者作成、Setup、Memory保存、Provider追加、モデル取得、Chat送信、回答表示、再読込後の会話履歴を確認。
 - チャットの390×844相当のviewportで入力欄と回答表示を目視確認。これは実機のソフトウェアキーボードの検証ではない。
 
-画面検証では `tests/fixtures/fake_provider.py` の固定応答を使用。実AIの応答品質・課金・能力の検証ではない。ローカルの検証DBは `.data/preview` に置き、Docker用の初期データとは分離している。テスト用アカウントを本運用へ移行しないこと。
+画面検証では `tests/fixtures/fake_provider.py` の固定応答を使用。実AIの応答品質・課金・能力の検証ではない。画面検証と自動テストはCompose profileごとの使い捨てPostgreSQLを使い、本運用のvolumeとは分離している。テスト用アカウントを本運用へ移行しないこと。
 
 ## 未完了の受入確認
 
 Dockerビルド中にホストの空き容量が約1.8GiBまで低下したため、ビルドを中止した。既存データやDockerキャッシュの削除は行っていない。最終コードの全イメージ再ビルドと実起動は未確認。容量を確保した環境で以下を実施する必要がある。
 
 - 新規Dockerボリュームから、`.env`編集なしでSetupと実Providerへの最初のチャット。
-- PostgreSQL上のMigration・排他制約・pg_trgm検索。自動テストのDBはSQLite。
+- PostgreSQL上のMigration・排他制約・pg_trgm検索。
 - Runnerの直接通信遮断、Proxy許可先の制限、DNS再解決・リダイレクト・metadata対策のコンテナ境界での確認。
 - TerminalからDB、Provider Key、MCP Secret、Docker Socketへアクセスできないこと。
 - Playwright Browser Tool、PDF抽出、Terminalキャンセル・子孫プロセス停止の実コンテナ確認。

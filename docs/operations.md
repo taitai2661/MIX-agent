@@ -13,6 +13,8 @@ docker compose stop
 
 Docker初回起動時のinitがDBパスワード、内部トークン、暗号鍵を生成します。既存の値は上書きしません。Runnerはread-only filesystem、非root、Capability削除、メモリ/CPU/PID上限で起動します。
 
+アプリDBはCompose内のPostgreSQL専用です。DBポートはホストへ公開せず、アプリはDBのhealthcheckとAlembic migration完了後に起動します。テストは `docker compose --profile test run --rm test`、画面確認は `docker compose --profile preview up --build preview` を使い、それぞれ使い捨てPostgreSQLを使用します。
+
 ## LAN/VPNとTLS
 
 Dockerの公開ポートへLANのプライベートIPアドレスで直接アクセスする場合は、初期設定を含め、そのIPアドレス・ポートと一致するOriginが自動的に許可されます。localhostからのアクセスも従来どおり利用できます。HTTPS対応Reverse Proxy、独自ドメイン、またはインターネット公開では、ホスト側で `MIX_BIND` と正確な `PUBLIC_ORIGIN` を設定してappを再作成してください。これらはDocker起動境界の設定なのでWeb UIでは変更しません。LAN利用にもHTTPS対応Reverse ProxyまたはVPNを推奨します。不特定ユーザーへ公開する構成ではありません。
@@ -41,4 +43,4 @@ Filesystemの接続設定は `/packages/node_modules/.bin/mcp-server-filesystem`
 
 ## 開発用画面確認
 
-ローカルの `.data/preview` は画面検証用SQLite環境で、Dockerの本番用volumeとは別です。テストProviderは `tests/fixtures/fake_provider.py` にあり、実AIではない旨を返します。製品のProviderフォールバックには使用しません。
+画面検証はCompose profile `preview` の使い捨てPostgreSQL環境で行います。テストProviderは `tests/fixtures/fake_provider.py` にあり、実AIではない旨を返します。製品のProviderフォールバックには使用しません。

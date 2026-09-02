@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -18,7 +18,7 @@ class Base(DeclarativeBase):
     pass
 
 
-JSONType = JSON().with_variant(JSONB(), "postgresql")
+JSONType = JSONB
 
 
 class Record:
@@ -237,7 +237,6 @@ class Run(Record, Base):
             "conversation_id",
             unique=True,
             postgresql_where=status.in_(["queued", "running", "waiting_approval"]),
-            sqlite_where=status.in_(["queued", "running", "waiting_approval"]),
         ),
     )
 

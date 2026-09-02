@@ -6,8 +6,10 @@ from urllib.parse import urlsplit
 DATA = Path(os.getenv("MIX_DATA", ".data")).resolve()
 KEYS = Path(os.getenv("MIX_KEYS", str(DATA / "keys"))).resolve()
 ARTIFACTS = DATA / "artifacts"
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///" + str(DATA / "mix.db"))
-if os.getenv("DB_PASSWORD_FILE"):
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    if not os.getenv("DB_PASSWORD_FILE"):
+        raise RuntimeError("PostgreSQL DATABASE_URL or DB_PASSWORD_FILE is required")
     from urllib.parse import quote
 
     DATABASE_URL = (
@@ -15,6 +17,8 @@ if os.getenv("DB_PASSWORD_FILE"):
         + quote(Path(os.environ["DB_PASSWORD_FILE"]).read_text().strip())
         + "@db/mix"
     )
+if not DATABASE_URL.startswith("postgresql+psycopg://"):
+    raise RuntimeError("MIX agent requires a postgresql+psycopg DATABASE_URL")
 RUNNER_URL = os.getenv("RUNNER_URL", "http://execution-runner:8001")
 MCP_URL = os.getenv("MCP_URL", "http://mcp-runner:8002")
 MCP_MANAGER_URL = os.getenv("MCP_MANAGER_URL", "http://mcp-manager:8003")
