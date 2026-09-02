@@ -19,7 +19,7 @@ describe("mode availability", () => {
         model={model({ capabilities: { reasoning: true } })}
       />,
     );
-    expect(html).toContain("通常推論でThinkingを実行します");
+    expect(html).toContain("通常推論で thinking を実行します");
   });
   it("respects explicit null overrides and empty preset tools", () => {
     const html = renderToStaticMarkup(

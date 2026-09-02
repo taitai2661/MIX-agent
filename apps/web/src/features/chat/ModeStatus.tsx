@@ -29,11 +29,11 @@ export function ModeStatus({
           ? "前提・別案・見落としを深く検討し、重要な結論を確認してから答えます。"
           : "計画・実行・途中検証・修正を繰り返し、完了または本当の停止条件まで進めます。"}
       <span>実行予算: {budget}。選択したモードは実行中に変わりません。</span>
-      {mode !== "agent" && <span>計画・委任・バックグラウンド処理・再開・自動Skill学習は長作業専用です。</span>}
+      {mode !== "agent" && <span>計画・委任・バックグラウンド処理・再開・自動Skill学習は agent 専用です。</span>}
       {model && mode !== "agent" && !canThink && (
         <span>
           {mode === "thinking"
-            ? "通常推論でThinkingを実行します。Provider固有の思考設定は送信しません。"
+            ? "通常推論で thinking を実行します。Provider固有の思考設定は送信しません。"
             : "思考制御は未対応・未確認のため、思考設定を送信しません。"}
         </span>
       )}
