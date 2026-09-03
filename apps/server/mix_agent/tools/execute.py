@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import re
+import time
 
 import httpx
 from bs4 import BeautifulSoup
@@ -21,7 +22,8 @@ async def runner_request(kind, path, payload, timeout=120):
     token = config.runner_token(kind)
     if not token:
         raise RuntimeError("Runner is not configured. Start the Docker deployment.")
-    url = {"execution": config.RUNNER_URL, "mcp": config.MCP_URL, "manager": config.MCP_MANAGER_URL}[kind]
+    url = {"execution": config.RUNNER_URL, "mcp": config.MCP_URL, "manager": config.MCP_MANAGER_URL,
+           "browser": config.BROWSER_URL, "browser-provisioner": config.BROWSER_PROVISIONER_URL}[kind]
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         response = await client.post(url + path, json=payload, headers={"Authorization": "Bearer " + token})
         response.raise_for_status()
@@ -74,7 +76,7 @@ async def execute(db, run, tool, args):
             raise ValueError("MCP connection is disabled")
         credentials = json.loads(read_secret(db, conn.data.get("secret_id")) or "{}")
         oauth = credentials.get("oauth")
-        if oauth and int(oauth.get("obtained_at", 0)) + int(oauth.get("expires_in", 0)) <= int(__import__("time").time()) + 60:
+        if oauth and int(oauth.get("obtained_at", 0)) + int(oauth.get("expires_in", 0)) <= int(time.time()) + 60:
             try:
                 oauth = await mcp_oauth.refresh(oauth, credentials.get("oauth_registration", {}))
                 credentials = {**credentials, "oauth": oauth, "headers": {**credentials.get("headers", {}), "Authorization": "Bearer " + oauth["access_token"]}}
@@ -99,8 +101,15 @@ async def execute(db, run, tool, args):
     elif tool["executor_ref"] == "execution":
         setting = db.scalar(select(Settings).where(Settings.owner_id == run.owner_id))
         browser_settings = setting.data if setting else {}
+        if name.startswith("browser_"):
+            try:
+                status = await runner_request("browser-provisioner", "/status", {}, timeout=5)
+            except Exception as error:
+                raise ValueError("Browserの導入状態を確認できません。設定画面から再試行してください。") from error
+            if status.get("status") != "ready":
+                raise ValueError("Browserはまだ利用できません（%s）。設定画面から導入または再試行してください。" % status.get("status", "not_installed"))
         result = await runner_request(
-            "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
+            "browser" if name.startswith("browser_") else "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
                                       "browser_settings": browser_settings}
         )
         if "image_base64" in result:

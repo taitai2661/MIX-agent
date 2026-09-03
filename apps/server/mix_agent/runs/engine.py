@@ -2,14 +2,25 @@ import asyncio
 import json
 import re
 from collections import defaultdict, deque
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
 from mix_agent.auth.security import read_secret
-from mix_agent.db.models import Approval, Conversation, Event, Message, Provider, Run, ToolCall, ScheduledRun, now
+from mix_agent.db.models import (
+    Approval,
+    Conversation,
+    Event,
+    Message,
+    Provider,
+    Run,
+    ScheduledRun,
+    ToolCall,
+    now,
+)
 from mix_agent.db.session import SessionLocal
+from mix_agent.performance import record as record_performance
 from mix_agent.providers.adapters import (
     Adapter,
     is_nvidia_nim_chat_incompatible,
@@ -19,7 +30,6 @@ from mix_agent.providers.adapters import (
 from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
-from mix_agent.performance import record as record_performance
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.tools.execute import execute, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
@@ -436,7 +446,7 @@ async def execute_prepared_calls(db, run, snapshot, prepared):
             remaining = max(
                 1,
                 snapshot.get("max_seconds", 900)
-                - (now() - run.created_at.replace(tzinfo=timezone.utc)).total_seconds(),
+                - (now() - run.created_at.replace(tzinfo=UTC)).total_seconds(),
             )
             return await asyncio.wait_for(
                 execute(db, run, current, call.data["arguments"]), timeout=min(120, remaining)
@@ -471,7 +481,7 @@ async def drive(run_id):
                 db.refresh(run)
                 if run.status == "cancelled":
                     return
-                elapsed = (now() - run.created_at.replace(tzinfo=timezone.utc)).total_seconds()
+                elapsed = (now() - run.created_at.replace(tzinfo=UTC)).total_seconds()
                 if elapsed >= snapshot.get("max_seconds", 900):
                     if snapshot.get("policy", {}).get("checkpointing"):
                         finish(db, run, "interrupted", "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。")
@@ -529,7 +539,7 @@ async def drive(run_id):
                                     db.flush()
                                     emit(db, run.id, "approval", {"id": approval.id, **approval.data})
                                 if (
-                                    approval.expires.replace(tzinfo=timezone.utc) < now()
+                                    approval.expires.replace(tzinfo=UTC) < now()
                                     and approval.status == "pending"
                                 ):
                                     approval.status = "expired"
@@ -810,24 +820,31 @@ async def scheduler():
             finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
         from mix_agent.schedules import reconcile
         reconcile(db, launch)
+    sleep_interval = 2
     while True:
-        from mix_agent.storage import backup
+        try:
+            from mix_agent.storage import backup
 
-        if backup.ACTIVE:
-            await asyncio.sleep(2)
-            continue
-        with SessionLocal() as db:
-            from mix_agent.api.routes import purge_expired_conversations
-            purge_expired_conversations(db)
-            from mix_agent.schedules import tick
-            tick(db, launch)
-            for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
-                if run.status == "queued":
-                    launch(run.id)
-                else:
-                    approval = db.scalar(
-                        select(Approval).where(Approval.run_id == run.id, Approval.status == "pending")
-                    )
-                    if not approval or approval.expires.replace(tzinfo=timezone.utc) < now():
+            if backup.ACTIVE:
+                await asyncio.sleep(2)
+                continue
+            with SessionLocal() as db:
+                from mix_agent.api.routes import purge_expired_conversations
+                purge_expired_conversations(db)
+                from mix_agent.schedules import tick
+                tick(db, launch)
+                for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
+                    if run.status == "queued":
                         launch(run.id)
-        await asyncio.sleep(2)
+                    else:
+                        approval = db.scalar(
+                            select(Approval).where(Approval.run_id == run.id, Approval.status == "pending")
+                        )
+                        if not approval or approval.expires.replace(tzinfo=UTC) < now():
+                            launch(run.id)
+            sleep_interval = 2
+        except Exception:
+            sleep_interval = min(30, sleep_interval * 2)
+            import logging
+            logging.getLogger(__name__).exception("scheduler tick failed")
+        await asyncio.sleep(sleep_interval)

@@ -147,9 +147,15 @@ export function Chat() {
     source.addEventListener("activity", onActivity);
     source.addEventListener("done", () => {
       source.close();
+      setBusy(false);
       qc.invalidateQueries({ queryKey: ["messages", id] });
       qc.invalidateQueries({ queryKey: ["run", runId] });
     });
+    source.onerror = () => {
+      source.close();
+      setBusy(false);
+      setError(new Error("ストリーム接続が切れました。再試行してください。"));
+    };
     return () => source.close();
   }, [runId, id, qc]);
   useEffect(() => {

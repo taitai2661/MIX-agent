@@ -45,8 +45,10 @@ export async function binary(path: string, body: FormData | object) {
     body: form ? body : JSON.stringify(body),
   });
   if (!r.ok) {
-    const e = await r.json();
-    throw new Error(e.detail || "処理に失敗しました");
+    const e = await r.json().catch(() => ({ detail: "処理に失敗しました" }));
+    throw new Error(
+      typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail),
+    );
   }
   return r;
 }

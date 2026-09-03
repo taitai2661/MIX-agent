@@ -101,7 +101,7 @@ def _events(db, owner_id: str, current: datetime):
     return list(db.scalars(select(AutoReliabilityEvent).where(
         AutoReliabilityEvent.owner_id == owner_id,
         AutoReliabilityEvent.created_at >= current - RETENTION,
-    )))
+    ))).copy()
 
 
 def _weight(created_at: datetime, current: datetime) -> float:
@@ -123,10 +123,12 @@ def _rate(events, current: datetime) -> tuple[float, float]:
 
 
 def speed(db, owner_id: str, model_id: str, provider_id: str, scope: str,
-          current: datetime | None = None, profile: str | None = None) -> dict:
+          current: datetime | None = None, profile: str | None = None,
+          events: list | None = None) -> dict:
     """Return decayed, privacy-minimal speed evidence for one Auto route."""
     current = current or now()
-    events = [event for event in _events(db, owner_id, current) if (
+    events = events if events is not None else _events(db, owner_id, current)
+    events = [event for event in events if (
         event.data.get("model_id") == model_id
         and event.data.get("provider_id") == provider_id
         and event.data.get("scope") == scope
@@ -236,9 +238,11 @@ def _cooldowns(events, model_id: str, provider_id: str, scope: str, current: dat
 
 
 def reliability(db, owner_id: str, model_id: str, provider_id: str, scope: str,
-                current: datetime | None = None, profile: str | None = None) -> dict:
+                current: datetime | None = None, profile: str | None = None,
+                events: list | None = None) -> dict:
     current = current or now()
-    events = _events(db, owner_id, current)
+    if events is None:
+        events = _events(db, owner_id, current)
     # Hierarchical, decayed evidence. Small direct samples are deliberately shrunk
     # toward broader model/provider evidence and a conservative beta prior.
     def matches_profile(event):

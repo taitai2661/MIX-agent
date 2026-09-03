@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from mix_agent.db.models import Feedback, Model
 from mix_agent.providers.model_roles import is_auto_chat_eligible
-from mix_agent.reliability import context_failure_ceiling, reliability, speed, usage_scope
+from mix_agent.reliability import _events, context_failure_ceiling, now, reliability, speed, usage_scope
 
 CODING = re.compile(r"```|\b(?:python|javascript|typescript|react|sql|docker|api|bug|code|コード|実装|修正)\b", re.IGNORECASE)
 REASONING = re.compile(r"\b(?:why|prove|derive|analy[sz]e|reason|比較|理由|証明|推論|考察|複雑)\b", re.IGNORECASE)
@@ -127,6 +127,7 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
     ranked = []
     context_usage = {}
     scope = usage_scope(mode, tools_required)
+    events = _events(db, owner_id, now())
     reliability_details = {}
     speed_details = {}
     has_other_provider = prefer_other_provider_than and any(
@@ -150,9 +151,9 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
             "usage_ratio": usage,
             "penalty": context_penalty,
         }
-        health = reliability(db, owner_id, model.id, model.data.get("provider_id"), scope, profile=profile)
+        health = reliability(db, owner_id, model.id, model.data.get("provider_id"), scope, profile=profile, events=events)
         reliability_details[model.id] = health
-        speed_details[model.id] = speed(db, owner_id, model.id, model.data.get("provider_id"), scope, profile=profile)
+        speed_details[model.id] = speed(db, owner_id, model.id, model.data.get("provider_id"), scope, profile=profile, events=events)
     speed_scores = _speed_scores(speed_details)
     for model, caps, context_window in candidates:
         up, down = outcomes[model.id]

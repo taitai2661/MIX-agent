@@ -25,6 +25,8 @@ import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom"
 
 import { Empty, ErrorBox, Logo } from "@/components/shared";
 import { ThemeController } from "@/components/theme";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ConfirmModal, PromptModal } from "@/components/modal";
 import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
 import { Chat } from "@/features/chat/Chat";
@@ -52,6 +54,8 @@ export function App() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [openConversationMenu, setOpenConversationMenu] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Row | null>(null);
+  const [trashTarget, setTrashTarget] = useState<Row | null>(null);
   const folders = useQuery<Row[]>({
     queryKey: ["/conversation-folders"],
     queryFn: () => api("/conversation-folders"),
@@ -117,17 +121,10 @@ export function App() {
     ]);
   }
   async function renameConversation(conversation: Row) {
-    const title = window.prompt("チャット名を変更", conversation.data.title);
-    if (title === null || !title.trim() || title.trim() === conversation.data.title) return;
-    await api(`/conversations/${conversation.id}`, "PATCH", { title: title.trim() });
-    setOpenConversationMenu(null);
-    await qc.invalidateQueries({ queryKey: ["/conversations"] });
+    setRenameTarget(conversation);
   }
-  async function trashConversation(id: string) {
-    if (!window.confirm("このチャットをごみ箱へ移動しますか？")) return;
-    await api(`/conversations/${id}`, "DELETE");
-    setOpenConversationMenu(null);
-    await qc.invalidateQueries({ queryKey: ["/conversations"] });
+  async function trashConversation(conversation: Row) {
+    setTrashTarget(conversation);
   }
   function conversationItem(conversation: Row) {
     const menuOpen = openConversationMenu === conversation.id;
@@ -141,7 +138,7 @@ export function App() {
         <button role="menuitem" onClick={() => renameConversation(conversation)}><Pencil size={17} />名前を変更<kbd>R</kbd></button>
         <div className="conversation-sidebar-menu-group"><Folder size={17} /><span>グループに移動</span><select aria-label="グループに移動" value={conversation.data.folder_id || ""} onChange={(event) => updateConversation(conversation.id, { folder_id: event.target.value || null })}><option value="">未分類</option>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.data.name}</option>)}</select></div>
         <button role="menuitem" onClick={() => updateConversation(conversation.id, { archived: true })}><Archive size={17} />アーカイブ</button>
-        <button className="danger" role="menuitem" onClick={() => trashConversation(conversation.id)}><Trash2 size={17} />削除<kbd>D</kbd></button>
+        <button className="danger" role="menuitem" onClick={() => trashConversation(conversation)}><Trash2 size={17} />削除<kbd>D</kbd></button>
       </div>}
     </div>;
   }
@@ -250,34 +247,64 @@ export function App() {
           </button>
           <span className="topbar-title"><b>MIX agent</b></span>
         </header>
-        <Routes>
-          <Route path="/" element={<Chat />} />
-          <Route path="/chat/:id" element={<Chat />} />
-          <Route path="/history" element={<Conversations />} />
-          <Route path="/history/:state" element={<Conversations />} />
-          <Route path="/agents" element={<Agents />} />
-          <Route path="/memory" element={<Navigate to="/settings/memory" replace />} />
-          <Route path="/skills" element={<Skills />} />
-          <Route path="/schedules" element={<Schedules />} />
-          <Route path="/setup" element={<Setup />} />
-          <Route
-            path="/settings/*"
-            element={
-              <Settings
-                user={user}
-                onUserChange={(value) => {
-                  setCSRF(value.csrf);
-                  setUser(value);
-                }}
-                onLogout={() => {
-                  setUser(null);
-                  qc.clear();
-                }}
-              />
-            }
-          />
-          <Route path="*" element={<Empty>ページが見つかりません</Empty>} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Chat />} />
+            <Route path="/chat/:id" element={<Chat />} />
+            <Route path="/history" element={<Conversations />} />
+            <Route path="/history/:state" element={<Conversations />} />
+            <Route path="/agents" element={<Agents />} />
+            <Route path="/memory" element={<Navigate to="/settings/memory" replace />} />
+            <Route path="/skills" element={<Skills />} />
+            <Route path="/schedules" element={<Schedules />} />
+            <Route path="/setup" element={<Setup />} />
+            <Route
+              path="/settings/*"
+              element={
+                <Settings
+                  user={user}
+                  onUserChange={(value) => {
+                    setCSRF(value.csrf);
+                    setUser(value);
+                  }}
+                  onLogout={() => {
+                    setUser(null);
+                    qc.clear();
+                  }}
+                />
+              }
+            />
+            <Route path="*" element={<Empty>ページが見つかりません</Empty>} />
+          </Routes>
+        </ErrorBoundary>
+        {renameTarget && <PromptModal
+          title="チャット名を変更"
+          defaultValue={renameTarget.data.title}
+          onConfirm={(title) => {
+            setRenameTarget(null);
+            if (!title.trim() || title.trim() === renameTarget.data.title) return;
+            void (async () => {
+              await api(`/conversations/${renameTarget.id}`, "PATCH", { title: title.trim() });
+              setOpenConversationMenu(null);
+              await qc.invalidateQueries({ queryKey: ["/conversations"] });
+            })();
+          }}
+          onCancel={() => setRenameTarget(null)}
+        />}
+        {trashTarget && <ConfirmModal
+          title="チャットを削除"
+          message="このチャットをごみ箱へ移動しますか？"
+          onConfirm={() => {
+            const id = trashTarget.id;
+            setTrashTarget(null);
+            void (async () => {
+              await api(`/conversations/${id}`, "DELETE");
+              setOpenConversationMenu(null);
+              await qc.invalidateQueries({ queryKey: ["/conversations"] });
+            })();
+          }}
+          onCancel={() => setTrashTarget(null)}
+        />}
       </div>
     </div>
   );

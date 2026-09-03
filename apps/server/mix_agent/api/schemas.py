@@ -1,4 +1,5 @@
 from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -240,7 +241,7 @@ class ProviderInput(Input):
     kind: Literal["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"] | None = None
     preset_id: str | None = Field(default=None, max_length=100)
     base_url: str = Field(default="", max_length=2000)
-    api_key: str | None = Field(default=None, max_length=10000)
+    api_key: str | None = Field(default=None, max_length=2000)
     extra_config: dict[str, str | int | float | bool] = Field(default_factory=dict)
     allow_private: bool = False
     rate_limit_rpm: int = Field(default=0, ge=0, le=10000)
@@ -392,6 +393,9 @@ class SettingsInput(Input):
     web_search_backend: Literal["ddgs", "brave"] = "ddgs"
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)
     browser_enabled: bool = True
+    browser_install_requested: bool = False
+    browser_install_status: Literal["not_installed", "installing", "ready", "failed"] = "not_installed"
+    browser_install_failure: str | None = None
     browser_timeout_ms: int = Field(default=15000, ge=3000, le=60000)
     browser_locale: str = Field(default="ja-JP", min_length=2, max_length=35)
     browser_user_agent: str = Field(default="", max_length=500)

@@ -21,6 +21,8 @@ services:
       - execution-token:/execution-token
       - mcp-token:/mcp-token
       - manager-token:/manager-token
+      - browser-token:/browser-token
+      - browser-provisioner-token:/browser-provisioner-token
       - data:/data
       - policy:/policy
       - workspace:/workspace
@@ -60,7 +62,9 @@ services:
       - execution-token:/execution-keys:ro
       - mcp-token:/mcp-keys:ro
       - manager-token:/manager-keys:ro
-    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
+      - browser-token:/browser-keys:ro
+      - browser-provisioner-token:/browser-provisioner-keys:ro
+    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
     networks: [database, execution, mcp, internet]
     extra_hosts: ["host.docker.internal:host-gateway"]
     mem_limit: 1g
@@ -80,6 +84,33 @@ services:
     mem_limit: 2g
     cpus: 2
     shm_size: 256m
+    depends_on:
+      init: {condition: service_completed_successfully}
+  browser-runner:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: browser-runner}
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      TOKEN_FILE: /tokens/browser.token
+    volumes: ["browser-data:/browser:ro", "browser-token:/tokens:ro"]
+    networks: [execution]
+    mem_limit: 2g
+    cpus: 2
+    shm_size: 256m
+    depends_on:
+      init: {condition: service_completed_successfully}
+  browser-provisioner:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: browser-provisioner}
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      TOKEN_FILE: /tokens/browser-provisioner.token
+    volumes: ["browser-data:/browser", "browser-provisioner-token:/tokens:ro"]
+    networks: [execution]
+    mem_limit: 1g
+    cpus: 1
     depends_on:
       init: {condition: service_completed_successfully}
   mcp-runner:
@@ -208,6 +239,9 @@ volumes:
   workspace:
   packages:
   mcp-shared:
+  browser-token:
+  browser-provisioner-token:
+  browser-data:
 
 secrets:
   test-db-password:

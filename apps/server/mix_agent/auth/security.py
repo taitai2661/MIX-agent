@@ -10,6 +10,15 @@ from mix_agent.db.models import Session, Secret, now
 
 passwords = PasswordHasher()
 
+_master_key: bytes | None = None
+
+
+def _get_master_key() -> bytes:
+    global _master_key
+    if _master_key is None:
+        _master_key = (config.KEYS / "master.key").read_bytes()
+    return _master_key
+
 
 def new_session_csrf():
     return secrets.token_urlsafe(32)
@@ -17,7 +26,7 @@ def new_session_csrf():
 
 def encrypt(value: str, purpose: str):
     nonce = secrets.token_bytes(12)
-    cipher = AESGCM((config.KEYS / "master.key").read_bytes()).encrypt(
+    cipher = AESGCM(_get_master_key()).encrypt(
         nonce, value.encode(), purpose.encode()
     )
     return {
@@ -30,7 +39,7 @@ def encrypt(value: str, purpose: str):
 
 def decrypt(data):
     return (
-        AESGCM((config.KEYS / "master.key").read_bytes())
+        AESGCM(_get_master_key())
         .decrypt(
             base64.b64decode(data["nonce"]), base64.b64decode(data["ciphertext"]), data["purpose"].encode()
         )

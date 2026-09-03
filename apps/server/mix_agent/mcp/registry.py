@@ -20,6 +20,7 @@ ALLOWED_REGISTRIES = {
 OCI_HOSTS = {"docker.io", "ghcr.io", "quay.io", "mcr.microsoft.com"}
 VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,254}$")
 _CACHE: dict[str, tuple[float, dict]] = {}
+_CACHE_MAX = 200
 _LOCK = asyncio.Lock()
 
 
@@ -123,6 +124,9 @@ async def _get(path: str, params: dict | None = None) -> dict:
             value = response.json()
         async with _LOCK:
             _CACHE[key] = (time.monotonic(), value)
+            if len(_CACHE) > _CACHE_MAX:
+                oldest = min(_CACHE, key=lambda k: _CACHE[k][0])
+                del _CACHE[oldest]
         return value
     except Exception:
         if cached and time.monotonic() - cached[0] < 3600:

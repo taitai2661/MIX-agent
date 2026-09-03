@@ -22,6 +22,8 @@ if not DATABASE_URL.startswith("postgresql+psycopg://"):
 RUNNER_URL = os.getenv("RUNNER_URL", "http://execution-runner:8001")
 MCP_URL = os.getenv("MCP_URL", "http://mcp-runner:8002")
 MCP_MANAGER_URL = os.getenv("MCP_MANAGER_URL", "http://mcp-manager:8003")
+BROWSER_URL = os.getenv("BROWSER_URL", "http://browser-runner:8005")
+BROWSER_PROVISIONER_URL = os.getenv("BROWSER_PROVISIONER_URL", "http://browser-provisioner:8006")
 PUBLIC_ORIGIN = os.getenv("PUBLIC_ORIGIN", "http://localhost:8080").rstrip("/")
 COOKIE_SECURE = PUBLIC_ORIGIN.startswith("https://")
 MAX_UPLOAD = 20 * 1024 * 1024

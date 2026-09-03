@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import re
@@ -164,6 +165,6 @@ async def scheduler():
 
 def datetime_from_iso(value):
     try:
-        return __import__("datetime").datetime.fromisoformat(value) if value else None
+        return datetime.datetime.fromisoformat(value) if value else None
     except ValueError:
         return None

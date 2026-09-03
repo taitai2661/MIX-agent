@@ -343,7 +343,6 @@ def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(
         assert response.status_code == 200
         assert response.json()["data"]["scope"] == {"workspace": "/workspace"}
         assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
-
         legacy = next(
             r for r in db.scalars(select(Permission)) if r.data.get("tool_id") == tool["id"]
         )
@@ -351,6 +350,30 @@ def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(
         db.commit()
         assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
 
+
+def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    async def provisioner(kind, path, payload, timeout=120):
+        assert kind == "browser-provisioner"
+        if path == "/install":
+            return {"status": "installing", "failure": None}
+        return {"status": "ready", "failure": None}
+
+    monkeypatch.setattr(routes, "runner_request", provisioner)
+    response = signed.post("/api/v1/browser/enable")
+    assert response.status_code == 200
+    assert {"browser_open", "browser_read", "browser_click", "browser_type"} <= set(response.json()["tool_ids"])
+    response = signed.post("/api/v1/browser/install")
+    assert response.status_code == 200
+    assert response.json()["status"] == "installing"
+    response = signed.get("/api/v1/settings")
+    assert response.status_code == 200
+    assert response.json()["data"]["browser_install_status"] == "ready"
+    with SessionLocal() as db:
+        rules = list(db.scalars(select(Permission)))
+        browser = [row.data for row in rules if row.data.get("tool_id", "").startswith("browser_")]
+        assert browser and all(row["permission"] == "allow" for row in browser)
 
 def test_skill_revision_restore(signed):
     row = signed.post(

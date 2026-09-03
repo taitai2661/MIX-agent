@@ -23,5 +23,5 @@ def record(db, owner_id: str, model_id: str, provider_id: str, mode: str,
         "mode": mode,
         "output_tokens": output_tokens,
         "generation_ms": generation_ms,
-        "tokens_per_second": round(output_tokens / (generation_ms / 1000), 1),
+        "tokens_per_second": round(output_tokens / max(0.001, generation_ms / 1000), 1),
     }, created_at=current)

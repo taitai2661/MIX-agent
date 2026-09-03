@@ -8,6 +8,9 @@ for directory in (
     "/execution-token",
     "/mcp-token",
     "/manager-token",
+    "/browser-token",
+    "/browser-provisioner-token",
+    "/browser-data",
     "/data",
     "/policy",
     "/workspace",
@@ -23,6 +26,8 @@ for filename, binary in (
     ("/execution-token/execution.token", False),
     ("/mcp-token/mcp.token", False),
     ("/manager-token/manager.token", False),
+    ("/browser-token/browser.token", False),
+    ("/browser-provisioner-token/browser-provisioner.token", False),
 ):
     file = Path(filename)
     try:

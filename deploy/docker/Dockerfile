@@ -34,12 +34,27 @@ USER 1000:1000
 
 FROM runtime AS execution
 USER root
-RUN --mount=type=cache,target=/root/.cache/ms-playwright apt-get update && apt-get install -y --no-install-recommends git && playwright install --with-deps --only-shell chromium && rm -rf /var/lib/apt/lists/* && cp -a /root/.cache/ms-playwright /opt/playwright
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY runners/execution/main.py /app/runner.py
 COPY packages/tool_contracts/snapshots.py /app/snapshots.py
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 USER 1000:1000
 CMD ["uvicorn", "runner:app", "--host", "0.0.0.0", "--port", "8001"]
+
+FROM runtime AS browser-base
+USER root
+# Runtime libraries only; Chromium itself is downloaded after setup into a volume.
+RUN playwright install-deps chromium && rm -rf /var/lib/apt/lists/*
+COPY runners/execution/main.py /app/runner.py
+COPY runners/browser_provisioner/main.py /app/browser_provisioner.py
+ENV PLAYWRIGHT_BROWSERS_PATH=/browser
+
+FROM browser-base AS browser-runner
+USER 1000:1000
+CMD ["uvicorn", "runner:app", "--host", "0.0.0.0", "--port", "8005"]
+
+FROM browser-base AS browser-provisioner
+USER 1000:1000
+CMD ["uvicorn", "browser_provisioner:app", "--host", "0.0.0.0", "--port", "8006"]
 
 FROM runtime AS mcp
 COPY --from=web /usr/local/bin/node /usr/local/bin/node
