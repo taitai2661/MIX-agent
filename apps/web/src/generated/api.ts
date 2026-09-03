@@ -295,6 +295,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Status */
+        get: operations["browser_status_api_v1_browser_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Install */
+        post: operations["browser_install_api_v1_browser_install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/statistics": {
         parameters: {
             query?: never;
@@ -309,6 +343,26 @@ export interface paths {
         get: operations["settings_statistics_api_v1_settings_statistics_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable Browser Tools
+         * @description Apply the explicit setup choice as one auditable Browser permission bundle.
+         */
+        post: operations["enable_browser_tools_api_v1_browser_enable_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2061,12 +2115,20 @@ export interface components {
             setup_complete: boolean;
             /** Brave Api Key */
             brave_api_key?: string | null;
+            /** Tavily Api Key */
+            tavily_api_key?: string | null;
+            /** Exa Api Key */
+            exa_api_key?: string | null;
+            /** Serper Api Key */
+            serper_api_key?: string | null;
+            /** Searxng Url */
+            searxng_url?: string | null;
             /**
              * Web Search Backend
              * @default ddgs
              * @enum {string}
              */
-            web_search_backend: "ddgs" | "brave";
+            web_search_backend: "ddgs" | "brave" | "tavily" | "exa" | "serper" | "searxng";
             /** Allowed Domains */
             allowed_domains?: string[];
             /**
@@ -2074,6 +2136,49 @@ export interface components {
              * @default true
              */
             browser_enabled: boolean;
+            /**
+             * Browser Install Requested
+             * @default false
+             */
+            browser_install_requested: boolean;
+            /**
+             * Browser Install Status
+             * @default not_installed
+             * @enum {string}
+             */
+            browser_install_status: "not_installed" | "installing" | "ready" | "failed";
+            /** Browser Install Failure */
+            browser_install_failure?: string | null;
+            /**
+             * Browser Timeout Ms
+             * @default 15000
+             */
+            browser_timeout_ms: number;
+            /**
+             * Browser Locale
+             * @default ja-JP
+             */
+            browser_locale: string;
+            /**
+             * Browser User Agent
+             * @default
+             */
+            browser_user_agent: string;
+            /**
+             * Browser Viewport Width
+             * @default 1280
+             */
+            browser_viewport_width: number;
+            /**
+             * Browser Viewport Height
+             * @default 720
+             */
+            browser_viewport_height: number;
+            /**
+             * Browser Block Images
+             * @default false
+             */
+            browser_block_images: boolean;
             /**
              * Web Search Enabled
              * @default true
@@ -2843,6 +2948,46 @@ export interface operations {
             };
         };
     };
+    browser_status_api_v1_browser_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    browser_install_api_v1_browser_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     settings_statistics_api_v1_settings_statistics_get: {
         parameters: {
             query?: never;
@@ -2859,6 +3004,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatisticsView"];
+                };
+            };
+        };
+    };
+    enable_browser_tools_api_v1_browser_enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

@@ -63,7 +63,7 @@ export function Tools() {
     if (!settings.data) return;
     const current = settings.data.data.tool_settings || {};
     const data = settings.data.data;
-    await api("/settings", "PUT", { default_model_id: data.default_model_id || "", auto_model_ids: data.auto_model_ids || null, auto_retry_count: data.auto_retry_count ?? 3, setup_complete: data.setup_complete ?? false, browser_enabled: data.browser_enabled !== false, web_search_enabled: data.web_search_enabled !== false, web_search_backend: data.web_search_backend || "ddgs", web_search_count: data.web_search_count ?? 5, allowed_domains: data.allowed_domains || [], tool_settings: { ...current, [toolId]: { ...(current[toolId] || {}), enabled } }, brave_api_key: null });
+    await api("/settings", "PUT", { default_model_id: data.default_model_id || "", auto_model_ids: data.auto_model_ids || null, auto_retry_count: data.auto_retry_count ?? 3, setup_complete: data.setup_complete ?? false, browser_enabled: data.browser_enabled !== false, web_search_enabled: data.web_search_enabled !== false, web_search_backend: data.web_search_backend || "ddgs", web_search_count: data.web_search_count ?? 5, searxng_url: data.searxng_url || "", allowed_domains: data.allowed_domains || [], tool_settings: { ...current, [toolId]: { ...(current[toolId] || {}), enabled } }, brave_api_key: null, tavily_api_key: null, exa_api_key: null, serper_api_key: null });
     await qc.invalidateQueries({ queryKey: ["/settings"] });
   }
   return (

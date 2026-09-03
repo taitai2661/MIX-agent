@@ -21,6 +21,11 @@ BUILTIN_CATALOG = {
 }
 SENSITIVE_KEYS = {"api_key", "key", "token", "authorization", "owner", "organization", "org_id"}
 
+# Safe-side fallback for models with unknown windows (see context/budget.py).
+FALLBACK_CONTEXT_WINDOW = 32_000
+FALLBACK_RESERVED_OUTPUT_TOKENS = 4096
+FALLBACK_SAFETY_MARGIN_TOKENS = 2000
+
 
 def redact(value):
     if isinstance(value, dict):

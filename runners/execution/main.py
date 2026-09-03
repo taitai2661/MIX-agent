@@ -314,6 +314,22 @@ async def execute(body: Execute):
                     await p.locator(args["selector"]).first.click()
                 elif name == "browser_type":
                     await p.locator(args["selector"]).first.fill(args["text"])
+                elif name == "browser_extract":
+                    limit = max(1, min(100, int(args.get("limit", 20) or 20)))
+                    items = await p.locator(args["selector"]).evaluate_all(
+                        "elements => elements.slice(0, " + str(limit) + ").map(e => ({text: (e.innerText || '').slice(0, 2000), href: e.href || (e.querySelector('a') || {}).href || ''}))"
+                    )
+                    return {"url": p.url, "count": len(items), "items": items}
+                elif name == "browser_wait":
+                    timeout = max(1000, min(30000, int(args.get("timeout_ms", 10000) or 10000)))
+                    if args.get("selector"):
+                        try:
+                            await p.locator(args["selector"]).first.wait_for(timeout=timeout)
+                            return {"url": p.url, "ready": True}
+                        except Exception:
+                            return {"url": p.url, "ready": False}
+                    await p.wait_for_timeout(timeout)
+                    return {"url": p.url, "ready": True}
                 elif name == "browser_screenshot":
                     return {
                         "image_base64": base64.b64encode(await p.screenshot()).decode()

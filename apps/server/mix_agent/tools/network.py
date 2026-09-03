@@ -13,7 +13,8 @@ async def public_address(host, port):
     return ips[0]
 
 
-async def fetch_public(url, max_bytes=2_000_000):
+async def fetch_public_bytes(url, max_bytes=2_000_000):
+    """Fetch raw bytes from a public HTTP(S) URL with SSRF protections."""
     for _ in range(5):
         parsed = urlsplit(url)
         if (
@@ -28,8 +29,9 @@ async def fetch_public(url, max_bytes=2_000_000):
             raise ValueError("Only ports 80 and 443 are allowed")
         ip = await public_address(parsed.hostname, port)
         target = httpx.URL(url).copy_with(host=ip)
-        async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
-            async with client.stream(
+        async with (
+            httpx.AsyncClient(timeout=20, trust_env=False) as client,
+            client.stream(
                 "GET",
                 target,
                 headers={"Host": parsed.netloc},
@@ -37,20 +39,32 @@ async def fetch_public(url, max_bytes=2_000_000):
                 # expects a hostname string.  Bytes fail there with an
                 # AttributeError before the page can be opened.
                 extensions={"sni_hostname": parsed.hostname},
-            ) as response:
-                if response.is_redirect:
-                    from urllib.parse import urljoin
+            ) as response,
+        ):
+            if response.is_redirect:
+                from urllib.parse import urljoin
 
-                    url = urljoin(url, response.headers["location"])
-                    continue
-                response.raise_for_status()
-                content = bytearray()
-                async for block in response.aiter_bytes():
-                    content.extend(block)
-                    if len(content) > max_bytes:
-                        raise ValueError("Page exceeds size limit")
-                return bytes(content).decode("utf-8", errors="replace")
+                url = urljoin(url, response.headers["location"])
+                continue
+            response.raise_for_status()
+            content = bytearray()
+            async for block in response.aiter_bytes():
+                content.extend(block)
+                if len(content) > max_bytes:
+                    raise ValueError("Page exceeds size limit")
+            return bytes(content), _content_type(response)
     raise ValueError("Too many redirects")
+
+
+def _content_type(response):
+    headers = getattr(response, "headers", None)
+    get = getattr(headers, "get", None)
+    return str(get("content-type", "") if callable(get) else "")
+
+
+async def fetch_public(url, max_bytes=2_000_000):
+    content, _ = await fetch_public_bytes(url, max_bytes)
+    return content.decode("utf-8", errors="replace")
 
 
 async def request_public(method, url, *, headers=None, data=None, json=None, max_bytes=2_000_000):
@@ -67,18 +81,20 @@ async def request_public(method, url, *, headers=None, data=None, json=None, max
     ip = await public_address(parsed.hostname, 443)
     target = httpx.URL(url).copy_with(host=ip)
     request_headers = {"Host": parsed.netloc, **(headers or {})}
-    async with httpx.AsyncClient(timeout=20, trust_env=False, follow_redirects=False) as client:
-        async with client.stream(
+    async with (
+        httpx.AsyncClient(timeout=20, trust_env=False, follow_redirects=False) as client,
+        client.stream(
             method,
             target,
             headers=request_headers,
             data=data,
             json=json,
             extensions={"sni_hostname": parsed.hostname},
-        ) as response:
-            content = bytearray()
-            async for block in response.aiter_bytes():
-                content.extend(block)
-                if len(content) > max_bytes:
-                    raise ValueError("Response exceeds size limit")
+        ) as response,
+    ):
+        content = bytearray()
+        async for block in response.aiter_bytes():
+            content.extend(block)
+            if len(content) > max_bytes:
+                raise ValueError("Response exceeds size limit")
             return response.status_code, dict(response.headers), bytes(content)

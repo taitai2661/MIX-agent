@@ -390,7 +390,11 @@ class SettingsInput(Input):
     auto_retry_count: int = Field(default=3, ge=0)
     setup_complete: bool = False
     brave_api_key: str | None = None
-    web_search_backend: Literal["ddgs", "brave"] = "ddgs"
+    tavily_api_key: str | None = None
+    exa_api_key: str | None = None
+    serper_api_key: str | None = None
+    searxng_url: str | None = None
+    web_search_backend: Literal["ddgs", "brave", "tavily", "exa", "serper", "searxng"] = "ddgs"
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)
     browser_enabled: bool = True
     browser_install_requested: bool = False

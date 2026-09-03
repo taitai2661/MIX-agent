@@ -550,6 +550,38 @@
         }
       }
     },
+    "/api/v1/browser/status": {
+      "get": {
+        "summary": "Browser Status",
+        "operationId": "browser_status_api_v1_browser_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/install": {
+      "post": {
+        "summary": "Browser Install",
+        "operationId": "browser_install_api_v1_browser_install_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/statistics": {
       "get": {
         "summary": "Settings Statistics",
@@ -563,6 +595,23 @@
                 "schema": {
                   "$ref": "#/components/schemas/StatisticsView"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/enable": {
+      "post": {
+        "summary": "Enable Browser Tools",
+        "description": "Apply the explicit setup choice as one auditable Browser permission bundle.",
+        "operationId": "enable_browser_tools_api_v1_browser_enable_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -5032,7 +5081,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 10000
+                "maxLength": 2000
               },
               {
                 "type": "null"
@@ -5459,11 +5508,59 @@
             ],
             "title": "Brave Api Key"
           },
+          "tavily_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tavily Api Key"
+          },
+          "exa_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exa Api Key"
+          },
+          "serper_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serper Api Key"
+          },
+          "searxng_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Searxng Url"
+          },
           "web_search_backend": {
             "type": "string",
             "enum": [
               "ddgs",
-              "brave"
+              "brave",
+              "tavily",
+              "exa",
+              "serper",
+              "searxng"
             ],
             "title": "Web Search Backend",
             "default": "ddgs"
@@ -5480,6 +5577,72 @@
             "type": "boolean",
             "title": "Browser Enabled",
             "default": true
+          },
+          "browser_install_requested": {
+            "type": "boolean",
+            "title": "Browser Install Requested",
+            "default": false
+          },
+          "browser_install_status": {
+            "type": "string",
+            "enum": [
+              "not_installed",
+              "installing",
+              "ready",
+              "failed"
+            ],
+            "title": "Browser Install Status",
+            "default": "not_installed"
+          },
+          "browser_install_failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Browser Install Failure"
+          },
+          "browser_timeout_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "minimum": 3000.0,
+            "title": "Browser Timeout Ms",
+            "default": 15000
+          },
+          "browser_locale": {
+            "type": "string",
+            "maxLength": 35,
+            "minLength": 2,
+            "title": "Browser Locale",
+            "default": "ja-JP"
+          },
+          "browser_user_agent": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Browser User Agent",
+            "default": ""
+          },
+          "browser_viewport_width": {
+            "type": "integer",
+            "maximum": 2560.0,
+            "minimum": 320.0,
+            "title": "Browser Viewport Width",
+            "default": 1280
+          },
+          "browser_viewport_height": {
+            "type": "integer",
+            "maximum": 2560.0,
+            "minimum": 320.0,
+            "title": "Browser Viewport Height",
+            "default": 720
+          },
+          "browser_block_images": {
+            "type": "boolean",
+            "title": "Browser Block Images",
+            "default": false
           },
           "web_search_enabled": {
             "type": "boolean",

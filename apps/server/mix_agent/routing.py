@@ -39,9 +39,10 @@ def routing_profile(content, mode, artifact_mimes, tools_required, required_toke
     return ":".join(features)
 
 
-def estimate_tokens(parts, attachment_bytes=0):
-    # UTF-8/2 is intentionally conservative for Japanese, code and mixed input.
-    return sum(math.ceil(len((part or "").encode("utf-8")) / 2) for part in parts) + math.ceil(attachment_bytes / 2)
+def estimate_tokens(parts, attachment_bytes=0, model_id=""):
+    from mix_agent.context import budget as context_budget
+
+    return context_budget.estimate_for_routing(list(parts or []), attachment_bytes, model_id)
 
 
 def _scores(db, owner_id, profile):

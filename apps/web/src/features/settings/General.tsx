@@ -132,8 +132,8 @@ export function General() {
             label="Brave Search API Key"
             hint={
               setting.data.data.has_brave_secret_id
-                ? "保存済み。空欄なら保持します。"
-                : "未設定の場合、Web検索だけが無効になります。"
+                ? "保存済み。空欄なら保持します。Tavily/Exa/SerperのキーはWeb検索設定から登録します。"
+                : "Brave利用時に必要です。他バックエンドのキーはWeb検索設定から登録します。"
             }
           >
             <input name="brave_api_key" type="password" />

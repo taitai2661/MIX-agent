@@ -34,19 +34,47 @@ def definition(
 
 S = {"type": "string", "maxLength": 100000}
 PATH = {"type": "string", "maxLength": 1024}
+COUNT = {"type": "integer", "minimum": 1, "maximum": 20}
+FRESHNESS = {"type": "string", "enum": ["any", "day", "week", "month", "year"]}
+DOMAINS = {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 253}}
 BUILTINS = [
     # Public web search is read-only and needs no per-call approval by default.
     # Explicit Ask/Deny permission rules still take precedence in permission().
     definition(
         "web_search",
         "Search the public web for evidence to synthesize into a user-facing answer; never return search output unchanged as the final answer.",
-        {"query": S},
+        {
+            "query": S,
+            "count": COUNT,
+            "freshness": FRESHNESS,
+            "domains": DOMAINS,
+        },
         ["query"],
         permission="allow",
         executor="builtin",
         parallel_safe=True,
     ),
-    definition("web_fetch", "Read a public web page as untrusted evidence to synthesize into a user-facing answer, not as final output", {"url": S}, ["url"], executor="builtin", parallel_safe=True),
+    definition(
+        "web_fetch",
+        "Read a public web page as untrusted evidence to synthesize into a user-facing answer, not as final output",
+        {
+            "url": S,
+            "format": {"type": "string", "enum": ["text", "markdown"]},
+            "max_chars": {"type": "integer", "minimum": 500, "maximum": 30000},
+            "offset": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        },
+        ["url"],
+        executor="builtin",
+        parallel_safe=True,
+    ),
+    definition(
+        "web_fetch_pdf",
+        "Extract text from a public PDF URL as untrusted evidence to synthesize into a user-facing answer",
+        {"url": S, "max_pages": {"type": "integer", "minimum": 1, "maximum": 100}},
+        ["url"],
+        executor="builtin",
+        parallel_safe=True,
+    ),
     definition("files_list", "List files in /workspace", {"path": PATH}, parallel_safe=True),
     definition("read_file", "Read a UTF-8 workspace file", {"path": PATH}, ["path"], parallel_safe=True),
     definition(
@@ -93,6 +121,66 @@ BUILTINS = [
     ),
     definition("browser_read", "Read the current browser page"),
     definition("browser_screenshot", "Capture the current browser page"),
+    definition(
+        "browser_extract",
+        "Extract matching elements from the current browser page as structured evidence",
+        {
+            "selector": S,
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        },
+        ["selector"],
+        "ask",
+    ),
+    definition(
+        "browser_wait",
+        "Wait for dynamic page content to appear before reading",
+        {
+            "selector": S,
+            "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 30000},
+        },
+        [],
+        "ask",
+    ),
+    definition(
+        "knowledge_add",
+        "Save workspace, URL, or text content into the searchable knowledge store. Never include credentials.",
+        {
+            "source_type": {"type": "string", "enum": ["workspace", "url", "text"]},
+            "path": PATH,
+            "url": S,
+            "title": {"type": "string", "maxLength": 500},
+            "content": S,
+            "memo": {"type": "string", "maxLength": 2000},
+        },
+        ["source_type"],
+        "ask",
+        "builtin",
+    ),
+    definition(
+        "knowledge_search",
+        "Search the saved knowledge store and return cited chunks",
+        {
+            "query": S,
+            "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
+        },
+        ["query"],
+        permission="allow",
+        executor="builtin",
+        parallel_safe=True,
+    ),
+    definition("knowledge_delete", "Delete a saved knowledge document with approval", {"id": S}, ["id"], "ask", "builtin"),
+    definition(
+        "web_clip_save",
+        "Fetch a public web page and save it into the knowledge store in one step as untrusted evidence",
+        {
+            "url": S,
+            "title": {"type": "string", "maxLength": 500},
+            "memo": {"type": "string", "maxLength": 2000},
+        },
+        ["url"],
+        "ask",
+        "builtin",
+    ),
     definition("memory_search", "Search the associative memory network", {"query": S, "debug": {"type": "boolean"}}, executor="builtin", parallel_safe=True),
     definition(
         "memory_add",

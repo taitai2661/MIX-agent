@@ -24,10 +24,11 @@ export function Memories() {
     <ErrorBox error={error || rows.error || settings.error} />
     {settings.data && <form className="card memory-settings" onSubmit={async e => {
       e.preventDefault(); const form = new FormData(e.currentTarget);
-      try { await api("/settings", "PUT", { ...settings.data.data,
+      try { const { has_secret_id, has_brave_secret_id, has_tavily_secret_id, has_exa_secret_id, has_serper_secret_id, ...rest } = settings.data.data;
+        await api("/settings", "PUT", { ...rest,
         memory_auto_formation: form.get("auto") === "on", memory_max_depth: Number(form.get("depth")),
         memory_max_candidates: Number(form.get("candidates")), memory_retrieval_budget_ms: Number(form.get("budget")),
-        memory_min_association_weight: Number(form.get("weight")), memory_activation_decay: Number(form.get("decay")), brave_api_key: null,
+        memory_min_association_weight: Number(form.get("weight")), memory_activation_decay: Number(form.get("decay")), brave_api_key: null, tavily_api_key: null, exa_api_key: null, serper_api_key: null,
       }); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (reason) { setError(reason); }
     }}>
       <h3>形成と想起</h3>

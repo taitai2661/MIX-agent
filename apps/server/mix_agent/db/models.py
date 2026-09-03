@@ -218,6 +218,13 @@ class SkillRevision(Record, Base):
     __tablename__ = "skill_revisions"
 
 
+class Knowledge(Record, Base):
+    """One chunk of a saved knowledge document. Chunks of a document share data.doc_id."""
+
+    __tablename__ = "knowledge"
+    __table_args__ = (Index("knowledge_owner_doc", "owner_id", "created_at"),)
+
+
 class Artifact(Record, Base):
     __tablename__ = "artifacts"
 

@@ -82,10 +82,14 @@ async def _evaluate(job, run, provider, key):
 
 
 def _apply(db, job, candidates):
+    # Action dispatch table. WEAKEN/LINK/ARCHIVE are recorded explicitly and
+    # treated as NOOP until their lifecycle handlers land; they must never
+    # fall back to CREATE (memory-growth cause).
     source_ids = [key for key in job.data.get("activated_ids", []) if db.get(Memory, key)]
     for index, candidate in enumerate(candidates):
-        if candidate["action"] == "NO_OP":
-            service._event(db, job.owner_id, job.run_id, "NO_OP", None, None, None, candidate["reason"], index)
+        action = candidate["action"]
+        if action in ("NO_OP", "WEAKEN_TRACE", "LINK_TRACE", "ARCHIVE_TRACE"):
+            service._event(db, job.owner_id, job.run_id, action + ":unsupported", None, None, None, candidate["reason"], index)
             continue
         related = service.search(db, job.owner_id, candidate["content"], settings={"result_limit": 3}, debug=False)
         target = db.get(Memory, related[0]["id"]) if related and related[0]["relevance"] >= 0.72 else None
