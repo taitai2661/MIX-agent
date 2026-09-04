@@ -131,6 +131,14 @@ async def test_context_limit_normalizes_compatible_and_ollama_responses(monkeypa
     assert models[0]["context_source"] == "provider_api"
 
 
+def test_context_limit_rejects_boolean_provider_values():
+    from mix_agent.providers.metadata import context_limit
+
+    assert context_limit({"context_length": True}) is None
+    assert context_limit({"limits": {"context": False}}) is None
+    assert context_limit({"context_length": 8192}) == 8192
+
+
 def test_each_preset_declares_transport_discovery_and_metadata_chain():
     assert len(PRESETS) == 50
     for preset in PRESETS:

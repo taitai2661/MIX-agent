@@ -160,7 +160,9 @@ def speed(db, owner_id: str, model_id: str, provider_id: str, scope: str,
         (event, event.data["completion_ms"] / event.data["output_tokens"])
         for event in events
         if isinstance(event.data.get("completion_ms"), (int, float)) and event.data["completion_ms"] > 0
-        and isinstance(event.data.get("output_tokens"), int) and event.data["output_tokens"] > 0
+        and isinstance(event.data.get("output_tokens"), int)
+        and not isinstance(event.data["output_tokens"], bool)
+        and event.data["output_tokens"] > 0
     ])
     completion = robust_average([
         (event, event.data["completion_ms"])

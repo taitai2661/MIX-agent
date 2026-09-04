@@ -276,11 +276,20 @@ async def execute(db, run, tool, args):
         browser_settings = setting.data if setting else {}
         if name.startswith("browser_"):
             try:
-                status = await runner_request("browser-provisioner", "/status", {}, timeout=5)
+                status = await runner_request("browser-provisioner", "/status", {}, timeout=10)
             except Exception as error:
-                raise ValueError("Browserの導入状態を確認できません。設定画面から再試行してください。") from error
-            if status.get("status") != "ready":
-                raise ValueError("Browserはまだ利用できません（%s）。設定画面から導入または再試行してください。" % status.get("status", "not_installed"))
+                raise ValueError(
+                    "Browser導入サービスに接続できません。Docker Composeが起動しているか、"
+                    "ネットワーク設定を確認してください。"
+                ) from error
+            install_status = status.get("status", "not_installed")
+            if install_status == "failed":
+                raise ValueError("Browserの導入に失敗しました。設定画面から再試行してください。")
+            if install_status != "ready":
+                raise ValueError(
+                    f"Browserはまだ利用できません（現在の状態: {install_status}）。"
+                    "設定画面から導入を完了してください。"
+                )
         result = await runner_request(
             "browser" if name.startswith("browser_") else "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
                                       "browser_settings": browser_settings}

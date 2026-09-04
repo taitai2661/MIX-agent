@@ -57,7 +57,7 @@ def resolve_reasoning(kind: str, model: str, caps: dict, mode: str, settings: di
         request = {"thinking": {"type": "adaptive"}, "output_config": {"effort": "low" if auto else "high"}}
     elif control == "anthropic_budget":
         maximum = settings.get("max_output_tokens", 4096)
-        if not isinstance(maximum, int) or maximum <= 1024:
+        if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum <= 1024:
             raise ValueError("このモデルの思考にはmax_output_tokensを1024より大きく設定してください。")
         request = {"thinking": {"type": "enabled", "budget_tokens": 1024}}
     elif control == "gemini_budget":

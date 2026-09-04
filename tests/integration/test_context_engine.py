@@ -22,6 +22,19 @@ def _window(window, reserved=4096):
     return {"context_window": window, "reserved_output_tokens": reserved, "safety_margin": 1000}
 
 
+def test_context_window_ignores_boolean_saved_values():
+    resolved = context_budget.resolve_window({
+        "context_window": True,
+        "max_output_tokens": False,
+        "safety_margin": True,
+    })
+    assert resolved == {
+        "context_window": context_budget.FALLBACK_CONTEXT_WINDOW,
+        "reserved_output_tokens": context_budget.FALLBACK_RESERVED_OUTPUT,
+        "safety_margin": 1000,
+    }
+
+
 def _messages(n, size=200):
     return [
         {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i} " + "x" * size}

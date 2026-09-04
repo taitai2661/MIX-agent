@@ -17,6 +17,7 @@ app = FastAPI(docs_url=None, redoc_url=None)
 ROOT = Path(os.getenv("WORKSPACE", "/workspace"))
 PROCESSES = {}
 BROWSER = None
+PLAYWRIGHT = None
 CONTEXT = None
 PAGE = None
 BROWSER_CONFIG = None
@@ -130,15 +131,24 @@ def browser_config(values):
 
 
 async def page(values=None):
-    global BROWSER, CONTEXT, PAGE, BROWSER_CONFIG
+    global PLAYWRIGHT, BROWSER, CONTEXT, PAGE, BROWSER_CONFIG
     config = browser_config(values)
     if BROWSER is None:
-        playwright = await async_playwright().start()
-        BROWSER = await playwright.chromium.launch(
-            headless=True,
-            proxy={"server": os.getenv("HTTPS_PROXY", "http://egress-proxy:3128")},
-            args=["--disable-dev-shm-usage", "--proxy-bypass-list=<-loopback>"],
-        )
+        try:
+            PLAYWRIGHT = await async_playwright().start()
+            BROWSER = await PLAYWRIGHT.chromium.launch(
+                headless=True,
+                proxy={"server": os.getenv("HTTPS_PROXY", "http://egress-proxy:3128")},
+                args=["--disable-dev-shm-usage", "--proxy-bypass-list=<-loopback>"],
+            )
+        except Exception as exc:
+            if PLAYWRIGHT is not None:
+                await PLAYWRIGHT.stop()
+            PLAYWRIGHT = None
+            BROWSER = None
+            raise ValueError(
+                f"Chromiumを起動できません。Browserが導入されているか確認してください。"
+            ) from exc
     if PAGE is None or BROWSER_CONFIG != config:
         if CONTEXT is not None:
             await CONTEXT.close()

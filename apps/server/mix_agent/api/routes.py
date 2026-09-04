@@ -108,7 +108,7 @@ from mix_agent.context import budget as context_budget
 from mix_agent.context import retrievers as context_retrievers
 from mix_agent.context import task_state as context_task_state
 from mix_agent.routing import effective_capabilities, select_auto_model
-from mix_agent.runs.engine import TASKS, emit, launch
+from mix_agent.runs.engine import TASKS, auto_retry_count, emit, launch
 from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, tool_allowed
 from mix_agent.skills import service as skills
 from mix_agent.tools.execute import runner_request, save_artifact
@@ -352,7 +352,7 @@ def purge_expired_conversations(db):
 
 def record_login(db, owner_id, successful, ip="unknown"):
     """Keep only the latest 100 outcomes for this account, with connection metadata."""
-    db.add(LoginEvent(owner_id=owner_id, successful=successful, data={"ip": ip}))
+    db.add(LoginEvent(owner_id=owner_id, successful=successful, ip=ip))
     db.flush()
     stale = db.scalars(
         select(LoginEvent)
@@ -450,7 +450,7 @@ async def login(body: Credentials, request: Request, response: Response, db=Depe
     cutoff = now() - timedelta(minutes=5)
     recent = db.scalars(
         select(LoginEvent).where(
-            LoginEvent.data["ip"].as_string() == ip,
+            LoginEvent.ip == ip,
             LoginEvent.created_at >= cutoff,
         )
     ).all()
@@ -1315,7 +1315,10 @@ async def _build_history_payload(db, s, conversation, body, settings_row, agent,
         "model_record_id": model.id,
         "requested_model_id": requested_model_id,
         # Keep retry policy stable for this run even if general settings change.
-        "auto_retry_count": settings_row.data.get("auto_retry_count", 3) if requested_model_id == "auto" else 0,
+        "auto_retry_count": (
+            auto_retry_count(settings_row.data.get("auto_retry_count", 3))
+            if requested_model_id == "auto" else 0
+        ),
         "provider": provider.data,
         "provider_record_id": provider.id,
         "tool_ids": tool_ids,

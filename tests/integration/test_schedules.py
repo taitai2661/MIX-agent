@@ -40,8 +40,10 @@ async def test_agent_schedule_tools_manage_only_owned_jobs(signed):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         conversation = Conversation(owner_id=owner, data={"title": "Test"})
+        db.add(conversation)
+        db.flush()
         run = Run(owner_id=owner, conversation_id=conversation.id, request_key=uid(), data={"snapshot": {}})
-        db.add_all((conversation, run)); db.flush()
+        db.add(run); db.flush()
         create = next(tool for tool in BUILTINS if tool["id"] == "schedule_create")
         created = await execute(db, run, create, {"name": "朝", "target_type": "conversation", "target_id": conversation.id, "prompt": "確認して", "cron": "0 9 * * *"})
         assert created["created"] is True

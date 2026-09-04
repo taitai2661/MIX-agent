@@ -19,6 +19,7 @@ export async function api<T = any>(
     headers["Idempotency-Key"] = idempotencyKey || crypto.randomUUID();
   const response = await fetch("/api/v1" + path, {
     method,
+    credentials: "same-origin",
     headers,
     body: body ? (form ? body : JSON.stringify(body)) : undefined,
   });
@@ -38,6 +39,7 @@ export async function binary(path: string, body: FormData | object) {
   const form = body instanceof FormData;
   const r = await fetch("/api/v1" + path, {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "x-csrf-token": csrf,
       ...(!form ? { "Content-Type": "application/json" } : {}),

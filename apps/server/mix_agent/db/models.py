@@ -49,6 +49,7 @@ class LoginEvent(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     successful: Mapped[bool] = mapped_column(Boolean)
+    ip: Mapped[str] = mapped_column(String(255), default="unknown")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
 
 

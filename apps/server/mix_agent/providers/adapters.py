@@ -131,7 +131,8 @@ class Adapter:
                     context = context_limit(details)
                     if not context and isinstance(model_info, dict):
                         context = next((value for key, value in model_info.items()
-                                        if key.endswith(".context_length") and isinstance(value, int)), None)
+                                        if key.endswith(".context_length") and isinstance(value, int)
+                                        and not isinstance(value, bool)), None)
                     items.append({"id": model_id, "name": model_id, "context_length": context})
                 body = {"data": items}
             else:

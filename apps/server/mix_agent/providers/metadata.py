@@ -38,12 +38,13 @@ def redact(value):
 def context_limit(item):
     for key in ("context_length", "context_window", "max_context_length", "max_context_tokens", "inputTokenLimit"):
         value = item.get(key)
-        if isinstance(value, int) and value > 0:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             return value
         if isinstance(value, str) and value.isdecimal() and int(value) > 0:
             return int(value)
     limits = item.get("limits")
-    if isinstance(limits, dict) and isinstance(limits.get("context"), int) and limits["context"] > 0:
+    if (isinstance(limits, dict) and isinstance(limits.get("context"), int)
+            and not isinstance(limits["context"], bool) and limits["context"] > 0):
         return limits["context"]
     return None
 

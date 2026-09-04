@@ -59,10 +59,18 @@ _PROVIDER_RATE_LOCK = asyncio.Lock()
 _PROVIDER_REQUESTS = defaultdict(deque)
 
 
+def auto_retry_count(value) -> int:
+    """Return a safe retry count for legacy or manually edited saved settings."""
+    # SettingsInput rejects malformed values for new writes, but old JSONB rows
+    # can still contain null, strings, or booleans.  A malformed persisted value
+    # must never make a provider-failure recovery path crash.
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 3
+
+
 async def wait_for_provider_slot(provider):
     """Apply the optional per-process provider requests/minute limit."""
     limit = provider.get("rate_limit_rpm", 0)
-    if not isinstance(limit, int) or limit <= 0:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         return
     period = 1 if provider.get("rate_limit_period", "minute") == "second" else 60
     key = provider.get("id") or provider.get("base_url") or provider.get("kind", "unknown")
@@ -90,7 +98,7 @@ def output_tokens(usage):
         return None
     for key in ("output_tokens", "completion_tokens", "candidates_token_count"):
         value = usage.get(key)
-        if isinstance(value, int) and value > 0:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             return value
     return None
 
@@ -324,7 +332,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
     snapshot = run.data["snapshot"]
     attempts = run.data.get("auto_selection", {}).get("attempts", [])
     failures = [attempt for attempt in attempts if attempt.get("outcome") == "provider_error"]
-    retry_limit = snapshot.get("auto_retry_count", 3)
+    retry_limit = auto_retry_count(snapshot.get("auto_retry_count", 3))
     if not routing or len(failures) >= retry_limit:
         return None
     previous_id = snapshot["model_record_id"]

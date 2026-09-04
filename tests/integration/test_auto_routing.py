@@ -89,6 +89,43 @@ def test_auto_retry_count_defaults_to_three_for_legacy_settings(signed):
     assert signed.get("/api/v1/settings").json()["data"]["auto_retry_count"] == 3
 
 
+def test_auto_retry_count_repairs_malformed_legacy_snapshot_value(signed, monkeypatch):
+    model_id = make_model({}, model_id="legacy-retry-count")
+    with SessionLocal() as db:
+        settings = db.get(Settings, "settings")
+        settings.data = {"default_model_id": "auto", "auto_model_ids": [model_id],
+                         "auto_retry_count": None, "allowed_domains": []}
+        db.commit()
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    response = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "malformed-retry-count"})
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.data["snapshot"]["auto_retry_count"] == 3
+    assert engine.auto_retry_count(None) == 3
+    assert engine.auto_retry_count("3") == 3
+    assert engine.auto_retry_count(True) == 3
+    assert engine.auto_retry_count(0) == 0
+
+
+def test_provider_rate_limit_ignores_malformed_boolean_value():
+    async def verify():
+        # A boolean is not a valid request count, even though bool subclasses int.
+        await engine.wait_for_provider_slot({"id": "boolean-rate-limit", "rate_limit_rpm": True})
+        assert not engine._PROVIDER_REQUESTS["boolean-rate-limit"]
+
+    asyncio.run(verify())
+
+
+def test_output_tokens_rejects_boolean_provider_usage():
+    assert engine.output_tokens({"output_tokens": True}) is None
+    assert engine.output_tokens({"completion_tokens": False}) is None
+    assert engine.output_tokens({"candidates_token_count": 12}) == 12
+
+
 def test_auto_reliability_is_scope_aware_and_success_clears_consecutive_cooldown(signed):
     model_id = make_model({}, model_id="reliability")
     with SessionLocal() as db:
