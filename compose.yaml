@@ -1,0 +1,248 @@
+name: mix-agent
+
+x-restricted: &restricted
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+
+services:
+  init:
+    image: python:3.12.11-slim-bookworm
+    entrypoint: [python, /bootstrap.py]
+    network_mode: none
+    volumes:
+      - ./deploy/docker/bootstrap.py:/bootstrap.py:ro
+      - keys:/keys
+      - db-secret:/db-secret
+      - execution-token:/execution-token
+      - mcp-token:/mcp-token
+      - manager-token:/manager-token
+      - browser-token:/browser-token
+      - browser-provisioner-token:/browser-provisioner-token
+      - data:/data
+      - policy:/policy
+      - workspace:/workspace
+      - packages:/packages
+      - mcp-shared:/shared
+  db:
+    image: postgres:17.5-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mix
+      POSTGRES_USER: mix
+      POSTGRES_PASSWORD_FILE: /db-secret/password
+    volumes: ["postgres:/var/lib/postgresql/data", "db-secret:/db-secret:ro"]
+    networks: [database]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U mix -d mix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  app:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: app}
+    ports: ["${MIX_BIND:-127.0.0.1}:8080:8080"]
+    environment:
+      DB_PASSWORD_FILE: /db-secret/password
+      MIX_DATA: /data
+      MIX_KEYS: /keys
+      RUNNER_KEYS: /runner-keys
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+    volumes:
+      - data:/data
+      - policy:/data/egress
+      - keys:/keys
+      - db-secret:/db-secret:ro
+      - execution-token:/execution-keys:ro
+      - mcp-token:/mcp-keys:ro
+      - manager-token:/manager-keys:ro
+      - browser-token:/browser-keys:ro
+      - browser-provisioner-token:/browser-provisioner-keys:ro
+    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
+    networks: [database, execution, mcp, internet]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    mem_limit: 1g
+    cpus: 2
+    depends_on:
+      db: {condition: service_healthy}
+  execution-runner:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: execution}
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      http_proxy: http://egress-proxy:3128
+      https_proxy: http://egress-proxy:3128
+    volumes: ["workspace:/workspace", "execution-token:/tokens:ro"]
+    networks: [execution]
+    mem_limit: 2g
+    cpus: 2
+    shm_size: 256m
+    depends_on:
+      init: {condition: service_completed_successfully}
+  browser-runner:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: browser-runner}
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      TOKEN_FILE: /tokens/browser.token
+    volumes: ["browser-data:/browser:ro", "browser-token:/tokens:ro"]
+    networks: [execution]
+    mem_limit: 2g
+    cpus: 2
+    shm_size: 256m
+    depends_on:
+      init: {condition: service_completed_successfully}
+  browser-provisioner:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: browser-provisioner}
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      TOKEN_FILE: /tokens/browser-provisioner.token
+    volumes: ["browser-data:/browser", "browser-provisioner-token:/tokens:ro"]
+    networks: [execution]
+    mem_limit: 1g
+    cpus: 1
+    depends_on:
+      init: {condition: service_completed_successfully}
+  mcp-runner:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: mcp}
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      http_proxy: http://egress-proxy:3128
+      https_proxy: http://egress-proxy:3128
+      HOME: /packages
+    volumes: ["packages:/packages", "mcp-shared:/shared", "mcp-token:/tokens:ro"]
+    networks: [mcp]
+    mem_limit: 512m
+    cpus: 1
+    depends_on:
+      init: {condition: service_completed_successfully}
+  mcp-manager:
+    <<: *restricted
+    image: mix-agent-mcp-runtime:local
+    user: "1000:1000"
+    group_add: ["0"]
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: mcp-runtime}
+    environment:
+      TOKEN_FILE: /tokens/manager.token
+      POLICY_FILE: /policy/mcp-policy.json
+      MCP_RUNTIME_IMAGE: mix-agent-mcp-runtime:local
+      MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - manager-token:/tokens:ro
+      - policy:/policy
+    command: ["uvicorn", "mcp_manager:app", "--host", "0.0.0.0", "--port", "8003"]
+    networks: [mcp]
+    mem_limit: 384m
+    cpus: 0.5
+    depends_on:
+      init: {condition: service_completed_successfully}
+      egress-proxy: {condition: service_started}
+  egress-proxy:
+    <<: *restricted
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: egress}
+    environment:
+      MCP_POLICY_FILE: /policy/mcp-policy.json
+    volumes: ["policy:/policy:ro"]
+    networks: [execution, mcp, internet]
+    mem_limit: 256m
+    cpus: 0.5
+    depends_on:
+      init: {condition: service_completed_successfully}
+  postgres-test:
+    image: postgres:17.5-bookworm
+    profiles: [test]
+    environment:
+      POSTGRES_DB: mix
+      POSTGRES_USER: mix
+      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
+    secrets: [test-db-password]
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U mix -d mix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  test:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
+    profiles: [test]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mix:test-only-password@postgres-test/mix
+      MIX_DATA: /tmp/mix-tests
+      MIX_KEYS: /tmp/mix-tests/keys
+      PUBLIC_ORIGIN: http://testserver
+    command: [sh, -c, "cd /app && alembic upgrade head && pytest -c /app/pyproject.toml -p no:cacheprovider -q /workspace/tests"]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks: [database]
+    depends_on:
+      postgres-test: {condition: service_healthy}
+  preview-db:
+    image: postgres:17.5-bookworm
+    profiles: [preview]
+    environment:
+      POSTGRES_DB: mix
+      POSTGRES_USER: mix
+      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
+    secrets: [test-db-password]
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U mix -d mix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  preview:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
+    profiles: [preview]
+    ports: ["127.0.0.1:18080:18080"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mix:test-only-password@preview-db/mix
+      MIX_DATA: /tmp/mix-chat-preview
+      MIX_KEYS: /tmp/mix-chat-preview/keys
+      PUBLIC_ORIGIN: http://127.0.0.1:18080
+    command: [sh, -c, "cd /app && alembic upgrade head && uvicorn --app-dir /workspace/tests/fixtures chat_preview:app --host 0.0.0.0 --port 18080"]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks: [database, internet]
+    depends_on:
+      preview-db: {condition: service_healthy}
+
+networks:
+  database: {internal: true}
+  execution: {internal: true}
+  mcp: {internal: true}
+  internet: {}
+
+volumes:
+  postgres:
+  keys:
+  db-secret:
+  execution-token:
+  mcp-token:
+  manager-token:
+  data:
+  policy:
+  workspace:
+  packages:
+  mcp-shared:
+  browser-token:
+  browser-provisioner-token:
+  browser-data:
+
+secrets:
+  test-db-password:
+    file: ./deploy/docker/test-db-password

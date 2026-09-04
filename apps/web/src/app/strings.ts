@@ -1,0 +1,15 @@
+export const ja = {
+  chat: "チャット",
+  agents: "アシスタント設定",
+  memory: "Memory",
+  skills: "Skills",
+  settings: "設定",
+  newChat: "新しいチャット",
+  send: "送信",
+  stop: "停止",
+  save: "保存",
+  cancel: "キャンセル",
+  thinking: "Thinking",
+  agent: "Agent",
+  loading: "読み込み中…",
+};
