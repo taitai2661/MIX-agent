@@ -1656,6 +1656,8 @@ async def run_events(key: str, request: Request, after: int = 0, ctx=Depends(con
         cursor = max(after, int(request.headers.get("last-event-id", "0")))
     except ValueError:
         raise HTTPException(422)
+    from mix_agent.wakeups import run_events
+    wakeup = run_events.for_run(key)
 
     async def stream():
         nonlocal cursor
@@ -1677,8 +1679,11 @@ async def run_events(key: str, request: Request, after: int = 0, ctx=Depends(con
                 if status in ("completed", "failed", "cancelled", "interrupted") and len(events) < 200:
                     yield "event: done\ndata: {}\n\n"
                     return
-            yield ": heartbeat\n\n"
-            await asyncio.sleep(0.3)
+            # Keep proxies from closing an idle SSE stream without polling the DB.
+            seen = wakeup.revision
+            changed = await wakeup.wait(seen, timeout=15)
+            if changed == seen:
+                yield ": heartbeat\n\n"
 
     return StreamingResponse(
         stream(),

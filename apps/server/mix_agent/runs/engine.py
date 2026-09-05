@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from collections import defaultdict, deque
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
@@ -285,6 +285,8 @@ def emit(db, run_id, kind, data):
     sequence = (db.scalar(select(func.max(Event.sequence)).where(Event.run_id == run_id)) or 0) + 1
     db.add(Event(run_id=run_id, sequence=sequence, kind=kind, data=data))
     db.flush()
+    from mix_agent.wakeups import mark
+    mark(db, "run", run_id)
 
 
 def update(run, **fields):
@@ -311,6 +313,9 @@ def finish(db, run, status, reason=None):
             scheduled.status = "retrying" if retry else ("completed" if status == "completed" else "failed")
             scheduled.data = {**scheduled.data, "reason": reason, "finished_at": now().isoformat(),
                               **({"attempt": 1, "retry_at": (now() + timedelta(seconds=30)).isoformat()} if retry else {})}
+            if retry:
+                from mix_agent.wakeups import mark
+                mark(db, "scheduler")
             from mix_agent.schedules import notify
             if not retry:
                 notify(db, run.owner_id, "schedule.completed" if status == "completed" else "schedule.failed", "定期実行: " + ("完了" if status == "completed" else "失敗"), scheduled)
@@ -708,6 +713,7 @@ async def drive(run_id):
                 return
             snapshot = run.data["snapshot"]
             run.status = "running"
+            emit(db, run.id, "status", {"status": "running"})
             if run.data.get("auto_selection"):
                 emit(db, run.id, "model_selected", run.data["auto_selection"])
             db.commit()
@@ -772,6 +778,8 @@ async def drive(run_id):
                                     db.add(approval)
                                     db.flush()
                                     emit(db, run.id, "approval", {"id": approval.id, **approval.data})
+                                    from mix_agent.wakeups import mark
+                                    mark(db, "scheduler")
                                 if (
                                     approval.expires.replace(tzinfo=UTC) < now()
                                     and approval.status == "pending"
@@ -1023,31 +1031,43 @@ async def scheduler():
             finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
         from mix_agent.schedules import reconcile
         reconcile(db, launch)
-    sleep_interval = 2
+    from mix_agent.wakeups import scheduler as wakeup
+    seen = wakeup.revision
     while True:
+        delay = 30.0  # durable fallback if a process-local signal is missed
         try:
             from mix_agent.storage import backup
 
             if backup.ACTIVE:
-                await asyncio.sleep(2)
-                continue
-            with SessionLocal() as db:
-                from mix_agent.api.routes import purge_expired_conversations
-                purge_expired_conversations(db)
-                from mix_agent.schedules import tick
-                tick(db, launch)
-                for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
-                    if run.status == "queued":
-                        launch(run.id)
-                    else:
+                delay = 2.0
+            else:
+                with SessionLocal() as db:
+                    from mix_agent.api.routes import purge_expired_conversations
+                    purge_expired_conversations(db)
+                    from mix_agent.schedules import tick
+                    tick(db, launch)
+                    current = now()
+                    # Cron is minute-granular, so wake exactly for its next boundary.
+                    delay = max(0.05, 60 - current.second - current.microsecond / 1_000_000)
+                    for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
+                        if run.status == "queued":
+                            launch(run.id)
+                            continue
                         approval = db.scalar(
                             select(Approval).where(Approval.run_id == run.id, Approval.status == "pending")
                         )
-                        if not approval or approval.expires.replace(tzinfo=UTC) < now():
+                        if not approval or approval.expires.replace(tzinfo=UTC) < current:
                             launch(run.id)
-            sleep_interval = 2
+                        else:
+                            delay = min(delay, max(0.05, (approval.expires.replace(tzinfo=UTC) - current).total_seconds()))
+                    for scheduled in db.scalars(select(ScheduledRun).where(ScheduledRun.status == "retrying")):
+                        try:
+                            retry_at = datetime.fromisoformat(scheduled.data.get("retry_at", ""))
+                            delay = min(delay, max(0.05, (retry_at - current).total_seconds()))
+                        except (TypeError, ValueError):
+                            pass
         except Exception:
-            sleep_interval = min(30, sleep_interval * 2)
+            delay = 30.0
             import logging
             logging.getLogger(__name__).exception("scheduler tick failed")
-        await asyncio.sleep(sleep_interval)
+        seen = await wakeup.wait(seen, timeout=delay)

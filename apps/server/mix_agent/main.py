@@ -16,6 +16,11 @@ async def lifespan(app):
     from mix_agent.storage.backup import recover_interrupted
     from mix_agent.memory.jobs import scheduler as memory_scheduler
 
+    from mix_agent.wakeups import memory_jobs, run_events, scheduler as scheduler_wakeup
+
+    run_events.bind()
+    scheduler_wakeup.bind()
+    memory_jobs.bind()
     await recover_interrupted()
     task = asyncio.create_task(scheduler())
     memory_task = asyncio.create_task(memory_scheduler())

@@ -67,7 +67,8 @@ export function Chat() {
     [runId, setRunId] = useState(""),
     [streamText, setStreamText] = useState(""),
     [reasoning, setReasoning] = useState(""),
-    [events, setEvents] = useState<RunEvent[]>([]);
+    [events, setEvents] = useState<RunEvent[]>([]),
+    [streamConnected, setStreamConnected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null),
     bottom = useRef<HTMLDivElement>(null);
   const pendingSend = useRef<{
@@ -86,14 +87,14 @@ export function Chat() {
     queryFn: () => api("/runs/" + runId),
     enabled: !!runId,
     refetchInterval: (q) =>
-      q.state.data?.status === "queued" || q.state.data?.status === "running" || q.state.data?.status === "waiting_approval"
+      !streamConnected && (q.state.data?.status === "queued" || q.state.data?.status === "running" || q.state.data?.status === "waiting_approval")
         ? 1500 : false,
   });
   const toolHistory = useQuery<ToolCallHistory[]>({
     queryKey: ["tool-calls", id],
     queryFn: () => api("/conversations/" + id + "/tool-calls"),
     enabled: !!id,
-    refetchInterval: run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval" ? 1500 : false,
+    refetchInterval: !streamConnected && (run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval") ? 1500 : false,
   });
   useEffect(() => {
     restoredConversation.current = undefined;
@@ -101,6 +102,7 @@ export function Chat() {
     setEvents([]);
     setStreamText("");
     setReasoning("");
+    setStreamConnected(false);
   }, [id]);
   useEffect(() => {
     const latestRun = history.data?.runs?.at(-1);
@@ -121,6 +123,7 @@ export function Chat() {
     setStreamText("");
     setReasoning("");
     const source = new EventSource("/api/v1/runs/" + runId + "/events");
+    source.onopen = () => setStreamConnected(true);
     const onActivity = (event: Event) => {
       if (!(event instanceof MessageEvent) || typeof event.data !== "string") return;
       const v = parseRunEvent(event.data);
@@ -136,6 +139,7 @@ export function Chat() {
         if (v.kind === "approval") {
           qc.invalidateQueries({ queryKey: ["run", runId] });
         }
+        if (v.kind === "status") qc.invalidateQueries({ queryKey: ["run", runId] });
         if (v.kind === "message") {
           setStreamText("");
           qc.invalidateQueries({ queryKey: ["messages", id] });
@@ -148,12 +152,14 @@ export function Chat() {
     source.addEventListener("done", () => {
       source.close();
       setBusy(false);
+      setStreamConnected(false);
       qc.invalidateQueries({ queryKey: ["messages", id] });
       qc.invalidateQueries({ queryKey: ["run", runId] });
     });
     source.onerror = () => {
       source.close();
       setBusy(false);
+      setStreamConnected(false);
       setError(new Error("ストリーム接続が切れました。再試行してください。"));
     };
     return () => source.close();

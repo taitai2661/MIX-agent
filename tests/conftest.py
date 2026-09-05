@@ -11,21 +11,14 @@ os.environ["PUBLIC_ORIGIN"] = "http://testserver"
 from mix_agent.db.session import engine, SessionLocal
 from mix_agent.db.models import Base
 from mix_agent.main import app
-from mix_agent.runs.engine import TASKS
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
 def database():
-    for task in list(TASKS.values()):
-        task.cancel()
-    TASKS.clear()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield
-    for task in list(TASKS.values()):
-        task.cancel()
-    TASKS.clear()
 
 
 @pytest.fixture

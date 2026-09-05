@@ -36,6 +36,8 @@ def enqueue(db, run, user_content, assistant_content, activated_ids):
         "activated_ids": list(dict.fromkeys(activated_ids))[:30], "next_attempt_at": now().isoformat(),
     })
     db.add(job)
+    from mix_agent.wakeups import mark
+    mark(db, "memory")
     return job
 
 
@@ -154,7 +156,10 @@ async def process_one(job_id):
 
 
 async def scheduler():
+    from mix_agent.wakeups import memory_jobs as wakeup
+    seen = wakeup.revision
     while True:
+        delay = 30.0  # durable reconciliation fallback
         try:
             with SessionLocal() as db:
                 jobs = list(db.scalars(select(MemoryProcessingJob).where(MemoryProcessingJob.status.in_(("pending", "retrying"))).order_by(MemoryProcessingJob.created_at).limit(4)))
@@ -162,9 +167,11 @@ async def scheduler():
                 next_at = datetime_from_iso(job.data.get("next_attempt_at"))
                 if not next_at or next_at <= now():
                     await process_one(job.id)
+                else:
+                    delay = min(delay, max(0.05, (next_at - now()).total_seconds()))
         except Exception:
             LOGGER.exception("Associative memory scheduler iteration failed")
-        await asyncio.sleep(2)
+        seen = await wakeup.wait(seen, timeout=delay)
 
 
 def datetime_from_iso(value):
