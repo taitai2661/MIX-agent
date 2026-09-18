@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 import pytest
 
 ROOT = Path("/tmp/mix-tests")
@@ -8,21 +9,23 @@ os.environ["MIX_KEYS"] = str(ROOT / "keys")
 os.environ["DATABASE_URL"] = "postgresql+psycopg://mix:test-only-password@postgres-test/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://testserver"
 
-from mix_agent.db.session import engine, SessionLocal
-from mix_agent.db.models import Base
-from mix_agent.main import app
 from fastapi.testclient import TestClient
+from mix_agent.db.models import Base
+from mix_agent.db.session import engine
+from mix_agent.main import app
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def database():
+    # Only tests that exercise the API (client/signed) require PostgreSQL;
+    # pure unit tests run without Docker.
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield
 
 
 @pytest.fixture
-def client():
+def client(database):
     return TestClient(app)
 
 

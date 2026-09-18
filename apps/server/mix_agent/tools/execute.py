@@ -255,7 +255,7 @@ async def execute(db, run, tool, args):
                 credentials = {**credentials, "oauth": oauth, "headers": {**credentials.get("headers", {}), "Authorization": "Bearer " + oauth["access_token"]}}
                 conn.data = {**conn.data, "secret_id": store_secret(db, conn.owner_id, json.dumps(credentials), "mcp")}
                 db.commit()
-            except Exception:
+            except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                 conn.data = {**conn.data, "state": "needs_authorization", "authorization_required": True, "enabled": False}
                 db.commit()
                 raise ValueError("MCPの再認証が必要です")
@@ -489,13 +489,13 @@ async def execute(db, run, tool, args):
         settings_row = db.get(Settings, "settings")
         if settings_row and isinstance(settings_row.data.get("tool_output_inline_limit"), int):
             inline_limit = max(1000, min(100000, settings_row.data["tool_output_inline_limit"]))
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
         pass
     if len(raw) > inline_limit:
         artifact = save_artifact(db, run.owner_id, raw.encode(), "tool-result.json", "application/json", kind="context-tool-output")
         try:
             existing_refs = list(run.data.get("tool_refs") or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             existing_refs = []
         if artifact["artifact_id"] not in existing_refs:
             run.data = {**run.data, "tool_refs": [*existing_refs, artifact["artifact_id"]]}

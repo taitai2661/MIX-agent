@@ -1,12 +1,13 @@
-import pytest
 import httpx
+import pytest
 from mix_agent.api import routes
+from mix_agent.db.models import Model, Provider, Settings, User
+from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import Adapter
 from mix_agent.providers.catalog import PRESETS, get_preset
 from mix_agent.providers.metadata import resolve
-from mix_agent.db.models import Model, Provider, Settings, User
-from mix_agent.db.session import SessionLocal
 from sqlalchemy import select
+
 
 @pytest.mark.parametrize("kind", ["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"])
 async def test_model_discovery_conservative_capabilities(kind, monkeypatch):

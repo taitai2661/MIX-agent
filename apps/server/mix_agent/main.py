@@ -2,35 +2,50 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from mix_agent.api.routes import router
+
 from mix_agent import config
-from mix_agent.runs.engine import scheduler, TASKS
+from mix_agent.api.routes import router
+from mix_agent.runs.engine import TASKS, scheduler
 
 
 @asynccontextmanager
 async def lifespan(app):
-    from mix_agent.storage.backup import recover_interrupted
     from mix_agent.memory.jobs import scheduler as memory_scheduler
-
-    from mix_agent.wakeups import memory_jobs, run_events, scheduler as scheduler_wakeup
+    from mix_agent.storage.backup import recover_interrupted
+    from mix_agent.wakeups import memory_jobs, run_events
+    from mix_agent.wakeups import scheduler as scheduler_wakeup
 
     run_events.bind()
     scheduler_wakeup.bind()
     memory_jobs.bind()
-    await recover_interrupted()
+    try:
+        await recover_interrupted()
+    except Exception:
+        # Belt-and-suspenders: a startup-recovery failure must never prevent
+        # the web app from serving.
+        import logging
+
+        logging.getLogger(__name__).exception("startup recovery failed")
     task = asyncio.create_task(scheduler())
     memory_task = asyncio.create_task(memory_scheduler())
     yield
     task.cancel()
     memory_task.cancel()
     # Shutdown leaves running markers for crash-safe recovery; do not report success.
+    from mix_agent.memory.jobs import ACTIVE_JOBS
+
     for pending in list(TASKS.values()):
         pending.cancel()
-    await asyncio.gather(task, memory_task, *list(TASKS.values()), return_exceptions=True)
+    for pending in list(ACTIVE_JOBS):
+        pending.cancel()
+    await asyncio.gather(
+        task, memory_task, *list(TASKS.values()), *list(ACTIVE_JOBS), return_exceptions=True
+    )
 
 
 app = FastAPI(title="MIX agent", version="0.1.0", lifespan=lifespan)
@@ -75,8 +90,9 @@ async def validation_error(request, exc):
 
 @app.get("/health")
 async def health():
-    from mix_agent.db.session import engine
     from sqlalchemy import text
+
+    from mix_agent.db.session import engine
 
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))

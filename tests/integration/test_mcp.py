@@ -1,7 +1,8 @@
 import asyncio
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
+
 
 async def test_real_stdio_mcp_discovery_and_call(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[2]

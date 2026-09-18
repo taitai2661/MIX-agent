@@ -1,9 +1,11 @@
 import hashlib
 import json
 from pathlib import PurePosixPath
+
 from jsonschema import Draft202012Validator
 from sqlalchemy import select
-from mix_agent.db.models import Tool, Permission
+
+from mix_agent.db.models import Permission, Tool
 
 
 def definition(

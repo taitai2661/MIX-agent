@@ -61,7 +61,7 @@ class DockerAPI:
             message = "Docker operation failed"
             try:
                 message = response.json().get("message", message)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
                 pass
             raise RuntimeError(message)
         if not response.content:
@@ -290,10 +290,10 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
                 await _proxy(resource_id, "discover", health)
             await self.api.call("DELETE", f"/volumes/{backup}", ok=(204, 404))
             return {**runtime, "updated": True}
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             try:
                 await self.action(resource_id, "uninstall", False)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
                 pass
             await self.copy_volume(backup, volume, clear=True)
             await self.install(resource_id, old_manifest, capability)
@@ -305,7 +305,7 @@ DRIVER: ContainerRuntimeDriver = DockerRuntimeDriver()
 
 async def _volume_archive(resource_id: str) -> bytes:
     if not isinstance(DRIVER, DockerRuntimeDriver):
-        raise ValueError("Runtime does not support snapshots")
+        raise ValueError("Runtime does not support snapshots")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
     _, _, volume = _names(resource_id)
     helper = "mix-mcp-snapshot-" + uuid.uuid4().hex
     body = {
@@ -324,7 +324,7 @@ async def _volume_archive(resource_id: str) -> bytes:
 
 async def _restore_archive(resource_id: str, archive: bytes) -> None:
     if not isinstance(DRIVER, DockerRuntimeDriver):
-        raise ValueError("Runtime does not support snapshots")
+        raise ValueError("Runtime does not support snapshots")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
     _, _, volume = _names(resource_id)
     await DRIVER.api.call("POST", "/volumes/create", body={"Name": volume, "Labels": {LABEL: resource_id}})
     helper = "mix-mcp-restore-" + uuid.uuid4().hex
@@ -360,7 +360,7 @@ async def validate_snapshot(body: dict):
             _names(resource_id)
             if len(base64.b64decode(archive, validate=True)) > 128 * 1024 * 1024:
                 raise ValueError()
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(422, "Invalid MCP volume snapshot")
     return {"ok": True}
 
@@ -402,7 +402,7 @@ async def update(resource_id: str, body: dict):
     async with lock:
         try:
             if not isinstance(DRIVER, DockerRuntimeDriver):
-                raise ValueError("Runtime does not support transactional updates")
+                raise ValueError("Runtime does not support transactional updates")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
             return await DRIVER.update(resource_id, body["old_manifest"], body["new_manifest"], body.get("network_capability", {}), body.get("health", {}))
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error))
@@ -463,7 +463,7 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
         websocket = await websockets.unix_connect(os.getenv("DOCKER_SOCKET", "/var/run/docker.sock"), uri=uri, max_size=16 * 1024 * 1024)
         channel = (websocket, asyncio.Lock(), "modern")
         OCI_CHANNELS[resource_id] = channel
-    websocket, lock, generation = channel
+    websocket, lock, _ = channel
     async with lock:
         request_id = next(RPC_IDS)
         request_params = dict(params)

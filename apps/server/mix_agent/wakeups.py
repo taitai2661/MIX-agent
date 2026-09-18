@@ -29,7 +29,7 @@ class Wakeup:
             self.bind()
         try:
             await asyncio.wait_for(self.event.wait(), timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         self.event.clear()
         return self.revision

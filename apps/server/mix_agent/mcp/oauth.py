@@ -5,13 +5,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
+import re
 import secrets
 import time
-import re
 from urllib.parse import urlencode, urlsplit
 
 from mix_agent import config
 from mix_agent.tools.network import fetch_public, request_public
+
+logger = logging.getLogger("mix_agent.oauth")
 
 
 def callback_url() -> str:
@@ -37,7 +40,7 @@ def client_metadata() -> dict:
 async def _json(url: str) -> dict:
     value = json.loads(await fetch_public(url, max_bytes=512_000))
     if not isinstance(value, dict):
-        raise ValueError("Invalid OAuth metadata")
+        raise ValueError("Invalid OAuth metadata")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
     return value
 
 
@@ -53,7 +56,7 @@ async def discover(resource_url: str) -> dict:
         match = re.search(r'resource_metadata="([^"\r\n]+)"', challenge)
         if match:
             resource_metadata_url = match.group(1)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
         pass
     resource_metadata = await _json(resource_metadata_url or resource_origin + "/.well-known/oauth-protected-resource")
     resource = str(resource_metadata.get("resource") or resource_url)
@@ -69,7 +72,8 @@ async def discover(resource_url: str) -> dict:
         try:
             metadata = await _json(issuer + suffix)
             break
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - try the next discovery path
+            logger.debug("OAuth discovery failed for %s: %s", suffix, type(exc).__name__)
             continue
     if not metadata or str(metadata.get("issuer", "")).rstrip("/") != issuer:
         raise ValueError("OAuth issuer metadata mismatch")

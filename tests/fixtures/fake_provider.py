@@ -1,5 +1,6 @@
 """Explicit local test fixture; never used as an application fallback."""
 import json
+
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 

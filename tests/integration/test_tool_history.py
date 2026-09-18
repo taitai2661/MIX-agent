@@ -1,7 +1,6 @@
-from sqlalchemy import select
-
 from mix_agent.db.models import Conversation, Run, ToolCall, User
 from mix_agent.db.session import SessionLocal
+from sqlalchemy import select
 
 
 def test_conversation_tool_history_reports_failure_and_unknown_retry(signed):

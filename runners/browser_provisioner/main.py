@@ -6,7 +6,7 @@ import os
 import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 app = FastAPI(docs_url=None, redoc_url=None)

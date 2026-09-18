@@ -1,4 +1,9 @@
-from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, mode_policy, tool_allowed
+from mix_agent.runs.mode_policy import (
+    apply_mode_defaults,
+    mode_policy,
+    mode_prompt,
+    tool_allowed,
+)
 
 
 def test_each_mode_has_a_distinct_execution_policy():

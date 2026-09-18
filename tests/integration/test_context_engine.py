@@ -2,8 +2,8 @@
 
 import json
 
-from mix_agent.context import builder as context_builder
 from mix_agent.context import budget as context_budget
+from mix_agent.context import builder as context_builder
 from mix_agent.context import task_state as task_state_mod
 from mix_agent.context.builder import select_recent
 from mix_agent.context.references import (
@@ -122,7 +122,7 @@ def test_provider_switching_rebudgets():
     small = context_budget.input_budget(_window(32_000))
     large = context_budget.input_budget(_window(200_000))
     assert large > small
-    recent_small, evicted_small = select_recent(_messages(50), small // 4, "m")
+    recent_small, _ = select_recent(_messages(50), small // 4, "m")
     recent_large, _ = select_recent(_messages(50), large // 4, "m")
     assert len(recent_large) >= len(recent_small)
 

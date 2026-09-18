@@ -1,4 +1,5 @@
 from sqlalchemy import select
+
 from mix_agent.db.models import Skill, SkillRevision
 
 

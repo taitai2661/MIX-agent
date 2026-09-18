@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import httpx
+from datetime import UTC, datetime
 
+import httpx
 
 # Exact records only: never derive a limit from an identifier prefix.
 OFFICIAL_CATALOG = {
@@ -50,7 +50,7 @@ def context_limit(item):
 
 
 def _record(values, source, confidence):
-    stamp = datetime.now(timezone.utc).isoformat()
+    stamp = datetime.now(UTC).isoformat()
     return {key: {"value": value, "source": source, "confidence": confidence, "resolved_at": stamp}
             for key, value in values.items() if value is not None}
 
@@ -62,7 +62,7 @@ async def models_dev(kind, model_id):
             response = await client.get("https://models.dev/api.json")
             response.raise_for_status()
             catalog = response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return {}
     providers = catalog.get("providers", catalog) if isinstance(catalog, dict) else {}
     candidate = providers.get(kind, {}) if isinstance(providers, dict) else {}

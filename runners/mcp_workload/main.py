@@ -65,7 +65,7 @@ async def _session(credentials: dict, arguments: list[str]):
     if STACK is not None:
         try:
             await STACK.aclose()
-        except BaseException:
+        except BaseException:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
             pass
         SESSION = None
         STACK = None
@@ -81,7 +81,7 @@ async def _session(credentials: dict, arguments: list[str]):
         env["PYTHONPATH"] = str(python_sites[0])
     stack = AsyncExitStack()
     params = StdioServerParameters(command=executable[0], args=arguments, env=env, cwd="/data")
-    errlog = stack.enter_context(open(os.devnull, "w"))
+    errlog = stack.enter_context(open(os.devnull, "w"))  # noqa: SIM115, ASYNC230 - /dev/null never blocks; fd lifetime tied to the exit stack
     read, write = await stack.enter_async_context(stdio_client(params, errlog=errlog))
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
@@ -96,7 +96,7 @@ async def discover(body: dict):
             session = await _session(body.get("credentials", {}), body.get("arguments", []))
             result = await asyncio.wait_for(session.list_tools(), 30)
             return {"tools": [tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in result.tools]}
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             raise HTTPException(502, "MCP discovery failed")
 
 
@@ -107,5 +107,5 @@ async def call(body: dict):
             session = await _session(body.get("credentials", {}), body.get("arguments", []))
             result = await asyncio.wait_for(session.call_tool(body["tool"], body.get("arguments_value", {})), 110)
             return result.model_dump(mode="json", by_alias=True, exclude_none=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             raise HTTPException(502, "MCP call failed")

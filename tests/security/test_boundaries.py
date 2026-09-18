@@ -1,11 +1,12 @@
 import importlib.util
 from pathlib import Path
+
 import pytest
 from cryptography.exceptions import InvalidTag
-from mix_agent.auth.security import encrypt, decrypt
-from mix_agent.storage.backup import seal, unseal, validate
+from mix_agent.auth.security import decrypt, encrypt
+from mix_agent.storage.backup import seal, unseal
 from mix_agent.tools import network
-from mix_agent.tools.network import public_address, fetch_public
+from mix_agent.tools.network import fetch_public, public_address
 
 
 def module(name, path):

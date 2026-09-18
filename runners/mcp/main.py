@@ -82,7 +82,7 @@ async def serve(connection, queue):
                     env=env,
                     cwd=str(SHARED),
                 )
-                errlog = stack.enter_context(open(os.devnull, "w"))
+                errlog = stack.enter_context(open(os.devnull, "w"))  # noqa: SIM115, ASYNC230 - /dev/null never blocks; fd lifetime tied to the exit stack
                 read, write = await stack.enter_async_context(
                     stdio_client(params, errlog=errlog)
                 )
@@ -145,10 +145,10 @@ async def serve(connection, queue):
                         )
                     if not future.done():
                         future.set_result(value)
-                except Exception:
+                except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                     if not future.done():
                         future.set_exception(ValueError("MCP operation failed"))
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - intentionally classified; never leak raw details
         while not queue.empty():
             _, _, future = queue.get_nowait()
             if not future.done():
@@ -172,7 +172,7 @@ async def invoke(action, body):
             if not connection.get("allow_legacy", True):
                 raise HTTPException(502, "MCP 2026-07-28 operation failed")
             # Compatibility adapter below owns all initialize/session behavior.
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             if not connection.get("allow_legacy", True):
                 raise HTTPException(502, "MCP 2026-07-28 operation failed")
             # Compatibility adapter below owns all initialize/session behavior.
@@ -180,14 +180,19 @@ async def invoke(action, body):
     if key not in CONNECTIONS or CONNECTIONS[key][1].done():
         queue = asyncio.Queue()
         CONNECTIONS[key] = (queue, asyncio.create_task(serve(connection, queue)))
-    queue, task = CONNECTIONS[key]
+    queue, _task = CONNECTIONS[key]
     future = asyncio.get_running_loop().create_future()
     await queue.put((action, body, future))
+    # A connection is shared across runs; track both the per-call future and
+    # the connection key so /cancel can target only this run's future.
+    entry = (future, key)
     if body.get("run_id"):
-        RUN_TASKS[body["run_id"]] = (future, task)
+        RUN_TASKS[body["run_id"]] = entry
     try:
         return await asyncio.wait_for(future, 115)
-    except Exception:
+    except asyncio.CancelledError:
+        raise HTTPException(502, "MCP operation cancelled") from None
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(502, "MCP接続またはTool実行に失敗しました")
     finally:
         RUN_TASKS.pop(body.get("run_id"), None)
@@ -205,9 +210,18 @@ async def call(body: dict):
 
 @app.post("/cancel")
 async def cancel(body: dict):
-    if pair := RUN_TASKS.get(body["run_id"]):
-        pair[0].cancel()
-        pair[1].cancel()
+    entry = RUN_TASKS.get(body["run_id"])
+    if entry:
+        future, key = entry
+        # Cancel only this run's call.  Never cancel the shared serve task
+        # while another run still waits on the same connection: that teardown
+        # would fail every other run's queued MCP call.
+        future.cancel()
+        if key in CONNECTIONS and not any(
+            other is not entry and other[1] == key for other in RUN_TASKS.values()
+        ):
+            _, task = CONNECTIONS[key]
+            task.cancel()
     return {"ok": True, "remote_side_effects_may_continue": True}
 
 

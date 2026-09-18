@@ -1,6 +1,7 @@
 """Add persistent scheduled jobs, their runs, and local notifications."""
 from alembic import op
-from mix_agent.db.models import ScheduledJob, ScheduledRun, Notification
+
+from mix_agent.db.models import Notification, ScheduledJob, ScheduledRun
 
 revision = "0008"
 down_revision = "0007"

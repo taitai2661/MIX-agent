@@ -1,6 +1,7 @@
 """Add per-message Auto routing feedback."""
 
 from alembic import op
+
 from mix_agent.db.models import Feedback
 
 revision = "0003"

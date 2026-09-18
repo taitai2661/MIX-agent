@@ -1,11 +1,12 @@
 import asyncio
-from sqlalchemy import select
+
 import pytest
 from mix_agent.db.models import *
 from mix_agent.db.session import SessionLocal
-from mix_agent.tools.registry import BUILTINS, permission, fingerprint, call_scope
-from mix_agent.tools.execute import save_text_artifact
 from mix_agent.runs import engine
+from mix_agent.tools.execute import save_text_artifact
+from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, permission
+from sqlalchemy import select
 
 
 def make_run(tool_name="write_file", mode="agent"):
@@ -45,7 +46,7 @@ def test_text_artifact_validation_and_metadata(tmp_path, monkeypatch):
         db.commit()
         assert artifact["name"] == "watermark-poster.html"
         assert artifact["mime"] == "text/html"
-        assert artifact["size"] == len("<h1>Hello</h1>".encode())
+        assert artifact["size"] == len(b"<h1>Hello</h1>")
         assert (tmp_path / artifact["artifact_id"]).read_text() == "<h1>Hello</h1>"
         for name in ("../escape.html", "nested/file.html", "", "bad<script>.html"):
             with pytest.raises(ValueError):

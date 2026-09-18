@@ -1,7 +1,5 @@
-import json
 
 import pytest
-
 from mix_agent.mcp.protocol import validate_schema
 from mix_agent.mcp.registry import normalize
 

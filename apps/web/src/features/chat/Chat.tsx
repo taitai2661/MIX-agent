@@ -1,4 +1,5 @@
 import { api, type Row } from "@/app/api";
+import { ja } from "@/app/strings";
 import type { components } from "@/generated/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -71,6 +72,7 @@ export function Chat() {
     [streamConnected, setStreamConnected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null),
     bottom = useRef<HTMLDivElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const pendingSend = useRef<{
     signature: string;
     key: string;
@@ -123,7 +125,24 @@ export function Chat() {
     setStreamText("");
     setReasoning("");
     const source = new EventSource("/api/v1/runs/" + runId + "/events");
+    eventSourceRef.current = source;
     source.onopen = () => setStreamConnected(true);
+    // A run is bounded by its budget on the server; if the stream never
+    // terminates, bail out and let the polling fallback take over.
+    const watchdog = setTimeout(() => {
+      if (source.readyState === EventSource.OPEN) {
+        source.close();
+        setStreamConnected(false);
+      }
+    }, 15 * 60 * 1000);
+    const finish = () => {
+      clearTimeout(watchdog);
+      source.close();
+      setBusy(false);
+      setStreamConnected(false);
+      qc.invalidateQueries({ queryKey: ["messages", id] });
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+    };
     const onActivity = (event: Event) => {
       if (!(event instanceof MessageEvent) || typeof event.data !== "string") return;
       const v = parseRunEvent(event.data);
@@ -149,20 +168,19 @@ export function Chat() {
         qc.invalidateQueries({ queryKey: ["tool-calls", id] });
     };
     source.addEventListener("activity", onActivity);
-    source.addEventListener("done", () => {
-      source.close();
-      setBusy(false);
-      setStreamConnected(false);
-      qc.invalidateQueries({ queryKey: ["messages", id] });
-      qc.invalidateQueries({ queryKey: ["run", runId] });
-    });
+    source.addEventListener("done", finish);
     source.onerror = () => {
+      clearTimeout(watchdog);
       source.close();
       setBusy(false);
       setStreamConnected(false);
-      setError(new Error("ストリーム接続が切れました。再試行してください。"));
+      setError(new Error(ja.streamLost));
     };
-    return () => source.close();
+    return () => {
+      clearTimeout(watchdog);
+      source.close();
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
+    };
   }, [runId, id, qc]);
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });

@@ -4,13 +4,14 @@ import asyncio
 import base64
 import io
 import os
-import signal
 import secrets
+import signal
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel, Field
+
+from fastapi import FastAPI, HTTPException, Request
 from playwright.async_api import async_playwright
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 app = FastAPI(docs_url=None, redoc_url=None)
@@ -104,6 +105,26 @@ def write(path, content):
         os.close(fd)
 
 
+def search_files(query):
+    found = []
+    for path in ROOT.rglob("*"):
+        if len(found) >= 100:
+            break
+        try:
+            rel = str(path.relative_to(ROOT))
+            text = read(rel)
+            if query in text:
+                found.append(
+                    {
+                        "path": rel,
+                        "excerpt": text[max(0, text.index(query) - 100) :][:500],
+                    }
+                )
+        except (OSError, ValueError):
+            continue
+    return {"matches": found}
+
+
 async def drain(proc, entry):
     while block := await proc.stdout.read(4096):
         entry["output"] = (entry["output"] + block.decode(errors="replace"))[-64000:]
@@ -147,7 +168,7 @@ async def page(values=None):
             PLAYWRIGHT = None
             BROWSER = None
             raise ValueError(
-                f"Chromiumを起動できません。Browserが導入されているか確認してください。"
+                "Chromiumを起動できません。Browserが導入されているか確認してください。"
             ) from exc
     if PAGE is None or BROWSER_CONFIG != config:
         if CONTEXT is not None:
@@ -227,25 +248,7 @@ async def execute(body: Execute):
                 finally:
                     os.close(fd)
             if name == "search_files":
-                found = []
-                for path in ROOT.rglob("*"):
-                    if len(found) >= 100:
-                        break
-                    try:
-                        rel = str(path.relative_to(ROOT))
-                        text = read(rel)
-                        if args["query"] in text:
-                            found.append(
-                                {
-                                    "path": rel,
-                                    "excerpt": text[
-                                        max(0, text.index(args["query"]) - 100) :
-                                    ][:500],
-                                }
-                            )
-                    except (OSError, ValueError):
-                        continue
-                return {"matches": found}
+                return await asyncio.to_thread(search_files, args["query"])
             if name == "run_terminal":
                 if (
                     sum(p["process"].returncode is None for p in PROCESSES.values())
@@ -336,7 +339,7 @@ async def execute(body: Execute):
                         try:
                             await p.locator(args["selector"]).first.wait_for(timeout=timeout)
                             return {"url": p.url, "ready": True}
-                        except Exception:
+                        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                             return {"url": p.url, "ready": False}
                     await p.wait_for_timeout(timeout)
                     return {"url": p.url, "ready": True}
@@ -351,7 +354,7 @@ async def execute(body: Execute):
                     "text": (await p.locator("body").inner_text())[:30000],
                 }
         raise ValueError("Unknown tool")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(422, "Runner operation failed: " + type(exc).__name__)
 
 
@@ -363,15 +366,20 @@ async def cancel(body: dict):
     return {"ok": True}
 
 
+def pdf_text(raw):
+    reader = PdfReader(io.BytesIO(raw))
+    return "\n".join((p.extract_text() or "") for p in reader.pages[:100])[:50000]
+
+
 @app.post("/extract-pdf")
 async def extract_pdf(body: dict):
-    raw = base64.b64decode(body["content"], validate=True)
+    try:
+        raw = base64.b64decode(body["content"], validate=True)
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+        raise HTTPException(422, "Invalid PDF payload")
     if len(raw) > 20 * 1024 * 1024:
         raise HTTPException(413)
-    reader = PdfReader(io.BytesIO(raw))
-    return {
-        "text": "\n".join((p.extract_text() or "") for p in reader.pages[:100])[:50000]
-    }
+    return {"text": await asyncio.to_thread(pdf_text, raw)}
 
 
 @app.post("/{action}")

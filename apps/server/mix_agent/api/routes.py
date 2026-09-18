@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import json
@@ -6,11 +5,11 @@ import re
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import Float, case, cast, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from mix_agent import config
@@ -52,13 +51,26 @@ from mix_agent.api.schemas import (
     UsernameChangeInput,
 )
 from mix_agent.auth.security import (
+    ACCOUNT_CHANGE_LIMIT,
+    ACCOUNT_CHANGE_WINDOW_SECONDS,
+    LOGIN_ACCOUNT_LIMIT,
+    LOGIN_IP_LIMIT,
+    LOGIN_WINDOW_SECONDS,
     authenticate,
+    clear_attempts,
+    dummy_password_hash,
     new_session,
     new_session_csrf,
     passwords,
     read_secret,
+    record_failed_attempt,
     store_secret,
+    throttle_attempt,
 )
+from mix_agent.context import budget as context_budget
+from mix_agent.context import builder as context_builder
+from mix_agent.context import retrievers as context_retrievers
+from mix_agent.context import task_state as context_task_state
 from mix_agent.db.models import (
     Agent,
     Approval,
@@ -84,6 +96,7 @@ from mix_agent.db.models import (
     Run,
     ScheduledJob,
     ScheduledRun,
+    Secret,
     Session,
     Settings,
     Skill,
@@ -103,13 +116,10 @@ from mix_agent.providers.adapters import DEFAULT_URLS, Adapter
 from mix_agent.providers.catalog import CUSTOM_KINDS, KIND_VALUES, catalog, get_preset
 from mix_agent.providers.model_roles import is_auto_chat_eligible
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
-from mix_agent.context import builder as context_builder
-from mix_agent.context import budget as context_budget
-from mix_agent.context import retrievers as context_retrievers
-from mix_agent.context import task_state as context_task_state
 from mix_agent.routing import effective_capabilities, select_auto_model
-from mix_agent.runs.engine import TASKS, auto_retry_count, emit, launch
+from mix_agent.runs.engine import TASKS, auto_retry_count, launch
 from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, tool_allowed
+from mix_agent.runs.state import transition_run
 from mix_agent.skills import service as skills
 from mix_agent.tools.execute import runner_request, save_artifact
 from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, registry
@@ -272,7 +282,7 @@ def _run_context_artifact_ids(run) -> set:
     ids: set = set()
     try:
         data = run.data or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return ids
     for key in ("tool_refs", "image_refs"):
         for value in data.get(key) or []:
@@ -325,11 +335,15 @@ def purge_conversation(db, conversation):
     for feedback in db.scalars(select(Feedback).where(Feedback.message_id.in_([m.id for m in messages]))): db.delete(feedback)
     for message in messages: db.delete(message)
     db.flush()
+    # Compute surviving artifact references once instead of rescanning every
+    # message and run for each candidate artifact.
+    used = set()
+    for message in db.scalars(select(Message).where(Message.owner_id == conversation.owner_id)):
+        used.update(_conversation_artifact_ids([message]))
+    for run in db.scalars(select(Run).where(Run.owner_id == conversation.owner_id)):
+        used.update(_run_context_artifact_ids(run))
     for artifact_id in artifact_ids:
-        still_used = any(artifact_id in _conversation_artifact_ids([message]) for message in db.scalars(select(Message).where(Message.owner_id == conversation.owner_id)))
-        if not still_used:
-            still_used = any(artifact_id in _run_context_artifact_ids(run) for run in db.scalars(select(Run).where(Run.owner_id == conversation.owner_id)))
-        if not still_used:
+        if artifact_id not in used:
             artifact = db.get(Artifact, artifact_id)
             if artifact and artifact.owner_id == conversation.owner_id:
                 (config.ARTIFACTS / artifact.id).unlink(missing_ok=True)
@@ -339,15 +353,22 @@ def purge_conversation(db, conversation):
 
 def purge_expired_conversations(db):
     cutoff = now() - timedelta(days=30)
+    expired_ids = []
     for conversation in db.scalars(select(Conversation)):
         deleted_at = conversation.data.get("deleted_at")
-        if deleted_at:
-            try:
-                if datetime.fromisoformat(deleted_at.replace("Z", "+00:00")) <= cutoff:
-                    purge_conversation(db, conversation)
-            except ValueError:
-                continue
-    db.commit()
+        if not deleted_at:
+            continue
+        try:
+            if datetime.fromisoformat(deleted_at) <= cutoff:
+                expired_ids.append(conversation.id)
+        except ValueError:
+            continue
+    # Purge in bounded batches so a large cleanup never holds one huge transaction.
+    for start in range(0, len(expired_ids), 100):
+        batch = expired_ids[start:start + 100]
+        for conversation in db.scalars(select(Conversation).where(Conversation.id.in_(batch))):
+            purge_conversation(db, conversation)
+        db.commit()
 
 
 def record_login(db, owner_id, successful, ip="unknown"):
@@ -447,22 +468,32 @@ async def setup_admin(body: Credentials, response: Response, db=Depends(get_db))
 @router.post("/auth/login")
 async def login(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
-    cutoff = now() - timedelta(minutes=5)
-    recent = db.scalars(
-        select(LoginEvent).where(
-            LoginEvent.ip == ip,
-            LoginEvent.created_at >= cutoff,
-        )
-    ).all()
-    if len(recent) >= 10:
-        raise HTTPException(429, "しばらく待ってから再試行してください")
     user = db.scalar(select(User).where(User.username == body.username))
+    ip_key = "login-ip:" + ip
+    account_key = f"login:{user.id}" if user else None
+    await throttle_attempt(
+        ip_key, LOGIN_IP_LIMIT, LOGIN_WINDOW_SECONDS,
+    )
+    if account_key:
+        await throttle_attempt(
+            account_key, LOGIN_ACCOUNT_LIMIT, LOGIN_WINDOW_SECONDS,
+        )
     try:
-        valid = bool(user and passwords.verify(user.password_hash, body.password))
-    except Exception:
+        if user:
+            valid = bool(passwords.verify(user.password_hash, body.password))
+        else:
+            # Unknown username: still run a real argon2 verification so the
+            # response time does not reveal whether the account exists.
+            passwords.verify(dummy_password_hash(), body.password)
+            valid = False
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         valid = False
     if not valid:
-        if user:
+        # Failures only consume the throttle budget; a successful login must
+        # never exhaust the bucket with its own legitimate traffic.
+        await record_failed_attempt(ip_key, LOGIN_WINDOW_SECONDS)
+        if account_key:
+            await record_failed_attempt(account_key, LOGIN_WINDOW_SECONDS)
             record_login(db, user.id, False, ip)
             db.commit()
         raise HTTPException(401, "ユーザー名またはパスワードが違います")
@@ -490,13 +521,17 @@ async def logout(response: Response, ctx=Depends(context)):
 @router.post("/auth/password")
 async def change_password(body: PasswordChangeInput, response: Response, ctx=Depends(context)):
     db, session = ctx
+    change_key = "password-change:" + session.owner_id
+    await throttle_attempt(change_key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
     user = db.get(User, session.owner_id)
     try:
         valid = passwords.verify(user.password_hash, body.current_password)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         valid = False
     if not valid:
+        await record_failed_attempt(change_key, ACCOUNT_CHANGE_WINDOW_SECONDS)
         raise HTTPException(401, "現在のパスワードが違います")
+    clear_attempts(change_key)
     user.password_hash = passwords.hash(body.new_password)
     audit(db, user.id, "password_changed", "account")
     if body.revoke_all_sessions:
@@ -512,13 +547,17 @@ async def change_password(body: PasswordChangeInput, response: Response, ctx=Dep
 @router.post("/auth/username")
 async def change_username(body: UsernameChangeInput, ctx=Depends(context)):
     db, session = ctx
+    change_key = "username-change:" + session.owner_id
+    await throttle_attempt(change_key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
     user = db.get(User, session.owner_id)
     try:
         valid = passwords.verify(user.password_hash, body.current_password)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         valid = False
     if not valid:
+        await record_failed_attempt(change_key, ACCOUNT_CHANGE_WINDOW_SECONDS)
         raise HTTPException(401, "現在のパスワードが違います")
+    clear_attempts(change_key)
     existing = db.scalar(select(User).where(User.username == body.username))
     if existing and existing.id != user.id:
         raise HTTPException(409, "そのユーザー名はすでに使われています")
@@ -591,7 +630,7 @@ async def provider_values(body, db, owner, previous=None):
 
         try:
             await public_address(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             raise HTTPException(422, "LAN接続先は「プライベート接続を許可」を明示してください")
     data["base_url"] = url
     data["extra_config"] = body.extra_config
@@ -611,7 +650,7 @@ async def sync_provider_models(db, owner_id, provider):
     try:
         adapter = Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
         fetched = await adapter.list_models()
-    except Exception as exc:  # Provider errors must not undo a saved connection.
+    except Exception as exc:  # noqa: BLE001 - Provider errors must not undo a saved connection.
         error = str(exc) if str(exc).startswith("missing_extra_config:") else type(exc).__name__
         return {"status": "failed", "count": 0, "auto_count": 0, "error": error}
 
@@ -730,7 +769,7 @@ async def provider_action(key: str, action: str, ctx=Depends(context)):
     if action == "test":
         try:
             return await Adapter(row.data, read_secret(db, row.data.get("secret_id"))).test_connection()
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             raise HTTPException(502, "接続テストに失敗しました。")
     if action != "sync-models":
         raise HTTPException(404)
@@ -769,7 +808,7 @@ async def browser_install_state(db, settings):
     """Read the provisioner state without making the settings page depend on Docker."""
     try:
         state = await runner_request("browser-provisioner", "/status", {}, timeout=5)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return {"status": settings.data.get("browser_install_status", "not_installed"),
                 "failure": settings.data.get("browser_install_failure")}
     status = state.get("status", "not_installed")
@@ -804,75 +843,117 @@ async def browser_install(ctx=Depends(context)):
 
 @router.get("/settings/statistics", response_model=StatisticsView)
 async def settings_statistics(ctx=Depends(context)):
-    """Return privacy-minimal, local reliability statistics for the account."""
+    """Return privacy-minimal, local reliability statistics for the account.
+
+    Aggregation happens in SQL so a busy account never loads a month of raw
+    event rows into memory just to render a summary.
+    """
     db, s = ctx
     since = datetime.now(UTC) - timedelta(days=30)
-    events = list(db.scalars(select(AutoReliabilityEvent).where(
-        AutoReliabilityEvent.owner_id == s.owner_id,
-        AutoReliabilityEvent.created_at >= since,
-    )))
-    performance_events = list(db.scalars(select(PerformanceEvent).where(
-        PerformanceEvent.owner_id == s.owner_id,
-        PerformanceEvent.created_at >= since,
-    )))
     models = {row.id: row.data for row in db.scalars(select(Model).where(Model.owner_id == s.owner_id))}
-    def blank(label):
-        return {"key": label, "total": 0, "success": 0, "failure": 0, "failure_rate": 0,
-                "first_output_ms": None, "completion_ms": None, "tokens_per_second": None,
-                "tps_count": 0, "classifications": {}}
+
+    def positive_sum(expression):
+        value = cast(expression, Float)
+        return func.coalesce(func.sum(case((value > 0, value), else_=0)), 0), func.coalesce(
+            func.sum(case((value > 0, 1), else_=0)), 0
+        )
+
+    auto_model = AutoReliabilityEvent.data["model_id"].astext
+    auto_provider = AutoReliabilityEvent.data["provider_id"].astext
+    auto_scope = func.coalesce(AutoReliabilityEvent.data["scope"].astext, "chat")
+    auto_outcome = AutoReliabilityEvent.data["outcome"].astext
+    first_sum, first_count = positive_sum(AutoReliabilityEvent.data["first_output_ms"].astext)
+    completion_sum, completion_count = positive_sum(AutoReliabilityEvent.data["completion_ms"].astext)
+    auto_rows = db.execute(
+        select(
+            func.coalesce(auto_model, "unknown"), func.coalesce(auto_provider, "unknown"), auto_scope,
+            func.count(), func.coalesce(func.sum(case((auto_outcome == "success", 1), else_=0)), 0),
+            first_sum, first_count, completion_sum, completion_count,
+        )
+        .where(AutoReliabilityEvent.owner_id == s.owner_id, AutoReliabilityEvent.created_at >= since)
+        .group_by(auto_model, auto_provider, auto_scope)
+    ).all()
+    auto_classification = func.coalesce(AutoReliabilityEvent.data["classification"].astext, "other")
+    class_rows = db.execute(
+        select(
+            func.coalesce(auto_model, "unknown"), func.coalesce(auto_provider, "unknown"), auto_scope,
+            auto_classification, func.count(),
+        )
+        .where(
+            AutoReliabilityEvent.owner_id == s.owner_id,
+            AutoReliabilityEvent.created_at >= since,
+            func.coalesce(auto_outcome, "") != "success",
+        )
+        .group_by(auto_model, auto_provider, auto_scope, auto_classification)
+    ).all()
+    perf_model = PerformanceEvent.data["model_id"].astext
+    perf_provider = PerformanceEvent.data["provider_id"].astext
+    perf_scope = func.coalesce(PerformanceEvent.data["mode"].astext, "chat")
+    tps_sum, tps_count = positive_sum(PerformanceEvent.data["tokens_per_second"].astext)
+    perf_rows = db.execute(
+        select(
+            func.coalesce(perf_model, "unknown"), func.coalesce(perf_provider, "unknown"), perf_scope,
+            func.count(), tps_sum, tps_count,
+        )
+        .where(PerformanceEvent.owner_id == s.owner_id, PerformanceEvent.created_at >= since)
+        .group_by(perf_model, perf_provider, perf_scope)
+    ).all()
+
     groups = {}
-    for event in events:
-        data = event.data or {}
-        model_id = data.get("model_id") or "unknown"
-        provider_id = data.get("provider_id") or "unknown"
-        scope = data.get("scope") or "chat"
+
+    def group(model_id, provider_id, scope):
         key = f"{model_id}:{provider_id}:{scope}"
-        item = groups.setdefault(key, blank(key))
-        item.update({"model_id": model_id, "provider_id": provider_id, "scope": scope,
-                     "model_name": models.get(model_id, {}).get("name") or models.get(model_id, {}).get("model_id") or model_id})
-        item["total"] += 1
-        if data.get("outcome") == "success":
-            item["success"] += 1
-        else:
-            item["failure"] += 1
-            classification = data.get("classification") or "other"
-            item["classifications"][classification] = item["classifications"].get(classification, 0) + 1
-        for source, target in (("first_output_ms", "first_output_ms"), ("completion_ms", "completion_ms")):
-            value = data.get(source)
-            if isinstance(value, (int, float)) and value > 0:
-                values = item.setdefault(f"_{target}_values", [])
-                values.append(value)
-    for event in performance_events:
-        data = event.data or {}
-        model_id = data.get("model_id") or "unknown"
-        provider_id = data.get("provider_id") or "unknown"
-        mode = data.get("mode") or "chat"
-        key = f"{model_id}:{provider_id}:{mode}"
-        item = groups.setdefault(key, blank(key))
-        item.update({"model_id": model_id, "provider_id": provider_id, "scope": mode,
-                     "model_name": models.get(model_id, {}).get("name") or models.get(model_id, {}).get("model_id") or model_id})
-        value = data.get("tokens_per_second")
-        if isinstance(value, (int, float)) and value > 0:
-            item.setdefault("_tps_values", []).append(value)
+        item = groups.get(key)
+        if item is None:
+            item = groups[key] = {
+                "key": key, "model_id": model_id, "provider_id": provider_id, "scope": scope,
+                "model_name": models.get(model_id, {}).get("name") or models.get(model_id, {}).get("model_id") or model_id,
+                "total": 0, "success": 0, "failure": 0, "failure_rate": 0,
+                "first_output_ms": None, "completion_ms": None, "tokens_per_second": None,
+                "tps_count": 0, "classifications": {},
+                "_first_sum": 0.0, "_first_count": 0, "_completion_sum": 0.0, "_completion_count": 0,
+                "_tps_sum": 0.0, "_tps_count": 0,
+            }
+        return item
+
+    class_totals = {}
+    for model_id, provider_id, scope, classification, count in class_rows:
+        item = group(model_id, provider_id, scope)
+        item["classifications"][classification] = item["classifications"].get(classification, 0) + count
+        class_totals[classification] = class_totals.get(classification, 0) + count
+    for model_id, provider_id, scope, count, success, first_sum, first_count, completion_sum, completion_count in auto_rows:
+        item = group(model_id, provider_id, scope)
+        item["total"] += count
+        item["success"] += int(success or 0)
+        item["failure"] += count - int(success or 0)
+        item["_first_sum"] += float(first_sum or 0); item["_first_count"] += int(first_count or 0)
+        item["_completion_sum"] += float(completion_sum or 0); item["_completion_count"] += int(completion_count or 0)
+    total_tps_sum = total_tps_count = 0
+    for model_id, provider_id, scope, count, tps_sum, tps_count in perf_rows:
+        item = group(model_id, provider_id, scope)
+        item["_tps_sum"] += float(tps_sum or 0); item["_tps_count"] += int(tps_count or 0)
+        total_tps_sum += float(tps_sum or 0); total_tps_count += int(tps_count or 0)
     for item in groups.values():
         item["failure_rate"] = round(item["failure"] / item["total"] * 100, 1) if item["total"] else 0
-        for target in ("first_output_ms", "completion_ms"):
-            values = item.pop(f"_{target}_values", [])
-            item[target] = round(sum(values) / len(values)) if values else None
-        tps_values = item.pop("_tps_values", [])
-        item["tps_count"] = len(tps_values)
-        item["tokens_per_second"] = round(sum(tps_values) / len(tps_values), 1) if tps_values else None
-    total = blank("all")
-    total["model_name"] = "全体"
-    for item in groups.values():
-        total["total"] += item["total"]; total["success"] += item["success"]
-        total["failure"] += item["failure"]
-        for key, value in item["classifications"].items(): total["classifications"][key] = total["classifications"].get(key, 0) + value
+        first_values = item.pop("_first_sum")
+        completion_values = item.pop("_completion_sum")
+        first_count = item.pop("_first_count")
+        completion_count = item.pop("_completion_count")
+        item["first_output_ms"] = round(first_values / first_count) if first_count else None
+        item["completion_ms"] = round(completion_values / completion_count) if completion_count else None
+        item["tps_count"] = item.pop("_tps_count")
+        item["tokens_per_second"] = round(item.pop("_tps_sum") / item["tps_count"], 1) if item["tps_count"] else None
+    total = {
+        "key": "all", "model_name": "全体",
+        "total": sum(x["total"] for x in groups.values()),
+        "success": sum(x["success"] for x in groups.values()),
+        "failure": sum(x["failure"] for x in groups.values()),
+        "first_output_ms": None, "completion_ms": None,
+        "tps_count": total_tps_count,
+        "tokens_per_second": round(total_tps_sum / total_tps_count, 1) if total_tps_count else None,
+        "classifications": class_totals,
+    }
     total["failure_rate"] = round(total["failure"] / total["total"] * 100, 1) if total["total"] else 0
-    tps_values = [event.data.get("tokens_per_second") for event in performance_events
-                  if isinstance(event.data.get("tokens_per_second"), (int, float)) and event.data["tokens_per_second"] > 0]
-    total["tps_count"] = len(tps_values)
-    total["tokens_per_second"] = round(sum(tps_values) / len(tps_values), 1) if tps_values else None
     return {"retention_days": 30, "total": total, "groups": sorted(groups.values(), key=lambda x: (-x["total"], x["model_name"]))}
 
 
@@ -896,9 +977,8 @@ async def set_settings(body: SettingsInput, ctx=Depends(context)):
             data["searxng_url"] = url.rstrip("/")
         else:
             data["searxng_url"] = ""
-    if "default_model_id" in body.model_fields_set and body.default_model_id:
-        if body.default_model_id != "auto":
-            own(db, Model, body.default_model_id, s.owner_id)
+    if "default_model_id" in body.model_fields_set and body.default_model_id and body.default_model_id != "auto":
+        own(db, Model, body.default_model_id, s.owner_id)
     if body.auto_model_ids is not None:
         auto_ids = list(dict.fromkeys(body.auto_model_ids))
         for model_id in auto_ids:
@@ -1156,7 +1236,7 @@ async def delete_conversation(key: str, permanent: bool = False, ctx=Depends(con
     else:
         for run in db.scalars(select(Run).where(Run.conversation_id == key, Run.status.in_(["queued", "running", "waiting_approval"]))):
             if run.id in TASKS: TASKS[run.id].cancel()
-            run.status = "cancelled"; update_run = {**run.data, "reason": "会話がごみ箱へ移動しました"}; run.data = update_run
+            transition_run(db, run, "cancelled", reason="会話がごみ箱へ移動しました")
         row.data = {**row.data, "deleted_at": now().isoformat(), "pinned": False}
         audit(db, s.owner_id, "conversation.trash", key)
     db.commit()
@@ -1193,16 +1273,36 @@ async def messages(key: str, ctx=Depends(context)):
         if row["id"] in feedback:
             row["data"]["feedback"] = feedback[row["id"]]
     run_rows = list(db.scalars(select(Run).where(Run.conversation_id == key).order_by(Run.created_at)))
-    # Runs created before this association existed pair with the matching user turn by order.
-    user_ids = [row["id"] for row in rows if row["data"].get("role") == "user"]
+    user_turns = [
+        {"id": row["id"], "created_at": datetime.fromisoformat(row["created_at"])}
+        for row in rows
+        if row["data"].get("role") == "user"
+    ]
+
+    def _legacy_message_id(r):
+        stored = r.data.get("input_message_id")
+        if stored:
+            return stored
+        # Legacy runs cannot be paired by list index: message lists can diverge
+        # from run order after restore, deletions, or drafts. Pair with the
+        # nearest user message created at-or-before the run instead. This is a
+        # safety net; a data migration backfills the field for old rows.
+        best = None
+        for turn in user_turns:
+            if turn["created_at"] <= r.created_at:
+                best = turn["id"]
+            else:
+                break
+        return best
+
     runs = [
         {
             "id": r.id,
             "status": r.status,
             "reason": r.data.get("reason"),
-            "message_id": r.data.get("input_message_id") or (user_ids[index] if index < len(user_ids) else None),
+            "message_id": _legacy_message_id(r),
         }
-        for index, r in enumerate(run_rows)
+        for r in run_rows
     ]
     return {"messages": rows, "runs": runs, "selection": conversation.data.get("selection")}
 
@@ -1697,15 +1797,14 @@ async def cancel(key: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     if run.status not in ("completed", "failed", "cancelled"):
-        run.status = "cancelled"
-        emit(db, key, "status", {"status": "cancelled"})
+        transition_run(db, run, "cancelled")
         db.commit()
         if key in TASKS:
             TASKS[key].cancel()
         for kind in ("execution", "mcp"):
             try:
                 await runner_request(kind, "/cancel", {"run_id": key}, timeout=5)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
                 pass
     return {"ok": True}
 
@@ -1736,7 +1835,7 @@ async def resume(key: str, body: ResumeInput, ctx=Depends(context)):
                 },
             ],
         }
-    run.status = "queued"
+    transition_run(db, run, "queued")
     snapshot = run.data["snapshot"]
     for field in ("max_seconds", "max_steps", "max_tool_calls"):
         value = getattr(body, field)
@@ -1834,11 +1933,21 @@ async def upload(file: UploadFile = File(...), ctx=Depends(context)):
 async def download(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Artifact, key, s.owner_id)
+    name = row.data["name"]
+    # Always serve as an attachment: model-created text/html or SVG artifacts
+    # must never render as active documents in this origin. Content-Disposition
+    # is set explicitly (Starlette's FileResponse would otherwise inject its own).
     return FileResponse(
         config.ARTIFACTS / key,
         media_type=row.data["mime"],
-        filename=row.data["name"],
-        headers={"X-Content-Type-Options": "nosniff"},
+        filename=name,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "X-Download-Options": "noopen",
+            "Content-Disposition": 'attachment; filename="{}"; filename*=utf-8\'\'{}'.format(
+                name.replace('"', ""), quote(name)
+            ),
+        },
     )
 
 
@@ -1889,7 +1998,7 @@ async def add_memory(body: MemoryInput, ctx=Depends(context)):
 @router.patch("/memories/{key}")
 async def edit_memory(key: str, body: MemoryInput, ctx=Depends(context)):
     db, s = ctx
-    row = own(db, Memory, key, s.owner_id)
+    own(db, Memory, key, s.owner_id)
     try:
         result = memory.change(db, s.owner_id, memory_id=key, **body.model_dump())
     except ValueError as exc:
@@ -1980,7 +2089,7 @@ async def mcp_connections(ctx=Depends(context)):
 async def mcp_registry_search(q: str = "", cursor: str = "", limit: int = 30, ctx=Depends(context)):
     try:
         return await mcp_registry.search(q, cursor, limit)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(502, "MCP Registryを取得できません")
 
 
@@ -1990,7 +2099,7 @@ async def mcp_registry_detail(name: str, version: str = "latest", ctx=Depends(co
         return await mcp_registry.detail(name, version)
     except ValueError as error:
         raise HTTPException(422, str(error))
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(502, "MCP Registryの詳細を取得できません")
 
 
@@ -1999,7 +2108,7 @@ async def install_registry_mcp(body: MCPInstallInput, ctx=Depends(context)):
     db, s = ctx
     try:
         manifest = await mcp_registry.detail(body.registry_id, body.version)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(502, "MCP Registryから導入情報を取得できません")
     candidate = manifest.get("selected")
     if not candidate:
@@ -2010,6 +2119,7 @@ async def install_registry_mcp(body: MCPInstallInput, ctx=Depends(context)):
     row = MCPConnection(owner_id=s.owner_id, data={})
     db.add(row)
     db.flush()
+    row_id = row.id
     secret_id = None
     if body.secrets:
         secret_id = store_secret(db, s.owner_id, json.dumps({"env": body.secrets}), "mcp")
@@ -2020,21 +2130,47 @@ async def install_registry_mcp(body: MCPInstallInput, ctx=Depends(context)):
         "configuration": body.configuration, "secret_id": secret_id, "enabled": True,
         "state": "installing", "authorization_required": False, "secret_required": False,
     }
-    try:
-        if candidate["kind"] == "remote":
-            row.data = {**common, "transport": "http", "url": candidate["url"], "runtime": {"driver": "remote"}, "state": "running"}
-        else:
-            runtime = await runner_request("manager", "/v1/install", {
-                "resource_id": row.id, "manifest": manifest,
-                "network_capability": common["network_capability"],
-            }, timeout=360)
-            row.data = {**common, "transport": "managed", "runtime": runtime, "state": runtime.get("state", "running")}
-        audit(db, s.owner_id, "mcp.registry.install", row.id)
-        db.commit()
+    if candidate["kind"] == "remote":
+        row.data = {**common, "transport": "http", "url": candidate["url"], "runtime": {"driver": "remote"}, "state": "running"}
+        try:
+            audit(db, s.owner_id, "mcp.registry.install", row.id)
+            db.commit()
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+            db.rollback()
+            raise HTTPException(422, "MCPを安全に導入できませんでした")
         return public(row)
-    except Exception:
+    # Managed runtime installs can take minutes; persist the placeholder and
+    # release the pooled DB connection before awaiting the manager instead of
+    # pinning a session for the whole external call.
+    row.data = {**common, "transport": "managed", "runtime": {}, "state": "installing"}
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         db.rollback()
         raise HTTPException(422, "MCPを安全に導入できませんでした")
+    db.close()
+    try:
+        runtime = await runner_request("manager", "/v1/install", {
+            "resource_id": row_id, "manifest": manifest,
+            "network_capability": common["network_capability"],
+        }, timeout=360)
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+        failed = db.get(MCPConnection, row_id)
+        if failed:
+            db.delete(failed)
+            if secret_id:
+                secret = db.get(Secret, secret_id)
+                if secret:
+                    db.delete(secret)
+            db.commit()
+        raise HTTPException(422, "MCPを安全に導入できませんでした")
+    row = db.get(MCPConnection, row_id)
+    if not row:
+        raise HTTPException(422, "MCPを安全に導入できませんでした")
+    row.data = {**row.data, "runtime": runtime, "state": runtime.get("state", "running")}
+    audit(db, s.owner_id, "mcp.registry.install", row.id)
+    db.commit()
+    return public(row)
 
 
 @router.get("/mcp/oauth/client-metadata.json")
@@ -2053,8 +2189,8 @@ async def start_mcp_oauth(key: str, body: MCPOAuthStartInput, ctx=Depends(contex
         registration = await mcp_oauth.register(discovery, {"client_id": body.client_id, "client_secret": body.client_secret})
         state, verifier = mcp_oauth.new_state()
         transient_secret = store_secret(db, s.owner_id, json.dumps({"verifier": verifier, "client_secret": registration.pop("client_secret", "")}), "mcp-oauth-state")
-        auth = MCPAuthState(owner_id=s.owner_id, data={
-            "connection_id": row.id, "state_hash": hashlib.sha256(state.encode()).hexdigest(),
+        auth = MCPAuthState(owner_id=s.owner_id, state_hash=hashlib.sha256(state.encode()).hexdigest(), data={
+            "connection_id": row.id,
             "expires_at": int(time.time()) + 600, "discovery": discovery, "registration": registration,
             "secret_id": transient_secret,
         })
@@ -2069,8 +2205,18 @@ async def start_mcp_oauth(key: str, body: MCPOAuthStartInput, ctx=Depends(contex
 @router.get("/mcp/oauth/callback")
 async def mcp_oauth_callback(state: str = "", code: str = "", iss: str = "", error: str = "", db=Depends(get_db)):
     digest = hashlib.sha256(state.encode()).hexdigest()
-    auth = next((item for item in db.scalars(select(MCPAuthState)) if secrets.compare_digest(item.data.get("state_hash", ""), digest)), None)
-    if not auth or auth.data.get("expires_at", 0) < int(time.time()) or error or not code:
+    # Authorization states are single-use and expire after ten minutes; purge
+    # abandoned ones so this unauthenticated endpoint stays bounded.
+    db.execute(delete(MCPAuthState).where(MCPAuthState.created_at < now() - timedelta(hours=1)))
+    db.commit()
+    auth = db.scalar(select(MCPAuthState).where(MCPAuthState.state_hash == digest))
+    if (
+        not auth
+        or not secrets.compare_digest(auth.state_hash, digest)
+        or auth.data.get("expires_at", 0) < int(time.time())
+        or error
+        or not code
+    ):
         return RedirectResponse("/settings/mcp?oauth=failed", status_code=303)
     row = db.get(MCPConnection, auth.data["connection_id"])
     if not row or row.owner_id != auth.owner_id:
@@ -2086,7 +2232,7 @@ async def mcp_oauth_callback(state: str = "", code: str = "", iss: str = "", err
         audit(db, row.owner_id, "mcp.oauth.authorized", row.id)
         db.commit()
         return RedirectResponse("/settings/mcp?oauth=success", status_code=303)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return RedirectResponse("/settings/mcp?oauth=failed", status_code=303)
 
 
@@ -2136,17 +2282,24 @@ async def mcp_action(key: str, action: str, ctx=Depends(context)):
         raise HTTPException(404)
     credentials = json.loads(read_secret(db, row.data.get("secret_id")) or "{}")
     connection = {**row.data, "credentials": credentials}
-    if row.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi"):
+    driver = row.data.get("runtime", {}).get("driver")
+    # Sync/test/install can take minutes; release the pooled connection while
+    # awaiting the runner instead of pinning a session for the whole call.
+    db.close()
+    if driver in ("oci", "npm", "pypi"):
         if action == "install":
             raise HTTPException(409, "Registry MCPは導入済みです")
         result = await runner_request("manager", f"/v1/discover/{key}", {
-            "credentials": credentials, "arguments": row.data.get("runtime_arguments", []),
+            "credentials": credentials, "arguments": connection.get("runtime_arguments", []),
         }, timeout=360)
     else:
         result = await runner_request(
             "mcp", "/" + ("install" if action == "install" else "discover"), {"connection": connection}
         )
     if action == "sync":
+        row = db.get(MCPConnection, key)
+        if not row:
+            raise HTTPException(404)
         prefix = key.replace("-", "")[:8]
         seen = set()
         for t in result["tools"]:

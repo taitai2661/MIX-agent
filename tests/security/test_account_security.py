@@ -1,11 +1,10 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import select
-
+from mix_agent.api.routes import record_login
 from mix_agent.auth.security import passwords
 from mix_agent.db.models import Session, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.main import app
-from mix_agent.api.routes import record_login
+from sqlalchemy import select
 
 
 def test_password_change_requires_current_password_and_rotates_csrf(signed):

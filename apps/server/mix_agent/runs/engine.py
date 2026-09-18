@@ -15,7 +15,6 @@ from mix_agent.context import tools_selector as context_tools
 from mix_agent.context.builder import select_recent
 from mix_agent.context.references import (
     DEFAULT_TOOL_INLINE_LIMIT,
-    extract_data_url_images,
     tool_envelope_text,
     tool_ref_message,
 )
@@ -48,15 +47,27 @@ from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import effective_capabilities, select_auto_model
+from mix_agent.runs.state import TERMINAL, can_transition, transition_run
 from mix_agent.tools.execute import execute, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
 
 TASKS = {}
-TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 PARALLEL_TOOL_LIMIT = 4
 SAME_TOOL_ARGUMENT_LIMIT = 3
 _PROVIDER_RATE_LOCK = asyncio.Lock()
 _PROVIDER_REQUESTS = defaultdict(deque)
+_LAUNCH_SEQUENCE = 0
+
+
+def _next_launch_epoch():
+    global _LAUNCH_SEQUENCE
+    _LAUNCH_SEQUENCE += 1
+    return _LAUNCH_SEQUENCE
+
+
+def _current_launch_epoch():
+    """Return the launch_epoch bound to the running drive task, if any."""
+    return getattr(asyncio.current_task(), "launch_epoch", None)
 
 
 def auto_retry_count(value) -> int:
@@ -294,17 +305,23 @@ def update(run, **fields):
 
 
 def finish(db, run, status, reason=None):
-    run.status = status
-    fields = {"reason": reason}
+    # Run status changes go through the state machine, which also emits the
+    # matching status Event.  A run that already reached a terminal state is
+    # never overwritten (e.g. an API cancel racing a drive completion).
+    if run.status in TERMINAL:
+        return
+    transition_run(db, run, status, reason=reason)
+    update(run, reason=reason)
     if run.data.get("snapshot", {}).get("policy", {}).get("checkpointing"):
-        fields["checkpoint"] = {
-            "status": status,
-            "steps": run.data.get("steps", 0),
-            "tool_count": run.data.get("tool_count", 0),
-            "finished_at": now().isoformat(),
-        }
-    update(run, **fields)
-    emit(db, run.id, "status", {"status": status, "reason": reason})
+        update(
+            run,
+            checkpoint={
+                "status": status,
+                "steps": run.data.get("steps", 0),
+                "tool_count": run.data.get("tool_count", 0),
+                "finished_at": now().isoformat(),
+            },
+        )
     scheduled_id = run.data.get("scheduled_run_id")
     if scheduled_id:
         scheduled = db.get(ScheduledRun, scheduled_id)
@@ -327,8 +344,27 @@ def finish(db, run, status, reason=None):
 
 
 def launch(run_id):
-    if run_id not in TASKS or TASKS[run_id].done():
-        TASKS[run_id] = asyncio.create_task(drive(run_id))
+    from mix_agent.storage import backup as backup_module
+
+    # A backup/restore is replacing tables and runner state: never start new
+    # work mid-restore. Queued runs are picked up again at the next scheduler
+    # tick once ACTIVE clears.
+    if backup_module.ACTIVE:
+        return
+    if run_id in TASKS and not TASKS[run_id].done():
+        return
+    epoch = _next_launch_epoch()
+    # Persist the epoch so a stale task can detect that it no longer owns the
+    # run.  Without this, a cancelled drive's finish() can kill a run that was
+    # immediately resumed (cancel -> resume redraws a non-terminal status).
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        if run:
+            update(run, launch_epoch=epoch)
+            db.commit()
+    task = asyncio.create_task(drive(run_id))
+    task.launch_epoch = epoch
+    TASKS[run_id] = task
 
 
 async def reroute_after_provider_error(db, run, request_key, error, classification, retry_until):
@@ -446,7 +482,7 @@ def complete_tool_call(db, run, call, current, result):
         settings_row = db.get(Settings, "settings") if Settings else None
         if settings_row and isinstance((settings_row.data or {}).get("tool_output_inline_limit"), int):
             inline_limit = max(1000, min(100000, settings_row.data["tool_output_inline_limit"]))
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         inline_limit = DEFAULT_TOOL_INLINE_LIMIT
     is_long, short_summary = tool_envelope_text(content, inline_limit)
     artifact_info = result.get("artifact") if isinstance(result, dict) else None
@@ -458,7 +494,7 @@ def complete_tool_call(db, run, call, current, result):
                 db, run.owner_id, content.encode("utf-8"), "tool-result.json",
                 "application/json", kind="context-tool-output",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             artifact_info = None
     if is_long:
         tool_ref = (artifact_info or {}).get("artifact_id")
@@ -498,7 +534,15 @@ def complete_tool_call(db, run, call, current, result):
 
 
 async def execute_prepared_calls(db, run, snapshot, prepared):
-    """Run a consecutive, already-authorized batch and preserve its result order."""
+    """Run a consecutive, already-authorized batch and preserve its result order.
+
+    Parallel-safe tools run in separate sessions: a single SQLAlchemy session
+    shared across coroutines can interleave flushes and lose concurrent updates
+    to ``run.data`` (e.g. two tools truncating long output overwrite each
+    other's ``tool_refs``). Each worker commits its own writes (artifacts) and
+    returns only the reference deltas, which are merged on the caller's
+    session before results are finalized in provider-call order.
+    """
     for call, current in prepared:
         call.status = "executing"
         emit(db, run.id, "tool_started", {
@@ -515,21 +559,29 @@ async def execute_prepared_calls(db, run, snapshot, prepared):
                 snapshot.get("max_seconds", 900)
                 - (now() - run.created_at.replace(tzinfo=UTC)).total_seconds(),
             )
-            return await asyncio.wait_for(
-                execute(db, run, current, call.data["arguments"]), timeout=min(120, remaining)
-            )
+            with SessionLocal() as worker:
+                worker_run = worker.get(Run, run.id)
+                result = await asyncio.wait_for(
+                    execute(worker, worker_run, current, call.data["arguments"]),
+                    timeout=min(120, remaining),
+                )
+                worker.commit()
+                return result, list(worker_run.data.get("tool_refs") or [])
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
             # Do not leak SDK headers, secrets, or remote response bodies.
             return {
                 "error": "Tool failed",
                 "code": "tool_timeout" if isinstance(exc, TimeoutError) else "tool_failed",
                 "type": type(exc).__name__,
-            }
+            }, None
 
-    results = await asyncio.gather(*(one(call, current) for call, current in prepared))
-    for (call, current), result in zip(prepared, results):
+    batch = await asyncio.gather(*(one(call, current) for call, current in prepared))
+    for (call, current), (result, worker_refs) in zip(prepared, batch):
+        if worker_refs:
+            merged = list(dict.fromkeys([*(run.data.get("tool_refs") or []), *worker_refs]))
+            update(run, tool_refs=merged)
         complete_tool_call(db, run, call, current, result)
 
 
@@ -546,7 +598,7 @@ def _image_data_url(db, owner_id, artifact_id):
 
         mime = (row.data or {}).get("mime", "image/png")
         return "data:" + mime + ";base64," + _b64.b64encode(raw).decode()
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return None
 
 
@@ -657,7 +709,7 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
                 if head:
                     head = [{**head[0], "content": head_text}]
                 db.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             # Summarizer failure must not destroy state; keep old summary.
             emit(db, run.id, "context_summary", {"status": "failed"})
             db.commit()
@@ -712,8 +764,12 @@ async def drive(run_id):
             if not run or run.status in TERMINAL:
                 return
             snapshot = run.data["snapshot"]
-            run.status = "running"
-            emit(db, run.id, "status", {"status": "running"})
+            # The DB status decides whether a Run can start: queued and
+            # waiting_approval reopen are the only legal entry points.  An
+            # already-running (stale) or unexpected status is never overwritten.
+            if not can_transition(run.status, "running"):
+                return
+            transition_run(db, run, "running")
             if run.data.get("auto_selection"):
                 emit(db, run.id, "model_selected", run.data["auto_selection"])
             db.commit()
@@ -753,7 +809,7 @@ async def drive(run_id):
                             attempt_counts[key] += 1
                             try:
                                 decision = permission(db, run, current, call.data["arguments"])
-                            except Exception:
+                            except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                                 decision = "deny"
                             if decision == "deny":
                                 result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
@@ -792,7 +848,7 @@ async def drive(run_id):
                                     result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
                     prepared.append((call, current, result))
                 if waiting_for_approval:
-                    run.status = "waiting_approval"
+                    transition_run(db, run, "waiting_approval")
                     db.commit()
                     return
                 index = 0
@@ -1002,19 +1058,21 @@ async def drive(run_id):
                 finish(db, run, "completed")
                 return
     except asyncio.CancelledError:
+        epoch = _current_launch_epoch()
         with SessionLocal() as db:
             run = db.get(Run, run_id)
-            if run and run.status not in TERMINAL:
+            if run and run.status not in TERMINAL and run.data.get("launch_epoch") == epoch:
                 finish(db, run, "cancelled", "ユーザーが停止しました")
         for kind in ("execution", "mcp"):
             try:
                 await runner_request(kind, "/cancel", {"run_id": run_id}, timeout=5)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
                 pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
+        epoch = _current_launch_epoch()
         with SessionLocal() as db:
             run = db.get(Run, run_id)
-            if run:
+            if run and run.data.get("launch_epoch") == epoch:
                 finish(
                     db,
                     run,

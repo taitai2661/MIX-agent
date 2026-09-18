@@ -18,10 +18,10 @@ os.environ["PUBLIC_ORIGIN"] = "http://127.0.0.1:18080"
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from mix_agent.main import app
-from mix_agent.db.models import Base, User, Provider, Model, Settings
-from mix_agent.db.session import engine, SessionLocal
 from mix_agent.auth.security import passwords, store_secret
+from mix_agent.db.models import Base, Model, Provider, Settings, User
+from mix_agent.db.session import SessionLocal, engine
+from mix_agent.main import app
 from mix_agent.runs import engine as runs
 
 # This profile's PostgreSQL database is disposable; reset it before loading
