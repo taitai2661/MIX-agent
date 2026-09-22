@@ -54,6 +54,10 @@ from mix_agent.tools.registry import call_scope, fingerprint, permission, regist
 TASKS = {}
 PARALLEL_TOOL_LIMIT = 4
 SAME_TOOL_ARGUMENT_LIMIT = 3
+# Persisting every provider token makes the database the throughput bottleneck
+# for fast models.  This stays well below the interval at which a human can
+# perceive streaming updates, while retaining the durable event trail.
+STREAM_TEXT_FLUSH_SECONDS = 0.075
 _PROVIDER_RATE_LOCK = asyncio.Lock()
 _PROVIDER_REQUESTS = defaultdict(deque)
 _LAUNCH_SEQUENCE = 0
@@ -298,6 +302,16 @@ def emit(db, run_id, kind, data):
     db.flush()
     from mix_agent.wakeups import mark
     mark(db, "run", run_id)
+
+
+def flush_stream_text(db, run_id, buffered_text) -> bool:
+    """Persist a group of streamed text fragments in their original order."""
+    if not buffered_text:
+        return False
+    emit(db, run_id, "text", {"text": "".join(buffered_text)})
+    buffered_text.clear()
+    db.commit()
+    return True
 
 
 def update(run, **fields):
@@ -900,6 +914,9 @@ async def drive(run_id):
                 response = None
                 provider_started_at = now()
                 first_output_at = None
+                buffered_text = []
+                last_text_flush_at = asyncio.get_running_loop().time()
+
                 model_settings = {
                     k: v for k, v in snapshot.get("model_settings", {}).items() if k != "_resolved_reasoning"
                 }
@@ -915,13 +932,28 @@ async def drive(run_id):
                             ), available, mode, model_settings
                         ):
                             if event["kind"] == "response":
+                                if flush_stream_text(db, run.id, buffered_text):
+                                    last_text_flush_at = asyncio.get_running_loop().time()
                                 response = event
-                            else:
-                                if event["kind"] == "text" and first_output_at is None:
+                            elif event["kind"] == "text":
+                                if first_output_at is None:
                                     first_output_at = now()
+                                buffered_text.append(event.get("text", ""))
+                                if asyncio.get_running_loop().time() - last_text_flush_at >= STREAM_TEXT_FLUSH_SECONDS:
+                                    flush_stream_text(db, run.id, buffered_text)
+                                    last_text_flush_at = asyncio.get_running_loop().time()
+                            else:
+                                # Do not let a reasoning/activity event overtake
+                                # already received text in the durable stream.
+                                if flush_stream_text(db, run.id, buffered_text):
+                                    last_text_flush_at = asyncio.get_running_loop().time()
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
+                        flush_stream_text(db, run.id, buffered_text)
                 except Exception as exc:
+                    # A failed stream must still expose every fragment the
+                    # provider already produced before reporting its outcome.
+                    flush_stream_text(db, run.id, buffered_text)
                     retryable = (
                         is_retryable_provider_error(exc)
                         or is_nvidia_nim_function_not_found(provider, exc)

@@ -6,6 +6,7 @@ from mix_agent.api import routes
 from mix_agent.db.models import (
     AutoReliabilityEvent,
     Conversation,
+    Event,
     Feedback,
     Message,
     Model,
@@ -369,6 +370,34 @@ def test_completed_answer_without_usage_does_not_record_tps(signed, monkeypatch)
         message = db.scalar(select(Message).where(Message.conversation_id == conversation,
                                                    Message.data["role"].as_string() == "assistant"))
         assert "performance" not in message.data
+
+
+def test_streaming_text_is_batched_without_losing_content(signed, monkeypatch):
+    """Fast token streams should not require one database commit per token."""
+    model_id = make_model({}, model_id="batched-stream")
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": model_id, "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "batched-stream"})
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            yield {"kind": "text", "text": "fast "}
+            yield {"kind": "text", "text": "stream"}
+            yield {"kind": "response", "message": {"role": "assistant", "content": "fast stream"},
+                   "tool_calls": [], "usage": {}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        events = db.scalars(select(Event).where(
+            Event.run_id == queued.json()["run_id"], Event.kind == "text"
+        ).order_by(Event.sequence)).all()
+        assert [event.data["text"] for event in events] == ["fast stream"]
 
 
 def test_auto_retry_prefers_another_provider_and_honors_retry_after(signed):
