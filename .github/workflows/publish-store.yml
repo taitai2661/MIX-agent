@@ -48,13 +48,13 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Verify public images without authentication
+      - name: Verify public image manifests without authentication
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           for target in init app execution browser-runner browser-provisioner mcp mcp-runtime egress; do
-            docker pull "ghcr.io/taitai2661/mix-agent-$target:$RELEASE_TAG"
+            docker manifest inspect "ghcr.io/taitai2661/mix-agent-$target:$RELEASE_TAG" >/dev/null
           done
 
       - name: Build ZimaOS community store
