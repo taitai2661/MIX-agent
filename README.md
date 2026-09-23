@@ -1,14 +1,26 @@
-# MIX agent
+# MIX-agent
 
 個人・LAN/VPN内向けのセルフホストAIワークスペース。React + FastAPI + PostgreSQL。
 
 **初期開発版です。インターネット公開・複数ユーザー・未知のコードを安全に実行する用途には使わないでください。**
 
+## 導入方法
+
+| 方法 | 対象 | 入口 |
+| --- | --- | --- |
+| Docker Compose | Dockerを自分で管理する人 | 下記の「Dockerで起動」 |
+| ZimaOSコミュニティストア | AMD64のZimaOSを使う人 | [ZimaOSガイド](docs/zimaos.md) |
+
+ZimaOSストアとGitHub Releasesは **v0.2.0の公開後** に利用可能になります。
+公開前は配布イメージとストアURLが有効ではありません。
+
 ## Dockerで起動
 
-Docker Desktop、またはDocker EngineとCompose v2を用意します。初回ビルドはPlaywright用ブラウザを取得するため、十分なディスク空き容量が必要です（10GB以上を推奨）。
+Docker Desktop、またはDocker EngineとCompose v2を用意します。初回ビルドとBrowser機能の導入に備えて、10GB以上のディスク空き容量を推奨します。
 
 ```sh
+git clone https://github.com/taitai2661/MIX-agent.git
+cd MIX-agent
 docker compose up -d --build
 ```
 
@@ -21,6 +33,29 @@ docker compose up -d --build
 5. 必要ならAgent・MCPを追加。
 
 ローカルのOllama/LM Studioには、Provider設定でプライベート接続を明示的に許可します。Docker内のlocalhostはホストPCではありません。標準URLでは `host.docker.internal` を使用します。ホスト側サービスの待受設定も確認してください。
+
+### 更新とバックアップ
+
+更新前に管理画面から暗号化バックアップを取得し、復元に必要なパスワードを保管してください。
+コードを取得して再ビルドすると、起動時にDB migrationが適用されます。
+
+```sh
+git pull --ff-only
+docker compose up -d --build
+```
+
+状態はDockerボリュームに保存されます。`docker compose down` はコンテナを停止しますが、
+`docker compose down -v` はボリュームも削除するため、更新時には実行しないでください。
+手動Compose版からZimaOSストア版へ移る場合は、ボリュームが自動で引き継がれるとは限りません。
+バックアップと復元の手順は[ZimaOSガイド](docs/zimaos.md)を確認してください。
+
+### GitHub Releases
+
+リリースページには、バージョンごとの[変更内容](docs/release-notes-v0.2.0.md)と
+ZimaOSストアのアーカイブを掲載します。コンテナイメージはGitHub Container Registry
+（GHCR）から取得します。初回リリースの公開作業には、GHCRパッケージをPublicに
+設定してからストアとReleaseを配布する手順が含まれます。
+公開手順は[リリースチェックリスト](docs/release-checklist.md)にまとめています。
 
 ## 実装内容
 

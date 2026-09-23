@@ -28,6 +28,10 @@ def test_spreading_activation_is_bounded_and_explained(signed):
         target = service.change(db, owner, "一時障害だけ再試行する", source_run="explicit-user-request")
         db.add(MemoryAssociation(owner_id=owner, source_memory_id=source["id"], target_memory_id=target["id"], weight=.9, confidence=.9, data={"relation": "causal"}))
         db.commit()
+        outgoing = service.associations_for(db, owner, source["id"])
+        incoming = service.associations_for(db, owner, target["id"])
+        assert outgoing[0]["connected_memory"] == {"id": target["id"], "content": "一時障害だけ再試行する", "lifecycle_state": "established"}
+        assert incoming[0]["connected_memory"]["id"] == source["id"]
         result = service.search(db, owner, "MIX Provider", settings={"max_depth": 1, "max_candidates": 8}, debug=True)
         assert len(result["memories"]) <= 8
         assert target["id"] in {row["id"] for row in result["memories"]}
