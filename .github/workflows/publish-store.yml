@@ -1,7 +1,8 @@
-name: Publish store and GitHub Release
+name: Publish ZimaOS store
 
-# GHCR packages are private at first publication. Make all eight image
-# packages public, then run this workflow with the verified tag.
+# Manual runs publish an existing release tag exactly as before.
+# Changes to the ZimaOS store source on main also rebuild gh-pages automatically,
+# so installed ZimaOS instances can discover new versions through index.json.
 on:
   workflow_dispatch:
     inputs:
@@ -9,6 +10,14 @@ on:
         description: "Existing release tag, for example v0.2.2"
         required: true
         type: string
+  push:
+    branches:
+      - main
+    paths:
+      - "Apps/**"
+      - "store-config.json"
+      - "supported-languages.json"
+      - ".github/workflows/publish-store.yml"
 
 permissions:
   contents: write
@@ -18,21 +27,36 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Check tag format
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+
+      - name: Resolve image tag
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TAG" ]]; then
+            RELEASE_TAG="$INPUT_TAG"
+          else
+            VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
+            test -n "$VERSION"
+            RELEASE_TAG="v$VERSION"
+          fi
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
       - name: Verify public images without authentication
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
+          set -euo pipefail
           for target in init app execution browser-runner browser-provisioner mcp mcp-runtime egress; do
             docker pull "ghcr.io/taitai2661/mix-agent-$target:$RELEASE_TAG"
           done
+
       - name: Build ZimaOS community store
         uses: IceWhaleTech/build-appstore-action@v1
         with:
@@ -41,19 +65,31 @@ jobs:
           base-url: https://cdn.jsdelivr.net/gh/${{ github.repository }}@gh-pages
           cache-file: .cache/build_appstore/image-size-cache.json
           digest-cache-file: .cache/build_appstore/image-digest-cache.json
+
       - name: Check store output
-        run: test -s dist/store.json && test -s dist/index.json
+        run: |
+          test -s dist/store.json
+          test -s dist/index.json
+          grep -q "\"version\": \"0.2.2\"" dist/index.json || {
+            echo "Generated store version does not match expected v0.2.2 metadata."
+            cat dist/index.json
+            exit 1
+          }
+
       - name: Publish store
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: ./dist
-      - name: Create release with store archive
+
+      - name: Update GitHub Release store archive
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
+          set -euo pipefail
           tar -czf "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" -C dist .
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" --clobber
