@@ -5,6 +5,14 @@ import type { Row } from "@/app/api";
 const model = (data: Record<string, unknown>) =>
   ({ id: "m", data, created_at: "" }) as Row;
 describe("mode availability", () => {
+  it("shows current server budgets and a selected agent override", () => {
+    expect(renderToStaticMarkup(<ModeStatus mode="chat" />)).toContain("20分・12ステップ・12 Tool Call");
+    expect(renderToStaticMarkup(<ModeStatus mode="thinking" />)).toContain("45分・24ステップ・24 Tool Call");
+    expect(renderToStaticMarkup(<ModeStatus mode="agent" agent={model({ max_seconds: 3600, max_steps: 200, max_tool_calls: 500 })} />))
+      .toContain("60分・200ステップ・500 Tool Call");
+    expect(renderToStaticMarkup(<ModeStatus mode="agent" budget={{ max_seconds: 600, max_steps: 5, max_tool_calls: 8 }} />))
+      .toContain("10分・5ステップ・8 Tool Call");
+  });
   it("explains plain chat fallback for unknown capabilities", () => {
     const html = renderToStaticMarkup(
       <ModeStatus mode="chat" model={model({})} />,

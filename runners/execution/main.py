@@ -1,16 +1,18 @@
 """Fixed single-user runner. No provider keys, database, host mounts, or Docker socket."""
 
 import asyncio
+import ast
 import base64
 import io
 import os
-import signal
 import secrets
+import signal
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel, Field
+
+from fastapi import FastAPI, HTTPException, Request
 from playwright.async_api import async_playwright
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 app = FastAPI(docs_url=None, redoc_url=None)
@@ -104,6 +106,55 @@ def write(path, content):
         os.close(fd)
 
 
+def search_files(query):
+    found = []
+    for path in ROOT.rglob("*"):
+        if len(found) >= 100:
+            break
+        try:
+            rel = str(path.relative_to(ROOT))
+            text = read(rel)
+            if query in text:
+                found.append(
+                    {
+                        "path": rel,
+                        "excerpt": text[max(0, text.index(query) - 100) :][:500],
+                    }
+                )
+        except (OSError, ValueError):
+            continue
+    return {"matches": found}
+
+
+async def workspace_check(args):
+    """Fixed checks only; never interpret model supplied text as a command."""
+    kind = args.get("kind")
+    path = args.get("path")
+    if kind == "python_syntax":
+        if not isinstance(path, str) or not path.endswith(".py"):
+            raise ValueError("A Python file path is required")
+        ast.parse(read(path), filename=path)
+        return {"kind": kind, "path": path, "ok": True}
+    if kind not in {"git_status", "git_diff_check"} or path is not None:
+        raise ValueError("Unknown check or unexpected path")
+    command = ["git", "--no-optional-locks", "-c", "core.pager=cat", "-c", "diff.external=",
+               "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+    command += (["status", "--short", "--untracked-files=no", "--ignore-submodules=all"]
+                if kind == "git_status" else ["diff", "--check", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all"])
+    proc = await asyncio.create_subprocess_exec(
+        *command, cwd=ROOT, env={"PATH": os.environ.get("PATH", ""), "HOME": "/tmp", "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        output, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise ValueError("Workspace check timed out") from None
+    return {"kind": kind, "ok": proc.returncode == 0, "exit_code": proc.returncode,
+            "output": output[:64000].decode("utf-8", errors="replace")}
+
+
 async def drain(proc, entry):
     while block := await proc.stdout.read(4096):
         entry["output"] = (entry["output"] + block.decode(errors="replace"))[-64000:]
@@ -147,7 +198,7 @@ async def page(values=None):
             PLAYWRIGHT = None
             BROWSER = None
             raise ValueError(
-                f"Chromiumを起動できません。Browserが導入されているか確認してください。"
+                "Chromiumを起動できません。Browserが導入されているか確認してください。"
             ) from exc
     if PAGE is None or BROWSER_CONFIG != config:
         if CONTEXT is not None:
@@ -227,25 +278,9 @@ async def execute(body: Execute):
                 finally:
                     os.close(fd)
             if name == "search_files":
-                found = []
-                for path in ROOT.rglob("*"):
-                    if len(found) >= 100:
-                        break
-                    try:
-                        rel = str(path.relative_to(ROOT))
-                        text = read(rel)
-                        if args["query"] in text:
-                            found.append(
-                                {
-                                    "path": rel,
-                                    "excerpt": text[
-                                        max(0, text.index(args["query"]) - 100) :
-                                    ][:500],
-                                }
-                            )
-                    except (OSError, ValueError):
-                        continue
-                return {"matches": found}
+                return await asyncio.to_thread(search_files, args["query"])
+            if name == "workspace_check":
+                return await workspace_check(args)
             if name == "run_terminal":
                 if (
                     sum(p["process"].returncode is None for p in PROCESSES.values())
@@ -336,7 +371,7 @@ async def execute(body: Execute):
                         try:
                             await p.locator(args["selector"]).first.wait_for(timeout=timeout)
                             return {"url": p.url, "ready": True}
-                        except Exception:
+                        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                             return {"url": p.url, "ready": False}
                     await p.wait_for_timeout(timeout)
                     return {"url": p.url, "ready": True}
@@ -351,7 +386,7 @@ async def execute(body: Execute):
                     "text": (await p.locator("body").inner_text())[:30000],
                 }
         raise ValueError("Unknown tool")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(422, "Runner operation failed: " + type(exc).__name__)
 
 
@@ -363,15 +398,20 @@ async def cancel(body: dict):
     return {"ok": True}
 
 
+def pdf_text(raw):
+    reader = PdfReader(io.BytesIO(raw))
+    return "\n".join((p.extract_text() or "") for p in reader.pages[:100])[:50000]
+
+
 @app.post("/extract-pdf")
 async def extract_pdf(body: dict):
-    raw = base64.b64decode(body["content"], validate=True)
+    try:
+        raw = base64.b64decode(body["content"], validate=True)
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+        raise HTTPException(422, "Invalid PDF payload")
     if len(raw) > 20 * 1024 * 1024:
         raise HTTPException(413)
-    reader = PdfReader(io.BytesIO(raw))
-    return {
-        "text": "\n".join((p.extract_text() or "") for p in reader.pages[:100])[:50000]
-    }
+    return {"text": await asyncio.to_thread(pdf_text, raw)}
 
 
 @app.post("/{action}")

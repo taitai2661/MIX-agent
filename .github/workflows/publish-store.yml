@@ -1,0 +1,60 @@
+name: Publish store and GitHub Release
+
+# GHCR packages are private at first publication. Make all eight image
+# packages public, then run this workflow with the verified tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag, for example v0.2.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check tag format
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Verify public images without authentication
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          for target in init app execution browser-runner browser-provisioner mcp mcp-runtime egress; do
+            docker pull "ghcr.io/taitai2661/mix-agent-$target:$RELEASE_TAG"
+          done
+      - name: Build ZimaOS community store
+        uses: IceWhaleTech/build-appstore-action@v1
+        with:
+          source: .
+          output: dist
+          base-url: https://cdn.jsdelivr.net/gh/${{ github.repository }}@gh-pages
+          cache-file: .cache/build_appstore/image-size-cache.json
+          digest-cache-file: .cache/build_appstore/image-digest-cache.json
+      - name: Check store output
+        run: test -s dist/store.json && test -s dist/index.json
+      - name: Publish store
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
+      - name: Create release with store archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          tar -czf "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" -C dist .
+          gh release create "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" \
+            --verify-tag --title "MIX-agent $RELEASE_TAG" \
+            --notes-file "docs/release-notes-${RELEASE_TAG}.md"

@@ -9,6 +9,7 @@ export function ModelPicker({ models, value, onChange, temporaryMode, allowTools
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const navigate = useNavigate();
   const choices = useMemo(() => [{ id: "auto", created_at: "", data: { name: "Auto", model_id: "リクエストごとに最適なモデルを選択" } } as Row, ...(models || [])], [models]);
   const selected = choices.find((item) => item.id === value);
@@ -31,9 +32,11 @@ export function ModelPicker({ models, value, onChange, temporaryMode, allowTools
     onChange(item.id);
     setOpen(false);
     setQuery("");
+    trigger.current?.focus();
   }
   function keyboard(event: React.KeyboardEvent) {
-    if (event.key === "Escape") return setOpen(false);
+    if (event.key === "Escape") { setOpen(false); trigger.current?.focus(); return; }
+    if (event.target !== input.current) return;
     if (event.key === "ArrowDown") {
       event.preventDefault(); setActive((index) => Math.min(index + 1, filtered.length - 1));
     }
@@ -46,7 +49,7 @@ export function ModelPicker({ models, value, onChange, temporaryMode, allowTools
   }
   return (
     <div className="model-picker" ref={root} onKeyDown={keyboard}>
-      <button className="model-trigger" aria-expanded={open} aria-haspopup="listbox" onClick={() => setOpen((shown) => !shown)} type="button">
+      <button ref={trigger} className="model-trigger" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((shown) => !shown)} type="button">
         <Sparkles size={16} />
         <span>{selected?.data.name || selected?.data.model_id || "モデルを選択"}</span>
         <ChevronDown size={16} />
@@ -62,9 +65,9 @@ export function ModelPicker({ models, value, onChange, temporaryMode, allowTools
           {!filtered.length && <div className="model-empty"><p>利用できるモデルがありません</p><button type="button" onClick={() => navigate("/settings/models")}>モデルを設定</button></div>}
         </div>
         <div className="temporary-settings">
-          <label><input type="checkbox" checked={temporaryMode} onChange={(event) => onTemporaryModeChange(event.target.checked)} /> 一時モード</label>
+          <label><input type="checkbox" checked={temporaryMode} onChange={(event) => { onTemporaryModeChange(event.target.checked); if (!event.target.checked) onAllowToolsChange(false); }} /> 一時モード</label>
           {temporaryMode && <>
-            <small>Memoryを使わず、この会話と添付を保存しません</small>
+            <small>この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します</small>
             <label><input type="checkbox" checked={allowTools} onChange={(event) => onAllowToolsChange(event.target.checked)} /> Toolを許可</label>
             {allowTools && <small>Toolの外部送信や副作用は残る場合があります</small>}
           </>}

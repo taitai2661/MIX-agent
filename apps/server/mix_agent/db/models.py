@@ -1,7 +1,17 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -127,6 +137,13 @@ class Notification(Record, Base):
     __table_args__ = (Index("notification_owner_read", "owner_id", "read_at"),)
 
 
+class PushSubscription(Record, Base):
+    __tablename__ = "push_subscriptions"
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    cursor_id: Mapped[str] = mapped_column(String(36), default="")
+
+
 class Settings(Record, Base):
     __tablename__ = "app_settings"
 
@@ -141,6 +158,7 @@ class MCPConnection(Record, Base):
 
 class MCPAuthState(Record, Base):
     __tablename__ = "mcp_auth_states"
+    state_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     __table_args__ = (Index("mcp_auth_state_owner_created", "owner_id", "created_at"),)
 
 
@@ -245,6 +263,10 @@ class Run(Record, Base):
             "conversation_id",
             unique=True,
             postgresql_where=status.in_(["queued", "running", "waiting_approval"]),
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled', 'interrupted')",
+            name="ck_runs_status_valid",
         ),
     )
 

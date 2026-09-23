@@ -5,8 +5,8 @@ from mix_agent.api import routes
 from mix_agent.db.models import Message, Model, Provider, Run, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
-from mix_agent.tools.registry import BUILTINS
 from mix_agent.runs.mode_policy import mode_prompt, tool_allowed
+from mix_agent.tools.registry import BUILTINS
 from sqlalchemy import select
 
 
@@ -40,7 +40,11 @@ def send(signed, monkeypatch, model_id, mode="chat", **kwargs):
 
 
 def test_activity_summary_exposes_only_safe_search_metadata():
-    from mix_agent.runs.engine import activity_result, activity_summary, is_user_facing_answer
+    from mix_agent.runs.engine import (
+        activity_result,
+        activity_summary,
+        is_user_facing_answer,
+    )
 
     assert activity_summary("web_search", {"query": "  AI news  "}) == {
         "icon": "search",
@@ -544,6 +548,7 @@ async def test_empty_or_url_json_final_turn_is_repaired_before_persisting(signed
     with SessionLocal() as db:
         messages = list(db.scalars(select(Message).where(Message.conversation_id == db.get(Run, run_id).conversation_id)))
         assert [message.data["content"] for message in messages] == ["test", "明日の天気を確認するには地域を指定してください。"]
+        assert db.get(Run, run_id).data["answer_evaluation"]["status"] == "provided"
 
 
 async def test_repeated_empty_final_turn_uses_safe_fallback(signed, monkeypatch):
@@ -568,6 +573,7 @@ async def test_repeated_empty_final_turn_uses_safe_fallback(signed, monkeypatch)
         assert run.status == "completed"
         assert len(messages) == 2
         assert "ユーザー向けの本文を生成できませんでした" in messages[-1].data["content"]
+        assert run.data["answer_evaluation"]["status"] == "needs_review"
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])

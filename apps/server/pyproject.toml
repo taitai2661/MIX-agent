@@ -1,6 +1,6 @@
 [project]
 name = "mix-agent"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "sqlalchemy>=2.0,<3",
@@ -20,3 +20,19 @@ asyncio_mode = "auto"
 testpaths = ["../../tests"]
 [tool.ruff]
 line-length = 110
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency-injection markers are idiomatic here and are treated as
+# immutable just like the broader community does; genuine mutable defaults in
+# other call sites stay flagged by B008.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.File",
+  "fastapi.Form",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.Body",
+  "fastapi.Security",
+]

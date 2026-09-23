@@ -1,4 +1,5 @@
 import { api, type Row } from "@/app/api";
+import { ja } from "@/app/strings";
 import type { components } from "@/generated/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -40,7 +41,7 @@ import {
 } from "./types";
 
 type ChatModel = Row & { data: { capabilities?: Record<string, boolean | null>; overrides?: Record<string, boolean | null>; reasoning_control?: boolean; tool_probe?: { status?: string } } };
-type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string; tool_ids?: string[] } };
+type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string; tool_ids?: string[]; max_seconds?: number; max_steps?: number; max_tool_calls?: number } };
 type Feedback = components["schemas"]["FeedbackInput"]["value"];
 const modes = ["chat", "thinking", "agent"] as const satisfies readonly ChatMode[];
 
@@ -67,9 +68,11 @@ export function Chat() {
     [runId, setRunId] = useState(""),
     [streamText, setStreamText] = useState(""),
     [reasoning, setReasoning] = useState(""),
-    [events, setEvents] = useState<RunEvent[]>([]);
+    [events, setEvents] = useState<RunEvent[]>([]),
+    [streamConnected, setStreamConnected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null),
     bottom = useRef<HTMLDivElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const pendingSend = useRef<{
     signature: string;
     key: string;
@@ -86,14 +89,14 @@ export function Chat() {
     queryFn: () => api("/runs/" + runId),
     enabled: !!runId,
     refetchInterval: (q) =>
-      q.state.data?.status === "queued" || q.state.data?.status === "running" || q.state.data?.status === "waiting_approval"
+      !streamConnected && (q.state.data?.status === "queued" || q.state.data?.status === "running" || q.state.data?.status === "waiting_approval")
         ? 1500 : false,
   });
   const toolHistory = useQuery<ToolCallHistory[]>({
     queryKey: ["tool-calls", id],
     queryFn: () => api("/conversations/" + id + "/tool-calls"),
     enabled: !!id,
-    refetchInterval: run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval" ? 1500 : false,
+    refetchInterval: !streamConnected && (run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval") ? 1500 : false,
   });
   useEffect(() => {
     restoredConversation.current = undefined;
@@ -101,6 +104,7 @@ export function Chat() {
     setEvents([]);
     setStreamText("");
     setReasoning("");
+    setStreamConnected(false);
   }, [id]);
   useEffect(() => {
     const latestRun = history.data?.runs?.at(-1);
@@ -121,6 +125,24 @@ export function Chat() {
     setStreamText("");
     setReasoning("");
     const source = new EventSource("/api/v1/runs/" + runId + "/events");
+    eventSourceRef.current = source;
+    source.onopen = () => setStreamConnected(true);
+    // A run is bounded by its budget on the server; if the stream never
+    // terminates, bail out and let the polling fallback take over.
+    const watchdog = setTimeout(() => {
+      if (source.readyState === EventSource.OPEN) {
+        source.close();
+        setStreamConnected(false);
+      }
+    }, 15 * 60 * 1000);
+    const finish = () => {
+      clearTimeout(watchdog);
+      source.close();
+      setBusy(false);
+      setStreamConnected(false);
+      qc.invalidateQueries({ queryKey: ["messages", id] });
+      qc.invalidateQueries({ queryKey: ["run", runId] });
+    };
     const onActivity = (event: Event) => {
       if (!(event instanceof MessageEvent) || typeof event.data !== "string") return;
       const v = parseRunEvent(event.data);
@@ -136,6 +158,7 @@ export function Chat() {
         if (v.kind === "approval") {
           qc.invalidateQueries({ queryKey: ["run", runId] });
         }
+        if (v.kind === "status" || v.kind === "context_summary") qc.invalidateQueries({ queryKey: ["run", runId] });
         if (v.kind === "message") {
           setStreamText("");
           qc.invalidateQueries({ queryKey: ["messages", id] });
@@ -145,21 +168,22 @@ export function Chat() {
         qc.invalidateQueries({ queryKey: ["tool-calls", id] });
     };
     source.addEventListener("activity", onActivity);
-    source.addEventListener("done", () => {
-      source.close();
-      setBusy(false);
-      qc.invalidateQueries({ queryKey: ["messages", id] });
-      qc.invalidateQueries({ queryKey: ["run", runId] });
-    });
+    source.addEventListener("done", finish);
     source.onerror = () => {
+      clearTimeout(watchdog);
       source.close();
       setBusy(false);
-      setError(new Error("ストリーム接続が切れました。再試行してください。"));
+      setStreamConnected(false);
+      setError(new Error(ja.streamLost));
     };
-    return () => source.close();
+    return () => {
+      clearTimeout(watchdog);
+      source.close();
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
+    };
   }, [runId, id, qc]);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
+    bottom.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [streamText, history.data]);
   const active =
     run.data &&
@@ -271,6 +295,16 @@ export function Chat() {
             <div className="messages">
               {history.data?.messages.map((m) => (
                 <div key={m.id}>
+                {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && r.context_summary?.text).map(r => (
+                  <details className="context-summary" key={r.id}>
+                    <summary>この実行で文脈を圧縮しました · {r.context_summary?.covered_count ?? 0}件を要約</summary>
+                    <p>古い会話は以下の要約としてモデルに渡しました。元の会話は画面に残っています。</p>
+                    <div className="context-summary-text">{r.context_summary?.text}</div>
+                  </details>
+                ))}
+                {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && r.id !== runId && r.answer_evaluation).map(r => (
+                  <p className="run-evaluation" key={r.id}>回答チェック: {r.answer_evaluation?.status === "provided" ? "最終回答あり" : r.answer_evaluation?.status === "needs_review" ? "要確認" : "未回答"}。{r.answer_evaluation?.reason}</p>
+                ))}
                 <article className={"message " + m.data.role}>
                   <div className="message-label">
                     {m.data.role === "user" ? (
@@ -298,7 +332,7 @@ export function Chat() {
                   )}
                   {m.data.auto_selection && (
                     <div className="message-auto">
-                      <small>Auto: {m.data.auto_selection.model_id}</small>
+                      <small>Auto: {m.data.auto_selection.model_name || m.data.auto_selection.model_id}</small>
                       <span>
                         <button className={m.data.feedback === "up" ? "selected" : ""} onClick={() => rate(m.id, m.data.feedback, "up")} aria-label="良い回答"><ThumbsUp size={14} /></button>
                         <button className={m.data.feedback === "down" ? "selected" : ""} onClick={() => rate(m.id, m.data.feedback, "down")} aria-label="良くない回答"><ThumbsDown size={14} /></button>
@@ -344,6 +378,9 @@ export function Chat() {
               {run.data?.reason && (
                 <div className="notice">{run.data.reason}</div>
               )}
+              {run.data?.answer_evaluation && <p className="run-evaluation" role="status">
+                回答チェック: {run.data.answer_evaluation.status === "provided" ? "最終回答あり" : run.data.answer_evaluation.status === "needs_review" ? "要確認" : "未回答"}。{run.data.answer_evaluation.reason}
+              </p>}
               {run.data && active && (
                 <p className="run-budget" role="status">
                   {run.data.mode}
@@ -385,6 +422,7 @@ export function Chat() {
               error={error || history.error || models.error || tools.error || permissionRules.error}
             />
             <form className="composer" onSubmit={send}>
+              {temporaryMode && <p className="temporary-notice" role="status">一時モード: Run終了後にMIX側の会話・回答・送信した添付を削除します。選択した添付は送信前にアップロードされます。Toolは{allowTools ? "許可中（外部への送信や副作用が残る場合があります）" : "無効"}。</p>}
               {attachments.length > 0 && (
                 <div className="attachments">
                   {attachments.map((a) => (
@@ -413,7 +451,7 @@ export function Chat() {
                   if (
                     e.key === "Enter" &&
                     !e.shiftKey &&
-                    !e.nativeEvent.isComposing
+                    !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229
                   ) {
                     e.preventDefault();
                     send();
@@ -457,7 +495,7 @@ export function Chat() {
                       <ShieldCheck size={14} />
                       <span>ツール権限: 許可 {permissionCounts.allow || 0} · 確認 {permissionCounts.ask || 0} · 拒否 {permissionCounts.deny || 0}</span>
                     </div>
-                    <ModeStatus mode={mode} model={selected} agent={selectedAgent} />
+                    <ModeStatus mode={mode} model={selected} agent={selectedAgent} budget={active && run.data?.mode === mode ? run.data.budget : undefined} />
                   </div>
                 </details>
                 <div className="composer-actions">

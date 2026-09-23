@@ -1,13 +1,12 @@
 from datetime import datetime, timezone
 
 import pytest
-
+from mix_agent.db.models import Conversation, Run, ScheduledJob, User, uid
+from mix_agent.db.session import SessionLocal
 from mix_agent.schedules import matches, next_at, parse
 from mix_agent.tools.execute import execute
 from mix_agent.tools.registry import BUILTINS
 from sqlalchemy import select
-from mix_agent.db.models import Conversation, Run, ScheduledJob, User, uid
-from mix_agent.db.session import SessionLocal
 
 
 def test_five_field_cron_validation_and_next_time():

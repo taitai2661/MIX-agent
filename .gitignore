@@ -10,5 +10,6 @@ __pycache__/
 .env
 test-results/
 playwright-report/
-
+.DS_Store
 *.tsbuildinfo
+.codex/

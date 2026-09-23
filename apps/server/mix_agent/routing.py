@@ -88,7 +88,7 @@ def _speed_scores(details):
 
 def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, tools_required,
                       context_parts, reserved_output_tokens, request_key, attachment_bytes=0,
-                      excluded_model_ids=(), prefer_other_provider_than=None):
+                      excluded_model_ids=(), prefer_other_provider_than=None, current_model_id=None):
     """Return a selected Model plus auditable local routing details, or a reason."""
     required_tokens = estimate_tokens(context_parts, attachment_bytes) + reserved_output_tokens
     profile = routing_profile(content, mode, artifact_mimes, tools_required, required_tokens)
@@ -168,7 +168,9 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
         context_penalty = max(0, usage - 0.5) * 0.1 if usage is not None else 0
         health = reliability_details[model.id]
         provider_retry_penalty = 1.0 if has_other_provider and model.data.get("provider_id") == prefer_other_provider_than else 0
-        ranked.append((mean + exploration + reasoning_bonus + speed_scores[model.id] - context_penalty - health["penalty"] - provider_retry_penalty,
+        # Small hysteresis avoids switching on a tie or a marginal score change.
+        continuity_bonus = 0.03 if model.id == current_model_id else 0
+        ranked.append((mean + exploration + reasoning_bonus + speed_scores[model.id] + continuity_bonus - context_penalty - health["penalty"] - provider_retry_penalty,
                        model, up, down))
     best = max(score for score, *_ in ranked)
     tied = [entry for entry in ranked if abs(entry[0] - best) < 1e-12]

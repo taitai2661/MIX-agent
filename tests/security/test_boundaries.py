@@ -1,11 +1,14 @@
 import importlib.util
+import shutil
+import subprocess
 from pathlib import Path
+
 import pytest
 from cryptography.exceptions import InvalidTag
-from mix_agent.auth.security import encrypt, decrypt
-from mix_agent.storage.backup import seal, unseal, validate
+from mix_agent.auth.security import decrypt, encrypt
+from mix_agent.storage.backup import seal, unseal
 from mix_agent.tools import network
-from mix_agent.tools.network import public_address, fetch_public
+from mix_agent.tools.network import fetch_public, public_address
 
 
 def module(name, path):
@@ -61,6 +64,33 @@ def test_symlink_read_and_parent_write_blocked(tmp_path, monkeypatch):
     assert (private / "secret").read_text() == "must not be read"
     runner.write("notes/hello.txt", "hello")
     assert runner.read("notes/hello.txt") == "hello"
+
+
+async def test_workspace_check_accepts_only_fixed_checks(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    (tmp_path / "valid.py").write_text("answer = 42\n")
+    assert (await runner.workspace_check({"kind": "python_syntax", "path": "valid.py"}))["ok"]
+    (tmp_path / "unexecuted.py").write_text("__import__('os').system('touch bad')\n")
+    assert (await runner.workspace_check({"kind": "python_syntax", "path": "unexecuted.py"}))["ok"]
+    (tmp_path / "invalid.py").write_text("answer = (\n")
+    with pytest.raises(SyntaxError):
+        await runner.workspace_check({"kind": "python_syntax", "path": "invalid.py"})
+    for args in ({"kind": "python_syntax", "path": "../secret.py"},
+                 {"kind": "git_status; touch bad"},
+                 {"kind": "git_diff_check", "path": "valid.py"}):
+        with pytest.raises((ValueError, OSError)):
+            await runner.workspace_check(args)
+    assert not (tmp_path / "bad").exists()
+
+
+async def test_workspace_git_checks_are_read_only(tmp_path, monkeypatch):
+    if shutil.which("git") is None:
+        pytest.skip("Git is installed in the execution image, not the test image")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
+    assert (await runner.workspace_check({"kind": "git_status"}))["ok"]
+    assert (await runner.workspace_check({"kind": "git_diff_check"}))["ok"]
+    assert not (tmp_path / ".git" / "index.lock").exists()
 
 
 @pytest.mark.parametrize(
@@ -134,6 +164,49 @@ async def test_public_fetch_passes_string_sni_hostname(monkeypatch):
     assert await fetch_public("https://example.com/page") == "page"
     assert captured["extensions"]["sni_hostname"] == "example.com"
     assert isinstance(captured["extensions"]["sni_hostname"], str)
+
+
+async def test_public_fetch_checks_allowlist_before_dns_and_after_redirect(monkeypatch):
+    visited = []
+
+    class Response:
+        is_redirect = True
+        headers = {"location": "https://blocked.example/page"}
+
+    class Stream:
+        async def __aenter__(self):
+            return Response()
+
+        async def __aexit__(self, *args):
+            pass
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            return Stream()
+
+    async def address(host, port):
+        visited.append(host)
+        return "93.184.216.34"
+
+    monkeypatch.setattr(network, "public_address", address)
+    monkeypatch.setattr(network.httpx, "AsyncClient", Client)
+
+    with pytest.raises(ValueError, match="allowed list"):
+        await fetch_public("https://blocked.example", allowed_domains=["example.com"])
+    assert visited == []
+
+    with pytest.raises(ValueError, match="allowed list"):
+        await fetch_public("https://example.com", allowed_domains=["example.com"])
+    assert visited == ["example.com"]
 
 
 def test_setup_only_once_and_csrf(signed):

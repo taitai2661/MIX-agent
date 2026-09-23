@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import itertools
+import json
 from urllib.parse import urlsplit
 
-import httpx
+from mix_agent.tools.network import request_public
 
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSION = "2025-11-25"
@@ -43,7 +44,7 @@ def _headers(method: str, tool: str = "", headers: dict | None = None) -> dict:
 def _request(method: str, params: dict | None = None) -> dict:
     params = dict(params or {})
     meta = dict(params.get("_meta") or {})
-    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.1.0"}
+    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.2.0"}
     meta["io.modelcontextprotocol/protocolVersion"] = MODERN_VERSION
     params["_meta"] = meta
     return {"jsonrpc": "2.0", "id": next(_IDS), "method": method, "params": params}
@@ -53,13 +54,14 @@ async def modern_call(url: str, method: str, params: dict | None = None, *, tool
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Remote MCP requires a public HTTPS URL")
-    import os
-    async with httpx.AsyncClient(timeout=115, follow_redirects=False, trust_env=False, proxy=os.getenv("HTTPS_PROXY")) as client:
-        response = await client.post(url, headers=_headers(method, tool, headers), json=_request(method, params))
-        response.raise_for_status()
-        if "text/event-stream" in response.headers.get("content-type", ""):
-            raise ValueError("Modern MCP must return a bounded request response")
-        value = response.json()
+    status, response_headers, body = await request_public(
+        "POST", url, headers=_headers(method, tool, headers), json=_request(method, params), timeout=115
+    )
+    if status < 200 or status >= 300:
+        raise ValueError("MCP operation failed")
+    if "text/event-stream" in response_headers.get("content-type", "").lower():
+        raise ValueError("Modern MCP must return a bounded request response")
+    value = json.loads(body)
     if value.get("error"):
         raise ValueError("MCP operation failed")
     return value.get("result", value)
@@ -68,7 +70,7 @@ async def modern_call(url: str, method: str, params: dict | None = None, *, tool
 async def discover(url: str, headers: dict | None = None) -> dict:
     try:
         return await modern_call(url, "server/discover", headers=headers)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return await modern_call(url, "tools/list", headers=headers)
 
 

@@ -1,9 +1,12 @@
 """Phase 1 Context Engine tests (pure unit + light integration, no provider calls)."""
 
 import json
+from types import SimpleNamespace
 
-from mix_agent.context import builder as context_builder
+import pytest
+
 from mix_agent.context import budget as context_budget
+from mix_agent.context import builder as context_builder
 from mix_agent.context import task_state as task_state_mod
 from mix_agent.context.builder import select_recent
 from mix_agent.context.references import (
@@ -16,6 +19,31 @@ from mix_agent.context.retrievers import fit_items
 from mix_agent.context.summary import finalize, merge_prompt
 from mix_agent.context.tokens import count, count_messages
 from mix_agent.context.types import ContextBudgetError
+
+
+@pytest.mark.asyncio
+async def test_failed_summary_keeps_previous_context(monkeypatch):
+    from mix_agent.runs import engine
+
+    history = [{"role": "user", "content": "old " * 2000}, {"role": "user", "content": "current"}]
+    run = SimpleNamespace(id="run", data={"history": history, "task_state": {"goal": "current"}, "summary": {"text": "", "covered_count": 0}})
+    db = SimpleNamespace(commit=lambda: None)
+    monkeypatch.setattr(engine, "emit", lambda *_: None)
+    monkeypatch.setattr(engine.context_budget, "input_budget", lambda *_, **__: 100)
+    monkeypatch.setattr(engine, "select_recent", lambda *args: ([history[-1]], [history[0]]))
+
+    class BrokenAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, *_):
+            raise RuntimeError("unavailable")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(engine, "Adapter", BrokenAdapter)
+    with pytest.raises(ContextBudgetError, match="preserved"):
+        await engine._maybe_compact_context(db, run, {"model_id": "test", "tools": []}, {}, "")
+    assert run.data["history"] == history
 
 
 def _window(window, reserved=4096):
@@ -122,7 +150,7 @@ def test_provider_switching_rebudgets():
     small = context_budget.input_budget(_window(32_000))
     large = context_budget.input_budget(_window(200_000))
     assert large > small
-    recent_small, evicted_small = select_recent(_messages(50), small // 4, "m")
+    recent_small, _ = select_recent(_messages(50), small // 4, "m")
     recent_large, _ = select_recent(_messages(50), large // 4, "m")
     assert len(recent_large) >= len(recent_small)
 

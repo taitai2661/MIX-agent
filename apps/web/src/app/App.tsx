@@ -220,11 +220,17 @@ export function App() {
             </div>
             <button
               className="icon"
-              aria-label="ログアウト"
+              aria-label={ja.logout}
               onClick={async () => {
-                await api("/auth/logout", "POST");
-                setUser(null);
+                try {
+                  await api("/auth/logout", "POST");
+                } catch {
+                  // Local dismissal still signs out the UI; the revoked
+                  // session cookie makes any subsequent request 401.
+                }
+                qc.cancelQueries();
                 qc.clear();
+                setUser(null);
               }}
             >
               <LogOut size={16} />

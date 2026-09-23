@@ -1,6 +1,7 @@
 """Add account login history."""
 
 from alembic import op
+
 from mix_agent.db.models import LoginEvent
 
 revision = "0004"

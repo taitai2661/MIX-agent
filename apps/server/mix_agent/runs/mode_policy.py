@@ -17,13 +17,12 @@ MODE_POLICIES = {
 MODE_PROMPTS = {
     "chat": (
         "\n## Response mode: Normal\n"
-        "Complete the user's immediate request in this turn with a short, direct, proportionate "
-        "answer. Prefer existing context and use only the few tools that materially improve "
-        "accuracy or complete a small action. Lead with the result, then include only the details "
-        "needed to act on it. Do not create a plan or checklist, delegate, start background work, "
-        "or expand a focused request into a broad investigation. If sustained work is genuinely "
-        "needed, state the remaining work concisely and recommend Long work mode; never switch "
-        "modes yourself."
+        "Respond naturally to the user's immediate request and conversation context. Match the "
+        "detail to the question: be brief for simple questions and explain or investigate when "
+        "the task needs it. Ask a clarifying question only when the missing answer matters; "
+        "otherwise use available context and take useful small actions in this Run. Continue "
+        "after a tool result or failure until you can give a meaningful answer. Do not delegate "
+        "or start background work. Never switch modes yourself."
     ),
     "thinking": (
         "\n## Response mode: Think deeply\n"
@@ -42,9 +41,12 @@ MODE_PROMPTS = {
         "iterate through implementation, observation, validation, and correction. Take the next safe "
         "action instead of stopping at a plan or progress promise. Preserve user data, public contracts, "
         "and unrelated work; make no destructive or external change without the required authorization. "
-        "After failures, diagnose from evidence and adapt. Continue until the outcome is verified or a "
-        "real authorization or user-choice blocker remains. Finish with the result, verification evidence, "
-        "and only meaningful follow-up work."
+        "Track remaining work with update_plan.pending and clear it only after the work is done. "
+        "After failures, diagnose from evidence and adapt. Check the requested outcome against "
+        "actual tool results, and record verification with update_plan after the last change. "
+        "Continue until the outcome is verified or a real authorization, user-choice, or budget "
+        "blocker remains. Never claim completion for unverified work. Finish with the result, "
+        "verification evidence, and only meaningful follow-up work."
     ),
 }
 

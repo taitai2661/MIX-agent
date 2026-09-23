@@ -1,0 +1,41 @@
+name: Validate release candidate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check generated store manifest
+        run: |
+          python -m pip install PyYAML==6.0.2
+          python scripts/render_zimaos_compose.py v0.2.0
+          git diff --exit-code -- Apps/MIX-agent/docker-compose.yml
+          docker compose -f Apps/MIX-agent/docker-compose.yml config --quiet
+      - name: Run application test suite
+        run: docker compose --profile test run --build --rm test
+      - name: Build all release images
+        run: |
+          for target in init app execution browser-runner browser-provisioner mcp mcp-runtime egress; do
+            docker build --target "$target" -f deploy/docker/Dockerfile -t "mix-agent-$target:validation" .
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.11.0"
+      - name: Check frontend
+        run: |
+          cd apps/web
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"

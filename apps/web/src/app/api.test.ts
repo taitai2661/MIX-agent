@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { api, binary, setCSRF } from "./api";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 describe("authenticated mutations", () => {
   it("adds CSRF and idempotency headers", async () => {
     const fetch = vi
@@ -33,5 +36,53 @@ describe("authenticated mutations", () => {
     await expect(
       api("/approvals/x/decision", "POST", { decision: "once" }),
     ).rejects.toThrow("承認は決定済みです");
+  });
+});
+describe("timeouts and cancellation", () => {
+  function abortingFetch() {
+    return vi.fn(
+      (_url: string, init: any) =>
+        new Promise((_, reject) => {
+          init.signal.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }),
+    );
+  }
+  it("aborts a hung request once the timeout fires", async () => {
+    vi.useFakeTimers();
+    const fetch = abortingFetch();
+    vi.stubGlobal("fetch", fetch);
+    const promise = api("/slow-resource", "GET", undefined, undefined, {
+      timeoutMs: 5,
+    });
+    const assertion = expect(promise).rejects.toThrow(
+      "リクエストがタイムアウトしました",
+    );
+    await vi.advanceTimersByTimeAsync(5);
+    await assertion;
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+  it("early-aborts when the caller's signal is cancelled", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", abortingFetch());
+    const promise = api("/x", "GET", undefined, undefined, {
+      signal: controller.signal,
+    });
+    controller.abort(new Error("cancelled"));
+    await expect(promise).rejects.toThrow("リクエストを中断しました");
+  });
+  it("keeps the session cookie on binary uploads that time out", async () => {
+    vi.useFakeTimers();
+    const fetch = abortingFetch();
+    vi.stubGlobal("fetch", fetch);
+    const promise = binary("/files/import", {}, { timeoutMs: 5 });
+    const assertion = expect(promise).rejects.toThrow(
+      "リクエストがタイムアウトしました",
+    );
+    await vi.advanceTimersByTimeAsync(5);
+    await assertion;
+    expect(fetch.mock.calls[0][1].credentials).toBe("same-origin");
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
   });
 });

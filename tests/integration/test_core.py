@@ -1,11 +1,12 @@
 import asyncio
-from sqlalchemy import select
+
 import pytest
 from mix_agent.db.models import *
 from mix_agent.db.session import SessionLocal
-from mix_agent.tools.registry import BUILTINS, permission, fingerprint, call_scope
-from mix_agent.tools.execute import save_text_artifact
 from mix_agent.runs import engine
+from mix_agent.tools.execute import save_text_artifact
+from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, permission
+from sqlalchemy import select
 
 
 def make_run(tool_name="write_file", mode="agent"):
@@ -45,7 +46,7 @@ def test_text_artifact_validation_and_metadata(tmp_path, monkeypatch):
         db.commit()
         assert artifact["name"] == "watermark-poster.html"
         assert artifact["mime"] == "text/html"
-        assert artifact["size"] == len("<h1>Hello</h1>".encode())
+        assert artifact["size"] == len(b"<h1>Hello</h1>")
         assert (tmp_path / artifact["artifact_id"]).read_text() == "<h1>Hello</h1>"
         for name in ("../escape.html", "nested/file.html", "", "bad<script>.html"):
             with pytest.raises(ValueError):
@@ -54,6 +55,33 @@ def test_text_artifact_validation_and_metadata(tmp_path, monkeypatch):
             save_text_artifact(db, owner, "empty.html", "text/html", "")
         with pytest.raises(ValueError):
             save_text_artifact(db, owner, "large.html", "text/html", "x" * (1024 * 1024 + 1))
+
+
+def test_agent_plan_tracks_pending_and_post_change_verification(signed):
+    run_id, _ = make_run(mode="agent")
+    tools = {tool["id"]: tool for tool in BUILTINS}
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        calls = []
+        for index, (name, result) in enumerate([
+            ("update_plan", {"steps": ["編集", "検証"], "pending": ["編集", "検証"], "verification": "変更前の確認"}),
+            ("write_file", {"ok": True}),
+            ("read_file", {"text": "verified"}),
+            ("update_plan", {"steps": ["編集", "検証"], "pending": [], "verification": "変更後のファイルを確認"}),
+        ]):
+            tool = tools[name]
+            call = ToolCall(owner_id=run.owner_id, run_id=run.id, data={
+                "tool_id": name, "name": name, "risk": tool["risk"],
+                "provider_call_id": f"plan-{index}", "arguments": {},
+            })
+            db.add(call)
+            db.flush()
+            engine.complete_tool_call(db, run, call, tool, result)
+            calls.append(call)
+            if index == 1:
+                assert run.data["agent_plan"]["verification"] == ""
+        assert run.data["task_state"]["pending"] == []
+        assert engine.agent_completion_issue(run, calls) is None
 
 
 class FakeAdapter:
@@ -83,6 +111,30 @@ class FakeAdapter:
             }
 
 
+async def test_agent_does_not_complete_while_plan_has_pending_work(signed, monkeypatch):
+    run_id, _ = make_run(mode="agent")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        run.data = {**run.data, "agent_plan": {"steps": ["検証"], "pending": ["検証"], "verification": ""}}
+        db.commit()
+
+    class PrematureAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            yield {"kind": "response", "message": {"role": "assistant", "content": "完了しました。"}}
+
+    monkeypatch.setattr(engine, "Adapter", PrematureAdapter)
+    await engine.drive(run_id)
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run.status == "interrupted"
+        assert "検証" in run.data["reason"]
+        assert run.data["agent_completion_repairs"] == 1
+        assert db.scalar(select(Message).where(Message.conversation_id == run.conversation_id)) is None
+
+
 @pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])
 async def test_approval_resume_and_no_double_execution(signed, monkeypatch, mode):
     run_id, _ = make_run(mode=mode)
@@ -105,7 +157,7 @@ async def test_approval_resume_and_no_double_execution(signed, monkeypatch, mode
     await engine.drive(run_id)
     assert len(executions) == 1
     with SessionLocal() as db:
-        assert db.get(Run, run_id).status == "completed"
+        assert db.get(Run, run_id).status == ("interrupted" if mode == "agent" else "completed")
         sequence = list(
             db.scalars(
                 select(Event.sequence)
@@ -142,7 +194,7 @@ async def test_denied_tool_never_executes(signed, monkeypatch, mode):
         db.commit()
     await engine.drive(run_id)
     with SessionLocal() as db:
-        assert db.get(Run, run_id).status == "completed"
+        assert db.get(Run, run_id).status == ("interrupted" if mode == "agent" else "completed")
         call = db.scalar(select(ToolCall))
         assert "denied" in call.data["result"]["error"]
 
@@ -357,8 +409,10 @@ def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
     async def provisioner(kind, path, payload, timeout=120):
         assert kind == "browser-provisioner"
         if path == "/install":
-            return {"status": "installing", "failure": None}
-        return {"status": "ready", "failure": None}
+            return {"status": "installing", "failure": None,
+                    "progress": 42, "stage": "ダウンロード中"}
+        return {"status": "ready", "failure": None,
+                "progress": 100, "stage": "利用可能"}
 
     monkeypatch.setattr(routes, "runner_request", provisioner)
     response = signed.post("/api/v1/browser/enable")
@@ -367,9 +421,14 @@ def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
     response = signed.post("/api/v1/browser/install")
     assert response.status_code == 200
     assert response.json()["status"] == "installing"
+    assert response.json()["progress"] == 42
+    response = signed.get("/api/v1/browser/status")
+    assert response.status_code == 200
+    assert response.json()["progress"] == 100
     response = signed.get("/api/v1/settings")
     assert response.status_code == 200
     assert response.json()["data"]["browser_install_status"] == "ready"
+    assert response.json()["data"]["browser_install_progress"] == 100
     with SessionLocal() as db:
         rules = list(db.scalars(select(Permission)))
         browser = [row.data for row in rules if row.data.get("tool_id", "").startswith("browser_")]

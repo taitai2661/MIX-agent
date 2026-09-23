@@ -45,7 +45,7 @@ def normalize(server_response: dict) -> dict:
     """Convert registry data into a bounded, executable-neutral manifest."""
     server = server_response.get("server", server_response)
     if not isinstance(server, dict):
-        raise ValueError("Invalid Registry response")
+        raise ValueError("Invalid Registry response")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
     name = str(server.get("name") or "")
     if not name or len(name) > 255:
         raise ValueError("Invalid Registry server name")
@@ -78,7 +78,7 @@ def normalize(server_response: dict) -> dict:
             continue
         if kind == "oci":
             host = identifier.split("/", 1)[0].lower()
-            if not (host in OCI_HOSTS or host.endswith(".pkg.dev") or host.endswith(".azurecr.io")):
+            if not (host in OCI_HOSTS or host.endswith((".pkg.dev", ".azurecr.io"))):
                 continue
             if "@sha256:" not in identifier and ":" not in identifier.rsplit("/", 1)[-1]:
                 continue
@@ -155,4 +155,3 @@ async def detail(name: str, version: str = "latest") -> dict:
         raise ValueError("Invalid Registry server name")
     raw = await _get(f"/v0.1/servers/{quote(name, safe='')}/versions/{quote(version, safe='')}")
     return normalize(raw)
-

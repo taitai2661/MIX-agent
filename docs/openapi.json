@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MIX agent",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/health": {
@@ -585,7 +585,7 @@
     "/api/v1/settings/statistics": {
       "get": {
         "summary": "Settings Statistics",
-        "description": "Return privacy-minimal, local reliability statistics for the account.",
+        "description": "Return privacy-minimal, local reliability statistics for the account.\n\nAggregation happens in SQL so a busy account never loads a month of raw\nevent rows into memory just to render a summary.",
         "operationId": "settings_statistics_api_v1_settings_statistics_get",
         "responses": {
           "200": {
@@ -1410,6 +1410,21 @@
               "type": "string",
               "title": "Key"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "answers",
+                "conversation",
+                "activity"
+              ],
+              "type": "string",
+              "default": "conversation",
+              "title": "Scope"
+            }
           }
         ],
         "responses": {
@@ -1556,6 +1571,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/diagnostics": {
+      "get": {
+        "summary": "Settings Diagnostics",
+        "description": "Return a privacy-minimal operational snapshot for the signed-in owner.",
+        "operationId": "settings_diagnostics_api_v1_settings_diagnostics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticsView"
                 }
               }
             }
@@ -3628,6 +3662,29 @@
         "type": "object",
         "title": "AgentInputPatch"
       },
+      "AnswerEvaluationView": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "provided",
+              "needs_review",
+              "unanswered"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "reason"
+        ],
+        "title": "AnswerEvaluationView"
+      },
       "ApprovalDataView": {
         "properties": {
           "tool": {
@@ -3742,6 +3799,17 @@
             "type": "string",
             "title": "Model Id"
           },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
           "reason": {
             "type": "string",
             "title": "Reason"
@@ -3827,6 +3895,35 @@
           "file"
         ],
         "title": "Body_upload_api_v1_artifacts_post"
+      },
+      "ContextSummaryView": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "covered_count": {
+            "type": "integer",
+            "title": "Covered Count",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ContextSummaryView"
       },
       "ConversationFolderInput": {
         "properties": {
@@ -3987,6 +4084,26 @@
               }
             ],
             "title": "Message Id"
+          },
+          "context_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer_evaluation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerEvaluationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -4105,6 +4222,94 @@
           "decision"
         ],
         "title": "DecisionInput"
+      },
+      "DiagnosticsFailureView": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "failed",
+              "interrupted"
+            ],
+            "title": "Status"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "mode",
+          "created_at"
+        ],
+        "title": "DiagnosticsFailureView"
+      },
+      "DiagnosticsRunsView": {
+        "properties": {
+          "active": {
+            "type": "integer",
+            "title": "Active"
+          },
+          "failed_30d": {
+            "type": "integer",
+            "title": "Failed 30D"
+          },
+          "interrupted_30d": {
+            "type": "integer",
+            "title": "Interrupted 30D"
+          },
+          "stale_active": {
+            "type": "integer",
+            "title": "Stale Active"
+          },
+          "recent_failures": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticsFailureView"
+            },
+            "type": "array",
+            "title": "Recent Failures"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "failed_30d",
+          "interrupted_30d",
+          "stale_active",
+          "recent_failures"
+        ],
+        "title": "DiagnosticsRunsView"
+      },
+      "DiagnosticsView": {
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "services": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Services"
+          },
+          "runs": {
+            "$ref": "#/components/schemas/DiagnosticsRunsView"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checked_at",
+          "services",
+          "runs"
+        ],
+        "title": "DiagnosticsView"
       },
       "FeedbackInput": {
         "properties": {
@@ -5356,6 +5561,26 @@
             },
             "type": "array",
             "title": "Approvals"
+          },
+          "context_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer_evaluation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerEvaluationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -5492,6 +5717,11 @@
             "title": "Auto Retry Count",
             "default": 3
           },
+          "auto_dynamic_switching": {
+            "type": "boolean",
+            "title": "Auto Dynamic Switching",
+            "default": true
+          },
           "setup_complete": {
             "type": "boolean",
             "title": "Setup Complete",
@@ -5604,6 +5834,28 @@
               }
             ],
             "title": "Browser Install Failure"
+          },
+          "browser_install_progress": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Browser Install Progress"
+          },
+          "browser_install_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Browser Install Stage"
           },
           "browser_timeout_ms": {
             "type": "integer",

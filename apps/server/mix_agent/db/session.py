@@ -1,5 +1,5 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
 from mix_agent import config
 
@@ -13,6 +13,18 @@ engine = create_engine(
 
 
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
+
+
+@event.listens_for(Session, "after_commit")
+def _notify_committed_work(session):
+    from mix_agent.wakeups import committed
+    committed(session)
+
+
+@event.listens_for(Session, "after_rollback")
+def _discard_uncommitted_work(session):
+    from mix_agent.wakeups import rolled_back
+    rolled_back(session)
 
 
 def get_db():

@@ -6,6 +6,7 @@ from mix_agent.api import routes
 from mix_agent.db.models import (
     AutoReliabilityEvent,
     Conversation,
+    Event,
     Feedback,
     Message,
     Model,
@@ -18,6 +19,7 @@ from mix_agent.db.models import (
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import (
     ProviderContextLimitError,
+    ProviderIncompleteResponseError,
     is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
 )
@@ -61,6 +63,27 @@ def test_auto_settings_and_capability_filters(signed, monkeypatch):
                                               ["look"], 10, "a-unique-request")
         assert selected.id == vision
         assert details["candidate_count"] == 1
+
+
+def test_auto_dynamic_setting_preserves_existing_choices(signed, monkeypatch):
+    model_id = make_model({"tools": True}, model_id="setting-model")
+    assert signed.put("/api/v1/settings", json={"auto_model_ids": [model_id], "auto_retry_count": 2}).status_code == 200
+    first = signed.get("/api/v1/settings").json()["data"]
+    assert first["auto_dynamic_switching"] is True
+    assert signed.put("/api/v1/settings", json={"auto_dynamic_switching": False}).status_code == 200
+    saved = signed.get("/api/v1/settings").json()["data"]
+    assert saved["auto_model_ids"] == [model_id]
+    assert saved["auto_retry_count"] == 2
+    assert saved["auto_dynamic_switching"] is False
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    response = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": conversation})
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.data["snapshot"]["auto_dynamic_switching"] is False
+        assert run.data["auto_routing"]["dynamic_switching"] is False
 
 
 def test_auto_excludes_known_special_purpose_models(signed):
@@ -152,6 +175,7 @@ def test_auto_reliability_classifies_retryable_and_non_availability_errors(signe
     response = httpx.Response(429, headers={"retry-after": "30"}, request=httpx.Request("POST", "https://provider.test"))
     assert classify_failure(httpx.HTTPStatusError("limited", request=response.request, response=response)) == "rate_limit"
     assert classify_failure(ProviderContextLimitError("context limit")) == "context"
+    assert classify_failure(ProviderIncompleteResponseError("stream ended")) == "incomplete"
     assert classify_failure(ValueError("tool calling is not supported")) == "tool"
     unauthorized = httpx.Response(401, request=response.request)
     assert classify_failure(httpx.HTTPStatusError("unauthorized", request=unauthorized.request, response=unauthorized)) == "auth"
@@ -270,6 +294,36 @@ def test_auto_retries_only_before_visible_output(signed, monkeypatch):
     assert len(attempts) == 1
 
 
+def test_auto_reroutes_when_stream_ends_without_response(signed, monkeypatch):
+    first = make_model({}, context=None, model_id="empty-first")
+    second = make_model({}, context=None, model_id="empty-second")
+    assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [first, second],
+                                                  "allowed_domains": []}).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "empty-stream"})
+    attempts = []
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            if len(attempts) == 1:
+                yield {"kind": "text", "text": ""}
+                return
+            yield {"kind": "response", "message": {"role": "assistant", "content": "hello"},
+                   "tool_calls": [], "usage": {}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        assert db.get(Run, queued.json()["run_id"]).status == "completed"
+    assert set(attempts) == {"empty-first", "empty-second"}
+
+
 def test_auto_success_records_first_output_and_completion_timings(signed, monkeypatch):
     model_id = make_model({}, model_id="timed")
     assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [model_id],
@@ -369,6 +423,34 @@ def test_completed_answer_without_usage_does_not_record_tps(signed, monkeypatch)
         message = db.scalar(select(Message).where(Message.conversation_id == conversation,
                                                    Message.data["role"].as_string() == "assistant"))
         assert "performance" not in message.data
+
+
+def test_streaming_text_is_batched_without_losing_content(signed, monkeypatch):
+    """Fast token streams should not require one database commit per token."""
+    model_id = make_model({}, model_id="batched-stream")
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": model_id, "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "batched-stream"})
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            yield {"kind": "text", "text": "fast "}
+            yield {"kind": "text", "text": "stream"}
+            yield {"kind": "response", "message": {"role": "assistant", "content": "fast stream"},
+                   "tool_calls": [], "usage": {}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        events = db.scalars(select(Event).where(
+            Event.run_id == queued.json()["run_id"], Event.kind == "text"
+        ).order_by(Event.sequence)).all()
+        assert [event.data["text"] for event in events] == ["fast stream"]
 
 
 def test_auto_retry_prefers_another_provider_and_honors_retry_after(signed):

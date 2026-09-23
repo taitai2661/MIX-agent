@@ -5,23 +5,26 @@ import { ErrorBox, Field, Title } from "@/components/shared";
 import { useState } from "react";
 
 function useSettings() {
-  return useQuery({ queryKey: ["/settings"], queryFn: () => api("/settings") });
+  return useQuery({ queryKey: ["/settings"], queryFn: () => api("/settings"), refetchInterval: (query) => query.state.data?.data.browser_install_status === "installing" ? 3000 : false });
 }
 
 export function BrowserSettings() {
   const query = useSettings();
   const qc = useQueryClient();
   const [error, setError] = useState<unknown>(null);
+  const [startingInstall, setStartingInstall] = useState(false);
   if (!query.data) return <ErrorBox error={query.error} />;
   const data = query.data.data;
-  const status = String(data.browser_install_status || "not_installed");
-  const install = async () => { try { await api("/browser/enable", "POST"); await api("/browser/install", "POST"); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } };
+  const status = startingInstall ? "installing" : String(data.browser_install_status || "not_installed");
+  const progress = typeof data.browser_install_progress === "number" ? data.browser_install_progress : null;
+  const stage = data.browser_install_stage;
+  const install = async () => { setStartingInstall(true); setError(null); try { await api("/browser/enable", "POST"); await api("/browser/install", "POST"); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } finally { setStartingInstall(false); } };
   const payload = (form: FormData) => ({ browser_enabled: form.get("enabled") === "on", browser_timeout_ms: Number(form.get("timeout")), browser_locale: String(form.get("locale") || "ja-JP").trim(), browser_user_agent: String(form.get("userAgent") || "").trim(), browser_viewport_width: Number(form.get("viewportWidth")), browser_viewport_height: Number(form.get("viewportHeight")), browser_block_images: form.get("blockImages") === "on", allowed_domains: String(form.get("domains")).split("\n").map((x) => x.trim()).filter(Boolean) });
   return <><Title title="Browser" sub="Docker内のPlaywright ChromiumでWebページを操作します。" />
     <ErrorBox error={error || query.error} />
     <form className="card" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api("/settings", "PUT", payload(form)); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } }}>
       <Field label="Browserを有効にする"><input name="enabled" type="checkbox" defaultChecked={data.browser_enabled !== false} /></Field>
-      <section className="notice"><b>Chromium導入状況:</b> {({ not_installed: "未導入", installing: "導入中", ready: "利用可能", failed: "失敗" } as Record<string, string>)[status] || status}<br />{data.browser_install_failure || "Chromiumは専用ボリュームに保存されます。"}<br />{status !== "ready" && <Button type="button" onClick={install}>{status === "failed" ? "Browserのみ再試行" : "Browserを導入"}</Button>}</section>
+      <section className="notice" role="status" aria-live="polite"><b>Chromium導入状況:</b> {status === "installing" ? `インストール中${progress === null ? "" : ` ${progress}%`}` : ({ not_installed: "未導入", ready: "利用可能", failed: "失敗" } as Record<string, string>)[status] || status}<br />{status === "installing" ? stage || "Chromiumを導入しています。" : data.browser_install_failure || "Chromiumは専用ボリュームに保存されます。"}<br />{status !== "ready" && <Button type="button" onClick={install} disabled={status === "installing"}>{status === "installing" ? "インストール中…" : status === "failed" ? "Browserのみ再試行" : "Browserを導入"}</Button>}</section>
       <section className="notice"><b>実行方式:</b> Playwright + Chromium（ヘッドレス）。専用Dockerコンテナからegress proxy経由で通信し、ホスト、Docker Socket、ローカルネットワークにはアクセスできません。</section>
       <Field label="操作タイムアウト" hint="要素のクリック・入力・ページ読み込みを待つ上限です。3〜60秒。"><input name="timeout" type="number" min="3000" max="60000" step="1000" defaultValue={data.browser_timeout_ms ?? 15000} /> ms</Field>
       <Field label="ページの言語"><input name="locale" defaultValue={data.browser_locale || "ja-JP"} placeholder="ja-JP" /></Field>

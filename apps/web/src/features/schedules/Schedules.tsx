@@ -3,6 +3,7 @@ import { Button } from "@/components/button";
 import { ErrorBox, Title } from "@/components/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { PushControl } from "./PushControl";
 
 type Job = Row & { data: { name: string; target_type: "agent" | "conversation"; target_id: string; prompt: string; cron: string; timezone: string; enabled: boolean; catch_up: boolean; next_at?: string | null } };
 export function Schedules() {
@@ -18,6 +19,7 @@ export function Schedules() {
   const targets = form.target_type === "agent" ? agents.data || [] : conversations.data || [];
   const preset = ({"0 * * * *":"hourly", "0 9 * * *":"daily", "0 9 * * 1":"weekly"} as Record<string, string>)[form.cron] || "custom";
   return <main className="page"><Title title="定期実行" sub="Cron式またはフォーム相当の定期設定で、Agentと会話を自動実行します。" />
+    <PushControl />
     {error !== null && <ErrorBox error={error} />}<form className="stack" onSubmit={async e => { e.preventDefault(); try { await api("/scheduled-jobs", "POST", form); setForm({ ...form, name: "", prompt: "", target_id: "" }); refresh(); } catch (x) { setError(x); } }}>
       <input required placeholder="ジョブ名" value={form.name} onChange={e => setForm({...form, name:e.target.value})} />
       <select value={form.target_type} onChange={e => setForm({...form, target_type:e.target.value, target_id:""})}><option value="agent">保存済みAgentを独立実行</option><option value="conversation">既存会話へ投稿</option></select>

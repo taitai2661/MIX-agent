@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "store_id": "io.github.taitai2661.mix-agent",
+  "name": {
+    "en_US": "MIX-agent",
+    "ja_JP": "MIX-agent"
+  },
+  "description": {
+    "en_US": "Self-hosted AI workspace for a trusted home network.",
+    "ja_JP": "信頼できる家庭内ネットワーク向けのセルフホストAIワークスペース。"
+  },
+  "maintainer": "taitai2661",
+  "url": "https://github.com/taitai2661/MIX-agent"
+}

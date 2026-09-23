@@ -1,6 +1,7 @@
 """Add reusable skill storage."""
 
 from alembic import op
+
 from mix_agent.db.models import Skill, SkillRevision
 
 revision = "0002"

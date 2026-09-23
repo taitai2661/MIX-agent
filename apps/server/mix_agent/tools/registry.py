@@ -1,9 +1,11 @@
 import hashlib
 import json
 from pathlib import PurePosixPath
+
 from jsonschema import Draft202012Validator
 from sqlalchemy import select
-from mix_agent.db.models import Tool, Permission
+
+from mix_agent.db.models import Permission, Tool
 
 
 def definition(
@@ -112,6 +114,17 @@ BUILTINS = [
         ["command"],
         "ask",
     ),
+    definition(
+        "workspace_check",
+        "Run a fixed read-only workspace check without a shell. Kinds: git_status, git_diff_check, python_syntax. Python syntax requires a path.",
+        {
+            "kind": {"type": "string", "enum": ["git_status", "git_diff_check", "python_syntax"]},
+            "path": PATH,
+        },
+        ["kind"],
+        permission="allow",
+        parallel_safe=True,
+    ),
     definition("process_list", "List workspace processes", allowed_modes=("agent",)),
     definition("process_stop", "Stop a workspace process group", {"process_id": S}, ["process_id"], "ask", allowed_modes=("agent",)),
     definition("browser_open", "Open a permitted public URL", {"url": S}, ["url"], "ask"),
@@ -202,8 +215,10 @@ BUILTINS = [
     definition("memory_delete", "Delete existing memory with approval", {"id": S}, ["id"], "ask", "builtin"),
     definition(
         "update_plan",
-        "Publish a short user-facing task checklist, not private reasoning",
-        {"steps": {"type": "array", "maxItems": 20, "items": S}},
+        "Publish a short task checklist and record remaining work and verification. Clear pending only after verifying the requested outcome.",
+        {"steps": {"type": "array", "maxItems": 20, "items": S},
+         "pending": {"type": "array", "maxItems": 20, "items": S},
+         "verification": {"type": "string", "maxLength": 2000}},
         ["steps"],
         executor="builtin",
         allowed_modes=("agent",),

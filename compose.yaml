@@ -23,6 +23,7 @@ services:
       - manager-token:/manager-token
       - browser-token:/browser-token
       - browser-provisioner-token:/browser-provisioner-token
+      - browser-data:/browser-data
       - data:/data
       - policy:/policy
       - workspace:/workspace
@@ -155,6 +156,7 @@ services:
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: egress}
     environment:
       MCP_POLICY_FILE: /policy/mcp-policy.json
+      LOG_LEVEL: INFO
     volumes: ["policy:/policy:ro"]
     networks: [execution, mcp, internet]
     mem_limit: 256m

@@ -18,6 +18,9 @@ def test_folder_state_search_export_and_trash(signed):
     assert [row["id"] for row in signed.get("/api/v1/conversations?q=本文").json()] == [key]
     markdown = signed.get(f"/api/v1/conversations/{key}/markdown")
     assert markdown.status_code == 200 and "検索できる本文" in markdown.text
+    answers = signed.get(f"/api/v1/conversations/{key}/markdown?scope=answers")
+    assert answers.status_code == 200 and "検索できる本文" not in answers.text
+    assert signed.get(f"/api/v1/conversations/{key}/markdown?scope=invalid").status_code == 422
     assert signed.delete(f"/api/v1/conversations/{key}").status_code == 200
     assert [row["id"] for row in signed.get("/api/v1/conversations?state=trash").json()] == [key]
     assert signed.post(f"/api/v1/conversations/{key}/restore").status_code == 200

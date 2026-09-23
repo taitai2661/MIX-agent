@@ -28,6 +28,7 @@ class ArtifactView(BaseModel):
 
 class AutoSelectionView(BaseModel):
     model_id: str
+    model_name: str | None = None
     reason: str
     model_record_id: str | None = None
     profile: str | None = None
@@ -59,11 +60,24 @@ class MessageView(BaseModel):
     created_at: str
 
 
+class ContextSummaryView(BaseModel):
+    text: str
+    covered_count: int = 0
+    updated_at: str | None = None
+
+
+class AnswerEvaluationView(BaseModel):
+    status: Literal["provided", "needs_review", "unanswered"]
+    reason: str
+
+
 class ConversationRunView(BaseModel):
     id: str
     status: RunStatus
     reason: str | None = None
     message_id: str | None = None
+    context_summary: ContextSummaryView | None = None
+    answer_evaluation: AnswerEvaluationView | None = None
 
 
 class ConversationSelectionView(BaseModel):
@@ -154,6 +168,8 @@ class RunView(BaseModel):
     budget: RunBudgetView
     remaining: RunBudgetView
     approvals: list[ApprovalView]
+    context_summary: ContextSummaryView | None = None
+    answer_evaluation: AnswerEvaluationView | None = None
 
 
 class StatisticsSummaryView(BaseModel):
@@ -180,6 +196,26 @@ class StatisticsView(BaseModel):
     retention_days: int
     total: StatisticsSummaryView
     groups: list[StatisticsGroupView]
+
+
+class DiagnosticsFailureView(BaseModel):
+    status: Literal["failed", "interrupted"]
+    mode: str
+    created_at: str
+
+
+class DiagnosticsRunsView(BaseModel):
+    active: int
+    failed_30d: int
+    interrupted_30d: int
+    stale_active: int
+    recent_failures: list[DiagnosticsFailureView]
+
+
+class DiagnosticsView(BaseModel):
+    checked_at: str
+    services: dict[str, str]
+    runs: DiagnosticsRunsView
 
 
 class ToolView(BaseModel):
@@ -388,6 +424,7 @@ class SettingsInput(Input):
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
     auto_retry_count: int = Field(default=3, ge=0)
+    auto_dynamic_switching: bool = True
     setup_complete: bool = False
     brave_api_key: str | None = None
     tavily_api_key: str | None = None
@@ -400,6 +437,8 @@ class SettingsInput(Input):
     browser_install_requested: bool = False
     browser_install_status: Literal["not_installed", "installing", "ready", "failed"] = "not_installed"
     browser_install_failure: str | None = None
+    browser_install_progress: int | None = None
+    browser_install_stage: str | None = None
     browser_timeout_ms: int = Field(default=15000, ge=3000, le=60000)
     browser_locale: str = Field(default="ja-JP", min_length=2, max_length=35)
     browser_user_agent: str = Field(default="", max_length=500)

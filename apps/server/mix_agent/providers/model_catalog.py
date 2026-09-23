@@ -7,7 +7,6 @@ unknown rather than receiving a guessed limit.
 
 from __future__ import annotations
 
-
 # Keep entries scoped to a provider wire format where possible.  Prefixes also
 # cover dated snapshot identifiers published by the same provider.
 _PREFIXES: dict[str, tuple[tuple[str, int], ...]] = {

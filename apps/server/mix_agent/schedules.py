@@ -3,13 +3,21 @@
 The database is the source of truth: process-local polling never decides whether
 an occurrence has already been claimed.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from mix_agent.db.models import ScheduledJob, ScheduledRun, Notification, Run, now
+
+from mix_agent.db.models import Notification, ScheduledJob, ScheduledRun, now
 
 FIELDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))
+
+# Startup reconciliation bounds: never look further back than this window and
+# never create more than this many historical occurrence rows per job.
+RECONCILE_HORIZON = timedelta(days=30)
+MAX_RECONCILE_OCCURRENCES = 5000
+MAX_MISSED_ROWS = 200
 
 def _part(value, lower, upper):
     result = set()
@@ -31,21 +39,27 @@ def parse(expression):
     try: return [_part(part, *bounds) for part, bounds in zip(parts, FIELDS)]
     except (ValueError, TypeError): raise ValueError("Cron式が不正です")
 
-def matches(expression, instant, tz):
-    minute, hour, day, month, weekday = parse(expression)
+def _matches(parsed, instant, tz):
+    minute, hour, day, month, weekday = parsed
     local = instant.astimezone(ZoneInfo(tz))
     # cron weekday uses Sunday=0; Python Monday=0.
     return (local.minute in minute and local.hour in hour and local.day in day and local.month in month and (local.weekday() + 1) % 7 in weekday)
 
-def next_at(expression, tz, after=None):
-    parse(expression)
-    try: ZoneInfo(tz)
-    except ZoneInfoNotFoundError as exc: raise ValueError("タイムゾーンが不正です") from exc
-    candidate = (after or now()).astimezone(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1)
+def matches(expression, instant, tz):
+    return _matches(parse(expression), instant, tz)
+
+def _next(parsed, tz, after=None):
+    candidate = (after or now()).astimezone(UTC).replace(second=0, microsecond=0) + timedelta(minutes=1)
     for _ in range(527_040):
-        if matches(expression, candidate, tz): return candidate
+        if _matches(parsed, candidate, tz): return candidate
         candidate += timedelta(minutes=1)
     raise ValueError("次回実行時刻を計算できません")
+
+def next_at(expression, tz, after=None):
+    parsed = parse(expression)
+    try: ZoneInfo(tz)
+    except ZoneInfoNotFoundError as exc: raise ValueError("タイムゾーンが不正です") from exc
+    return _next(parsed, tz, after)
 
 def notify(db, owner, kind, title, scheduled_run=None):
     db.add(Notification(owner_id=owner, data={"kind": kind, "title": title, "scheduled_run_id": scheduled_run.id if scheduled_run else None}))
@@ -67,7 +81,7 @@ def tick(db, launch):
         from mix_agent.api.routes import enqueue_scheduled_run
         try:
             run = enqueue_scheduled_run(db, job.owner_id, job, scheduled); db.commit(); launch(run.id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             db.rollback()
     for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean() == True)):
         data = job.data
@@ -82,29 +96,42 @@ def tick(db, launch):
         from mix_agent.api.routes import enqueue_scheduled_run
         try:
             run = enqueue_scheduled_run(db, job.owner_id, job, scheduled); db.commit(); launch(run.id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
             db.rollback(); scheduled = db.get(ScheduledRun, scheduled.id)
             if scheduled:
                 scheduled.status = "failed"; scheduled.data = {"reason": str(exc)[:300]}; notify(db, job.owner_id, "schedule.failed", data["name"], scheduled); db.commit()
 
 def reconcile(db, launch):
-    """Mark downtime occurrences missed; optional catch-up runs only the latest."""
+    """Mark downtime occurrences missed; optional catch-up runs only the latest.
+
+    Occurrences are found by jumping from match to match (never scanning every
+    minute), the look-back window is bounded, and the number of historical rows
+    created per job is capped so a long-dormant job cannot hang startup.
+    """
     current = now().replace(second=0, microsecond=0)
     for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean() == True)):
+        try:
+            parsed, tz = parse(job.data["cron"]), job.data["timezone"]
+            ZoneInfo(tz)
+        except (KeyError, ValueError, ZoneInfoNotFoundError):
+            continue
         latest = db.scalar(select(ScheduledRun).where(ScheduledRun.job_id == job.id).order_by(ScheduledRun.scheduled_at.desc()))
         cursor = (latest.scheduled_at if latest else job.created_at).replace(second=0, microsecond=0)
+        cursor = max(cursor, current - RECONCILE_HORIZON)
         occurrences = []
-        while cursor < current:
-            cursor += timedelta(minutes=1)
-            if matches(job.data["cron"], cursor, job.data["timezone"]): occurrences.append(cursor)
+        while len(occurrences) < MAX_RECONCILE_OCCURRENCES:
+            try: candidate = _next(parsed, tz, cursor)
+            except ValueError: break
+            if candidate >= current: break
+            occurrences.append(candidate); cursor = candidate
         if not occurrences: continue
         chosen = occurrences[-1] if job.data.get("catch_up") else None
-        for occurrence in occurrences:
+        from mix_agent.api.routes import enqueue_scheduled_run
+        for occurrence in occurrences[-MAX_MISSED_ROWS:]:
             scheduled = claim(db, job, occurrence)
             if not scheduled: continue
             if occurrence != chosen:
                 scheduled.status = "missed"; scheduled.data = {"reason": "サーバー停止中"}; notify(db, job.owner_id, "schedule.missed", job.data["name"], scheduled)
             else:
-                from mix_agent.api.routes import enqueue_scheduled_run
                 run = enqueue_scheduled_run(db, job.owner_id, job, scheduled); launch(run.id)
         db.commit()

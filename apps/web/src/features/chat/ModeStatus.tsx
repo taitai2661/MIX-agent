@@ -4,10 +4,12 @@ export function ModeStatus({
   mode,
   model,
   agent,
+  budget: runBudget,
 }: {
   mode: string;
   model?: Row;
   agent?: Row;
+  budget?: { max_seconds?: number | null; max_steps?: number | null; max_tool_calls?: number | null };
 }) {
   const caps = { ...model?.data.capabilities, ...model?.data.overrides };
   const canThink = caps.reasoning === true && !!model?.data.reasoning_control;
@@ -16,20 +18,25 @@ export function ModeStatus({
     caps.tools === true || (caps.tools == null && probe?.status === "supported");
   const noTools =
     Array.isArray(agent?.data.tool_ids) && agent.data.tool_ids.length === 0;
-  const budget = mode === "chat"
-    ? "15分・8ステップ・8 Tool Call"
+  const policy = mode === "chat"
+    ? { seconds: 1200, steps: 12, calls: 12 }
     : mode === "thinking"
-      ? "30分・16ステップ・16 Tool Call"
-      : "既定60分・200ステップ・500 Tool Call";
+      ? { seconds: 2700, steps: 24, calls: 24 }
+      : { seconds: 5400, steps: 300, calls: 750 };
+  const agentData = agent?.data as { max_seconds?: number; max_steps?: number; max_tool_calls?: number } | undefined;
+  const seconds = runBudget?.max_seconds ?? (mode === "agent" ? agentData?.max_seconds ?? policy.seconds : policy.seconds);
+  const steps = runBudget?.max_steps ?? (mode === "agent" ? agentData?.max_steps ?? policy.steps : policy.steps);
+  const calls = runBudget?.max_tool_calls ?? (mode === "agent" ? agentData?.max_tool_calls ?? policy.calls : policy.calls);
+  const budget = `${seconds / 60}分・${steps}ステップ・${calls} Tool Call`;
   return (
     <p className="mode-status" role="status">
       {mode === "chat"
-        ? "すばやく直接答え、必要な場合だけ思考・検索・作成・実行を使います。"
+        ? "会話の文脈に合わせて答え、必要な調査や小さな作業を進めます。"
         : mode === "thinking"
           ? "前提・別案・見落としを深く検討し、重要な結論を確認してから答えます。"
-          : "計画・実行・途中検証・修正を繰り返し、完了または本当の停止条件まで進めます。"}
+          : "計画・実行・検証・修正を繰り返し、成果を確認できた場合に完了します。"}
       <span>実行予算: {budget}。選択したモードは実行中に変わりません。</span>
-      {mode !== "agent" && <span>計画・委任・バックグラウンド処理・再開・自動Skill学習は agent 専用です。</span>}
+      {mode !== "agent" && <span>計画・バックグラウンド処理・再開・自動Skill学習は agent 専用です。</span>}
       {model && mode !== "agent" && !canThink && (
         <span>
           {mode === "thinking"

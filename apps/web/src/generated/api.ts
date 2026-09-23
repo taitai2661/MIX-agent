@@ -339,6 +339,9 @@ export interface paths {
         /**
          * Settings Statistics
          * @description Return privacy-minimal, local reliability statistics for the account.
+         *
+         *     Aggregation happens in SQL so a busy account never loads a month of raw
+         *     event rows into memory just to render a summary.
          */
         get: operations["settings_statistics_api_v1_settings_statistics_get"];
         put?: never;
@@ -658,6 +661,26 @@ export interface paths {
         };
         /** Conversation Tool Calls */
         get: operations["conversation_tool_calls_api_v1_conversations__key__tool_calls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Settings Diagnostics
+         * @description Return a privacy-minimal operational snapshot for the signed-in owner.
+         */
+        get: operations["settings_diagnostics_api_v1_settings_diagnostics_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1430,6 +1453,16 @@ export interface components {
                 };
             } | null;
         };
+        /** AnswerEvaluationView */
+        AnswerEvaluationView: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "provided" | "needs_review" | "unanswered";
+            /** Reason */
+            reason: string;
+        };
         /** ApprovalDataView */
         ApprovalDataView: {
             /** Tool */
@@ -1477,6 +1510,8 @@ export interface components {
         AutoSelectionView: {
             /** Model Id */
             model_id: string;
+            /** Model Name */
+            model_name?: string | null;
             /** Reason */
             reason: string;
             /** Model Record Id */
@@ -1502,6 +1537,18 @@ export interface components {
         Body_upload_api_v1_artifacts_post: {
             /** File */
             file: string;
+        };
+        /** ContextSummaryView */
+        ContextSummaryView: {
+            /** Text */
+            text: string;
+            /**
+             * Covered Count
+             * @default 0
+             */
+            covered_count: number;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /** ConversationFolderInput */
         ConversationFolderInput: {
@@ -1553,6 +1600,8 @@ export interface components {
             reason?: string | null;
             /** Message Id */
             message_id?: string | null;
+            context_summary?: components["schemas"]["ContextSummaryView"] | null;
+            answer_evaluation?: components["schemas"]["AnswerEvaluationView"] | null;
         };
         /** ConversationSelectionView */
         ConversationSelectionView: {
@@ -1593,6 +1642,41 @@ export interface components {
              * @enum {string}
              */
             decision: "once" | "always" | "denied";
+        };
+        /** DiagnosticsFailureView */
+        DiagnosticsFailureView: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "failed" | "interrupted";
+            /** Mode */
+            mode: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** DiagnosticsRunsView */
+        DiagnosticsRunsView: {
+            /** Active */
+            active: number;
+            /** Failed 30D */
+            failed_30d: number;
+            /** Interrupted 30D */
+            interrupted_30d: number;
+            /** Stale Active */
+            stale_active: number;
+            /** Recent Failures */
+            recent_failures: components["schemas"]["DiagnosticsFailureView"][];
+        };
+        /** DiagnosticsView */
+        DiagnosticsView: {
+            /** Checked At */
+            checked_at: string;
+            /** Services */
+            services: {
+                [key: string]: string;
+            };
+            runs: components["schemas"]["DiagnosticsRunsView"];
         };
         /** FeedbackInput */
         FeedbackInput: {
@@ -2049,6 +2133,8 @@ export interface components {
             remaining: components["schemas"]["RunBudgetView"];
             /** Approvals */
             approvals: components["schemas"]["ApprovalView"][];
+            context_summary?: components["schemas"]["ContextSummaryView"] | null;
+            answer_evaluation?: components["schemas"]["AnswerEvaluationView"] | null;
         };
         /** ScheduledJobInput */
         ScheduledJobInput: {
@@ -2109,6 +2195,11 @@ export interface components {
              */
             auto_retry_count: number;
             /**
+             * Auto Dynamic Switching
+             * @default true
+             */
+            auto_dynamic_switching: boolean;
+            /**
              * Setup Complete
              * @default false
              */
@@ -2149,6 +2240,10 @@ export interface components {
             browser_install_status: "not_installed" | "installing" | "ready" | "failed";
             /** Browser Install Failure */
             browser_install_failure?: string | null;
+            /** Browser Install Progress */
+            browser_install_progress?: number | null;
+            /** Browser Install Stage */
+            browser_install_stage?: string | null;
             /**
              * Browser Timeout Ms
              * @default 15000
@@ -3669,7 +3764,9 @@ export interface operations {
     };
     export_conversation_markdown_api_v1_conversations__key__markdown_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "answers" | "conversation" | "activity";
+            };
             header?: never;
             path: {
                 key: string;
@@ -3791,6 +3888,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settings_diagnostics_api_v1_settings_diagnostics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticsView"];
                 };
             };
         };

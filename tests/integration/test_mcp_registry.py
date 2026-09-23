@@ -1,7 +1,5 @@
-import json
 
 import pytest
-
 from mix_agent.mcp.protocol import validate_schema
 from mix_agent.mcp.registry import normalize
 
@@ -40,4 +38,3 @@ def test_external_schema_refs_and_excessive_depth_are_rejected():
         current = current["properties"]["next"]
     with pytest.raises(ValueError):
         validate_schema(value)
-

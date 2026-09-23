@@ -47,6 +47,11 @@ def _apply_domains(query, domains):
     return query + " " + " ".join("site:" + domain for domain in cleaned)
 
 
+def _fetch_allowed_domains(db, owner_id):
+    setting = db.scalar(select(Settings).where(Settings.owner_id == owner_id))
+    return (setting.data.get("allowed_domains") or []) if setting else []
+
+
 def _page_text(html):
     """Extract title, headings, links, and body text from HTML."""
     soup = BeautifulSoup(html, "html.parser")
@@ -255,7 +260,7 @@ async def execute(db, run, tool, args):
                 credentials = {**credentials, "oauth": oauth, "headers": {**credentials.get("headers", {}), "Authorization": "Bearer " + oauth["access_token"]}}
                 conn.data = {**conn.data, "secret_id": store_secret(db, conn.owner_id, json.dumps(credentials), "mcp")}
                 db.commit()
-            except Exception:
+            except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                 conn.data = {**conn.data, "state": "needs_authorization", "authorization_required": True, "enabled": False}
                 db.commit()
                 raise ValueError("MCPの再認証が必要です")
@@ -300,7 +305,7 @@ async def execute(db, run, tool, args):
             )
             result["artifact"] = artifact
     elif name == "web_fetch":
-        html = await fetch_public(args["url"])
+        html = await fetch_public(args["url"], allowed_domains=_fetch_allowed_domains(db, run.owner_id))
         title, description, published, headings, links, text = _page_text(html)
         if args.get("format") == "markdown":
             text = _page_markdown(html)
@@ -320,7 +325,8 @@ async def execute(db, run, tool, args):
             "truncated": offset + max_chars < total,
         }
     elif name == "web_fetch_pdf":
-        raw, content_type = await fetch_public_bytes(args["url"], max_bytes=20 * 1024 * 1024)
+        raw, content_type = await fetch_public_bytes(args["url"], max_bytes=20 * 1024 * 1024,
+                                                      allowed_domains=_fetch_allowed_domains(db, run.owner_id))
         if "html" in content_type.lower() and not raw.lstrip().startswith(b"%PDF"):
             raise ValueError("URLはPDFではありません（HTMLが返されました）")
         max_pages = max(1, min(100, int(args.get("max_pages", 100) or 100)))
@@ -378,7 +384,7 @@ async def execute(db, run, tool, args):
     elif name == "skill_update":
         result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
     elif name == "update_plan":
-        result = {"steps": args["steps"]}
+        result = {key: args[key] for key in ("steps", "pending", "verification") if key in args}
     elif name == "schedule_list":
         from mix_agent.schedules import next_at
 
@@ -455,7 +461,7 @@ async def execute(db, run, tool, args):
             url = args.get("url", "")
             if not url:
                 raise ValueError("URL is required")
-            raw, content_type = await fetch_public_bytes(url)
+            raw, content_type = await fetch_public_bytes(url, allowed_domains=_fetch_allowed_domains(db, run.owner_id))
             if "pdf" in content_type.lower() or raw.lstrip().startswith(b"%PDF"):
                 text, _ = await asyncio.wait_for(asyncio.to_thread(_extract_pdf_text, raw, 100), timeout=60)
                 title = args.get("title", "") or url
@@ -470,7 +476,7 @@ async def execute(db, run, tool, args):
             result = knowledge.add(db, run.owner_id, content, title=args.get("title", ""), source_type="text", source_ref="", memo=args.get("memo", ""))
     elif name == "web_clip_save":
         url = args["url"]
-        raw, content_type = await fetch_public_bytes(url)
+        raw, content_type = await fetch_public_bytes(url, allowed_domains=_fetch_allowed_domains(db, run.owner_id))
         if "pdf" in content_type.lower() or raw.lstrip().startswith(b"%PDF"):
             text, _ = await asyncio.wait_for(asyncio.to_thread(_extract_pdf_text, raw, 100), timeout=60)
             title = args.get("title", "") or url
@@ -489,13 +495,13 @@ async def execute(db, run, tool, args):
         settings_row = db.get(Settings, "settings")
         if settings_row and isinstance(settings_row.data.get("tool_output_inline_limit"), int):
             inline_limit = max(1000, min(100000, settings_row.data["tool_output_inline_limit"]))
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
         pass
     if len(raw) > inline_limit:
         artifact = save_artifact(db, run.owner_id, raw.encode(), "tool-result.json", "application/json", kind="context-tool-output")
         try:
             existing_refs = list(run.data.get("tool_refs") or [])
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             existing_refs = []
         if artifact["artifact_id"] not in existing_refs:
             run.data = {**run.data, "tool_refs": [*existing_refs, artifact["artifact_id"]]}

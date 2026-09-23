@@ -1,6 +1,7 @@
 """Add privacy-minimal completed-answer performance history."""
 
 from alembic import op
+
 from mix_agent.db.models import PerformanceEvent
 
 revision = "0007"

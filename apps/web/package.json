@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.11.0",
@@ -18,7 +18,7 @@
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-markdown": "^10.1.0",
+    "react-markdown": "^10.2.0",
     "react-router-dom": "^7.6.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.2.0"

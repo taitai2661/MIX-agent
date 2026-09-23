@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0009"
 down_revision = "0008"

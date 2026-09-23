@@ -31,9 +31,13 @@ class ProviderContextLimitError(RuntimeError):
     """A provider explicitly rejected the request for exceeding its context limit."""
 
 
+class ProviderIncompleteResponseError(RuntimeError):
+    """The provider stream ended before returning its final response."""
+
+
 def is_retryable_provider_error(exc):
     """Return whether a provider failure is safe to retry on another model."""
-    if is_context_limit_error(exc):
+    if isinstance(exc, ProviderIncompleteResponseError) or is_context_limit_error(exc):
         return True
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
         return True
@@ -242,14 +246,14 @@ class Adapter:
                         {"type": "input_image", "image_url": x} for x in m["images"]
                     ]
                 inputs.append({"role": m["role"], "content": content})
-        args = dict(
-            model=model,
-            input=inputs,
-            instructions=instructions,
-            stream=True,
-            store=False,
-            max_output_tokens=settings.get("max_output_tokens", 4096),
-            tools=[
+        args = {
+            "model": model,
+            "input": inputs,
+            "instructions": instructions,
+            "stream": True,
+            "store": False,
+            "max_output_tokens": settings.get("max_output_tokens", 4096),
+            "tools": [
                 {
                     "type": "function",
                     "name": t["model_name"],
@@ -258,7 +262,7 @@ class Adapter:
                 }
                 for t in tools
             ],
-        )
+        }
         options = request_options(settings)
         if options is not None:
             args.update(options)
@@ -309,9 +313,12 @@ class Adapter:
                         {"type": "image_url", "image_url": {"url": x}} for x in m["images"]
                     ]
                 wire.append({"role": m["role"], "content": content})
-        args = dict(
-            model=model, messages=wire, stream=True, max_tokens=settings.get("max_output_tokens", 4096)
-        )
+        args = {
+            "model": model,
+            "messages": wire,
+            "stream": True,
+            "max_tokens": settings.get("max_output_tokens", 4096),
+        }
         if tools:
             args["tools"] = [
                 {
@@ -422,16 +429,16 @@ class Adapter:
                 wire[-1]["content"].extend(entry["content"])
             else:
                 wire.append(entry)
-        args = dict(
-            model=model,
-            system=system,
-            messages=wire,
-            max_tokens=settings.get("max_output_tokens", 4096),
-            tools=[
+        args = {
+            "model": model,
+            "system": system,
+            "messages": wire,
+            "max_tokens": settings.get("max_output_tokens", 4096),
+            "tools": [
                 {"name": t["model_name"], "description": t["description"], "input_schema": t["input_schema"]}
                 for t in tools
             ],
-        )
+        }
         options = request_options(settings)
         if options is not None:
             args.update(options)
@@ -441,15 +448,17 @@ class Adapter:
             args["thinking"] = {"type": "enabled", "budget_tokens": min(1024, args["max_tokens"] - 1)}
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "tool", "name": "mix_tool_probe"}
-        async with AsyncAnthropic(api_key=self.key, base_url=self.url, max_retries=0) as client:
-            async with client.messages.stream(**args) as stream:
-                async for event in stream:
-                    if event.type == "content_block_delta":
-                        if event.delta.type == "text_delta":
-                            yield {"kind": "text", "text": event.delta.text}
-                        elif event.delta.type == "thinking_delta" and show_summary(mode, settings):
-                            yield {"kind": "reasoning", "text": event.delta.thinking}
-                final = await stream.get_final_message()
+        async with (
+            AsyncAnthropic(api_key=self.key, base_url=self.url, max_retries=0) as client,
+            client.messages.stream(**args) as stream,
+        ):
+            async for event in stream:
+                if event.type == "content_block_delta":
+                    if event.delta.type == "text_delta":
+                        yield {"kind": "text", "text": event.delta.text}
+                    elif event.delta.type == "thinking_delta" and show_summary(mode, settings):
+                        yield {"kind": "reasoning", "text": event.delta.thinking}
+            final = await stream.get_final_message()
         if final.stop_reason not in ("end_turn", "tool_use", "stop_sequence"):
             raise RuntimeError("Provider stopped before completion")
         native = [x.model_dump(mode="json", exclude_none=True) for x in final.content]

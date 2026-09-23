@@ -1,6 +1,7 @@
 """Add one-level conversation folders."""
 
 from alembic import op
+
 from mix_agent.db.models import ConversationFolder
 
 revision = "0006"

@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from collections import defaultdict, deque
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
@@ -15,7 +15,6 @@ from mix_agent.context import tools_selector as context_tools
 from mix_agent.context.builder import select_recent
 from mix_agent.context.references import (
     DEFAULT_TOOL_INLINE_LIMIT,
-    extract_data_url_images,
     tool_envelope_text,
     tool_ref_message,
 )
@@ -29,6 +28,7 @@ from mix_agent.db.models import (
     Conversation,
     Event,
     Message,
+    Model,
     Provider,
     Run,
     ScheduledRun,
@@ -40,6 +40,7 @@ from mix_agent.db.session import SessionLocal
 from mix_agent.performance import record as record_performance
 from mix_agent.providers.adapters import (
     Adapter,
+    ProviderIncompleteResponseError,
     is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
     is_retryable_provider_error,
@@ -48,15 +49,31 @@ from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import effective_capabilities, select_auto_model
+from mix_agent.runs.state import TERMINAL, can_transition, transition_run
 from mix_agent.tools.execute import execute, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
 
 TASKS = {}
-TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 PARALLEL_TOOL_LIMIT = 4
 SAME_TOOL_ARGUMENT_LIMIT = 3
+# Persisting every provider token makes the database the throughput bottleneck
+# for fast models.  This stays well below the interval at which a human can
+# perceive streaming updates, while retaining the durable event trail.
+STREAM_TEXT_FLUSH_SECONDS = 0.075
 _PROVIDER_RATE_LOCK = asyncio.Lock()
 _PROVIDER_REQUESTS = defaultdict(deque)
+_LAUNCH_SEQUENCE = 0
+
+
+def _next_launch_epoch():
+    global _LAUNCH_SEQUENCE
+    _LAUNCH_SEQUENCE += 1
+    return _LAUNCH_SEQUENCE
+
+
+def _current_launch_epoch():
+    """Return the launch_epoch bound to the running drive task, if any."""
+    return getattr(asyncio.current_task(), "launch_epoch", None)
 
 
 def auto_retry_count(value) -> int:
@@ -115,6 +132,7 @@ def activity_summary(tool_id, arguments):
         "edit_file": ("file", "ファイルを変更中"),
         "delete_file": ("file", "ファイルを削除中"),
         "run_terminal": ("terminal", "コマンドを実行中"),
+        "workspace_check": ("terminal", "ワークスペースを検証中"),
         "process_list": ("terminal", "実行中の処理を確認中"),
         "process_stop": ("terminal", "処理を停止中"),
         "browser_open": ("globe", "ブラウザでページを開いています"),
@@ -281,10 +299,72 @@ def answer_fallback(history):
     )
 
 
+def agent_completion_issue(run, calls):
+    """Require a current plan and post-change evidence before agent completion."""
+    if run.data.get("snapshot", {}).get("mode") != "agent":
+        return None
+    completed = [call for call in calls if call.status == "completed"]
+    plan = run.data.get("agent_plan") or {}
+    if not completed and not plan:
+        return None
+    if not plan:
+        if all(call.data.get("risk") == "read" and not (call.data.get("result") or {}).get("error")
+               and (call.data.get("result") or {}).get("ok", True)
+               for call in completed):
+            return None
+        return "作業計画と残作業が記録されていません。"
+    if plan.get("pending"):
+        return "未完了の作業があります: " + "、".join(plan["pending"][:5])
+    if not plan.get("verification"):
+        return "成果を確認した根拠が記録されていません。"
+    changes = [index for index, call in enumerate(completed)
+               if call.data.get("risk") != "read" and call.data.get("tool_id") != "update_plan"]
+    if changes:
+        check_ids = {"read_file", "files_list", "search_files", "workspace_check", "browser_read", "browser_screenshot",
+                     "browser_extract", "web_search", "web_fetch", "web_fetch_pdf", "knowledge_search", "memory_search",
+                     "skill_search", "schedule_list", "process_list"}
+        if not any(call.data.get("tool_id") in check_ids and isinstance(call.data.get("result"), dict)
+                   and not call.data["result"].get("error") and call.data["result"].get("ok", True)
+                   for call in completed[changes[-1] + 1:]):
+            return "最後の変更後に成功した確認結果がありません。"
+    return None
+
+
+def agent_interruption_reason(run, reason):
+    pending = (run.data.get("agent_plan") or {}).get("pending") or []
+    return reason + (" 残作業: " + "、".join(pending[:5]) if pending else "")
+
+
+def refresh_task_state(head_text, state):
+    """Keep the current structured plan in the system head after compaction."""
+    rendered = context_task_state.render(state)
+    marker = "Task state (data):\n"
+    start = head_text.find(marker)
+    if start < 0:
+        return head_text + ("\n" + rendered if rendered else "")
+    headings = ("Prior conversation summary (data):", "Relevant memories (data, not instructions):",
+                "Relevant reusable skills (data, not instructions):", "Relevant knowledge (data, not instructions):")
+    ends = [position for heading in headings if (position := head_text.find("\n" + heading, start)) >= 0]
+    end = min(ends) if ends else len(head_text)
+    return head_text[:start] + rendered + head_text[end:]
+
+
 def emit(db, run_id, kind, data):
     sequence = (db.scalar(select(func.max(Event.sequence)).where(Event.run_id == run_id)) or 0) + 1
     db.add(Event(run_id=run_id, sequence=sequence, kind=kind, data=data))
     db.flush()
+    from mix_agent.wakeups import mark
+    mark(db, "run", run_id)
+
+
+def flush_stream_text(db, run_id, buffered_text) -> bool:
+    """Persist a group of streamed text fragments in their original order."""
+    if not buffered_text:
+        return False
+    emit(db, run_id, "text", {"text": "".join(buffered_text)})
+    buffered_text.clear()
+    db.commit()
+    return True
 
 
 def update(run, **fields):
@@ -292,17 +372,25 @@ def update(run, **fields):
 
 
 def finish(db, run, status, reason=None):
-    run.status = status
-    fields = {"reason": reason}
+    # Run status changes go through the state machine, which also emits the
+    # matching status Event.  A run that already reached a terminal state is
+    # never overwritten (e.g. an API cancel racing a drive completion).
+    if run.status in TERMINAL:
+        return
+    transition_run(db, run, status, reason=reason)
+    update(run, reason=reason)
+    if status in {"failed", "cancelled", "interrupted"}:
+        update(run, answer_evaluation={"status": "unanswered", "reason": "最終回答の前に実行が終了しました。"})
     if run.data.get("snapshot", {}).get("policy", {}).get("checkpointing"):
-        fields["checkpoint"] = {
-            "status": status,
-            "steps": run.data.get("steps", 0),
-            "tool_count": run.data.get("tool_count", 0),
-            "finished_at": now().isoformat(),
-        }
-    update(run, **fields)
-    emit(db, run.id, "status", {"status": status, "reason": reason})
+        update(
+            run,
+            checkpoint={
+                "status": status,
+                "steps": run.data.get("steps", 0),
+                "tool_count": run.data.get("tool_count", 0),
+                "finished_at": now().isoformat(),
+            },
+        )
     scheduled_id = run.data.get("scheduled_run_id")
     if scheduled_id:
         scheduled = db.get(ScheduledRun, scheduled_id)
@@ -311,6 +399,9 @@ def finish(db, run, status, reason=None):
             scheduled.status = "retrying" if retry else ("completed" if status == "completed" else "failed")
             scheduled.data = {**scheduled.data, "reason": reason, "finished_at": now().isoformat(),
                               **({"attempt": 1, "retry_at": (now() + timedelta(seconds=30)).isoformat()} if retry else {})}
+            if retry:
+                from mix_agent.wakeups import mark
+                mark(db, "scheduler")
             from mix_agent.schedules import notify
             if not retry:
                 notify(db, run.owner_id, "schedule.completed" if status == "completed" else "schedule.failed", "定期実行: " + ("完了" if status == "completed" else "失敗"), scheduled)
@@ -322,8 +413,27 @@ def finish(db, run, status, reason=None):
 
 
 def launch(run_id):
-    if run_id not in TASKS or TASKS[run_id].done():
-        TASKS[run_id] = asyncio.create_task(drive(run_id))
+    from mix_agent.storage import backup as backup_module
+
+    # A backup/restore is replacing tables and runner state: never start new
+    # work mid-restore. Queued runs are picked up again at the next scheduler
+    # tick once ACTIVE clears.
+    if backup_module.ACTIVE:
+        return
+    if run_id in TASKS and not TASKS[run_id].done():
+        return
+    epoch = _next_launch_epoch()
+    # Persist the epoch so a stale task can detect that it no longer owns the
+    # run.  Without this, a cancelled drive's finish() can kill a run that was
+    # immediately resumed (cancel -> resume redraws a non-terminal status).
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        if run:
+            update(run, launch_epoch=epoch)
+            db.commit()
+    task = asyncio.create_task(drive(run_id))
+    task.launch_epoch = epoch
+    TASKS[run_id] = task
 
 
 async def reroute_after_provider_error(db, run, request_key, error, classification, retry_until):
@@ -346,7 +456,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         routing["artifact_mimes"], routing["tools_required"], routing["context_parts"],
         routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
         excluded_model_ids=tuple(used_model_ids),
-        prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout"} else None),
+        prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout", "incomplete"} else None),
     )
     if not model:
         return None
@@ -389,6 +499,10 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         run,
         snapshot=updated_snapshot,
         auto_selection=selection,
+        auto_model_history=[*run.data.get("auto_model_history", []), {
+            "step": run.data.get("steps", 1), "from_model_record_id": previous_id,
+            "to_model_record_id": model.id, "model_id": model.data["model_id"],
+        }],
         steps=max(0, run.data.get("steps", 0) - 1),
     )
     emit(db, run.id, "model_rerouted", {
@@ -405,7 +519,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         delay = max(0, (retry_until - now()).total_seconds())
         if delay:
             await asyncio.sleep(delay)
-    elif classification in {"provider_5xx", "timeout"} and provider.id == provider_id:
+    elif classification in {"provider_5xx", "timeout", "incomplete"} and provider.id == provider_id:
         await asyncio.sleep(min(4, 2 ** max(0, retry_number - 1)))
     return updated_snapshot
 
@@ -431,6 +545,21 @@ def complete_tool_call(db, run, call, current, result):
     call.status = "completed"
     summary = activity_result((current or {}).get("id", call.data["tool_id"]), result)
     call.data = {**call.data, "result": result, **({"result_activity": summary} if summary else {})}
+    if call.data.get("tool_id") == "update_plan" and isinstance(result, dict) and not result.get("error"):
+        previous = run.data.get("agent_plan") or {}
+        agent_plan = {
+            "steps": result["steps"],
+            "pending": result.get("pending", previous.get("pending", result["steps"])),
+            "verification": result.get("verification", previous.get("verification", "")),
+        }
+        state = context_task_state.validate(run.data.get("task_state"))
+        state["plan"] = agent_plan["steps"]
+        state["pending"] = agent_plan["pending"]
+        update(run, agent_plan=agent_plan, task_state=state)
+    elif call.data.get("risk") != "read" and not (isinstance(result, dict) and result.get("error")):
+        previous = run.data.get("agent_plan")
+        if previous:
+            update(run, agent_plan={**previous, "verification": ""})
     envelope = model_tool_result(result)
     content = json.dumps(envelope, ensure_ascii=False)
     tool_ref = None
@@ -441,7 +570,7 @@ def complete_tool_call(db, run, call, current, result):
         settings_row = db.get(Settings, "settings") if Settings else None
         if settings_row and isinstance((settings_row.data or {}).get("tool_output_inline_limit"), int):
             inline_limit = max(1000, min(100000, settings_row.data["tool_output_inline_limit"]))
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         inline_limit = DEFAULT_TOOL_INLINE_LIMIT
     is_long, short_summary = tool_envelope_text(content, inline_limit)
     artifact_info = result.get("artifact") if isinstance(result, dict) else None
@@ -453,7 +582,7 @@ def complete_tool_call(db, run, call, current, result):
                 db, run.owner_id, content.encode("utf-8"), "tool-result.json",
                 "application/json", kind="context-tool-output",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             artifact_info = None
     if is_long:
         tool_ref = (artifact_info or {}).get("artifact_id")
@@ -493,7 +622,15 @@ def complete_tool_call(db, run, call, current, result):
 
 
 async def execute_prepared_calls(db, run, snapshot, prepared):
-    """Run a consecutive, already-authorized batch and preserve its result order."""
+    """Run a consecutive, already-authorized batch and preserve its result order.
+
+    Parallel-safe tools run in separate sessions: a single SQLAlchemy session
+    shared across coroutines can interleave flushes and lose concurrent updates
+    to ``run.data`` (e.g. two tools truncating long output overwrite each
+    other's ``tool_refs``). Each worker commits its own writes (artifacts) and
+    returns only the reference deltas, which are merged on the caller's
+    session before results are finalized in provider-call order.
+    """
     for call, current in prepared:
         call.status = "executing"
         emit(db, run.id, "tool_started", {
@@ -510,21 +647,29 @@ async def execute_prepared_calls(db, run, snapshot, prepared):
                 snapshot.get("max_seconds", 900)
                 - (now() - run.created_at.replace(tzinfo=UTC)).total_seconds(),
             )
-            return await asyncio.wait_for(
-                execute(db, run, current, call.data["arguments"]), timeout=min(120, remaining)
-            )
+            with SessionLocal() as worker:
+                worker_run = worker.get(Run, run.id)
+                result = await asyncio.wait_for(
+                    execute(worker, worker_run, current, call.data["arguments"]),
+                    timeout=min(120, remaining),
+                )
+                worker.commit()
+                return result, list(worker_run.data.get("tool_refs") or [])
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
             # Do not leak SDK headers, secrets, or remote response bodies.
             return {
                 "error": "Tool failed",
                 "code": "tool_timeout" if isinstance(exc, TimeoutError) else "tool_failed",
                 "type": type(exc).__name__,
-            }
+            }, None
 
-    results = await asyncio.gather(*(one(call, current) for call, current in prepared))
-    for (call, current), result in zip(prepared, results):
+    batch = await asyncio.gather(*(one(call, current) for call, current in prepared))
+    for (call, current), (result, worker_refs) in zip(prepared, batch):
+        if worker_refs:
+            merged = list(dict.fromkeys([*(run.data.get("tool_refs") or []), *worker_refs]))
+            update(run, tool_refs=merged)
         complete_tool_call(db, run, call, current, result)
 
 
@@ -541,7 +686,7 @@ def _image_data_url(db, owner_id, artifact_id):
 
         mime = (row.data or {}).get("mime", "image/png")
         return "data:" + mime + ";base64," + _b64.b64encode(raw).decode()
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return None
 
 
@@ -600,6 +745,11 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
     if not run.data.get("task_state"):
         first_user = next((m.get("content", "") for m in history if m.get("role") == "user"), "")
         update(run, task_state=context_task_state.ensure(None, first_user[:1000]))
+    if history and history[0].get("role") == "system":
+        head = refresh_task_state(history[0].get("content", ""), run.data["task_state"])
+        if head != history[0].get("content"):
+            history = [{**history[0], "content": head}, *history[1:]]
+            update(run, history=history)
     if run.data.get("summary") is None:
         update(run, summary={"text": "", "covered_count": 0, "updated_at": None})
     model_record = db.get(_Model, snapshot.get("model_record_id")) if snapshot.get("model_record_id") else None
@@ -652,10 +802,15 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
                 if head:
                     head = [{**head[0], "content": head_text}]
                 db.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             # Summarizer failure must not destroy state; keep old summary.
             emit(db, run.id, "context_summary", {"status": "failed"})
             db.commit()
+            raise ContextBudgetError("context summary failed; previous conversation was preserved")
+        if not summary_text:
+            emit(db, run.id, "context_summary", {"status": "failed"})
+            db.commit()
+            raise ContextBudgetError("context summary was empty; previous conversation was preserved")
     compacted = [*head, *recent]
     estimated = context_tokens.count_messages(compacted, model_id)
     if estimated > total + 2000 and len(compacted) <= 2:
@@ -700,6 +855,67 @@ def _persist_trace(db, run, snapshot, history, estimated, total, tool_cost, summ
     update(run, context_trace=trace)
 
 
+def _reevaluate_auto_model(db, run, snapshot, available):
+    """Reconsider Auto only between provider calls; keep the Run's saved policy."""
+    routing = run.data.get("auto_routing") or {}
+    if run.data.get("requested_model_id") != "auto" or not routing.get("dynamic_switching", snapshot.get("auto_dynamic_switching", True)):
+        return snapshot
+    history = run.data.get("history") or []
+    content = routing.get("content", "")
+    task_state = run.data.get("task_state") or {}
+    if isinstance(task_state, dict):
+        content += "\n" + str(task_state.get("plan", ""))[:2000]
+        content += "\n" + str(task_state.get("pending", ""))[:1000]
+    # Tool output informs this decision locally, without entering selection events.
+    recent = history[-8:]
+    for item in reversed(recent):
+        if item.get("role") == "tool":
+            content += "\n" + str(item.get("content", ""))[:4000]
+    context_parts = [str(item.get("content", "")) for item in history]
+    tools_required = bool(available)
+    model, selection = select_auto_model(
+        db, run.owner_id, routing["allowed_ids"], content, snapshot["mode"],
+        routing.get("artifact_mimes", []), tools_required, context_parts,
+        routing.get("reserved_output_tokens", 4096), run.request_key,
+        routing.get("attachment_bytes", 0), current_model_id=snapshot["model_record_id"],
+    )
+    if not model:
+        return snapshot
+    provider = db.get(Provider, model.data.get("provider_id"))
+    if not provider or provider.owner_id != run.owner_id:
+        return snapshot
+    try:
+        reasoning = resolve_reasoning(
+            provider.data["kind"], model.data["model_id"], effective_capabilities(model.data),
+            snapshot["mode"], snapshot.get("model_settings", {}),
+        )
+    except ValueError:
+        return snapshot
+    previous = snapshot["model_record_id"]
+    selection["model_record_id"] = model.id
+    selection["model_id"] = model.data["model_id"]
+    selection["attempts"] = run.data.get("auto_selection", {}).get("attempts", [])
+    if model.id != previous:
+        snapshot = {
+            **snapshot, "model_id": model.data["model_id"], "model_record_id": model.id,
+            "provider": provider.data, "provider_record_id": provider.id,
+            "reasoning": reasoning, "context_window_info": context_budget.resolve_window(model.data, snapshot),
+        }
+        changes = [*run.data.get("auto_model_history", []), {
+            "step": run.data.get("steps", 0) + 1,
+            "from_model_record_id": previous, "to_model_record_id": model.id,
+            "model_id": model.data["model_id"],
+        }]
+        update(run, snapshot=snapshot, auto_model_history=changes)
+        emit(db, run.id, "model_rerouted", {
+            "from_model_record_id": previous, "to_model_record_id": model.id,
+            "selection": selection,
+        })
+    update(run, auto_selection=selection)
+    db.commit()
+    return snapshot
+
+
 async def drive(run_id):
     try:
         with SessionLocal() as db:
@@ -707,7 +923,12 @@ async def drive(run_id):
             if not run or run.status in TERMINAL:
                 return
             snapshot = run.data["snapshot"]
-            run.status = "running"
+            # The DB status decides whether a Run can start: queued and
+            # waiting_approval reopen are the only legal entry points.  An
+            # already-running (stale) or unexpected status is never overwritten.
+            if not can_transition(run.status, "running"):
+                return
+            transition_run(db, run, "running")
             if run.data.get("auto_selection"):
                 emit(db, run.id, "model_selected", run.data["auto_selection"])
             db.commit()
@@ -718,7 +939,7 @@ async def drive(run_id):
                 elapsed = (now() - run.created_at.replace(tzinfo=UTC)).total_seconds()
                 if elapsed >= snapshot.get("max_seconds", 900):
                     if snapshot.get("policy", {}).get("checkpointing"):
-                        finish(db, run, "interrupted", "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。")
+                        finish(db, run, "interrupted", agent_interruption_reason(run, "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。"))
                     else:
                         finish(db, run, "completed", "このモードの実行時間上限に到達したため、取得済みの結果で終了しました。長い作業には長作業モードを使用してください。")
                     return
@@ -747,7 +968,7 @@ async def drive(run_id):
                             attempt_counts[key] += 1
                             try:
                                 decision = permission(db, run, current, call.data["arguments"])
-                            except Exception:
+                            except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                                 decision = "deny"
                             if decision == "deny":
                                 result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
@@ -772,6 +993,8 @@ async def drive(run_id):
                                     db.add(approval)
                                     db.flush()
                                     emit(db, run.id, "approval", {"id": approval.id, **approval.data})
+                                    from mix_agent.wakeups import mark
+                                    mark(db, "scheduler")
                                 if (
                                     approval.expires.replace(tzinfo=UTC) < now()
                                     and approval.status == "pending"
@@ -784,7 +1007,7 @@ async def drive(run_id):
                                     result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
                     prepared.append((call, current, result))
                 if waiting_for_approval:
-                    run.status = "waiting_approval"
+                    transition_run(db, run, "waiting_approval")
                     db.commit()
                     return
                 index = 0
@@ -809,19 +1032,20 @@ async def drive(run_id):
                 steps = run.data.get("steps", 0)
                 count = run.data.get("tool_count", 0)
                 call_limit = snapshot.get("max_tool_calls", 50 if mode == "agent" else 8)
-                provider = snapshot["provider"]
-                # Credentials are resolved at use time, never copied into run snapshots.
-                key = read_secret(db, provider.get("secret_id"))
                 available = [t for t in snapshot["tools"] if t["id"] in registry(db, run.owner_id)]
                 tool_limit_reached = count >= call_limit
                 if tool_limit_reached:
                     available = []
                 step_limit_reached = steps >= snapshot.get("max_steps", 8)
                 if step_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
-                    finish(db, run, "interrupted", "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。")
+                    finish(db, run, "interrupted", agent_interruption_reason(run, "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。"))
                     return
                 if step_limit_reached:
                     available = []
+                snapshot = _reevaluate_auto_model(db, run, snapshot, available)
+                provider = snapshot["provider"]
+                # Credentials are resolved at use time, never copied into run snapshots.
+                key = read_secret(db, provider.get("secret_id"))
                 history = run.data["history"]
                 # Model-aware pre-send budget check with progressive compaction.
                 try:
@@ -836,6 +1060,9 @@ async def drive(run_id):
                 response = None
                 provider_started_at = now()
                 first_output_at = None
+                buffered_text = []
+                last_text_flush_at = asyncio.get_running_loop().time()
+
                 model_settings = {
                     k: v for k, v in snapshot.get("model_settings", {}).items() if k != "_resolved_reasoning"
                 }
@@ -851,13 +1078,30 @@ async def drive(run_id):
                             ), available, mode, model_settings
                         ):
                             if event["kind"] == "response":
+                                if flush_stream_text(db, run.id, buffered_text):
+                                    last_text_flush_at = asyncio.get_running_loop().time()
                                 response = event
-                            else:
-                                if event["kind"] == "text" and first_output_at is None:
+                            elif event["kind"] == "text":
+                                if event.get("text") and first_output_at is None:
                                     first_output_at = now()
+                                buffered_text.append(event.get("text", ""))
+                                if asyncio.get_running_loop().time() - last_text_flush_at >= STREAM_TEXT_FLUSH_SECONDS:
+                                    flush_stream_text(db, run.id, buffered_text)
+                                    last_text_flush_at = asyncio.get_running_loop().time()
+                            else:
+                                # Do not let a reasoning/activity event overtake
+                                # already received text in the durable stream.
+                                if flush_stream_text(db, run.id, buffered_text):
+                                    last_text_flush_at = asyncio.get_running_loop().time()
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
+                        flush_stream_text(db, run.id, buffered_text)
+                        if response is None:
+                            raise ProviderIncompleteResponseError("Provider stream ended without a final response")
                 except Exception as exc:
+                    # A failed stream must still expose every fragment the
+                    # provider already produced before reporting its outcome.
+                    flush_stream_text(db, run.id, buffered_text)
                     retryable = (
                         is_retryable_provider_error(exc)
                         or is_nvidia_nim_function_not_found(provider, exc)
@@ -882,8 +1126,6 @@ async def drive(run_id):
                         raise
                     snapshot = rerouted
                     continue
-                if response is None:
-                    raise RuntimeError("Incomplete model response")
                 if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
                     completed_at = now()
                     first_output_at = first_output_at or completed_at
@@ -951,6 +1193,20 @@ async def drive(run_id):
                         continue
                     message = {"role": "assistant", "content": answer_fallback(run.data["history"])}
                     update(run, history=[*history, message])
+                    update(run, answer_evaluation={"status": "needs_review", "reason": "自動補足で終了しました。依頼の達成を確認してください。"})
+                else:
+                    update(run, answer_evaluation={"status": "provided", "reason": "ユーザー向けの最終回答を確認しました。内容の正しさは自動判定していません。"})
+                issue = agent_completion_issue(run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at))))
+                if issue:
+                    repairs = run.data.get("agent_completion_repairs", 0)
+                    if run.data.get("agent_plan") and repairs < 1 and steps < snapshot.get("max_steps", 8):
+                        update(run, agent_completion_repairs=repairs + 1,
+                               history=[*run.data["history"], {"role": "user", "content":
+                               "The task is not yet verified: " + issue + " Continue the work, update the plan with remaining tasks and verification, then answer. If blocked, report the blocker and remaining work."}])
+                        db.commit()
+                        continue
+                    finish(db, run, "interrupted", agent_interruption_reason(run, issue))
+                    return
                 performance = None
                 output_count = output_tokens(response.get("usage", {}))
                 # A provider's final usage is authoritative.  The first visible
@@ -977,10 +1233,12 @@ async def drive(run_id):
                 if performance:
                     message_data["performance"] = performance
                 if run.data.get("auto_selection"):
+                    selected_model = db.get(Model, snapshot["model_record_id"])
                     message_data["auto_selection"] = {
                         **run.data["auto_selection"],
                         "model_record_id": snapshot["model_record_id"],
                         "model_id": snapshot["model_id"],
+                        "model_name": (selected_model.data.get("name") or snapshot["model_id"]) if selected_model else snapshot["model_id"],
                     }
                 db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data=message_data))
                 user_content = next((item.get("content", "") for item in reversed(run.data["history"]) if item.get("role") == "user"), "")
@@ -994,19 +1252,21 @@ async def drive(run_id):
                 finish(db, run, "completed")
                 return
     except asyncio.CancelledError:
+        epoch = _current_launch_epoch()
         with SessionLocal() as db:
             run = db.get(Run, run_id)
-            if run and run.status not in TERMINAL:
+            if run and run.status not in TERMINAL and run.data.get("launch_epoch") == epoch:
                 finish(db, run, "cancelled", "ユーザーが停止しました")
         for kind in ("execution", "mcp"):
             try:
                 await runner_request(kind, "/cancel", {"run_id": run_id}, timeout=5)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
                 pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
+        epoch = _current_launch_epoch()
         with SessionLocal() as db:
             run = db.get(Run, run_id)
-            if run:
+            if run and run.data.get("launch_epoch") == epoch:
                 finish(
                     db,
                     run,
@@ -1023,31 +1283,43 @@ async def scheduler():
             finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
         from mix_agent.schedules import reconcile
         reconcile(db, launch)
-    sleep_interval = 2
+    from mix_agent.wakeups import scheduler as wakeup
+    seen = wakeup.revision
     while True:
+        delay = 30.0  # durable fallback if a process-local signal is missed
         try:
             from mix_agent.storage import backup
 
             if backup.ACTIVE:
-                await asyncio.sleep(2)
-                continue
-            with SessionLocal() as db:
-                from mix_agent.api.routes import purge_expired_conversations
-                purge_expired_conversations(db)
-                from mix_agent.schedules import tick
-                tick(db, launch)
-                for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
-                    if run.status == "queued":
-                        launch(run.id)
-                    else:
+                delay = 2.0
+            else:
+                with SessionLocal() as db:
+                    from mix_agent.api.routes import purge_expired_conversations
+                    purge_expired_conversations(db)
+                    from mix_agent.schedules import tick
+                    tick(db, launch)
+                    current = now()
+                    # Cron is minute-granular, so wake exactly for its next boundary.
+                    delay = max(0.05, 60 - current.second - current.microsecond / 1_000_000)
+                    for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
+                        if run.status == "queued":
+                            launch(run.id)
+                            continue
                         approval = db.scalar(
                             select(Approval).where(Approval.run_id == run.id, Approval.status == "pending")
                         )
-                        if not approval or approval.expires.replace(tzinfo=UTC) < now():
+                        if not approval or approval.expires.replace(tzinfo=UTC) < current:
                             launch(run.id)
-            sleep_interval = 2
+                        else:
+                            delay = min(delay, max(0.05, (approval.expires.replace(tzinfo=UTC) - current).total_seconds()))
+                    for scheduled in db.scalars(select(ScheduledRun).where(ScheduledRun.status == "retrying")):
+                        try:
+                            retry_at = datetime.fromisoformat(scheduled.data.get("retry_at", ""))
+                            delay = min(delay, max(0.05, (retry_at - current).total_seconds()))
+                        except (TypeError, ValueError):
+                            pass
         except Exception:
-            sleep_interval = min(30, sleep_interval * 2)
+            delay = 30.0
             import logging
             logging.getLogger(__name__).exception("scheduler tick failed")
-        await asyncio.sleep(sleep_interval)
+        seen = await wakeup.wait(seen, timeout=delay)

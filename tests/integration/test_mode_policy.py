@@ -1,13 +1,22 @@
-from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, mode_policy, tool_allowed
+from mix_agent.runs.mode_policy import (
+    apply_mode_defaults,
+    mode_policy,
+    mode_prompt,
+    tool_allowed,
+)
+from mix_agent.tools.registry import BUILTINS
 
 
 def test_each_mode_has_a_distinct_execution_policy():
     prompts = {mode: mode_prompt(mode) for mode in ("chat", "thinking", "agent")}
     assert len(set(prompts.values())) == 3
     assert "immediate request" in prompts["chat"]
+    assert "Match the detail to the question" in prompts["chat"]
+    assert "recommend Long work mode" not in prompts["chat"]
     assert "cross-check" in prompts["thinking"]
     assert "update_plan" in prompts["agent"]
     assert "observable success" in prompts["agent"]
+    assert "Never claim completion for unverified work" in prompts["agent"]
 
 
 def test_mode_defaults_expand_autonomous_work_budgets():
@@ -44,3 +53,11 @@ def test_mode_restrictions_cannot_be_bypassed_with_arguments():
     assert not tool_allowed("thinking", terminal, {"background": True})
     assert tool_allowed("agent", terminal, {"background": True})
     assert mode_policy("chat")["label"] == "通常"
+
+
+def test_workspace_check_is_fixed_and_allowed_but_terminal_still_asks():
+    tools = {tool["id"]: tool for tool in BUILTINS}
+    check = tools["workspace_check"]
+    assert check["default_permission"] == "allow"
+    assert check["input_schema"]["properties"]["kind"]["enum"] == ["git_status", "git_diff_check", "python_syntax"]
+    assert tools["run_terminal"]["default_permission"] == "ask"

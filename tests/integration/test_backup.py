@@ -1,13 +1,16 @@
 import copy
-from sqlalchemy import select
+
 import pytest
-from mix_agent.storage import backup
-from mix_agent.db.session import SessionLocal
-from mix_agent.db.models import User, Memory, Secret
-from mix_agent.memory.service import change
-from mix_agent.auth.security import store_secret, read_secret
-from mix_agent.tools.execute import save_artifact
+from cryptography.exceptions import InvalidTag
 from mix_agent import config
+from mix_agent.auth.security import read_secret, store_secret
+from mix_agent.db.models import Memory, User
+from mix_agent.db.session import SessionLocal
+from mix_agent.memory.service import change
+from mix_agent.storage import backup
+from mix_agent.tools.execute import save_artifact
+from sqlalchemy import select
+
 
 @pytest.fixture
 def fake_runners(monkeypatch):
@@ -56,7 +59,7 @@ async def test_restore_invalid_password_leaves_current_state(signed, fake_runner
         change(db, owner, "keep this")
         db.commit()
         raw = await backup.create(db, "correct-backup-password")
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidTag):
             await backup.restore(db, raw, "incorrect-password")
         assert db.scalar(select(Memory)).data["content"] == "keep this"
 

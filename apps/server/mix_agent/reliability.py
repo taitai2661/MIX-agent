@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import delete, select
 
 from mix_agent.db.models import AutoReliabilityEvent
-from mix_agent.providers.adapters import ProviderContextLimitError, is_context_limit_error
+from mix_agent.providers.adapters import ProviderContextLimitError, ProviderIncompleteResponseError, is_context_limit_error
 
 RETENTION = timedelta(days=30)
 HALF_LIFE = timedelta(days=7)
@@ -27,6 +27,8 @@ def usage_scope(mode: str, tools_required: bool) -> str:
 
 def classify_failure(exc: Exception) -> str:
     """Classify without retaining provider-provided content."""
+    if isinstance(exc, ProviderIncompleteResponseError):
+        return "incomplete"
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, TimeoutError)):
         return "timeout"
     if is_context_limit_error(exc) or isinstance(exc, ProviderContextLimitError):
@@ -117,7 +119,7 @@ def _rate(events, current: datetime) -> tuple[float, float]:
         weight = _weight(event.created_at, current)
         if event.data.get("outcome") == "success":
             success += weight
-        elif event.data.get("classification") in {"rate_limit", "provider_5xx", "timeout"}:
+        elif event.data.get("classification") in {"rate_limit", "provider_5xx", "timeout", "incomplete"}:
             failure += weight
     return success, failure
 
@@ -204,7 +206,7 @@ def _cooldowns(events, model_id: str, provider_id: str, scope: str, current: dat
     model_last_success = max(model_successes, default=None)
     model_failures = [e for e in events if e.data.get("model_id") == model_id
                       and e.data.get("scope") == scope
-                      and e.data.get("classification") in {"rate_limit", "provider_5xx", "timeout"}
+                      and e.data.get("classification") in {"rate_limit", "provider_5xx", "timeout", "incomplete"}
                       and timestamp(e) >= current - MODEL_WINDOW
                       and (model_last_success is None or timestamp(e) > model_last_success)]
     model_until = None
@@ -216,7 +218,7 @@ def _cooldowns(events, model_id: str, provider_id: str, scope: str, current: dat
     provider_last_success = max(provider_successes, default=None)
     provider_failures = [e for e in events if e.data.get("provider_id") == provider_id
                          and e.data.get("scope") == scope
-                         and e.data.get("classification") in {"provider_5xx", "timeout"}
+                         and e.data.get("classification") in {"provider_5xx", "timeout", "incomplete"}
                          and timestamp(e) >= current - PROVIDER_WINDOW
                          and (provider_last_success is None or timestamp(e) > provider_last_success)]
     provider_until = None

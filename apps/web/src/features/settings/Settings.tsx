@@ -7,6 +7,7 @@ import {
   Sparkles,
   BarChart3,
   Brain,
+  Activity,
 } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
@@ -16,10 +17,12 @@ import { Providers } from "@/features/providers/Providers";
 import { Backups } from "@/features/settings/Backups";
 import { Account } from "@/features/settings/Account";
 import { General } from "@/features/settings/General";
+import { Auto } from "@/features/settings/Auto";
 import { Tools } from "@/features/tools/Tools";
 import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSettings";
 import { SettingsOverview } from "@/features/settings/Overview";
 import { Statistics } from "@/features/settings/Statistics";
+import { Diagnostics } from "@/features/settings/Diagnostics";
 import { Memories } from "@/features/memory/Memories";
 
 export function Settings({
@@ -42,6 +45,7 @@ export function Settings({
         {[
           ["providers", "AI Providers", Server],
           ["models", "モデル", Sparkles],
+          ["auto", "Auto", Sparkles],
           ["memory", "Memory", Brain],
         ].map(([path, label, Icon]: any) => (
           <NavLink key={path} to={"/settings/" + path}>
@@ -51,6 +55,7 @@ export function Settings({
         ))}
         <p className="settings-nav-label">接続と安全性</p>
         <NavLink to="/settings/statistics"><BarChart3 size={17} /> 統計</NavLink>
+        <NavLink to="/settings/diagnostics"><Activity size={17} /> 障害診断</NavLink>
         {[
           ["browser", "Browser", Globe],
           ["web-search", "Web検索", Globe],
@@ -71,6 +76,7 @@ export function Settings({
           <Route index element={<SettingsOverview />} />
           <Route path="providers" element={<Providers />} />
           <Route path="models" element={<Models />} />
+          <Route path="auto" element={<Auto />} />
           <Route path="memory" element={<Memories />} />
           <Route path="tools" element={<Tools />} />
           <Route path="browser" element={<BrowserSettings />} />
@@ -80,6 +86,7 @@ export function Settings({
           <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />
           <Route path="backups" element={<Backups />} />
           <Route path="statistics" element={<Statistics />} />
+          <Route path="diagnostics" element={<Diagnostics />} />
         </Routes>
       </main>
     </div>

@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from sqlalchemy import DateTime, select
 
 from mix_agent import config
-from mix_agent.db.models import Base, MCPConnection, Run
+from mix_agent.db.models import Base, MCPConnection, Run, ScheduledRun
 from mix_agent.db.session import engine
 from mix_agent.tools.execute import runner_request
 
@@ -41,6 +41,8 @@ def unseal(raw, password):
 def check_idle(db):
     if db.scalar(select(Run.id).where(Run.status.in_(["queued", "running", "waiting_approval"]))):
         raise ValueError("すべての実行を停止してからバックアップしてください")
+    if db.scalar(select(ScheduledRun.id).where(ScheduledRun.status.in_(["pending", "running", "retrying"]))):
+        raise ValueError("待機中または再試行待ちの定期実行を停止してからバックアップしてください")
 
 
 async def create(db, password):
@@ -177,7 +179,7 @@ async def restore(db, raw, password, recovering=False):
             moved_original = True
             stage.rename(config.ARTIFACTS)
             swapped = True
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - intentionally classified; never leak raw details
         if swapped:
             config.ARTIFACTS.rename(stage)
         if moved_original:
@@ -204,16 +206,32 @@ async def restore(db, raw, password, recovering=False):
 
 async def recover_interrupted():
     global ACTIVE
-    if not (config.DATA / "restore-journal.json").exists():
+    journal = config.DATA / "restore-journal.json"
+    if not journal.exists():
         return
     ACTIVE = True
-    from mix_agent.db.session import SessionLocal
+    import logging
 
-    with SessionLocal() as db:
-        await restore(
-            db,
-            (config.DATA / "restore-rollback.mix").read_bytes(),
-            (config.KEYS / "restore-passphrase").read_text(),
-            recovering=True,
-        )
-    ACTIVE = False
+    logger = logging.getLogger(__name__)
+    try:
+        from mix_agent.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            await restore(
+                db,
+                (config.DATA / "restore-rollback.mix").read_bytes(),
+                (config.KEYS / "restore-passphrase").read_text(),
+                recovering=True,
+            )
+    except Exception:
+        # A damaged journal, missing rollback archive, or wrong passphrase key
+        # must never brick the server. Quarantine the recovery inputs and boot
+        # into a degraded-but-operational state; an operator can inspect them.
+        logger.exception("startup recovery failed; quarantining restore journal")
+        quarantine = config.DATA / ("restore-journal-" + str(uuid4()) + ".json")
+        try:
+            journal.rename(quarantine)
+        except OSError:
+            logger.exception("failed to quarantine restore journal")
+    finally:
+        ACTIVE = False
