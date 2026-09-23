@@ -22,6 +22,7 @@ from mix_agent.api.schemas import (
     ConversationStateInput,
     Credentials,
     DecisionInput,
+    DiagnosticsView,
     FeedbackInput,
     Input,
     MCPInput,
@@ -233,6 +234,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         "mode": mode,
         "model_id": model.data["model_id"], "model_record_id": model.id, "requested_model_id": requested_model_id,
         "auto_retry_count": 0,
+        "auto_dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)) if requested_model_id == "auto" else False,
         "provider": provider.data, "provider_record_id": provider.id, "tool_ids": tool_ids,
         "tools": [available[t] for t in tool_ids if t in available],
         "reasoning": reasoning,
@@ -266,7 +268,13 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         "task_state": built["task_state"], "summary": "", "budgets": built["budgets"], "input_budget": built["input_budget"],
     }
     attempt = int(scheduled.data.get("attempt", 0))
-    run = Run(owner_id=owner_id, conversation_id=conversation.id, request_key=f"schedule-{scheduled.id}-{attempt}", data={"snapshot": snapshot, "history": history, "steps": 0, "tool_count": 0, "scheduled_run_id": scheduled.id, "auto_selection": auto_selection, "task_state": built["task_state"], "summary": {"text": "", "covered_count": 0, "updated_at": None}, "context_trace": built["trace"], "context_version": 1, "trigger_type": "scheduled", "memory_trace_ids": [m.get("id") for m in memories if isinstance(m, dict) and m.get("id")], "image_refs": [], "tool_refs": []})
+    auto_routing = ({
+        "allowed_ids": settings.data.get("auto_model_ids", []), "content": data["prompt"],
+        "mode": mode, "artifact_mimes": [], "tools_required": bool(tool_ids),
+        "reserved_output_tokens": agent.get("model_settings", {}).get("max_output_tokens", 4096),
+        "attachment_bytes": 0, "dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)),
+    } if requested_model_id == "auto" else None)
+    run = Run(owner_id=owner_id, conversation_id=conversation.id, request_key=f"schedule-{scheduled.id}-{attempt}", data={"snapshot": snapshot, "history": history, "steps": 0, "tool_count": 0, "scheduled_run_id": scheduled.id, "requested_model_id": requested_model_id, "auto_selection": auto_selection, "auto_routing": auto_routing, "auto_model_history": ([{"step": 1, "to_model_record_id": model.id, "model_id": model.data["model_id"]}] if auto_selection else []), "task_state": built["task_state"], "summary": {"text": "", "covered_count": 0, "updated_at": None}, "context_trace": built["trace"], "context_version": 1, "trigger_type": "scheduled", "memory_trace_ids": [m.get("id") for m in memories if isinstance(m, dict) and m.get("id")], "image_refs": [], "tool_refs": []})
     db.add(run); db.add(Message(owner_id=owner_id, conversation_id=conversation.id, data={"role": "user", "content": data["prompt"], "scheduled_run_id": scheduled.id}))
     db.flush(); scheduled.run_id = run.id; scheduled.status = "running"; scheduled.data = {**scheduled.data, "snapshot": snapshot}
     conversation.data = {**conversation.data, "last_message_at": now().isoformat()}
@@ -786,9 +794,10 @@ async def settings(ctx=Depends(context)):
     row = own(db, Settings, "settings", s.owner_id)
     view = public(row)
     # Older profiles predate these preferences; expose compatible defaults.
-    view["data"] = {"auto_retry_count": 3, "browser_enabled": True,
+    view["data"] = {"auto_retry_count": 3, "auto_dynamic_switching": True, "browser_enabled": True,
                      "browser_install_requested": False, "browser_install_status": "not_installed",
-                     "browser_install_failure": None,
+                     "browser_install_failure": None, "browser_install_progress": None,
+                     "browser_install_stage": None,
                      "browser_timeout_ms": 15000, "browser_locale": "ja-JP", "browser_user_agent": "",
                      "browser_viewport_width": 1280, "browser_viewport_height": 720, "browser_block_images": False,
                      "web_search_enabled": True,
@@ -800,7 +809,9 @@ async def settings(ctx=Depends(context)):
     if view["data"].get("browser_install_requested"):
         state = await browser_install_state(db, row)
         view["data"] = {**view["data"], "browser_install_status": state["status"],
-                        "browser_install_failure": state["failure"]}
+                        "browser_install_failure": state["failure"],
+                        "browser_install_progress": state["progress"],
+                        "browser_install_stage": state["stage"]}
     return view
 
 
@@ -810,13 +821,22 @@ async def browser_install_state(db, settings):
         state = await runner_request("browser-provisioner", "/status", {}, timeout=5)
     except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         return {"status": settings.data.get("browser_install_status", "not_installed"),
-                "failure": settings.data.get("browser_install_failure")}
+                "failure": settings.data.get("browser_install_failure"),
+                "progress": settings.data.get("browser_install_progress"),
+                "stage": settings.data.get("browser_install_stage")}
     status = state.get("status", "not_installed")
     failure = state.get("failure")
-    if status != settings.data.get("browser_install_status") or failure != settings.data.get("browser_install_failure"):
-        settings.data = {**settings.data, "browser_install_status": status, "browser_install_failure": failure}
+    progress = state.get("progress")
+    stage = state.get("stage")
+    if any(settings.data.get(key) != value for key, value in (
+        ("browser_install_status", status), ("browser_install_failure", failure),
+        ("browser_install_progress", progress), ("browser_install_stage", stage),
+    )):
+        settings.data = {**settings.data, "browser_install_status": status,
+                         "browser_install_failure": failure,
+                         "browser_install_progress": progress, "browser_install_stage": stage}
         db.commit()
-    return {"status": status, "failure": failure}
+    return {"status": status, "failure": failure, "progress": progress, "stage": stage}
 
 
 @router.get("/browser/status")
@@ -836,9 +856,14 @@ async def browser_install(ctx=Depends(context)):
         raise HTTPException(503, "Browser導入サービスに接続できません。Docker deploymentを起動してください。") from error
     settings.data = {**settings.data, "browser_install_requested": True,
                      "browser_install_status": state.get("status", "installing"),
-                     "browser_install_failure": state.get("failure")}
+                     "browser_install_failure": state.get("failure"),
+                     "browser_install_progress": state.get("progress"),
+                     "browser_install_stage": state.get("stage")}
     db.commit()
-    return {"status": settings.data["browser_install_status"], "failure": settings.data["browser_install_failure"]}
+    return {"status": settings.data["browser_install_status"],
+            "failure": settings.data["browser_install_failure"],
+            "progress": settings.data["browser_install_progress"],
+            "stage": settings.data["browser_install_stage"]}
 
 
 @router.get("/settings/statistics", response_model=StatisticsView)
@@ -1364,6 +1389,69 @@ async def conversation_tool_calls(key: str, ctx=Depends(context)):
     return result
 
 
+@router.get("/settings/diagnostics", response_model=DiagnosticsView)
+async def settings_diagnostics(ctx=Depends(context)):
+    """Return a privacy-minimal operational snapshot for the signed-in owner."""
+    db, session = ctx
+    owner_id = session.owner_id
+    checked_at = datetime.now(UTC)
+
+    # Query only aggregate counts and timestamps. Conversation text, Tool output,
+    # provider errors, and credentials never leave the server in this response.
+    run_counts = dict(db.execute(
+        select(Run.status, func.count())
+        .where(Run.owner_id == owner_id)
+        .group_by(Run.status)
+    ).all())
+    recent_runs = db.scalars(
+        select(Run)
+        .where(Run.owner_id == owner_id, Run.status.in_(["failed", "interrupted"]))
+        .order_by(Run.created_at.desc())
+        .limit(10)
+    )
+    failures = [
+        {"status": run.status, "mode": run.data.get("mode", "unknown"),
+         "created_at": run.created_at.isoformat()}
+        for run in recent_runs
+    ]
+    db.execute(select(1))
+
+    runner_status = {
+        "database": "ok",
+        "execution": "configured" if config.runner_token("execution") else "not_configured",
+        "mcp": "configured" if config.runner_token("mcp") else "not_configured",
+        "browser": "configured" if config.runner_token("browser") else "not_configured",
+        "mcp_manager": "configured" if config.runner_token("manager") else "not_configured",
+    }
+    settings_row = db.scalar(select(Settings).where(Settings.owner_id == owner_id))
+    if settings_row and settings_row.data.get("browser_install_requested"):
+        runner_status["browser_install"] = settings_row.data.get("browser_install_status", "unknown")
+
+    now_utc = checked_at
+    stale_runs = db.scalar(select(func.count()).select_from(Run).where(
+        Run.owner_id == owner_id,
+        Run.status.in_(["queued", "running"]),
+        Run.created_at < now_utc - timedelta(minutes=30),
+    )) or 0
+    return {
+        "checked_at": checked_at.isoformat(),
+        "services": runner_status,
+        "runs": {
+            "active": sum(run_counts.get(status, 0) for status in ("queued", "running", "waiting_approval")),
+            "failed_30d": db.scalar(select(func.count()).select_from(Run).where(
+                Run.owner_id == owner_id, Run.status == "failed",
+                Run.created_at >= now_utc - timedelta(days=30),
+            )) or 0,
+            "interrupted_30d": db.scalar(select(func.count()).select_from(Run).where(
+                Run.owner_id == owner_id, Run.status == "interrupted",
+                Run.created_at >= now_utc - timedelta(days=30),
+            )) or 0,
+            "stale_active": stale_runs,
+            "recent_failures": failures,
+        },
+    }
+
+
 def _handle_explicit_memory_requests(db, owner_id, content, temporary_mode):
     """Process explicit 'remember this' / 'forget this' requests outside of the model."""
     candidate = None if temporary_mode else memory.explicit_candidate(content)
@@ -1419,6 +1507,7 @@ async def _build_history_payload(db, s, conversation, body, settings_row, agent,
             auto_retry_count(settings_row.data.get("auto_retry_count", 3))
             if requested_model_id == "auto" else 0
         ),
+        "auto_dynamic_switching": bool(settings_row.data.get("auto_dynamic_switching", True)) if requested_model_id == "auto" else False,
         "provider": provider.data,
         "provider_record_id": provider.id,
         "tool_ids": tool_ids,
@@ -1528,6 +1617,7 @@ def _build_run_record(db, s, conversation, key, body, request_key, request_hash,
             "request_hash": request_hash,
             "auto_selection": auto_selection,
             "auto_routing": auto_routing,
+            "auto_model_history": ([{"step": 1, "to_model_record_id": snapshot["model_record_id"], "model_id": snapshot["model_id"]}] if auto_selection else []),
             "requested_model_id": snapshot.get("requested_model_id"),
             "memory_trace_ids": memory_trace_ids,
             "temporary_mode": temporary_mode,
@@ -1674,6 +1764,7 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         "context_parts": [*prior_content, body.content, agent.get("system_prompt", "")],
         "reserved_output_tokens": agent.get("model_settings", {}).get("max_output_tokens", 4096),
         "attachment_bytes": sum(a.data.get("size", 0) for a in artifacts),
+        "dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)),
     } if requested_model_id == "auto" else None)
     run = _build_run_record(
         db, s, conversation, key, body, request_key, request_hash,

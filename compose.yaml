@@ -23,6 +23,7 @@ services:
       - manager-token:/manager-token
       - browser-token:/browser-token
       - browser-provisioner-token:/browser-provisioner-token
+      - browser-data:/browser-data
       - data:/data
       - policy:/policy
       - workspace:/workspace

@@ -339,6 +339,9 @@ export interface paths {
         /**
          * Settings Statistics
          * @description Return privacy-minimal, local reliability statistics for the account.
+         *
+         *     Aggregation happens in SQL so a busy account never loads a month of raw
+         *     event rows into memory just to render a summary.
          */
         get: operations["settings_statistics_api_v1_settings_statistics_get"];
         put?: never;
@@ -658,6 +661,26 @@ export interface paths {
         };
         /** Conversation Tool Calls */
         get: operations["conversation_tool_calls_api_v1_conversations__key__tool_calls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Settings Diagnostics
+         * @description Return a privacy-minimal operational snapshot for the signed-in owner.
+         */
+        get: operations["settings_diagnostics_api_v1_settings_diagnostics_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1594,6 +1617,41 @@ export interface components {
              */
             decision: "once" | "always" | "denied";
         };
+        /** DiagnosticsFailureView */
+        DiagnosticsFailureView: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "failed" | "interrupted";
+            /** Mode */
+            mode: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** DiagnosticsRunsView */
+        DiagnosticsRunsView: {
+            /** Active */
+            active: number;
+            /** Failed 30D */
+            failed_30d: number;
+            /** Interrupted 30D */
+            interrupted_30d: number;
+            /** Stale Active */
+            stale_active: number;
+            /** Recent Failures */
+            recent_failures: components["schemas"]["DiagnosticsFailureView"][];
+        };
+        /** DiagnosticsView */
+        DiagnosticsView: {
+            /** Checked At */
+            checked_at: string;
+            /** Services */
+            services: {
+                [key: string]: string;
+            };
+            runs: components["schemas"]["DiagnosticsRunsView"];
+        };
         /** FeedbackInput */
         FeedbackInput: {
             /** Value */
@@ -2149,6 +2207,10 @@ export interface components {
             browser_install_status: "not_installed" | "installing" | "ready" | "failed";
             /** Browser Install Failure */
             browser_install_failure?: string | null;
+            /** Browser Install Progress */
+            browser_install_progress?: number | null;
+            /** Browser Install Stage */
+            browser_install_stage?: string | null;
             /**
              * Browser Timeout Ms
              * @default 15000
@@ -3791,6 +3853,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settings_diagnostics_api_v1_settings_diagnostics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticsView"];
                 };
             };
         };

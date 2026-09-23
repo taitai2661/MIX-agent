@@ -41,7 +41,7 @@ import {
 } from "./types";
 
 type ChatModel = Row & { data: { capabilities?: Record<string, boolean | null>; overrides?: Record<string, boolean | null>; reasoning_control?: boolean; tool_probe?: { status?: string } } };
-type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string; tool_ids?: string[] } };
+type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string; tool_ids?: string[]; max_seconds?: number; max_steps?: number; max_tool_calls?: number } };
 type Feedback = components["schemas"]["FeedbackInput"]["value"];
 const modes = ["chat", "thinking", "agent"] as const satisfies readonly ChatMode[];
 
@@ -481,7 +481,7 @@ export function Chat() {
                       <ShieldCheck size={14} />
                       <span>ツール権限: 許可 {permissionCounts.allow || 0} · 確認 {permissionCounts.ask || 0} · 拒否 {permissionCounts.deny || 0}</span>
                     </div>
-                    <ModeStatus mode={mode} model={selected} agent={selectedAgent} />
+                    <ModeStatus mode={mode} model={selected} agent={selectedAgent} budget={active && run.data?.mode === mode ? run.data.budget : undefined} />
                   </div>
                 </details>
                 <div className="composer-actions">

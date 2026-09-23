@@ -1,7 +1,7 @@
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
 import { ThemeController } from "@/components/theme";
@@ -14,39 +14,7 @@ export function General() {
     models = useRows("/models"),
     qc = useQueryClient();
   const [error, setError] = useState<unknown>(null),
-    [saved, setSaved] = useState(false),
-    [modelQuery, setModelQuery] = useState(""),
-    [showSelectedOnly, setShowSelectedOnly] = useState(false),
-    [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (setting.data) setSelectedModelIds(new Set(setting.data.data.auto_model_ids || []));
-  }, [setting.data, setting.dataUpdatedAt]);
-
-  const filteredModels = useMemo(() => {
-    const query = modelQuery.trim().toLocaleLowerCase();
-    return (models.data || []).filter((model) => {
-      const name = model.data.name || model.data.model_id || "";
-      return (!showSelectedOnly || selectedModelIds.has(model.id)) &&
-        (!query || name.toLocaleLowerCase().includes(query));
-    });
-  }, [modelQuery, models.data, selectedModelIds, showSelectedOnly]);
-
-  const updateVisibleSelections = (checked: boolean) => {
-    setSelectedModelIds((current) => {
-      const next = new Set(current);
-      filteredModels.forEach((model) => checked ? next.add(model.id) : next.delete(model.id));
-      return next;
-    });
-  };
-
-  const toggleModel = (id: string) => {
-    setSelectedModelIds((current) => {
-      const next = new Set(current);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
+    [saved, setSaved] = useState(false);
   return (
     <>
       <Title
@@ -71,8 +39,6 @@ export function General() {
             try {
               await api("/settings", "PUT", {
                 default_model_id: f.get("default_model_id"),
-                auto_model_ids: [...selectedModelIds],
-                auto_retry_count: Number(f.get("auto_retry_count")),
                 setup_complete: setting.data.data.setup_complete,
                 allowed_domains: String(f.get("domains"))
                   .split("\n")
@@ -101,32 +67,6 @@ export function General() {
                 </option>
               ))}
             </select>
-          </Field>
-          <Field label="Autoで使用可能なモデル" hint="Autoは、この中から必要なCapabilityと過去の評価をもとに選択します。">
-            <div className="auto-model-picker">
-              <div className="auto-model-toolbar">
-                <input aria-label="Auto候補を検索" className="auto-model-search" value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder="モデルを検索" type="search" />
-                <span className="auto-model-count">{selectedModelIds.size}件を選択中</span>
-              </div>
-              <div className="auto-model-actions">
-                <button type="button" className="btn-ghost" onClick={() => setShowSelectedOnly((value) => !value)} aria-pressed={showSelectedOnly}>{showSelectedOnly ? "すべて表示" : "選択済みのみ"}</button>
-                <button type="button" className="btn-ghost" onClick={() => updateVisibleSelections(true)} disabled={!filteredModels.length}>すべて選択</button>
-                <button type="button" className="btn-ghost" onClick={() => updateVisibleSelections(false)} disabled={!filteredModels.length}>すべて解除</button>
-              </div>
-              <div className="auto-model-list" aria-label="Autoで使用可能なモデル">
-                {filteredModels.map((model) => (
-                  <label className="auto-model-option" key={model.id}>
-                    <input checked={selectedModelIds.has(model.id)} onChange={() => toggleModel(model.id)} type="checkbox" />
-                    <span className="auto-model-name">{model.data.name || model.data.model_id}</span>
-                    <small>{model.data.context_window ? `${model.data.context_window.toLocaleString()} context` : "Context Window未設定"}</small>
-                  </label>
-                ))}
-                {!filteredModels.length && <p className="auto-model-empty">該当するモデルがありません。</p>}
-              </div>
-            </div>
-          </Field>
-          <Field label="Auto実行の再試行回数" hint="一時的なProvider障害時に、未使用のAuto候補へ切り替える回数です。0なら再試行しません。モデル未検出・認証・設定エラーは再試行しません。">
-            <input name="auto_retry_count" type="number" min="0" step="1" defaultValue={setting.data.data.auto_retry_count ?? 3} />
           </Field>
           <Field
             label="Brave Search API Key"

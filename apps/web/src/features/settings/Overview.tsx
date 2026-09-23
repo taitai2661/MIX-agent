@@ -1,7 +1,7 @@
 import { api } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, BarChart3, Brain, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, ArrowRight, BarChart3, Brain, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const cards = [
@@ -15,6 +15,7 @@ const cards = [
   ["account", "アカウント・安全性", "認証とログイン履歴", ShieldCheck],
   ["backups", "バックアップ", "データを安全に保管", Database],
   ["statistics", "統計", "モデルの成功率と失敗傾向", BarChart3],
+  ["diagnostics", "障害診断", "サービス状態と最近の失敗", Activity],
 ] as const;
 
 export function SettingsOverview() {
@@ -31,6 +32,7 @@ export function SettingsOverview() {
     account: "変更・確認",
     backups: "作成・復元",
     statistics: "30日間",
+    diagnostics: "状態を確認",
   };
   const defaultModel = models.data?.find((row) => row.id === settings.data?.data.default_model_id);
   return <div className="settings-overview">

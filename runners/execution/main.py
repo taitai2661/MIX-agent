@@ -1,6 +1,7 @@
 """Fixed single-user runner. No provider keys, database, host mounts, or Docker socket."""
 
 import asyncio
+import ast
 import base64
 import io
 import os
@@ -123,6 +124,35 @@ def search_files(query):
         except (OSError, ValueError):
             continue
     return {"matches": found}
+
+
+async def workspace_check(args):
+    """Fixed checks only; never interpret model supplied text as a command."""
+    kind = args.get("kind")
+    path = args.get("path")
+    if kind == "python_syntax":
+        if not isinstance(path, str) or not path.endswith(".py"):
+            raise ValueError("A Python file path is required")
+        ast.parse(read(path), filename=path)
+        return {"kind": kind, "path": path, "ok": True}
+    if kind not in {"git_status", "git_diff_check"} or path is not None:
+        raise ValueError("Unknown check or unexpected path")
+    command = ["git", "--no-optional-locks", "-c", "core.pager=cat", "-c", "diff.external=",
+               "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+    command += (["status", "--short", "--untracked-files=no", "--ignore-submodules=all"]
+                if kind == "git_status" else ["diff", "--check", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all"])
+    proc = await asyncio.create_subprocess_exec(
+        *command, cwd=ROOT, env={"PATH": os.environ.get("PATH", ""), "HOME": "/tmp", "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        output, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise ValueError("Workspace check timed out") from None
+    return {"kind": kind, "ok": proc.returncode == 0, "exit_code": proc.returncode,
+            "output": output[:64000].decode("utf-8", errors="replace")}
 
 
 async def drain(proc, entry):
@@ -249,6 +279,8 @@ async def execute(body: Execute):
                     os.close(fd)
             if name == "search_files":
                 return await asyncio.to_thread(search_files, args["query"])
+            if name == "workspace_check":
+                return await workspace_check(args)
             if name == "run_terminal":
                 if (
                     sum(p["process"].returncode is None for p in PROCESSES.values())

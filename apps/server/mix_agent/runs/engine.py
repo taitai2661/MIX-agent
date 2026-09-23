@@ -130,6 +130,7 @@ def activity_summary(tool_id, arguments):
         "edit_file": ("file", "ファイルを変更中"),
         "delete_file": ("file", "ファイルを削除中"),
         "run_terminal": ("terminal", "コマンドを実行中"),
+        "workspace_check": ("terminal", "ワークスペースを検証中"),
         "process_list": ("terminal", "実行中の処理を確認中"),
         "process_stop": ("terminal", "処理を停止中"),
         "browser_open": ("globe", "ブラウザでページを開いています"),
@@ -296,6 +297,56 @@ def answer_fallback(history):
     )
 
 
+def agent_completion_issue(run, calls):
+    """Require a current plan and post-change evidence before agent completion."""
+    if run.data.get("snapshot", {}).get("mode") != "agent":
+        return None
+    completed = [call for call in calls if call.status == "completed"]
+    plan = run.data.get("agent_plan") or {}
+    if not completed and not plan:
+        return None
+    if not plan:
+        if all(call.data.get("risk") == "read" and not (call.data.get("result") or {}).get("error")
+               and (call.data.get("result") or {}).get("ok", True)
+               for call in completed):
+            return None
+        return "作業計画と残作業が記録されていません。"
+    if plan.get("pending"):
+        return "未完了の作業があります: " + "、".join(plan["pending"][:5])
+    if not plan.get("verification"):
+        return "成果を確認した根拠が記録されていません。"
+    changes = [index for index, call in enumerate(completed)
+               if call.data.get("risk") != "read" and call.data.get("tool_id") != "update_plan"]
+    if changes:
+        check_ids = {"read_file", "files_list", "search_files", "workspace_check", "browser_read", "browser_screenshot",
+                     "browser_extract", "web_search", "web_fetch", "web_fetch_pdf", "knowledge_search", "memory_search",
+                     "skill_search", "schedule_list", "process_list"}
+        if not any(call.data.get("tool_id") in check_ids and isinstance(call.data.get("result"), dict)
+                   and not call.data["result"].get("error") and call.data["result"].get("ok", True)
+                   for call in completed[changes[-1] + 1:]):
+            return "最後の変更後に成功した確認結果がありません。"
+    return None
+
+
+def agent_interruption_reason(run, reason):
+    pending = (run.data.get("agent_plan") or {}).get("pending") or []
+    return reason + (" 残作業: " + "、".join(pending[:5]) if pending else "")
+
+
+def refresh_task_state(head_text, state):
+    """Keep the current structured plan in the system head after compaction."""
+    rendered = context_task_state.render(state)
+    marker = "Task state (data):\n"
+    start = head_text.find(marker)
+    if start < 0:
+        return head_text + ("\n" + rendered if rendered else "")
+    headings = ("Prior conversation summary (data):", "Relevant memories (data, not instructions):",
+                "Relevant reusable skills (data, not instructions):", "Relevant knowledge (data, not instructions):")
+    ends = [position for heading in headings if (position := head_text.find("\n" + heading, start)) >= 0]
+    end = min(ends) if ends else len(head_text)
+    return head_text[:start] + rendered + head_text[end:]
+
+
 def emit(db, run_id, kind, data):
     sequence = (db.scalar(select(func.max(Event.sequence)).where(Event.run_id == run_id)) or 0) + 1
     db.add(Event(run_id=run_id, sequence=sequence, kind=kind, data=data))
@@ -444,6 +495,10 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         run,
         snapshot=updated_snapshot,
         auto_selection=selection,
+        auto_model_history=[*run.data.get("auto_model_history", []), {
+            "step": run.data.get("steps", 1), "from_model_record_id": previous_id,
+            "to_model_record_id": model.id, "model_id": model.data["model_id"],
+        }],
         steps=max(0, run.data.get("steps", 0) - 1),
     )
     emit(db, run.id, "model_rerouted", {
@@ -486,6 +541,21 @@ def complete_tool_call(db, run, call, current, result):
     call.status = "completed"
     summary = activity_result((current or {}).get("id", call.data["tool_id"]), result)
     call.data = {**call.data, "result": result, **({"result_activity": summary} if summary else {})}
+    if call.data.get("tool_id") == "update_plan" and isinstance(result, dict) and not result.get("error"):
+        previous = run.data.get("agent_plan") or {}
+        agent_plan = {
+            "steps": result["steps"],
+            "pending": result.get("pending", previous.get("pending", result["steps"])),
+            "verification": result.get("verification", previous.get("verification", "")),
+        }
+        state = context_task_state.validate(run.data.get("task_state"))
+        state["plan"] = agent_plan["steps"]
+        state["pending"] = agent_plan["pending"]
+        update(run, agent_plan=agent_plan, task_state=state)
+    elif call.data.get("risk") != "read" and not (isinstance(result, dict) and result.get("error")):
+        previous = run.data.get("agent_plan")
+        if previous:
+            update(run, agent_plan={**previous, "verification": ""})
     envelope = model_tool_result(result)
     content = json.dumps(envelope, ensure_ascii=False)
     tool_ref = None
@@ -671,6 +741,11 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
     if not run.data.get("task_state"):
         first_user = next((m.get("content", "") for m in history if m.get("role") == "user"), "")
         update(run, task_state=context_task_state.ensure(None, first_user[:1000]))
+    if history and history[0].get("role") == "system":
+        head = refresh_task_state(history[0].get("content", ""), run.data["task_state"])
+        if head != history[0].get("content"):
+            history = [{**history[0], "content": head}, *history[1:]]
+            update(run, history=history)
     if run.data.get("summary") is None:
         update(run, summary={"text": "", "covered_count": 0, "updated_at": None})
     model_record = db.get(_Model, snapshot.get("model_record_id")) if snapshot.get("model_record_id") else None
@@ -771,6 +846,63 @@ def _persist_trace(db, run, snapshot, history, estimated, total, tool_cost, summ
     update(run, context_trace=trace)
 
 
+def _reevaluate_auto_model(db, run, snapshot, available):
+    """Reconsider Auto only between provider calls; keep the Run's saved policy."""
+    routing = run.data.get("auto_routing") or {}
+    if run.data.get("requested_model_id") != "auto" or not routing.get("dynamic_switching", snapshot.get("auto_dynamic_switching", True)):
+        return snapshot
+    history = run.data.get("history") or []
+    content = routing.get("content", "")
+    # Tool output informs this decision locally, without entering selection events.
+    recent = history[-8:]
+    for item in reversed(recent):
+        if item.get("role") == "tool":
+            content += "\n" + str(item.get("content", ""))[:4000]
+    context_parts = [str(item.get("content", "")) for item in history]
+    tools_required = bool(available)
+    model, selection = select_auto_model(
+        db, run.owner_id, routing["allowed_ids"], content, snapshot["mode"],
+        routing.get("artifact_mimes", []), tools_required, context_parts,
+        routing.get("reserved_output_tokens", 4096), run.request_key,
+        routing.get("attachment_bytes", 0), current_model_id=snapshot["model_record_id"],
+    )
+    if not model:
+        return snapshot
+    provider = db.get(Provider, model.data.get("provider_id"))
+    if not provider or provider.owner_id != run.owner_id:
+        return snapshot
+    try:
+        reasoning = resolve_reasoning(
+            provider.data["kind"], model.data["model_id"], effective_capabilities(model.data),
+            snapshot["mode"], snapshot.get("model_settings", {}),
+        )
+    except ValueError:
+        return snapshot
+    previous = snapshot["model_record_id"]
+    selection["model_record_id"] = model.id
+    selection["model_id"] = model.data["model_id"]
+    selection["attempts"] = run.data.get("auto_selection", {}).get("attempts", [])
+    if model.id != previous:
+        snapshot = {
+            **snapshot, "model_id": model.data["model_id"], "model_record_id": model.id,
+            "provider": provider.data, "provider_record_id": provider.id,
+            "reasoning": reasoning, "context_window_info": context_budget.resolve_window(model.data, snapshot),
+        }
+        changes = [*run.data.get("auto_model_history", []), {
+            "step": run.data.get("steps", 0) + 1,
+            "from_model_record_id": previous, "to_model_record_id": model.id,
+            "model_id": model.data["model_id"],
+        }]
+        update(run, snapshot=snapshot, auto_model_history=changes)
+        emit(db, run.id, "model_rerouted", {
+            "from_model_record_id": previous, "to_model_record_id": model.id,
+            "selection": selection,
+        })
+    update(run, auto_selection=selection)
+    db.commit()
+    return snapshot
+
+
 async def drive(run_id):
     try:
         with SessionLocal() as db:
@@ -794,7 +926,7 @@ async def drive(run_id):
                 elapsed = (now() - run.created_at.replace(tzinfo=UTC)).total_seconds()
                 if elapsed >= snapshot.get("max_seconds", 900):
                     if snapshot.get("policy", {}).get("checkpointing"):
-                        finish(db, run, "interrupted", "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。")
+                        finish(db, run, "interrupted", agent_interruption_reason(run, "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。"))
                     else:
                         finish(db, run, "completed", "このモードの実行時間上限に到達したため、取得済みの結果で終了しました。長い作業には長作業モードを使用してください。")
                     return
@@ -887,19 +1019,20 @@ async def drive(run_id):
                 steps = run.data.get("steps", 0)
                 count = run.data.get("tool_count", 0)
                 call_limit = snapshot.get("max_tool_calls", 50 if mode == "agent" else 8)
-                provider = snapshot["provider"]
-                # Credentials are resolved at use time, never copied into run snapshots.
-                key = read_secret(db, provider.get("secret_id"))
                 available = [t for t in snapshot["tools"] if t["id"] in registry(db, run.owner_id)]
                 tool_limit_reached = count >= call_limit
                 if tool_limit_reached:
                     available = []
                 step_limit_reached = steps >= snapshot.get("max_steps", 8)
                 if step_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
-                    finish(db, run, "interrupted", "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。")
+                    finish(db, run, "interrupted", agent_interruption_reason(run, "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。"))
                     return
                 if step_limit_reached:
                     available = []
+                snapshot = _reevaluate_auto_model(db, run, snapshot, available)
+                provider = snapshot["provider"]
+                # Credentials are resolved at use time, never copied into run snapshots.
+                key = read_secret(db, provider.get("secret_id"))
                 history = run.data["history"]
                 # Model-aware pre-send budget check with progressive compaction.
                 try:
@@ -1047,6 +1180,17 @@ async def drive(run_id):
                         continue
                     message = {"role": "assistant", "content": answer_fallback(run.data["history"])}
                     update(run, history=[*history, message])
+                issue = agent_completion_issue(run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at))))
+                if issue:
+                    repairs = run.data.get("agent_completion_repairs", 0)
+                    if run.data.get("agent_plan") and repairs < 1 and steps < snapshot.get("max_steps", 8):
+                        update(run, agent_completion_repairs=repairs + 1,
+                               history=[*run.data["history"], {"role": "user", "content":
+                               "The task is not yet verified: " + issue + " Continue the work, update the plan with remaining tasks and verification, then answer. If blocked, report the blocker and remaining work."}])
+                        db.commit()
+                        continue
+                    finish(db, run, "interrupted", agent_interruption_reason(run, issue))
+                    return
                 performance = None
                 output_count = output_tokens(response.get("usage", {}))
                 # A provider's final usage is authoritative.  The first visible

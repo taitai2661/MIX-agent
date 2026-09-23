@@ -31,6 +31,7 @@ docker compose up -d --build
 - stdio / Streamable HTTP MCP、Filesystem導入テンプレート
 - Agent編集、Memory履歴・復元、暗号化Secret
 - 暗号化バックアップ、復元前退避、復元途中の再起動からの回復
+- 運用診断（DB接続、Runner設定、滞留Run、直近の失敗・中断）
 
 Knowledge/RAG、画像生成・編集、MCP OAuth、Registry Store、外部向けOpenAI Compatible APIは次段階です。Vision対応モデルへの画像添付・解析は初期版に含みます。
 

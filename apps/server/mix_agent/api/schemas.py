@@ -182,6 +182,26 @@ class StatisticsView(BaseModel):
     groups: list[StatisticsGroupView]
 
 
+class DiagnosticsFailureView(BaseModel):
+    status: Literal["failed", "interrupted"]
+    mode: str
+    created_at: str
+
+
+class DiagnosticsRunsView(BaseModel):
+    active: int
+    failed_30d: int
+    interrupted_30d: int
+    stale_active: int
+    recent_failures: list[DiagnosticsFailureView]
+
+
+class DiagnosticsView(BaseModel):
+    checked_at: str
+    services: dict[str, str]
+    runs: DiagnosticsRunsView
+
+
 class ToolView(BaseModel):
     id: str
     default_permission: Literal["allow", "ask", "deny"] = "ask"
@@ -388,6 +408,7 @@ class SettingsInput(Input):
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
     auto_retry_count: int = Field(default=3, ge=0)
+    auto_dynamic_switching: bool = True
     setup_complete: bool = False
     brave_api_key: str | None = None
     tavily_api_key: str | None = None
@@ -400,6 +421,8 @@ class SettingsInput(Input):
     browser_install_requested: bool = False
     browser_install_status: Literal["not_installed", "installing", "ready", "failed"] = "not_installed"
     browser_install_failure: str | None = None
+    browser_install_progress: int | None = None
+    browser_install_stage: str | None = None
     browser_timeout_ms: int = Field(default=15000, ge=3000, le=60000)
     browser_locale: str = Field(default="ja-JP", min_length=2, max_length=35)
     browser_user_agent: str = Field(default="", max_length=500)

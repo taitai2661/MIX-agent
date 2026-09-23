@@ -14,7 +14,7 @@ async def public_address(host, port):
     return ips[0]
 
 
-async def fetch_public_bytes(url, max_bytes=2_000_000):
+async def fetch_public_bytes(url, max_bytes=2_000_000, *, allowed_domains=None):
     """Fetch raw bytes from a public HTTP(S) URL with SSRF protections."""
     for _ in range(5):
         parsed = urlsplit(url)
@@ -28,6 +28,10 @@ async def fetch_public_bytes(url, max_bytes=2_000_000):
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         if port not in (80, 443):
             raise ValueError("Only ports 80 and 443 are allowed")
+        if allowed_domains and parsed.hostname.lower().rstrip(".") not in {
+            str(domain).lower().rstrip(".") for domain in allowed_domains
+        }:
+            raise ValueError("Domain is not in the allowed list")
         ip = await public_address(parsed.hostname, port)
         target = httpx.URL(url).copy_with(host=ip)
         async with (
@@ -63,8 +67,8 @@ def _content_type(response):
     return str(get("content-type", "") if callable(get) else "")
 
 
-async def fetch_public(url, max_bytes=2_000_000):
-    content, _ = await fetch_public_bytes(url, max_bytes)
+async def fetch_public(url, max_bytes=2_000_000, *, allowed_domains=None):
+    content, _ = await fetch_public_bytes(url, max_bytes, allowed_domains=allowed_domains)
     return content.decode("utf-8", errors="replace")
 
 
@@ -98,4 +102,4 @@ async def request_public(method, url, *, headers=None, data=None, json=None, max
             content.extend(block)
             if len(content) > max_bytes:
                 raise ValueError("Response exceeds size limit")
-            return response.status_code, dict(response.headers), bytes(content)
+        return response.status_code, dict(response.headers), bytes(content)

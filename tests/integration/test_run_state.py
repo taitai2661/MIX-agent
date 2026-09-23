@@ -262,7 +262,9 @@ async def test_approval_flow_uses_state_machine_and_executes_once(signed, monkey
     await engine.drive(run_id)
     assert len(executions) == 1
     with SessionLocal() as db:
-        assert db.get(Run, run_id).status == "completed"
+        run = db.get(Run, run_id)
+        assert run.status == "interrupted"
+        assert "作業計画" in run.data["reason"]
     events = status_events(run_id)
     assert any(
         e.data.get("from_status") == "running" and e.data.get("status") == "waiting_approval"
