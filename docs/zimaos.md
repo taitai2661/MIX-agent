@@ -3,7 +3,7 @@
 ## 配布の仕組み
 
 公開リポジトリの `store-config.json` と `Apps/MIX-agent/docker-compose.yml` から
-ZimaOS v2用の `store.json` とアプリ情報を生成します。Releaseタグ `v0.2.2`
+ZimaOS v2用の `store.json` とアプリ情報を生成します。Releaseタグ `v0.2.0`
 を作成すると、GitHub ActionsがAMD64のコンテナイメージをGHCRへ配布します。
 初回の配布では8つのGHCRパッケージをPublicに変更し、公開イメージを確認した後で
 `Publish store and GitHub Release` ワークフローにタグを入力します。
@@ -51,7 +51,7 @@ Tool実行環境を確認してください。必要なMCPパッケージは再�
 
 ```sh
 python -m pip install PyYAML==6.0.2
-python scripts/render_zimaos_compose.py v0.2.2
+python scripts/render_zimaos_compose.py v0.2.0
 docker compose -f Apps/MIX-agent/docker-compose.yml config --quiet
 ```
 
