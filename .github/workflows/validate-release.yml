@@ -15,7 +15,7 @@ jobs:
       - name: Check generated store manifest
         run: |
           python -m pip install PyYAML==6.0.2
-          python scripts/render_zimaos_compose.py v0.2.0
+          python scripts/render_zimaos_compose.py v0.2.2
           git diff --exit-code -- Apps/MIX-agent/docker-compose.yml
           docker compose -f Apps/MIX-agent/docker-compose.yml config --quiet
       - name: Run application test suite
