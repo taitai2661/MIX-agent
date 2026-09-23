@@ -32,6 +32,7 @@ export function ModelPicker({ models, value, onChange, temporaryMode, allowTools
     onChange(item.id);
     setOpen(false);
     setQuery("");
+    trigger.current?.focus();
   }
   function keyboard(event: React.KeyboardEvent) {
     if (event.key === "Escape") { setOpen(false); trigger.current?.focus(); return; }
@@ -66,7 +67,7 @@ export function ModelPicker({ models, value, onChange, temporaryMode, allowTools
         <div className="temporary-settings">
           <label><input type="checkbox" checked={temporaryMode} onChange={(event) => { onTemporaryModeChange(event.target.checked); if (!event.target.checked) onAllowToolsChange(false); }} /> 一時モード</label>
           {temporaryMode && <>
-            <small>この送信ではMemoryを使わず、会話・回答・添付をMIX側に保存しません</small>
+            <small>この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します</small>
             <label><input type="checkbox" checked={allowTools} onChange={(event) => onAllowToolsChange(event.target.checked)} /> Toolを許可</label>
             {allowTools && <small>Toolの外部送信や副作用は残る場合があります</small>}
           </>}

@@ -40,6 +40,7 @@ from mix_agent.db.session import SessionLocal
 from mix_agent.performance import record as record_performance
 from mix_agent.providers.adapters import (
     Adapter,
+    ProviderIncompleteResponseError,
     is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
     is_retryable_provider_error,
@@ -378,6 +379,8 @@ def finish(db, run, status, reason=None):
         return
     transition_run(db, run, status, reason=reason)
     update(run, reason=reason)
+    if status in {"failed", "cancelled", "interrupted"}:
+        update(run, answer_evaluation={"status": "unanswered", "reason": "最終回答の前に実行が終了しました。"})
     if run.data.get("snapshot", {}).get("policy", {}).get("checkpointing"):
         update(
             run,
@@ -453,7 +456,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         routing["artifact_mimes"], routing["tools_required"], routing["context_parts"],
         routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
         excluded_model_ids=tuple(used_model_ids),
-        prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout"} else None),
+        prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout", "incomplete"} else None),
     )
     if not model:
         return None
@@ -516,7 +519,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         delay = max(0, (retry_until - now()).total_seconds())
         if delay:
             await asyncio.sleep(delay)
-    elif classification in {"provider_5xx", "timeout"} and provider.id == provider_id:
+    elif classification in {"provider_5xx", "timeout", "incomplete"} and provider.id == provider_id:
         await asyncio.sleep(min(4, 2 ** max(0, retry_number - 1)))
     return updated_snapshot
 
@@ -1079,7 +1082,7 @@ async def drive(run_id):
                                     last_text_flush_at = asyncio.get_running_loop().time()
                                 response = event
                             elif event["kind"] == "text":
-                                if first_output_at is None:
+                                if event.get("text") and first_output_at is None:
                                     first_output_at = now()
                                 buffered_text.append(event.get("text", ""))
                                 if asyncio.get_running_loop().time() - last_text_flush_at >= STREAM_TEXT_FLUSH_SECONDS:
@@ -1093,6 +1096,8 @@ async def drive(run_id):
                                 emit(db, run.id, event["kind"], {"text": event.get("text", "")})
                                 db.commit()
                         flush_stream_text(db, run.id, buffered_text)
+                        if response is None:
+                            raise ProviderIncompleteResponseError("Provider stream ended without a final response")
                 except Exception as exc:
                     # A failed stream must still expose every fragment the
                     # provider already produced before reporting its outcome.
@@ -1121,8 +1126,6 @@ async def drive(run_id):
                         raise
                     snapshot = rerouted
                     continue
-                if response is None:
-                    raise RuntimeError("Incomplete model response")
                 if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
                     completed_at = now()
                     first_output_at = first_output_at or completed_at

@@ -33,9 +33,12 @@ async def lifespan(app):
         logging.getLogger(__name__).exception("startup recovery failed")
     task = asyncio.create_task(scheduler())
     memory_task = asyncio.create_task(memory_scheduler())
+    from mix_agent.push import worker as push_worker
+    push_task = asyncio.create_task(push_worker())
     yield
     task.cancel()
     memory_task.cancel()
+    push_task.cancel()
     # Shutdown leaves running markers for crash-safe recovery; do not report success.
     from mix_agent.memory.jobs import ACTIVE_JOBS
 
@@ -44,7 +47,7 @@ async def lifespan(app):
     for pending in list(ACTIVE_JOBS):
         pending.cancel()
     await asyncio.gather(
-        task, memory_task, *list(TASKS.values()), *list(ACTIVE_JOBS), return_exceptions=True
+        task, memory_task, push_task, *list(TASKS.values()), *list(ACTIVE_JOBS), return_exceptions=True
     )
 
 
@@ -106,6 +109,14 @@ app.include_router(router)
 web = Path(os.getenv("WEB_DIST", "apps/web/dist"))
 if (web / "assets").exists():
     app.mount("/assets", StaticFiles(directory=web / "assets"), name="assets")
+
+
+@app.get("/push-sw.js")
+async def push_service_worker():
+    path = web / "push-sw.js"
+    if not path.exists():
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(path, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/{path:path}")

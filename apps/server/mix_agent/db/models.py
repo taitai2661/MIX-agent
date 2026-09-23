@@ -137,6 +137,13 @@ class Notification(Record, Base):
     __table_args__ = (Index("notification_owner_read", "owner_id", "read_at"),)
 
 
+class PushSubscription(Record, Base):
+    __tablename__ = "push_subscriptions"
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    cursor_id: Mapped[str] = mapped_column(String(36), default="")
+
+
 class Settings(Record, Base):
     __tablename__ = "app_settings"
 

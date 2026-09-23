@@ -548,6 +548,7 @@ async def test_empty_or_url_json_final_turn_is_repaired_before_persisting(signed
     with SessionLocal() as db:
         messages = list(db.scalars(select(Message).where(Message.conversation_id == db.get(Run, run_id).conversation_id)))
         assert [message.data["content"] for message in messages] == ["test", "明日の天気を確認するには地域を指定してください。"]
+        assert db.get(Run, run_id).data["answer_evaluation"]["status"] == "provided"
 
 
 async def test_repeated_empty_final_turn_uses_safe_fallback(signed, monkeypatch):
@@ -572,6 +573,7 @@ async def test_repeated_empty_final_turn_uses_safe_fallback(signed, monkeypatch)
         assert run.status == "completed"
         assert len(messages) == 2
         assert "ユーザー向けの本文を生成できませんでした" in messages[-1].data["content"]
+        assert run.data["answer_evaluation"]["status"] == "needs_review"
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])

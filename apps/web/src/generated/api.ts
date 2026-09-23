@@ -1459,7 +1459,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "provided" | "needs_review";
+            status: "provided" | "needs_review" | "unanswered";
             /** Reason */
             reason: string;
         };

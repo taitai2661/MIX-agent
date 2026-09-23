@@ -19,6 +19,7 @@ from mix_agent.db.models import (
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import (
     ProviderContextLimitError,
+    ProviderIncompleteResponseError,
     is_nvidia_nim_chat_incompatible,
     is_nvidia_nim_function_not_found,
 )
@@ -174,6 +175,7 @@ def test_auto_reliability_classifies_retryable_and_non_availability_errors(signe
     response = httpx.Response(429, headers={"retry-after": "30"}, request=httpx.Request("POST", "https://provider.test"))
     assert classify_failure(httpx.HTTPStatusError("limited", request=response.request, response=response)) == "rate_limit"
     assert classify_failure(ProviderContextLimitError("context limit")) == "context"
+    assert classify_failure(ProviderIncompleteResponseError("stream ended")) == "incomplete"
     assert classify_failure(ValueError("tool calling is not supported")) == "tool"
     unauthorized = httpx.Response(401, request=response.request)
     assert classify_failure(httpx.HTTPStatusError("unauthorized", request=unauthorized.request, response=unauthorized)) == "auth"
@@ -290,6 +292,36 @@ def test_auto_retries_only_before_visible_output(signed, monkeypatch):
     with SessionLocal() as db:
         assert db.get(Run, queued.json()["run_id"]).status == "failed"
     assert len(attempts) == 1
+
+
+def test_auto_reroutes_when_stream_ends_without_response(signed, monkeypatch):
+    first = make_model({}, context=None, model_id="empty-first")
+    second = make_model({}, context=None, model_id="empty-second")
+    assert signed.put("/api/v1/settings", json={"default_model_id": "auto", "auto_model_ids": [first, second],
+                                                  "allowed_domains": []}).status_code == 200
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    queued = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": "empty-stream"})
+    attempts = []
+
+    class FakeAdapter:
+        def __init__(self, provider, key):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            attempts.append(model)
+            if len(attempts) == 1:
+                yield {"kind": "text", "text": ""}
+                return
+            yield {"kind": "response", "message": {"role": "assistant", "content": "hello"},
+                   "tool_calls": [], "usage": {}}
+
+    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    asyncio.run(engine.drive(queued.json()["run_id"]))
+    with SessionLocal() as db:
+        assert db.get(Run, queued.json()["run_id"]).status == "completed"
+    assert set(attempts) == {"empty-first", "empty-second"}
 
 
 def test_auto_success_records_first_output_and_completion_timings(signed, monkeypatch):

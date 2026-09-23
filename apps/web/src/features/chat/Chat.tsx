@@ -158,7 +158,7 @@ export function Chat() {
         if (v.kind === "approval") {
           qc.invalidateQueries({ queryKey: ["run", runId] });
         }
-        if (v.kind === "status") qc.invalidateQueries({ queryKey: ["run", runId] });
+        if (v.kind === "status" || v.kind === "context_summary") qc.invalidateQueries({ queryKey: ["run", runId] });
         if (v.kind === "message") {
           setStreamText("");
           qc.invalidateQueries({ queryKey: ["messages", id] });
@@ -183,7 +183,7 @@ export function Chat() {
     };
   }, [runId, id, qc]);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
+    bottom.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [streamText, history.data]);
   const active =
     run.data &&
@@ -302,6 +302,9 @@ export function Chat() {
                     <div className="context-summary-text">{r.context_summary?.text}</div>
                   </details>
                 ))}
+                {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && r.id !== runId && r.answer_evaluation).map(r => (
+                  <p className="run-evaluation" key={r.id}>回答チェック: {r.answer_evaluation?.status === "provided" ? "最終回答あり" : r.answer_evaluation?.status === "needs_review" ? "要確認" : "未回答"}。{r.answer_evaluation?.reason}</p>
+                ))}
                 <article className={"message " + m.data.role}>
                   <div className="message-label">
                     {m.data.role === "user" ? (
@@ -376,7 +379,7 @@ export function Chat() {
                 <div className="notice">{run.data.reason}</div>
               )}
               {run.data?.answer_evaluation && <p className="run-evaluation" role="status">
-                回答チェック: {run.data.answer_evaluation.status === "provided" ? "最終回答あり" : "要確認"}。{run.data.answer_evaluation.reason}
+                回答チェック: {run.data.answer_evaluation.status === "provided" ? "最終回答あり" : run.data.answer_evaluation.status === "needs_review" ? "要確認" : "未回答"}。{run.data.answer_evaluation.reason}
               </p>}
               {run.data && active && (
                 <p className="run-budget" role="status">
@@ -419,7 +422,7 @@ export function Chat() {
               error={error || history.error || models.error || tools.error || permissionRules.error}
             />
             <form className="composer" onSubmit={send}>
-              {temporaryMode && <p className="temporary-notice" role="status">一時モード: MIX側に会話・回答・添付を保存しません。Toolは{allowTools ? "許可中（外部への送信や副作用が残る場合があります）" : "無効"}。</p>}
+              {temporaryMode && <p className="temporary-notice" role="status">一時モード: Run終了後にMIX側の会話・回答・送信した添付を削除します。選択した添付は送信前にアップロードされます。Toolは{allowTools ? "許可中（外部への送信や副作用が残る場合があります）" : "無効"}。</p>}
               {attachments.length > 0 && (
                 <div className="attachments">
                   {attachments.map((a) => (

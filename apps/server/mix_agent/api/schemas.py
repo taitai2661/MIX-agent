@@ -67,7 +67,7 @@ class ContextSummaryView(BaseModel):
 
 
 class AnswerEvaluationView(BaseModel):
-    status: Literal["provided", "needs_review"]
+    status: Literal["provided", "needs_review", "unanswered"]
     reason: str
 
 

@@ -31,9 +31,13 @@ class ProviderContextLimitError(RuntimeError):
     """A provider explicitly rejected the request for exceeding its context limit."""
 
 
+class ProviderIncompleteResponseError(RuntimeError):
+    """The provider stream ended before returning its final response."""
+
+
 def is_retryable_provider_error(exc):
     """Return whether a provider failure is safe to retry on another model."""
-    if is_context_limit_error(exc):
+    if isinstance(exc, ProviderIncompleteResponseError) or is_context_limit_error(exc):
         return True
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
         return True
