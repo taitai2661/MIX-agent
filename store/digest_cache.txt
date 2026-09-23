@@ -1,9 +1,9 @@
-ghcr.io/taitai2661/mix-agent-app:v0.2.0 sha256:a886e7ff74f9b97b108315fc3f47a1f15b35ef5c40f65f162ce9c4fca6fefce0
-ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.2.0 sha256:c984347934329b741f41bb954cd63bd20ad808d9feb34d555f2f747d7eed80b8
-ghcr.io/taitai2661/mix-agent-browser-runner:v0.2.0 sha256:36411de2cbb8eaf20103be26826e9a08be6e97d07cc138b8fa0032a1a0fa8c80
-ghcr.io/taitai2661/mix-agent-egress:v0.2.0 sha256:168639fdff2fd852245dcb25991649316487bd5bce5f9939ca88b424cb20a795
-ghcr.io/taitai2661/mix-agent-execution:v0.2.0 sha256:bc5ed1f965fac61967e166e49e88e67973e4ca69724454f371cda863e82a6d85
-ghcr.io/taitai2661/mix-agent-init:v0.2.0 sha256:1d92bd4aff9d4815c4c3a509d290724584096d4664591f7f4507f186f7a63b7f
-ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.2.0 sha256:1eee9d9fc8fc1868bb166f74a5d04f9f6f33f0e6629f544cc48256dbc3772f01
-ghcr.io/taitai2661/mix-agent-mcp:v0.2.0 sha256:a9834c773e8aaac9e8037a0b9903aad2a7b9c78e34936e17a1b14a2c81bd9eec
+ghcr.io/taitai2661/mix-agent-app:v0.2.0 sha256:457e1dd88512eb93650587f09453162c4a12615ffdc6e2b5881049e650d85ebb
+ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.2.0 sha256:7de2c4e55549513db3d485457569d771b5fd7b140713fc7dbf234ebcdb113974
+ghcr.io/taitai2661/mix-agent-browser-runner:v0.2.0 sha256:fadfbf39164232bc8dcefe232bcda504a95d0192bcab33c25e11f59558fdefe6
+ghcr.io/taitai2661/mix-agent-egress:v0.2.0 sha256:c4b71362548e1da26a9f871dc13df87ceb19d0e4cb00a4332ed5e0139f5c9157
+ghcr.io/taitai2661/mix-agent-execution:v0.2.0 sha256:c4735d8836b795042c47df0082d4463cc39b7f4db05939b94133bc6dbb7e7ccb
+ghcr.io/taitai2661/mix-agent-init:v0.2.0 sha256:cc80a036d33eea9890e38fefed568589b33754caeba8ef1c54f618ff6d0c57bd
+ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.2.0 sha256:ae57fabd6b4a80abd74500acc18caa1992a6d2bd6baf9987d88437e0443edead
+ghcr.io/taitai2661/mix-agent-mcp:v0.2.0 sha256:9091389c1482fb3c4345cd38f76e89b4a14bce5051a86af0d075808d0e364143
 postgres:17.5-bookworm sha256:2088c1744625793a8a89118d2dee63fb121139141ff0ff53bd72e63bb6089d0d

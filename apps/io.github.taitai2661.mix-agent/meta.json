@@ -11,10 +11,6 @@
     "amd64"
   ],
   "update_at": "2026-09-23",
-  "website": "https://github.com/taitai2661/MIX-agent",
-  "repo": "https://github.com/taitai2661/MIX-agent",
-  "support": "https://github.com/taitai2661/MIX-agent/issues",
-  "docs": "https://github.com/taitai2661/MIX-agent/blob/main/docs/operations.md",
   "title": "MIX-agent",
   "release_note": "First versioned release with expanded agent and provider capabilities.",
   "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
@@ -25,6 +21,6 @@
   ],
   "min_memory": 0,
   "min_image_size": {
-    "amd64": 1342096367
+    "amd64": 1342099666
   }
 }

@@ -270,8 +270,8 @@ x-casaos:
   index: /
   port_map: '8080'
   scheme: http
-  icon: https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages/apps/io.github.taitai2661.mix-agent/assets/icon.svg
   title:
     en_US: MIX-agent
     ja_JP: MIX-agent
   version: 0.2.0
+  icon: https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages/apps/io.github.taitai2661.mix-agent/assets/icon.png
