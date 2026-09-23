@@ -211,7 +211,8 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
     mode = agent.get("mode") or selection.get("mode") or "agent"
     if requested_model_id == "auto":
         allowed = settings.data.get("auto_model_ids", [])
-        model, auto_selection = select_auto_model(db, owner_id, allowed, data["prompt"], mode, [], bool(agent.get("tool_ids")), [data["prompt"]], agent.get("model_settings", {}).get("max_output_tokens", 4096), scheduled.id, 0)
+        task_content = data["prompt"] + ("\n" + agent.get("system_prompt", "") if mode == "agent" else "")
+        model, auto_selection = select_auto_model(db, owner_id, allowed, task_content, mode, [], bool(agent.get("tool_ids")), [data["prompt"]], agent.get("model_settings", {}).get("max_output_tokens", 4096), scheduled.id, 0)
         if not model: raise HTTPException(422, (auto_selection or {}).get("reason", "Autoモデルを選択できません"))
     else:
         model, auto_selection = own(db, Model, requested_model_id, owner_id), None
@@ -269,7 +270,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
     }
     attempt = int(scheduled.data.get("attempt", 0))
     auto_routing = ({
-        "allowed_ids": settings.data.get("auto_model_ids", []), "content": data["prompt"],
+        "allowed_ids": settings.data.get("auto_model_ids", []), "content": data["prompt"] + ("\n" + agent.get("system_prompt", "") if mode == "agent" else ""),
         "mode": mode, "artifact_mimes": [], "tools_required": bool(tool_ids),
         "reserved_output_tokens": agent.get("model_settings", {}).get("max_output_tokens", 4096),
         "attachment_bytes": 0, "dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)),
@@ -1718,8 +1719,9 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         allowed_ids = settings.data.get("auto_model_ids", [])
         if not allowed_ids:
             raise HTTPException(422, "Autoで使用可能なモデルを設定してください")
+        task_content = body.content + ("\n" + agent.get("system_prompt", "") if mode == "agent" else "")
         model, auto_selection = select_auto_model(
-            db, s.owner_id, allowed_ids, body.content, mode, artifact_mimes, tools_required,
+            db, s.owner_id, allowed_ids, task_content, mode, artifact_mimes, tools_required,
             [*prior_content, body.content, agent.get("system_prompt", "")],
             agent.get("model_settings", {}).get("max_output_tokens", 4096), request_key,
             sum(a.data.get("size", 0) for a in artifacts),
@@ -1757,7 +1759,7 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
     )
     auto_routing = ({
         "allowed_ids": allowed_ids,
-        "content": body.content,
+        "content": body.content + ("\n" + agent.get("system_prompt", "") if mode == "agent" else ""),
         "mode": mode,
         "artifact_mimes": artifact_mimes,
         "tools_required": tools_required,

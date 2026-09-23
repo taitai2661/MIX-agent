@@ -28,6 +28,7 @@ class ArtifactView(BaseModel):
 
 class AutoSelectionView(BaseModel):
     model_id: str
+    model_name: str | None = None
     reason: str
     model_record_id: str | None = None
     profile: str | None = None

@@ -64,6 +64,27 @@ def test_auto_settings_and_capability_filters(signed, monkeypatch):
         assert details["candidate_count"] == 1
 
 
+def test_auto_dynamic_setting_preserves_existing_choices(signed, monkeypatch):
+    model_id = make_model({"tools": True}, model_id="setting-model")
+    assert signed.put("/api/v1/settings", json={"auto_model_ids": [model_id], "auto_retry_count": 2}).status_code == 200
+    first = signed.get("/api/v1/settings").json()["data"]
+    assert first["auto_dynamic_switching"] is True
+    assert signed.put("/api/v1/settings", json={"auto_dynamic_switching": False}).status_code == 200
+    saved = signed.get("/api/v1/settings").json()["data"]
+    assert saved["auto_model_ids"] == [model_id]
+    assert saved["auto_retry_count"] == 2
+    assert saved["auto_dynamic_switching"] is False
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    response = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"}, headers={"Idempotency-Key": conversation})
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.data["snapshot"]["auto_dynamic_switching"] is False
+        assert run.data["auto_routing"]["dynamic_switching"] is False
+
+
 def test_auto_excludes_known_special_purpose_models(signed):
     parse = make_model({}, model_id="nvidia/nemotron-parse", provider_data={"kind": "nvidia"})
     chat = make_model({}, model_id="nvidia/llama-3.3-nemotron-super-49b-v1.5", provider_data={"kind": "nvidia"})

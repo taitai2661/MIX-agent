@@ -72,7 +72,7 @@ async def fetch_public(url, max_bytes=2_000_000, *, allowed_domains=None):
     return content.decode("utf-8", errors="replace")
 
 
-async def request_public(method, url, *, headers=None, data=None, json=None, max_bytes=2_000_000):
+async def request_public(method, url, *, headers=None, data=None, json=None, max_bytes=2_000_000, timeout=20):
     """Issue one pinned public HTTP(S) request without following redirects."""
     parsed = urlsplit(url)
     if (
@@ -85,9 +85,10 @@ async def request_public(method, url, *, headers=None, data=None, json=None, max
         raise ValueError("Only public HTTPS endpoints are allowed")
     ip = await public_address(parsed.hostname, 443)
     target = httpx.URL(url).copy_with(host=ip)
-    request_headers = {"Host": parsed.netloc, **(headers or {})}
+    request_headers = {key: value for key, value in (headers or {}).items() if key.lower() != "host"}
+    request_headers["Host"] = parsed.netloc
     async with (
-        httpx.AsyncClient(timeout=20, trust_env=False, follow_redirects=False) as client,
+        httpx.AsyncClient(timeout=timeout, trust_env=False, follow_redirects=False) as client,
         client.stream(
             method,
             target,

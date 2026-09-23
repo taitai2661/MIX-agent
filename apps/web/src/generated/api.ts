@@ -1500,6 +1500,8 @@ export interface components {
         AutoSelectionView: {
             /** Model Id */
             model_id: string;
+            /** Model Name */
+            model_name?: string | null;
             /** Reason */
             reason: string;
             /** Model Record Id */
@@ -2166,6 +2168,11 @@ export interface components {
              * @default 3
              */
             auto_retry_count: number;
+            /**
+             * Auto Dynamic Switching
+             * @default true
+             */
+            auto_dynamic_switching: boolean;
             /**
              * Setup Complete
              * @default false

@@ -28,6 +28,7 @@ from mix_agent.db.models import (
     Conversation,
     Event,
     Message,
+    Model,
     Provider,
     Run,
     ScheduledRun,
@@ -853,6 +854,10 @@ def _reevaluate_auto_model(db, run, snapshot, available):
         return snapshot
     history = run.data.get("history") or []
     content = routing.get("content", "")
+    task_state = run.data.get("task_state") or {}
+    if isinstance(task_state, dict):
+        content += "\n" + str(task_state.get("plan", ""))[:2000]
+        content += "\n" + str(task_state.get("pending", ""))[:1000]
     # Tool output informs this decision locally, without entering selection events.
     recent = history[-8:]
     for item in reversed(recent):
@@ -1217,10 +1222,12 @@ async def drive(run_id):
                 if performance:
                     message_data["performance"] = performance
                 if run.data.get("auto_selection"):
+                    selected_model = db.get(Model, snapshot["model_record_id"])
                     message_data["auto_selection"] = {
                         **run.data["auto_selection"],
                         "model_record_id": snapshot["model_record_id"],
                         "model_id": snapshot["model_id"],
+                        "model_name": (selected_model.data.get("name") or snapshot["model_id"]) if selected_model else snapshot["model_id"],
                     }
                 db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data=message_data))
                 user_content = next((item.get("content", "") for item in reversed(run.data["history"]) if item.get("role") == "user"), "")

@@ -322,7 +322,7 @@ export function Chat() {
                   )}
                   {m.data.auto_selection && (
                     <div className="message-auto">
-                      <small>Auto: {m.data.auto_selection.model_id}</small>
+                      <small>Auto: {m.data.auto_selection.model_name || m.data.auto_selection.model_id}</small>
                       <span>
                         <button className={m.data.feedback === "up" ? "selected" : ""} onClick={() => rate(m.id, m.data.feedback, "up")} aria-label="良い回答"><ThumbsUp size={14} /></button>
                         <button className={m.data.feedback === "down" ? "selected" : ""} onClick={() => rate(m.id, m.data.feedback, "down")} aria-label="良くない回答"><ThumbsDown size={14} /></button>

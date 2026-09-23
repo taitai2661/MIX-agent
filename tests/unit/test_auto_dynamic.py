@@ -57,3 +57,22 @@ def test_auto_does_not_reevaluate_manual_or_disabled_runs(monkeypatch):
     for requested, enabled in (("manual", True), ("auto", False)):
         run = SimpleNamespace(data={"requested_model_id": requested, "auto_routing": {"dynamic_switching": enabled}})
         assert engine._reevaluate_auto_model(FakeDB(provider), run, snapshot, []) is snapshot
+
+
+def test_auto_keeps_current_model_when_it_remains_best(monkeypatch):
+    model = SimpleNamespace(id="same", data={"provider_id": "provider", "model_id": "same-model", "context_window": 32000})
+    provider = SimpleNamespace(id="provider", owner_id="owner", data={"kind": "openai"})
+    db = FakeDB(provider)
+    run = SimpleNamespace(owner_id="owner", id="run", request_key="request-key", data={
+        "requested_model_id": "auto", "steps": 1,
+        "history": [{"role": "user", "content": "hello"}],
+        "auto_routing": {"allowed_ids": ["same"], "content": "hello"},
+    })
+    snapshot = {"model_record_id": "same", "model_id": "same-model", "mode": "chat", "model_settings": {}}
+    monkeypatch.setattr(engine, "select_auto_model", lambda *args, **kwargs: (model, {"profile": "general"}))
+    monkeypatch.setattr(engine, "resolve_reasoning", lambda *args: {"policy": "off"})
+    monkeypatch.setattr(engine, "update", lambda row, **values: row.data.update(values))
+    monkeypatch.setattr(engine, "emit", lambda *args: 1 / 0)
+    assert engine._reevaluate_auto_model(db, run, snapshot, []) is snapshot
+    assert db.commits == 1
+    assert "auto_model_history" not in run.data
