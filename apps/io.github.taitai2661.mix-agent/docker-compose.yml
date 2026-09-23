@@ -2,7 +2,7 @@
 name: mix-agent
 services:
   init:
-    image: ghcr.io/taitai2661/mix-agent-init:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-init:v0.2.2
     entrypoint:
       - python
       - /bootstrap.py
@@ -87,7 +87,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    image: ghcr.io/taitai2661/mix-agent-app:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-app:v0.2.2
   execution-runner:
     restart: unless-stopped
     read_only: true
@@ -111,7 +111,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-execution:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-execution:v0.2.2
   browser-runner:
     restart: unless-stopped
     read_only: true
@@ -134,7 +134,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.2.2
   browser-provisioner:
     restart: unless-stopped
     read_only: true
@@ -156,7 +156,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.2.2
   mcp-runner:
     restart: unless-stopped
     read_only: true
@@ -181,7 +181,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-mcp:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-mcp:v0.2.2
   mcp-manager:
     restart: unless-stopped
     read_only: true
@@ -189,14 +189,14 @@ services:
     security_opt: *id002
     pids_limit: 128
     tmpfs: *id003
-    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.2.2
     user: 1000:1000
     group_add:
       - '0'
     environment:
       TOKEN_FILE: /tokens/manager.token
       POLICY_FILE: /policy/mcp-policy.json
-      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.2.0
+      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.2.2
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -239,7 +239,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-egress:v0.2.0
+    image: ghcr.io/taitai2661/mix-agent-egress:v0.2.2
     container_name: mix-agent-egress-proxy-1
 networks:
   database:
@@ -273,5 +273,5 @@ x-casaos:
   title:
     en_US: MIX-agent
     ja_JP: MIX-agent
-  version: 0.2.0
+  version: 0.2.2
   icon: https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages/apps/io.github.taitai2661.mix-agent/assets/icon.png

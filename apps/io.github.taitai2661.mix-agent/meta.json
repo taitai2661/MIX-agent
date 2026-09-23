@@ -12,15 +12,15 @@
   ],
   "update_at": "2026-09-23",
   "title": "MIX-agent",
-  "release_note": "First versioned release with expanded agent and provider capabilities.",
+  "release_note": "Patch release with aligned version metadata and ZimaOS images.",
   "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
   "id": "io.github.taitai2661.mix-agent",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "categories": [
     "ai"
   ],
   "min_memory": 0,
   "min_image_size": {
-    "amd64": 1342099666
+    "amd64": 1342086232
   }
 }
