@@ -1,4 +1,5 @@
 import { api, type Row } from "@/app/api";
+import { uuid } from "@/app/uuid";
 import { ja } from "@/app/strings";
 import type { components } from "@/generated/api";
 import { Button } from "@/components/button";
@@ -79,6 +80,7 @@ export function Chat() {
     conversation: string | undefined;
   } | null>(null);
   const restoredConversation = useRef<string | undefined>(undefined);
+  const reconciledRun = useRef<string | null>(null);
   const history = useQuery<ConversationHistory>({
     queryKey: ["messages", id],
     queryFn: () => api("/conversations/" + id + "/messages"),
@@ -98,6 +100,15 @@ export function Chat() {
     enabled: !!id,
     refetchInterval: !streamConnected && (run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval") ? 1500 : false,
   });
+  useEffect(() => {
+    if (!runId || !run.data || streamConnected) return;
+    if (!["completed", "failed", "cancelled", "interrupted"].includes(run.data.status)) return;
+    const revision = `${runId}:${run.data.status}`;
+    if (reconciledRun.current === revision) return;
+    reconciledRun.current = revision;
+    qc.invalidateQueries({ queryKey: ["messages", id] });
+    qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+  }, [id, qc, run.data, runId, streamConnected]);
   useEffect(() => {
     restoredConversation.current = undefined;
     setRunId("");
@@ -208,7 +219,7 @@ export function Chat() {
       if (!pendingSend.current || pendingSend.current.signature !== signature) {
         pendingSend.current = {
           signature,
-          key: crypto.randomUUID(),
+          key: uuid(),
           conversation: id,
         };
       }
@@ -239,11 +250,11 @@ export function Chat() {
       setBusy(false);
     }
   }
-  async function attach(files: FileList | null) {
-    if (!files) return;
+  async function attach(files: File[]) {
+    if (!files.length) return;
     setError(null);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         const f = new FormData();
         f.set("file", file);
         const a = await api<Artifact>("/artifacts", "POST", f);
@@ -513,7 +524,11 @@ export function Chat() {
                     type="file"
                     multiple
                     accept="image/*,.txt,.md,.pdf"
-                    onChange={(e) => attach(e.target.files)}
+                    onChange={(e) => {
+                      const files = Array.from(e.currentTarget.files || []);
+                      e.currentTarget.value = "";
+                      attach(files);
+                    }}
                   />
                   {active ? (
                     <button
