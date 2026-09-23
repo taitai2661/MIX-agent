@@ -273,7 +273,6 @@ x-casaos:
   index: /
   port_map: '8080'
   scheme: http
-  icon: https://raw.githubusercontent.com/taitai2661/MIX-agent/main/Apps/MIX-agent/icon.svg
   title:
     en_US: MIX-agent
     ja_JP: MIX-agent
@@ -301,7 +300,3 @@ x-casaos:
   release_notes:
     en_US: First versioned release with expanded agent and provider capabilities.
     ja_JP: Agent・Provider機能を拡充した初回のバージョン付きリリース。
-  website: https://github.com/taitai2661/MIX-agent
-  repo: https://github.com/taitai2661/MIX-agent
-  support: https://github.com/taitai2661/MIX-agent/issues
-  docs: https://github.com/taitai2661/MIX-agent/blob/main/docs/operations.md

@@ -55,6 +55,12 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           tar -czf "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" -C dist .
-          gh release create "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" \
-            --verify-tag --title "MIX-agent $RELEASE_TAG" \
-            --notes-file "docs/release-notes-${RELEASE_TAG}.md"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" --clobber
+            gh release edit "$RELEASE_TAG" --title "MIX-agent $RELEASE_TAG" \
+              --notes-file "docs/release-notes-${RELEASE_TAG}.md"
+          else
+            gh release create "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" \
+              --verify-tag --title "MIX-agent $RELEASE_TAG" \
+              --notes-file "docs/release-notes-${RELEASE_TAG}.md"
+          fi
