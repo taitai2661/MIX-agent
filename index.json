@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "updated_at": "2026-09-23T09:13:00Z",
+  "app_count": 1,
+  "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
+  "apps": [
+    {
+      "id": "io.github.taitai2661.mix-agent",
+      "title": "MIX-agent",
+      "tagline": "Your AI workspace on a trusted home network.",
+      "category": "AI",
+      "categories": [
+        "ai"
+      ],
+      "author": "MIX-agent contributors",
+      "developer": "MIX-agent contributors",
+      "architectures": [
+        "amd64"
+      ],
+      "icon": "/apps/io.github.taitai2661.mix-agent/assets/icon.svg",
+      "thumbnail": "",
+      "compose_url": "/apps/io.github.taitai2661.mix-agent/docker-compose.yml",
+      "meta_url": "/apps/io.github.taitai2661.mix-agent/meta.json",
+      "content_hash": "7694c812",
+      "version": "0.2.0"
+    }
+  ]
+}
