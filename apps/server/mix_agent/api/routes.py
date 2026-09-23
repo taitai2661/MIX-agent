@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from typing import Literal
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import Float, case, cast, delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -1270,13 +1271,24 @@ async def delete_conversation(key: str, permanent: bool = False, ctx=Depends(con
 
 
 @router.get("/conversations/{key}/markdown")
-async def export_conversation_markdown(key: str, ctx=Depends(context)):
+async def export_conversation_markdown(key: str, scope: Literal["answers", "conversation", "activity"] = "conversation", ctx=Depends(context)):
     db, s = ctx
     row = own(db, Conversation, key, s.owner_id)
-    lines = [f"# {row.data.get('title', '新しいチャット')}", "", f"作成: {row.created_at.isoformat()}", ""]
+    lines = [f"# {row.data.get('title', '新しいチャット')}", "", f"作成: {row.created_at.isoformat()}", f"書き出し範囲: {scope}", ""]
     for message in db.scalars(select(Message).where(Message.conversation_id == key).order_by(Message.created_at)):
+        if scope == "answers" and message.data.get("role") != "assistant":
+            continue
         lines += ["## " + ("あなた" if message.data.get("role") == "user" else "MIX agent"), "", message.data.get("content", ""), ""]
-        for artifact in message.data.get("artifacts", []): lines.append(f"添付: {artifact.get('name', 'attachment')}")
+        if scope != "answers":
+            for artifact in message.data.get("artifacts", []):
+                lines.append(f"添付: {artifact.get('name', 'attachment')}")
+    if scope == "activity":
+        run_ids = list(db.scalars(select(Run.id).where(Run.conversation_id == key)))
+        if run_ids:
+            lines += ["## Tool の実行概要", "", "引数・結果本文・資格情報は含みません。", ""]
+            for call in db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_ids)).order_by(ToolCall.created_at)):
+                label = (call.data.get("activity") or {}).get("label") or call.data.get("tool_id") or "Tool"
+                lines.append(f"- {call.created_at.isoformat()} · {label} · {call.status}")
     safe_name = "conversation-" + key + ".md"
     return PlainTextResponse("\n".join(lines), headers={"Content-Disposition": f'attachment; filename="{safe_name}"'})
 
@@ -1327,6 +1339,8 @@ async def messages(key: str, ctx=Depends(context)):
             "status": r.status,
             "reason": r.data.get("reason"),
             "message_id": _legacy_message_id(r),
+            "context_summary": r.data.get("summary") if (r.data.get("summary") or {}).get("text") else None,
+            "answer_evaluation": r.data.get("answer_evaluation"),
         }
         for r in run_rows
     ]
@@ -1838,6 +1852,8 @@ async def get_run(key: str, ctx=Depends(context)):
             {**public(a), "status": a.status}
             for a in db.scalars(select(Approval).where(Approval.run_id == key))
         ],
+        "context_summary": run.data.get("summary") if (run.data.get("summary") or {}).get("text") else None,
+        "answer_evaluation": run.data.get("answer_evaluation"),
     }
 
 

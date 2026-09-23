@@ -803,6 +803,11 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             # Summarizer failure must not destroy state; keep old summary.
             emit(db, run.id, "context_summary", {"status": "failed"})
             db.commit()
+            raise ContextBudgetError("context summary failed; previous conversation was preserved")
+        if not summary_text:
+            emit(db, run.id, "context_summary", {"status": "failed"})
+            db.commit()
+            raise ContextBudgetError("context summary was empty; previous conversation was preserved")
     compacted = [*head, *recent]
     estimated = context_tokens.count_messages(compacted, model_id)
     if estimated > total + 2000 and len(compacted) <= 2:
@@ -1185,6 +1190,9 @@ async def drive(run_id):
                         continue
                     message = {"role": "assistant", "content": answer_fallback(run.data["history"])}
                     update(run, history=[*history, message])
+                    update(run, answer_evaluation={"status": "needs_review", "reason": "自動補足で終了しました。依頼の達成を確認してください。"})
+                else:
+                    update(run, answer_evaluation={"status": "provided", "reason": "ユーザー向けの最終回答を確認しました。内容の正しさは自動判定していません。"})
                 issue = agent_completion_issue(run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at))))
                 if issue:
                     repairs = run.data.get("agent_completion_repairs", 0)

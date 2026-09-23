@@ -1453,6 +1453,16 @@ export interface components {
                 };
             } | null;
         };
+        /** AnswerEvaluationView */
+        AnswerEvaluationView: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "provided" | "needs_review";
+            /** Reason */
+            reason: string;
+        };
         /** ApprovalDataView */
         ApprovalDataView: {
             /** Tool */
@@ -1528,6 +1538,18 @@ export interface components {
             /** File */
             file: string;
         };
+        /** ContextSummaryView */
+        ContextSummaryView: {
+            /** Text */
+            text: string;
+            /**
+             * Covered Count
+             * @default 0
+             */
+            covered_count: number;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** ConversationFolderInput */
         ConversationFolderInput: {
             /** Name */
@@ -1578,6 +1600,8 @@ export interface components {
             reason?: string | null;
             /** Message Id */
             message_id?: string | null;
+            context_summary?: components["schemas"]["ContextSummaryView"] | null;
+            answer_evaluation?: components["schemas"]["AnswerEvaluationView"] | null;
         };
         /** ConversationSelectionView */
         ConversationSelectionView: {
@@ -2109,6 +2133,8 @@ export interface components {
             remaining: components["schemas"]["RunBudgetView"];
             /** Approvals */
             approvals: components["schemas"]["ApprovalView"][];
+            context_summary?: components["schemas"]["ContextSummaryView"] | null;
+            answer_evaluation?: components["schemas"]["AnswerEvaluationView"] | null;
         };
         /** ScheduledJobInput */
         ScheduledJobInput: {
@@ -3738,7 +3764,9 @@ export interface operations {
     };
     export_conversation_markdown_api_v1_conversations__key__markdown_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "answers" | "conversation" | "activity";
+            };
             header?: never;
             path: {
                 key: string;

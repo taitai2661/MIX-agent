@@ -31,7 +31,7 @@ Filesystemテンプレートを導入する場合は「一般・通信」で `re
 
 Filesystemの接続設定は `/packages/node_modules/.bin/mcp-server-filesystem`、引数は `["/shared"]`。これはTerminalの `/workspace` と別のMCP専用領域です。
 
-汎用stdioはインストール済み実行ファイルを指定します。npx/uvxによるTool実行時の自動ダウンロードは禁止します。初期版の自動パッケージ導入はFilesystemのみです。他の実行環境が必要な場合はRunnerイメージを拡張してください。Remote HTTPはHTTPS、Bearer/カスタムHeaderに対応し、OAuthやprivate IP接続は未対応です。
+汎用stdioはインストール済み実行ファイルを指定します。npx/uvxによるTool実行時の自動ダウンロードは禁止します。初期版の自動パッケージ導入はFilesystemのみです。他の実行環境が必要な場合はRunnerイメージを拡張してください。Remote HTTPはHTTPS、Bearer/カスタムHeader、OAuth認証フローに対応します。OAuthは接続先Serverとの実接続確認が必要です。private IP接続は未対応です。
 
 接続の編集後は既存Toolを無効化し、「接続・Tool取得」をやり直します。Secret欄は空欄で保持、`{}`で削除します。MCP Serverの標準エラーはSecret漏えいを避けてアプリログに流しません。
 

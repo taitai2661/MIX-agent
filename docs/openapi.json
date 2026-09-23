@@ -1410,6 +1410,21 @@
               "type": "string",
               "title": "Key"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "answers",
+                "conversation",
+                "activity"
+              ],
+              "type": "string",
+              "default": "conversation",
+              "title": "Scope"
+            }
           }
         ],
         "responses": {
@@ -3647,6 +3662,28 @@
         "type": "object",
         "title": "AgentInputPatch"
       },
+      "AnswerEvaluationView": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "provided",
+              "needs_review"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "reason"
+        ],
+        "title": "AnswerEvaluationView"
+      },
       "ApprovalDataView": {
         "properties": {
           "tool": {
@@ -3858,6 +3895,35 @@
         ],
         "title": "Body_upload_api_v1_artifacts_post"
       },
+      "ContextSummaryView": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "covered_count": {
+            "type": "integer",
+            "title": "Covered Count",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ContextSummaryView"
+      },
       "ConversationFolderInput": {
         "properties": {
           "name": {
@@ -4017,6 +4083,26 @@
               }
             ],
             "title": "Message Id"
+          },
+          "context_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer_evaluation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerEvaluationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -5474,6 +5560,26 @@
             },
             "type": "array",
             "title": "Approvals"
+          },
+          "context_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextSummaryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer_evaluation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerEvaluationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

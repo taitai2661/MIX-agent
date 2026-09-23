@@ -32,8 +32,13 @@ docker compose up -d --build
 - Agent編集、Memory履歴・復元、暗号化Secret
 - 暗号化バックアップ、復元前退避、復元途中の再起動からの回復
 - 運用診断（DB接続、Runner設定、滞留Run、直近の失敗・中断）
+- Knowledgeのテキスト登録・検索Tool、Skillの登録・履歴・復元、定期実行
+- Remote MCPのOAuth認証フロー（対応Serverとの接続が必要）
+- 会話のMarkdown書き出し（回答のみ／会話／Tool実行概要）
 
-Knowledge/RAG、画像生成・編集、MCP OAuth、Registry Store、外部向けOpenAI Compatible APIは次段階です。Vision対応モデルへの画像添付・解析は初期版に含みます。
+Knowledgeはテキストのチャンク検索を提供します。外部資料の自動同期や検索品質の実環境評価は今後の課題です。画像生成・編集、Registry Store、外部向けOpenAI Compatible APIは次段階です。Vision対応モデルへの画像添付・解析は含みます。
+
+Contextの上限が近づくと、古い会話を要約してモデルへ渡します。チャット画面ではRunごとの圧縮要約と対象件数を確認できます。要約が生成できない場合は古い文脈を切り落とさず実行を止めます。Runの「回答チェック」はユーザー向け最終回答の有無を判定するもので、内容の正しさや依頼達成を保証しません。
 
 ### Chat / Thinking / Agent
 

@@ -60,11 +60,24 @@ class MessageView(BaseModel):
     created_at: str
 
 
+class ContextSummaryView(BaseModel):
+    text: str
+    covered_count: int = 0
+    updated_at: str | None = None
+
+
+class AnswerEvaluationView(BaseModel):
+    status: Literal["provided", "needs_review"]
+    reason: str
+
+
 class ConversationRunView(BaseModel):
     id: str
     status: RunStatus
     reason: str | None = None
     message_id: str | None = None
+    context_summary: ContextSummaryView | None = None
+    answer_evaluation: AnswerEvaluationView | None = None
 
 
 class ConversationSelectionView(BaseModel):
@@ -155,6 +168,8 @@ class RunView(BaseModel):
     budget: RunBudgetView
     remaining: RunBudgetView
     approvals: list[ApprovalView]
+    context_summary: ContextSummaryView | None = None
+    answer_evaluation: AnswerEvaluationView | None = None
 
 
 class StatisticsSummaryView(BaseModel):

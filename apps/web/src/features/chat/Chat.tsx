@@ -295,6 +295,13 @@ export function Chat() {
             <div className="messages">
               {history.data?.messages.map((m) => (
                 <div key={m.id}>
+                {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && r.context_summary?.text).map(r => (
+                  <details className="context-summary" key={r.id}>
+                    <summary>この実行で文脈を圧縮しました · {r.context_summary?.covered_count ?? 0}件を要約</summary>
+                    <p>古い会話は以下の要約としてモデルに渡しました。元の会話は画面に残っています。</p>
+                    <div className="context-summary-text">{r.context_summary?.text}</div>
+                  </details>
+                ))}
                 <article className={"message " + m.data.role}>
                   <div className="message-label">
                     {m.data.role === "user" ? (
@@ -368,6 +375,9 @@ export function Chat() {
               {run.data?.reason && (
                 <div className="notice">{run.data.reason}</div>
               )}
+              {run.data?.answer_evaluation && <p className="run-evaluation" role="status">
+                回答チェック: {run.data.answer_evaluation.status === "provided" ? "最終回答あり" : "要確認"}。{run.data.answer_evaluation.reason}
+              </p>}
               {run.data && active && (
                 <p className="run-budget" role="status">
                   {run.data.mode}
@@ -409,6 +419,7 @@ export function Chat() {
               error={error || history.error || models.error || tools.error || permissionRules.error}
             />
             <form className="composer" onSubmit={send}>
+              {temporaryMode && <p className="temporary-notice" role="status">一時モード: MIX側に会話・回答・添付を保存しません。Toolは{allowTools ? "許可中（外部への送信や副作用が残る場合があります）" : "無効"}。</p>}
               {attachments.length > 0 && (
                 <div className="attachments">
                   {attachments.map((a) => (
@@ -437,7 +448,7 @@ export function Chat() {
                   if (
                     e.key === "Enter" &&
                     !e.shiftKey &&
-                    !e.nativeEvent.isComposing
+                    !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229
                   ) {
                     e.preventDefault();
                     send();
