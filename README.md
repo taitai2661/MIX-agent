@@ -11,8 +11,7 @@
 | Docker Compose | Dockerを自分で管理する人 | 下記の「Dockerで起動」 |
 | ZimaOSコミュニティストア | AMD64のZimaOSを使う人 | [ZimaOSガイド](docs/zimaos.md) |
 
-ZimaOSストアとGitHub Releasesは **v0.2.0の公開後** に利用可能になります。
-公開前は配布イメージとストアURLが有効ではありません。
+ZimaOSストアは配布イメージの公開とストア配布作業が完了したバージョンから利用できます。
 
 ## Dockerで起動
 
@@ -51,7 +50,7 @@ docker compose up -d --build
 
 ### GitHub Releases
 
-リリースページには、バージョンごとの[変更内容](docs/release-notes-v0.2.0.md)と
+リリースページには、バージョンごとの[変更内容](docs/release-notes-v0.2.2.md)と
 ZimaOSストアのアーカイブを掲載します。コンテナイメージはGitHub Container Registry
 （GHCR）から取得します。初回リリースの公開作業には、GHCRパッケージをPublicに
 設定してからストアとReleaseを配布する手順が含まれます。
