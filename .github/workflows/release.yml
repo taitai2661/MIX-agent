@@ -35,3 +35,10 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/taitai2661/MIX-agent
             org.opencontainers.image.version=${{ github.ref_name }}
+
+  zimaos-store:
+    needs: images
+    uses: ./.github/workflows/publish-store.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

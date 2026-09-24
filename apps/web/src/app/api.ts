@@ -1,5 +1,6 @@
 import type { components } from "../generated/api";
 import { ja } from "./strings";
+import { uuid } from "./uuid";
 export type Row = Omit<components["schemas"]["RecordView"], "data"> & {
   data: Record<string, any>;
 };
@@ -48,7 +49,7 @@ export async function api<T = any>(
   const headers: Record<string, string> = { "x-csrf-token": csrf };
   if (body && !form) headers["Content-Type"] = "application/json";
   if (method === "POST")
-    headers["Idempotency-Key"] = idempotencyKey || crypto.randomUUID();
+    headers["Idempotency-Key"] = idempotencyKey || uuid();
   const controller = new AbortController();
   const { timedOut, cleanup } = pipeTimeout(
     controller,

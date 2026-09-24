@@ -13,11 +13,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check generated store manifest
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install PyYAML==6.0.2
-          python scripts/render_zimaos_compose.py v0.2.2
+          VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
+          test -n "$VERSION"
+          python scripts/render_zimaos_compose.py "v$VERSION"
           git diff --exit-code -- Apps/MIX-agent/docker-compose.yml
           docker compose -f Apps/MIX-agent/docker-compose.yml config --quiet
+      - name: Build legacy ZimaOS/CasaOS store
+        uses: IceWhaleTech/CasaOS-AppStore/.github/actions/build-store-v1@0909364b800950030e71ea82355a5969a1c08b39
+        with:
+          source: .
+          output-zip: dist/store/main.zip
+          report-json: out/build-v1-report.json
+          report-title: MIX-agent legacy ZimaOS store validation
+      - name: Validate legacy store archive
+        run: unzip -t dist/store/main.zip
       - name: Run application test suite
         run: docker compose --profile test run --build --rm test
       - name: Build all release images

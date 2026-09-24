@@ -287,8 +287,24 @@ def list_traces(db, owner, query="", state=None, limit=200):
 
 
 def associations_for(db, owner, memory_id, limit=20):
-    rows = db.scalars(select(MemoryAssociation).where(MemoryAssociation.owner_id == owner, or_(MemoryAssociation.source_memory_id == memory_id, MemoryAssociation.target_memory_id == memory_id)).order_by(MemoryAssociation.weight.desc()).limit(limit))
-    return [{"id": row.id, "source_memory_id": row.source_memory_id, "target_memory_id": row.target_memory_id, "weight": row.weight, "confidence": row.confidence, "relation": row.data.get("relation")} for row in rows]
+    rows = list(db.scalars(
+        select(MemoryAssociation)
+        .where(MemoryAssociation.owner_id == owner, or_(MemoryAssociation.source_memory_id == memory_id, MemoryAssociation.target_memory_id == memory_id))
+        .order_by(MemoryAssociation.weight.desc())
+        .limit(limit)
+    ))
+    connected_ids = {row.target_memory_id if row.source_memory_id == memory_id else row.source_memory_id for row in rows}
+    connected = {row.id: row for row in db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.id.in_(connected_ids)))}
+    result = []
+    for row in rows:
+        peer_id = row.target_memory_id if row.source_memory_id == memory_id else row.source_memory_id
+        peer = connected.get(peer_id)
+        result.append({
+            "id": row.id, "source_memory_id": row.source_memory_id, "target_memory_id": row.target_memory_id,
+            "weight": row.weight, "confidence": row.confidence, "relation": row.data.get("relation"),
+            "connected_memory": {"id": peer.id, "content": peer.data.get("content", ""), "lifecycle_state": peer.lifecycle_state} if peer else None,
+        })
+    return result
 
 
 def restore(db, owner, row, previous):

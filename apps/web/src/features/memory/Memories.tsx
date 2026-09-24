@@ -7,6 +7,25 @@ import { useState } from "react";
 
 const states: Record<string, string> = { latent: "未定着", established: "定着", superseded: "過去の状態", archived: "アーカイブ", deleted: "削除済み" };
 const percent = (value: unknown) => `${Math.round(Number(value || 0) * 100)}%`;
+type Association = { id: string; source_memory_id: string; target_memory_id: string; weight: number; confidence: number; relation?: string; connected_memory?: { id: string; content: string; lifecycle_state: string } | null };
+
+function MemoryConnections({ memory, content, onSelect, onClose }: { memory: string; content: string; onSelect: (id: string, content: string) => void; onClose: () => void }) {
+  const connections = useQuery<Association[]>({ queryKey: ["/memories", memory, "associations"], queryFn: () => api(`/memories/${memory}/associations`) });
+  return <section className="card memory-connections" aria-label="記憶の繋がり">
+    <div className="memory-connections-heading"><div><h3>記憶の繋がり</h3><p>接続先を選ぶと、その記憶を中心に表示します。</p></div><Button variant="ghost" onClick={onClose}>閉じる</Button></div>
+    <ErrorBox error={connections.error} />
+    <div className="memory-network-center"><Brain size={18} /><span>{content}</span></div>
+    {connections.isPending && <p>繋がりを読み込み中…</p>}
+    {connections.data?.length === 0 && <p className="memory-network-empty">この記憶に繋がりはまだありません。</p>}
+    {!!connections.data?.length && <div className="memory-network-list">{connections.data.map(item => {
+      const peer = item.connected_memory;
+      return <div className="memory-network-edge" key={item.id}>
+        <div className="memory-network-link"><span className="memory-network-line" /><span>{item.relation || "関連"} · {percent(item.weight)}</span></div>
+        {peer ? <button type="button" className="memory-network-node" onClick={() => onSelect(peer.id, peer.content)}><span>{peer.content}</span><small>{states[peer.lifecycle_state] || peer.lifecycle_state} · 確度 {percent(item.confidence)}</small></button> : <div className="memory-network-node unavailable">接続先を表示できません</div>}
+      </div>;
+    })}</div>}
+  </section>;
+}
 
 export function Memories() {
   const qc = useQueryClient();
@@ -14,7 +33,7 @@ export function Memories() {
     [content, setContent] = useState(""), [strength, setStrength] = useState(.85), [confidence, setConfidence] = useState(.95),
     [salience, setSalience] = useState(.7), [error, setError] = useState<unknown>(null),
     [history, setHistory] = useState<{ memory: string; rows: Row[] } | null>(null),
-    [relations, setRelations] = useState<{ memory: string; rows: any[] } | null>(null);
+    [selected, setSelected] = useState<{ id: string; content: string } | null>(null);
   const rows = useRows(`/memories?q=${encodeURIComponent(q)}${state ? `&state=${state}` : ""}`);
   const settings = useQuery<any>({ queryKey: ["/settings"], queryFn: () => api("/settings") });
   const refreshMemories = () => qc.invalidateQueries({ predicate: item => String(item.queryKey[0]).startsWith("/memories") });
@@ -52,17 +71,17 @@ export function Memories() {
         <Field label={`Salience ${percent(salience)}`}><input type="range" min="0" max="1" step=".05" value={salience} onChange={e => setSalience(Number(e.target.value))} /></Field>
       </div><div className="form-actions"><Button>{editing ? "訂正" : "追加"}</Button>{editing && <Button type="button" variant="ghost" onClick={reset}>キャンセル</Button>}</div>
     </form>
+    {selected && <MemoryConnections memory={selected.id} content={selected.content} onSelect={(id, content) => setSelected({ id, content })} onClose={() => setSelected(null)} />}
     <div className="memory-filters"><input className="search-input" aria-label="Memory検索" placeholder="Traceを検索…" value={q} onChange={e => setQ(e.target.value)} />
       <select aria-label="定着状態" value={state} onChange={e => setState(e.target.value)}><option value="">すべての状態</option>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
     {rows.data?.map(row => <div className={`card memory-card ${row.data.lifecycle_state === "deleted" ? "deleted" : ""}`} key={row.id}>
       <Brain size={20} /><div className="grow"><p>{row.data.content}</p><div className="memory-metrics"><span>{states[row.data.lifecycle_state] || row.data.lifecycle_state}</span><span>強度 {percent(row.data.strength)}</span><span>確度 {percent(row.data.confidence)}</span><span>顕著性 {percent(row.data.salience)}</span><span>活性化 {row.data.activation_count || 0}回</span></div>
       {!!row.data.concepts?.length && <small>概念: {row.data.concepts.join("、")}</small>}</div>
       <div className="row-actions">{row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={() => { setEditing(row); setContent(row.data.content); setStrength(row.data.strength); setConfidence(row.data.confidence); setSalience(row.data.salience); }}>訂正</Button>}
-        <Button variant="ghost" onClick={async () => { try { setRelations({ memory: row.id, rows: await api(`/memories/${row.id}/associations`) }); } catch (reason) { setError(reason); } }}><GitBranch size={14} /> 関連</Button>
+        <Button variant="ghost" onClick={() => setSelected({ id: row.id, content: row.data.content })}><GitBranch size={14} /> 繋がりを見る</Button>
         <Button variant="ghost" onClick={async () => { try { setHistory({ memory: row.id, rows: await api(`/memories/${row.id}/revisions`) }); } catch (reason) { setError(reason); } }}>履歴</Button>
         {row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={async () => { if (confirm("このTraceと派生記憶を想起対象外にしますか？履歴から復元できます。")) { try { await api(`/memories/${row.id}`, "DELETE"); refreshMemories(); } catch (reason) { setError(reason); } } }}>忘れる</Button>}
       </div></div>)}
-    {relations && <div className="card"><h3>関連Trace</h3>{relations.rows.map(row => <div className="revision" key={row.id}><span>{row.relation || "association"}</span><small>weight {percent(row.weight)} · confidence {percent(row.confidence)}</small></div>)}{!relations.rows.length && <p>関連Traceはまだありません。</p>}<Button variant="ghost" onClick={() => setRelations(null)}>閉じる</Button></div>}
     {history && <div className="card"><h3>変更履歴</h3>{history.rows.map(row => <div className="revision" key={row.id}><p>{row.data.previous.content}</p><Button variant="outline" onClick={async () => { try { await api(`/memories/${history.memory}/restore/${row.id}`, "POST"); refreshMemories(); setHistory(null); } catch (reason) { setError(reason); } }}>復元</Button></div>)}{!history.rows.length && <p>変更履歴はまだありません。</p>}<Button variant="ghost" onClick={() => setHistory(null)}>閉じる</Button></div>}
   </main>;
 }
