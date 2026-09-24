@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -2156,6 +2157,14 @@ async def browser_return(key: str, ctx=Depends(context)):
         run.data = data
         transition_run(db, run, "queued")
         db.commit()
+        pending = TASKS.get(key)
+        if pending and not pending.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(pending), timeout=2)
+            except (TimeoutError, asyncio.CancelledError):
+                pending.add_done_callback(lambda _: launch(key))
+            except Exception:
+                pass
         launch(key)
     else:
         run.data = data

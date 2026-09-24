@@ -60,7 +60,7 @@ export function Diagnostics() {
         <h2><Activity size={18} /> {t("サービス状態")}</h2>
         <div className="diagnostics-services">{Object.entries(data.services).map(([key, status]) => <article className="diagnostics-service" key={key}>
           <span className={`diagnostics-dot ${serviceTone(status)}`} />
-          <div><b>{serviceLabels[key] || key}</b><small>{stateLabels[status] || status}</small></div>
+          <div><b>{t(serviceLabels[key] || key)}</b><small>{t(stateLabels[status] || status)}</small></div>
           {status === "not_configured" && <Link to={key === "browser" ? "/settings/browser" : key === "mcp" || key === "mcp_manager" ? "/settings/mcp" : "/settings/tools"}>{t("設定を確認")}</Link>}
         </article>)}</div>
         <p className="diagnostics-note"><CircleHelp size={14} /> {t("Runnerは認証情報の設定有無を表示します。実際のネットワーク疎通は確認していません。")}</p>

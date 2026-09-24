@@ -1,4 +1,4 @@
-import { t } from "@/app/i18n";
+import { getLanguage, t } from "@/app/i18n";
 import { AlertTriangle, CheckCircle2, CircleDot, Clock3, ExternalLink, HelpCircle, RotateCcw, ShieldCheck, Wrench, XCircle } from "lucide-react";
 import type { ApprovalDecision, ToolCallHistory } from "./types";
 
@@ -25,10 +25,10 @@ export function ToolHistory({ calls, onApproval }: { calls: ToolCallHistory[]; o
         return <article className={'tool-history-card ' + call.status} key={call.id}>
           <details className="tool-history-details" open={call.status === "waiting_approval" || call.status === "failed"}>
             <summary>
-              <span className="tool-history-status"><StateIcon size={15} />{state.label}</span>
+              <span className="tool-history-status"><StateIcon size={15} />{t(state.label)}</span>
               <b>{call.activity?.label || call.tool_name}</b>
               {(sourceCount > 0 || call.artifact) && <span className="tool-history-badges">{sourceCount > 0 && `${sourceCount}件のソース`}{call.artifact && t("成果物")}</span>}
-              <time dateTime={call.created_at}>{new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date(call.created_at))}</time>
+              <time dateTime={call.created_at}>{new Intl.DateTimeFormat(getLanguage() === "en" ? "en-US" : "ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date(call.created_at))}</time>
             </summary>
             {hasDetails && <div className="tool-history-detail-content">
               {call.activity?.detail && <p className="tool-history-detail">{call.activity.detail}</p>}

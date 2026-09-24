@@ -6109,6 +6109,12 @@
       },
       "SettingsInput": {
         "properties": {
+          "ui_language": {
+            "type": "string",
+            "enum": ["ja", "en"],
+            "title": "Ui Language",
+            "default": "ja"
+          },
           "default_model_id": {
             "type": "string",
             "title": "Default Model Id",

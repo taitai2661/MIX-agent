@@ -49,7 +49,7 @@ export function SettingsOverview() {
     </section>
     <div className="settings-overview-grid">
       {cards.map(([path, title, description, Icon]) => <Link key={path} to={"/settings/" + path} className="settings-overview-card">
-        <span className="settings-card-icon"><Icon size={20} /></span><span className="settings-card-copy"><b>{title}</b><small>{description}</small></span><strong>{counts[path]}</strong><ArrowRight size={17} />
+        <span className="settings-card-icon"><Icon size={20} /></span><span className="settings-card-copy"><b>{t(title)}</b><small>{t(description)}</small></span><strong>{counts[path]}</strong><ArrowRight size={17} />
       </Link>)}
     </div>
   </div>;

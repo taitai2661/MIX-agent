@@ -87,15 +87,15 @@ export function Tools() {
       </section>
       <section className="permission-overview" aria-label={t("現在のTool権限の内訳")}>
         {(Object.keys(permissionInfo) as PermissionValue[]).map((permission) => <div className={'permission-overview-item ' + permission} key={permission}>
-          <span>{permissionInfo[permission].label}</span><b>{counts[permission]} {t("件")}</b><small>{permissionInfo[permission].description}</small>
+          <span>{t(permissionInfo[permission].label)}</span><b>{counts[permission]} {t("件")}</b><small>{t(permissionInfo[permission].description)}</small>
         </div>)}
       </section>
       <ErrorBox error={tools.error || rules.error || agents.error || settings.error} />
       <section className="tool-list" aria-label={t("Toolごとの権限")}>
         {permissions.map(({ tool, permission }) => <article className={'tool-card permission-' + permission} key={tool.id} aria-busy={savingToolIds.has(tool.id)}>
-          <div className="tool-card-main"><div className="tool-card-heading"><b>{tool.model_name}</b><span className={'permission-badge ' + permission}>{permissionInfo[permission].label}</span></div><p>{tool.description}</p><div className="tool-meta"><span>{tool.source === "builtin" ? t("組み込み") : tool.source}</span><span>{riskLabel(tool.risk)}</span></div></div>
+          <div className="tool-card-main"><div className="tool-card-heading"><b>{tool.model_name}</b><span className={'permission-badge ' + permission}>{t(permissionInfo[permission].label)}</span></div><p>{tool.description}</p><div className="tool-meta"><span>{tool.source === "builtin" ? t("組み込み") : tool.source}</span><span>{t(riskLabel(tool.risk))}</span></div></div>
           <label className="check"><input type="checkbox" checked={settings.data?.data.tool_settings?.[tool.id]?.enabled !== false} onChange={(event) => updateEnabled(tool.id, event.target.checked)} /> {t("有効")}</label>
-          <div className="tool-card-control"><label htmlFor={'permission-' + tool.id}>{t("実行時の扱い")}</label><select id={'permission-' + tool.id} value={permission} disabled={savingToolIds.has(tool.id)} onChange={(event) => updatePermission(tool.id, event.target.value as PermissionValue)}>{(Object.keys(permissionInfo) as PermissionValue[]).map((value) => <option key={value} value={value}>{permissionInfo[value].label}</option>)}</select><small>{savingToolIds.has(tool.id) ? t("保存しています…") : permissionInfo[permission].description}</small><ErrorBox error={saveErrors[tool.id]} /></div>
+          <div className="tool-card-control"><label htmlFor={'permission-' + tool.id}>{t("実行時の扱い")}</label><select id={'permission-' + tool.id} value={permission} disabled={savingToolIds.has(tool.id)} onChange={(event) => updatePermission(tool.id, event.target.value as PermissionValue)}>{(Object.keys(permissionInfo) as PermissionValue[]).map((value) => <option key={value} value={value}>{t(permissionInfo[value].label)}</option>)}</select><small>{savingToolIds.has(tool.id) ? t("保存しています…") : t(permissionInfo[permission].description)}</small><ErrorBox error={saveErrors[tool.id]} /></div>
         </article>)}
         {!tools.isLoading && !permissions.length && <div className="empty"><CircleHelp size={25} /><p>{t("利用可能なToolはありません。")}</p></div>}
       </section>

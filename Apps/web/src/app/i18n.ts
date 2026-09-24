@@ -30,7 +30,7 @@ export function setLanguage(value: Language) {
   listeners.forEach(listener => listener());
 }
 export function useLanguage() {
-  return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, getLanguage);
+  return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, getLanguage, getLanguage);
 }
 
 const en: Record<string, string> = {
@@ -304,6 +304,27 @@ const en: Record<string, string> = {
   "この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します": "Memory is off for this message. The conversation, answer, and sent attachments are deleted after the run.",
   "Toolを許可": "Allow tools", "Toolの外部送信や副作用は残る場合があります": "Tool transmissions and side effects may persist.",
   "エラーが発生しました": "An error occurred", "予期しないエラーが発生しました。以下のボタンで再読み込みしてください。": "An unexpected error occurred. Reload using the button below.",
+  "成功": "Succeeded", "実行中": "Running", "承認待ち": "Awaiting approval", "結果不明": "Unknown result",
+  "データベース": "Database", "実行Runner": "Execution Runner", "MCP管理サービス": "MCP manager",
+  "Browser導入": "Browser installation", "正常": "Healthy", "設定済み（接続未確認）": "Configured (connection unverified)",
+  "利用可能": "Available", "導入中": "Installing", "未導入": "Not installed", "状態不明": "Unknown status",
+  "確認なしで実行できます": "Can run without confirmation",
+  "毎回確認": "Ask every time", "実行前にあなたへ確認します": "Ask you before running",
+  "使用しない": "Do not use", "AgentはこのToolを実行できません": "The agent cannot run this tool",
+  "読み取り中心": "Mostly read-only", "外部サービス": "External service", "変更を伴う": "Makes changes",
+  "接続済みのAIサービス": "Connected AI services", "会話で使うモデル": "Models used in conversations",
+  "記憶の形成・想起・管理": "Memory formation, recall, and management", "Agentの実行権限": "Agent execution permissions",
+  "Webページの操作と許可先": "Web page interaction and allowed destinations", "検索サービスと結果数": "Search service and result count",
+  "外部サービスとの接続": "External service connections", "認証とログイン履歴": "Authentication and login history",
+  "データを安全に保管": "Store data securely", "モデルの成功率と失敗傾向": "Model success rates and failures",
+  "サービス状態と最近の失敗": "Service status and recent failures",
+  "画像": "Image", "表計算": "Spreadsheet", "ファイル": "File", "拡大したブラウザ画面": "Expanded browser view",
+  "未定着": "Not retained", "定着": "Retained", "過去の状態": "Past state", "削除済み": "Deleted",
+  "未確認": "Unverified", "タイムアウト": "Timeout", "レート制限": "Rate limit", "Provider障害": "Provider failure",
+  "Context不足": "Insufficient context", "Tool対応": "Tool support", "認証": "Authentication", "未検出": "None detected", "その他": "Other",
+  "のメニュー": "menu for", "ページが見つかりません": "Page not found", "チャット名を変更": "Rename chat",
+  "チャットを削除": "Delete chat", "このチャットをごみ箱へ移動しますか？": "Move this chat to Trash?",
+  "未対応": "Unsupported", "例: {\"headers\":{\"Authorization\":\"Bearer ...\"}} または {\"env\":{\"TOKEN\":\"...\"}}": "Example: {\"headers\":{\"Authorization\":\"Bearer ...\"}} or {\"env\":{\"TOKEN\":\"...\"}}",
 };
 
 export function t(value: string): string { return language === "en" ? en[value] ?? value : value; }

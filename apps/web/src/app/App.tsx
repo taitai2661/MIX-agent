@@ -144,13 +144,13 @@ export function App() {
       <NavLink onClick={() => setSidebar(false)} className="conversation-sidebar-link" to={"/chat/" + conversation.id}>
         {conversation.data.title}
       </NavLink>
-      <button className="conversation-sidebar-menu-button" aria-label={`${conversation.data.title}のメニュー`} aria-expanded={menuOpen} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpenConversationMenu(menuOpen ? null : conversation.id); }}><MoreVertical size={17} /></button>
+      <button className="conversation-sidebar-menu-button" aria-label={`${conversation.data.title} ${t("のメニュー")}`} aria-expanded={menuOpen} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpenConversationMenu(menuOpen ? null : conversation.id); }}><MoreVertical size={17} /></button>
       {menuOpen && <div className="conversation-sidebar-menu" role="menu">
-        <button role="menuitem" onClick={() => updateConversation(conversation.id, { pinned: !conversation.data.pinned })}><Pin size={17} />{conversation.data.pinned ? "ピン留めを外す" : "ピン留め"}<kbd>P</kbd></button>
-        <button role="menuitem" onClick={() => renameConversation(conversation)}><Pencil size={17} />名前を変更<kbd>R</kbd></button>
-        <div className="conversation-sidebar-menu-group"><Folder size={17} /><span>グループに移動</span><select aria-label="グループに移動" value={conversation.data.folder_id || ""} onChange={(event) => updateConversation(conversation.id, { folder_id: event.target.value || null })}><option value="">未分類</option>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.data.name}</option>)}</select></div>
-        <button role="menuitem" onClick={() => updateConversation(conversation.id, { archived: true })}><Archive size={17} />アーカイブ</button>
-        <button className="danger" role="menuitem" onClick={() => trashConversation(conversation)}><Trash2 size={17} />削除<kbd>D</kbd></button>
+        <button role="menuitem" onClick={() => updateConversation(conversation.id, { pinned: !conversation.data.pinned })}><Pin size={17} />{t(conversation.data.pinned ? "ピン留めを外す" : "ピン留め")}<kbd>P</kbd></button>
+        <button role="menuitem" onClick={() => renameConversation(conversation)}><Pencil size={17} />{t("名前を変更")}<kbd>R</kbd></button>
+        <div className="conversation-sidebar-menu-group"><Folder size={17} /><span>{t("グループに移動")}</span><select aria-label={t("グループに移動")} value={conversation.data.folder_id || ""} onChange={(event) => updateConversation(conversation.id, { folder_id: event.target.value || null })}><option value="">{t("未分類")}</option>{folders.data?.map((folder) => <option key={folder.id} value={folder.id}>{folder.data.name}</option>)}</select></div>
+        <button role="menuitem" onClick={() => updateConversation(conversation.id, { archived: true })}><Archive size={17} />{t("アーカイブ")}</button>
+        <button className="danger" role="menuitem" onClick={() => trashConversation(conversation)}><Trash2 size={17} />{t("削除")}<kbd>D</kbd></button>
       </div>}
     </div>;
   }
@@ -185,7 +185,7 @@ export function App() {
       <aside id="main-navigation" className="sidebar" aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
           <Logo />
-          <div className="sidebar-controls"><ThemeController /><button className="icon mobile" onClick={() => setSidebar(false)} aria-label="閉じる"><X size={18} /></button></div>
+          <div className="sidebar-controls"><ThemeController /><button className="icon mobile" onClick={() => setSidebar(false)} aria-label={t("閉じる")}><X size={18} /></button></div>
         </div>
         <nav className="primary-nav">
           <div className="chat-nav-item">
@@ -251,13 +251,13 @@ export function App() {
           </div>
         </div>
       </aside>
-      {sidebar && <button className="sidebar-backdrop" type="button" aria-label="メニューを閉じる" onClick={() => setSidebar(false)} />}
-      <div className="sidebar-resizer" role="separator" aria-label="サイドバーの幅を調整" aria-orientation="vertical" aria-valuemin={sidebarMinimum} aria-valuemax={sidebarMaximum} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={resizeSidebar} onKeyDown={resizeSidebarWithKeyboard} />
+      {sidebar && <button className="sidebar-backdrop" type="button" aria-label={t("メニューを閉じる")} onClick={() => setSidebar(false)} />}
+      <div className="sidebar-resizer" role="separator" aria-label={t("サイドバーの幅を調整")} aria-orientation="vertical" aria-valuemin={sidebarMinimum} aria-valuemax={sidebarMaximum} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={resizeSidebar} onKeyDown={resizeSidebarWithKeyboard} />
       <div className="main">
         <header className="topbar">
           <button
             className="icon"
-            aria-label="メニュー"
+            aria-label={t("メニュー")}
             aria-expanded={window.matchMedia("(max-width: 760px)").matches ? sidebar : undefined}
             aria-controls="main-navigation"
             onClick={() => window.matchMedia("(max-width: 760px)").matches ? setSidebar(!sidebar) : setCollapsed(!collapsed)}
@@ -296,11 +296,11 @@ export function App() {
                 />
               }
             />
-            <Route path="*" element={<Empty>ページが見つかりません</Empty>} />
+            <Route path="*" element={<Empty>{t("ページが見つかりません")}</Empty>} />
           </Routes>
         </ErrorBoundary>
         {renameTarget && <PromptModal
-          title="チャット名を変更"
+          title={t("チャット名を変更")}
           defaultValue={renameTarget.data.title}
           onConfirm={(title) => {
             setRenameTarget(null);
@@ -314,8 +314,8 @@ export function App() {
           onCancel={() => setRenameTarget(null)}
         />}
         {trashTarget && <ConfirmModal
-          title="チャットを削除"
-          message="このチャットをごみ箱へ移動しますか？"
+          title={t("チャットを削除")}
+          message={t("このチャットをごみ箱へ移動しますか？")}
           onConfirm={() => {
             const id = trashTarget.id;
             setTrashTarget(null);

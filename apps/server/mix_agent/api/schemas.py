@@ -434,7 +434,7 @@ class MCPUninstallInput(Input):
 
 
 class SettingsInput(Input):
-    ui_language: Literal["ja", "en"] | None = None
+    ui_language: Literal["ja", "en"] = "ja"
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
     auto_retry_count: int = Field(default=3, ge=0)

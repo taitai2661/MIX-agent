@@ -2312,6 +2312,8 @@ export interface components {
         };
         /** SettingsInput */
         SettingsInput: {
+            /** Ui Language */
+            ui_language?: "ja" | "en";
             /**
              * Default Model Id
              * @default
