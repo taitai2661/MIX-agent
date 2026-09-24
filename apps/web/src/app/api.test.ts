@@ -29,6 +29,16 @@ describe("authenticated mutations", () => {
       "00000000-0000-4000-8000-000000000000",
     );
   });
+  it("sends setup POST when Web Crypto is unavailable", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("crypto", undefined);
+    await api("/setup/admin", "POST", { username: "user", password: "test-password" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][1].headers["Idempotency-Key"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
   it("keeps the login session cookie on binary mutations too", async () => {
     const fetch = vi
       .fn()
