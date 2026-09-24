@@ -29,8 +29,8 @@ export function Setup() {
     [installBrowser, setInstallBrowser] = useState(true);
   const navigate = useNavigate();
   async function changeLanguage(value: "ja" | "en") {
-    await api("/settings", "PUT", { ui_language: value });
     setLanguage(value);
+    await api("/settings", "PUT", { ui_language: value });
   }
   const pages = [
     <section className="card setup-browser-card">

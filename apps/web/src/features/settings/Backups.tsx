@@ -38,7 +38,7 @@ export function Backups() {
             a.download = "mix-agent-backup.mix";
             a.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setNotice("暗号化バックアップを作成しました");
+            setNotice(t("暗号化バックアップを作成しました"));
           } catch (e) {
             setError(e);
           } finally {
@@ -61,7 +61,7 @@ export function Backups() {
           e.preventDefault();
           if (
             !confirm(
-              "現在のデータをバックアップ内容に置き換えます。現在のバックアップを確保しましたか？",
+              t("現在のデータをバックアップ内容に置き換えます。現在のバックアップを確保しましたか？"),
             )
           )
             return;

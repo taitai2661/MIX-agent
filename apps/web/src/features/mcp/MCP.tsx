@@ -231,7 +231,7 @@ export function MCP() {
                 setSelected(null);
                 setNotice(
                   toolCount === null
-                    ? "導入しました。接続確認は導入済み一覧から再実行できます。"
+                    ? t("導入しました。接続確認は導入済み一覧から再実行できます。")
                     : `導入が完了し、${toolCount}件のToolを利用できるようになりました。`,
                 );
                 qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
@@ -323,8 +323,8 @@ export function MCP() {
                     onChange={() => setNetworkCapability(option.value)}
                   />
                   <span>
-                    <strong>{option.title}</strong>
-                    <small>{option.description}</small>
+                    <strong>{t(option.title)}</strong>
+                    <small>{t(option.description)}</small>
                   </span>
                 </label>
               ))}
@@ -552,7 +552,7 @@ export function MCP() {
                   try {
                     await api("/mcp/connections/" + r.id + "/install", "POST");
                     setNotice(
-                      "パッケージを導入しました。接続・Tool取得を実行してください。",
+                      t("パッケージを導入しました。接続・Tool取得を実行してください。"),
                     );
                   } catch (e) {
                     setError(e);
@@ -563,9 +563,9 @@ export function MCP() {
               </Button>
             )}
             {[
-              ["test", "接続テスト"],
-              ["sync", "接続・Tool取得"],
-              ["disconnect", "切断"],
+              ["test", t("接続テスト")],
+              ["sync", t("接続・Tool取得")],
+              ["disconnect", t("切断")],
             ].map(([a, label]) => (
               <Button
                 key={a}
@@ -579,8 +579,8 @@ export function MCP() {
                     );
                     setNotice(
                       result.tools
-                        ? result.tools.length + "件のToolを確認しました"
-                        : "切断しました",
+                        ? `${result.tools.length} ${t("件のToolを確認しました")}`
+                        : t("切断しました"),
                     );
                     qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
                     qc.invalidateQueries({ queryKey: ["/tools"] });

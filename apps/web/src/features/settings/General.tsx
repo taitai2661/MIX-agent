@@ -31,7 +31,7 @@ export function General() {
         </div>
         <ThemeController />
       </section>
-      <section className="card theme-card"><div><h3>{t("表示言語")}</h3><p>{t("ブラウザーの言語から初期値を選びます。変更内容はアカウントに保存されます。")}</p></div><select aria-label={t("表示言語")} value={getLanguage()} onChange={async e => { const value = e.target.value as "ja" | "en"; try { await api("/settings", "PUT", { ui_language: value }); setLanguage(value); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (cause) { setError(cause); } }}><option value="ja">{t("日本語")}</option><option value="en">English</option></select></section>
+      <section className="card theme-card"><div><h3>{t("表示言語")}</h3><p>{t("ブラウザーの言語から初期値を選びます。変更内容はアカウントに保存されます。")}</p></div><select aria-label={t("表示言語")} value={getLanguage()} onChange={async e => { const previous = getLanguage(); const value = e.target.value as "ja" | "en"; setLanguage(value); try { await api("/settings", "PUT", { ui_language: value }); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (cause) { setLanguage(previous); setError(cause); } }}><option value="ja">{t("日本語")}</option><option value="en">English</option></select></section>
       {setting.data && (
         <form
           className="card"

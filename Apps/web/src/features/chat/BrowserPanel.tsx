@@ -33,7 +33,7 @@ export function BrowserPanel({ runId, run, onChange }: { runId: string; run?: Ru
       await qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
       onChange();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "操作できませんでした");
+      setError(cause instanceof Error ? t(cause.message) : t("操作できませんでした"));
     } finally {
       setWorking(false);
     }
@@ -65,6 +65,6 @@ export function BrowserPanel({ runId, run, onChange }: { runId: string; run?: Ru
       <div>{["Enter", "Tab", "Backspace", "Escape"].map(key => <button type="button" key={key} disabled={working || !atLatest} onClick={() => action("browser-manual", { action: "key", key })}>{key}</button>)}<button type="button" disabled={working || !atLatest} onClick={() => action("browser-manual", { action: "scroll", dy: 500 })}>{t("下へ")}</button><button type="button" disabled={working || !atLatest} onClick={() => action("browser-manual", { action: "scroll", dy: -500 })}>{t("上へ")}</button></div>
     </div>}
     {error && <p role="alert">{error}</p>}
-    {expanded && <div className="browser-panel-overlay" role="dialog" aria-modal="true" aria-label={t("ブラウザ画面の拡大表示")} onClick={() => setExpanded(false)}><button type="button" onClick={() => setExpanded(false)}>{t("閉じる")}</button><img src={image} alt="拡大したブラウザ画面" onClick={event => event.stopPropagation()} /></div>}
+    {expanded && <div className="browser-panel-overlay" role="dialog" aria-modal="true" aria-label={t("ブラウザ画面の拡大表示")} onClick={() => setExpanded(false)}><button type="button" onClick={() => setExpanded(false)}>{t("閉じる")}</button><img src={image} alt={t("拡大したブラウザ画面")} onClick={event => event.stopPropagation()} /></div>}
   </section>;
 }

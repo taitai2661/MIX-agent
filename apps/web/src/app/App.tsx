@@ -204,7 +204,7 @@ export function App() {
           <NavLink to="/projects" onClick={() => setSidebar(false)}><Folder size={18} />{t("プロジェクト")}</NavLink>
           <NavLink to="/skills" onClick={() => setSidebar(false)}>
             <BookOpen size={18} />
-            {ja.skills}
+            {t(ja.skills)}
           </NavLink>
           <NavLink to="/schedules" onClick={() => setSidebar(false)}><Clock3 size={18} />{t("定期実行")}</NavLink>
         </nav>

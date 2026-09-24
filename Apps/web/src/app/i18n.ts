@@ -325,6 +325,15 @@ const en: Record<string, string> = {
   "のメニュー": "menu for", "ページが見つかりません": "Page not found", "チャット名を変更": "Rename chat",
   "チャットを削除": "Delete chat", "このチャットをごみ箱へ移動しますか？": "Move this chat to Trash?",
   "未対応": "Unsupported", "例: {\"headers\":{\"Authorization\":\"Bearer ...\"}} または {\"env\":{\"TOKEN\":\"...\"}}": "Example: {\"headers\":{\"Authorization\":\"Bearer ...\"}} or {\"env\":{\"TOKEN\":\"...\"}}",
+  "Chromiumを更新": "Update Chromium", "現在のPlaywrightに対応する版を再導入します。新しい版にはDockerイメージの更新が必要です。": "Reinstall a version supported by the current Playwright. A newer version requires a Docker image update.",
+  "コード": "Code", "導入しました。接続確認は導入済み一覧から再実行できます。": "Installed. You can test the connection again from the installed list.",
+  "外部通信を許可しません（推奨）": "No external network access (recommended)", "指定ドメインのみ": "Listed domains only",
+  "必要な接続先だけを許可します": "Allow only required destinations", "公開Web": "Public web",
+  "公開IPのHTTP/HTTPSを許可します": "Allow HTTP/HTTPS to public IP addresses",
+  "パッケージを導入しました。接続・Tool取得を実行してください。": "Package installed. Test the connection and fetch tools.",
+  "接続テスト": "Test connection", "接続・Tool取得": "Connect and fetch tools", "切断": "Disconnect",
+  "件のToolを確認しました": "tools verified", "切断しました": "Disconnected", "更新を確認しました": "Update checked",
+  "このTraceと派生記憶を想起対象外にしますか？履歴から復元できます。": "Exclude this trace and its derived memories from recall? You can restore them from history.",
 };
 
 export function t(value: string): string { return language === "en" ? en[value] ?? value : value; }

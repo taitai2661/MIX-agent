@@ -1,4 +1,4 @@
-import { t } from "@/app/i18n";
+import { getLanguage, t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { ErrorBox, Title } from "@/components/shared";
 import type { components } from "@/generated/api";
@@ -53,7 +53,7 @@ export function Diagnostics() {
       <section className={`diagnostics-banner ${hasWarnings ? "warning" : "ok"}`}>
         {hasWarnings ? <AlertTriangle size={20} /> : <CheckCircle2 size={20} />}
         <div><b>{hasWarnings ? t("確認が必要な項目があります") : t("設定上の問題は見つかりませんでした")}</b>
-          <small>{t("最終確認:")} {new Date(data.checked_at).toLocaleString("ja-JP")}</small></div>
+          <small>{t("最終確認:")} {new Date(data.checked_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</small></div>
       </section>
 
       <section className="card diagnostics-section">
@@ -76,7 +76,7 @@ export function Diagnostics() {
       <section className="card diagnostics-section">
         <h2><AlertTriangle size={18} /> {t("最近の失敗・中断")}</h2>
         {data.runs.recent_failures.length ? <div className="diagnostics-failures">{data.runs.recent_failures.map((run, index) => <article key={`${run.created_at}-${index}`}>
-          <b>{run.status === "failed" ? t("失敗") : t("中断")} · {run.mode}</b><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString("ja-JP")}</time>
+          <b>{run.status === "failed" ? t("失敗") : t("中断")} · {run.mode}</b><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</time>
         </article>)}</div> : <p className="diagnostics-empty">{t("直近の失敗・中断はありません。")}</p>}
       </section>
     </>}

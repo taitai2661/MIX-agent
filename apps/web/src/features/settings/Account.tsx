@@ -1,4 +1,4 @@
-import { t } from "@/app/i18n";
+import { getLanguage, t } from "@/app/i18n";
 import { api, setCSRF } from "@/app/api";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title } from "@/components/shared";
@@ -32,7 +32,7 @@ export function Account({
     const form = new FormData(event.currentTarget);
     const next = String(form.get("new_password") || "");
     if (next !== String(form.get("confirm_password") || "")) {
-      setError(new Error("新しいパスワードが一致しません"));
+      setError(new Error(t("新しいパスワードが一致しません")));
       return;
     }
     setBusy(true); setError(null); setNotice("");
@@ -48,7 +48,7 @@ export function Account({
       }
       if (result.csrf) setCSRF(result.csrf);
       event.currentTarget.reset();
-      setNotice("パスワードを変更しました");
+      setNotice(t("パスワードを変更しました"));
     } catch (value) { setError(value); } finally { setBusy(false); }
   }
 
@@ -61,7 +61,7 @@ export function Account({
         current_password: form.get("current_password"), username: form.get("username"),
       });
       onUserChange(result);
-      setNotice("ユーザー名を変更しました");
+      setNotice(t("ユーザー名を変更しました"));
     } catch (value) { setError(value); } finally { setBusy(false); }
   }
 
@@ -70,7 +70,7 @@ export function Account({
     try {
       const result = await api<{ relogin_required: boolean }>("/auth/sessions/revoke", "POST", { scope });
       if (result.relogin_required) onLogout();
-      else setNotice("ほかのログインをすべて終了しました");
+      else setNotice(t("ほかのログインをすべて終了しました"));
       setConfirming(null);
       qc.invalidateQueries({ queryKey: ["/auth/login-history"] });
     } catch (value) { setError(value); } finally { setBusy(false); }
@@ -100,7 +100,7 @@ export function Account({
     </section>
     <section className="card">
       <h3>{t("ログイン履歴")}</h3><p>{t("直近100件のログイン結果です。接続元や端末情報は保存しません。")}</p>
-      <div className="login-history">{history.data?.length ? history.data.map((event, index) => <div className="revision" key={`${event.created_at}-${index}`}><span>{event.successful ? t("ログイン成功") : t("ログイン失敗")}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString("ja-JP")}</time></div>) : <p>{t("まだログイン履歴はありません。")}</p>}</div>
+      <div className="login-history">{history.data?.length ? history.data.map((event, index) => <div className="revision" key={`${event.created_at}-${index}`}><span>{event.successful ? t("ログイン成功") : t("ログイン失敗")}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</time></div>) : <p>{t("まだログイン履歴はありません。")}</p>}</div>
     </section>
   </>;
 }

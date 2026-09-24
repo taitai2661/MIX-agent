@@ -17,11 +17,11 @@ function formatSize(size?: number) {
 
 function fileKind(mime = "", name = "") {
   const extension = name.split(".").pop()?.toUpperCase();
-  if (mime.startsWith("image/")) return { label: "画像", Icon: Image };
+  if (mime.startsWith("image/")) return { label: t("画像"), Icon: Image };
   if (mime === "application/pdf") return { label: "PDF", Icon: FileText };
-  if (["HTML", "CSS", "JS", "TS", "JSON", "MD"].includes(extension || "")) return { label: `コード・${extension}`, Icon: Code2 };
-  if (["CSV", "XLS", "XLSX"].includes(extension || "")) return { label: "表計算", Icon: Table2 };
-  return { label: extension ? `ファイル・${extension}` : "ファイル", Icon: File };
+  if (["HTML", "CSS", "JS", "TS", "JSON", "MD"].includes(extension || "")) return { label: `${t("コード")} · ${extension}`, Icon: Code2 };
+  if (["CSV", "XLS", "XLSX"].includes(extension || "")) return { label: t("表計算"), Icon: Table2 };
+  return { label: extension ? `${t("ファイル")} · ${extension}` : t("ファイル"), Icon: File };
 }
 
 export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {

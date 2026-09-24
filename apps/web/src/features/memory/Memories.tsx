@@ -22,7 +22,7 @@ function MemoryConnections({ memory, content, onSelect, onClose }: { memory: str
       const peer = item.connected_memory;
       return <div className="memory-network-edge" key={item.id}>
         <div className="memory-network-link"><span className="memory-network-line" /><span>{item.relation || t("関連")} · {percent(item.weight)}</span></div>
-        {peer ? <button type="button" className="memory-network-node" onClick={() => onSelect(peer.id, peer.content)}><span>{peer.content}</span><small>{states[peer.lifecycle_state] || peer.lifecycle_state} {t("· 確度")} {percent(item.confidence)}</small></button> : <div className="memory-network-node unavailable">{t("接続先を表示できません")}</div>}
+        {peer ? <button type="button" className="memory-network-node" onClick={() => onSelect(peer.id, peer.content)}><span>{peer.content}</span><small>{t(states[peer.lifecycle_state] || peer.lifecycle_state)} {t("· 確度")} {percent(item.confidence)}</small></button> : <div className="memory-network-node unavailable">{t("接続先を表示できません")}</div>}
       </div>;
     })}</div>}
   </section>;
@@ -74,9 +74,9 @@ export function Memories() {
     </form>
     {selected && <MemoryConnections memory={selected.id} content={selected.content} onSelect={(id, content) => setSelected({ id, content })} onClose={() => setSelected(null)} />}
     <div className="memory-filters"><input className="search-input" aria-label={t("Memory検索")} placeholder={t("Traceを検索…")} value={q} onChange={e => setQ(e.target.value)} />
-      <select aria-label={t("定着状態")} value={state} onChange={e => setState(e.target.value)}><option value="">{t("すべての状態")}</option>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
+      <select aria-label={t("定着状態")} value={state} onChange={e => setState(e.target.value)}><option value="">{t("すべての状態")}</option>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></div>
     {rows.data?.map(row => <div className={`card memory-card ${row.data.lifecycle_state === "deleted" ? "deleted" : ""}`} key={row.id}>
-      <Brain size={20} /><div className="grow"><p>{row.data.content}</p><div className="memory-metrics"><span>{states[row.data.lifecycle_state] || row.data.lifecycle_state}</span><span>{t("強度")} {percent(row.data.strength)}</span><span>{t("確度")} {percent(row.data.confidence)}</span><span>{t("顕著性")} {percent(row.data.salience)}</span><span>{t("活性化")} {row.data.activation_count || 0}{t("回")}</span></div>
+      <Brain size={20} /><div className="grow"><p>{row.data.content}</p><div className="memory-metrics"><span>{t(states[row.data.lifecycle_state] || row.data.lifecycle_state)}</span><span>{t("強度")} {percent(row.data.strength)}</span><span>{t("確度")} {percent(row.data.confidence)}</span><span>{t("顕著性")} {percent(row.data.salience)}</span><span>{t("活性化")} {row.data.activation_count || 0}{t("回")}</span></div>
       {!!row.data.concepts?.length && <small>{t("概念:")} {row.data.concepts.join("、")}</small>}</div>
       <div className="row-actions">{row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={() => { setEditing(row); setContent(row.data.content); setStrength(row.data.strength); setConfidence(row.data.confidence); setSalience(row.data.salience); }}>{t("訂正")}</Button>}
         <Button variant="ghost" onClick={() => setSelected({ id: row.id, content: row.data.content })}><GitBranch size={14} /> {t("繋がりを見る")}</Button>

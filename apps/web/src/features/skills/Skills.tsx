@@ -25,7 +25,7 @@ export function Skills() {
     </form>
     {rows.data?.map(skill => <div className={"card memory-card " + (skill.data.deleted ? "deleted" : "")} key={skill.id}>
       <BookOpen size={20} /><div className="grow"><h3>{skill.data.name}</h3><small>{skill.data.description || t("説明なし")} · {skill.data.source_run ? t("Agentが保存") : t("手動で保存")}</small><p>{skill.data.content}</p></div>
-      <div className="row-actions"><Button variant="ghost" onClick={() => setEditing(skill)}>{t("編集")}</Button>{!skill.data.deleted && <Button variant="ghost" onClick={async () => { if (confirm("このSkillを削除しますか？履歴から復元できます。")) { try { await api("/skills/" + skill.id, "DELETE"); qc.invalidateQueries({ queryKey: ["/skills"] }); } catch (err) { setError(err); } } }}>{t("削除")}</Button>}</div>
+      <div className="row-actions"><Button variant="ghost" onClick={() => setEditing(skill)}>{t("編集")}</Button>{!skill.data.deleted && <Button variant="ghost" onClick={async () => { if (confirm(t("このSkillを削除しますか？履歴から復元できます。"))) { try { await api("/skills/" + skill.id, "DELETE"); qc.invalidateQueries({ queryKey: ["/skills"] }); } catch (err) { setError(err); } } }}>{t("削除")}</Button>}</div>
     </div>)}
   </main>;
 }
