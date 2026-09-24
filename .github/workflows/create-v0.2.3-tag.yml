@@ -1,0 +1,32 @@
+name: Create v0.2.3 tag once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/create-v0.2.3-tag.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create release tag
+        env:
+          TARGET_SHA: 17608239b7f7e25a3a8181e2ed4f4401f54eafb8
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin refs/tags/v0.2.3 >/dev/null 2>&1; then
+            echo 'v0.2.3 already exists'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a v0.2.3 "$TARGET_SHA" -m 'MIX-agent v0.2.3'
+          git push origin v0.2.3
