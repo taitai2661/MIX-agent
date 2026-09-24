@@ -1,7 +1,7 @@
 {
   "id": "io.github.taitai2661.mix-agent",
   "title": "MIX-agent",
-  "release_note": "バージョン情報とZimaOSイメージ参照を揃えた修正版。",
+  "release_note": "LAN内HTTPでの初期設定互換性を修正し、ChatとMemoryの挙動を改善。",
   "description": "チャット・Agent・Tool・MCPをまとめたセルフホスト環境。信頼できるLAN/VPNの単一管理者向け。インターネット公開は非推奨。",
   "tagline": "家庭内ネットワークで使うAIワークスペース。",
   "tips": {
