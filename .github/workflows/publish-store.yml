@@ -1,13 +1,16 @@
 name: Publish ZimaOS store
 
-# Manual runs publish an existing release tag exactly as before.
-# Changes to the ZimaOS store source on main also rebuild gh-pages automatically,
-# so installed ZimaOS instances can discover new versions through index.json.
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to publish, for example v0.2.3"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag, for example v0.2.2"
+        description: "Existing release tag, for example v0.2.3"
         required: true
         type: string
   push:
@@ -15,6 +18,10 @@ on:
       - main
     paths:
       - "Apps/**"
+      - "build/**"
+      - "category-list.json"
+      - "featured-apps.json"
+      - "recommend-list.json"
       - "store-config.json"
       - "supported-languages.json"
       - ".github/workflows/publish-store.yml"
@@ -29,36 +36,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+          ref: ${{ inputs.tag != '' && inputs.tag || github.sha }}
 
-      - name: Resolve image tag
+      - name: Resolve store version
         id: version
         shell: bash
         env:
-          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [[ -n "$INPUT_TAG" ]]; then
+          COMPOSE_VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
+          test -n "$COMPOSE_VERSION"
+
+          if [[ -n "${INPUT_TAG:-}" ]]; then
             RELEASE_TAG="$INPUT_TAG"
+            VERSION="${RELEASE_TAG#v}"
+            if [[ "$VERSION" != "$COMPOSE_VERSION" ]]; then
+              echo "Tag version $VERSION does not match store compose version $COMPOSE_VERSION."
+              exit 1
+            fi
           else
-            VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
-            test -n "$VERSION"
+            VERSION="$COMPOSE_VERSION"
             RELEASE_TAG="v$VERSION"
           fi
+
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Verify public image manifests without authentication
+      - name: Verify public image manifests
+        id: images
+        shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REQUESTED_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          missing=0
           for target in init app execution browser-runner browser-provisioner mcp mcp-runtime egress; do
-            docker manifest inspect "ghcr.io/taitai2661/mix-agent-$target:$RELEASE_TAG" >/dev/null
+            image="ghcr.io/taitai2661/mix-agent-$target:$RELEASE_TAG"
+            if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+              echo "Missing image: $image"
+              missing=1
+            fi
           done
 
-      - name: Build ZimaOS community store
-        uses: IceWhaleTech/build-appstore-action@v1
+          if [[ "$missing" -ne 0 ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            if [[ -n "${REQUESTED_TAG:-}" ]]; then
+              echo "A requested release cannot be published until every GHCR image exists."
+              exit 1
+            fi
+            echo "Skipping automatic main-branch store publish until release images exist."
+            exit 0
+          fi
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build ZimaOS v2 community store
+        if: steps.images.outputs.ready == 'true'
+        uses: IceWhaleTech/build-appstore-action@c9bb47fad5b32d7928a07978fad68801f52e910f
         with:
           source: .
           output: dist
@@ -66,37 +103,94 @@ jobs:
           cache-file: .cache/build_appstore/image-size-cache.json
           digest-cache-file: .cache/build_appstore/image-digest-cache.json
 
+      - name: Build legacy ZimaOS/CasaOS v1 store
+        if: steps.images.outputs.ready == 'true'
+        uses: IceWhaleTech/CasaOS-AppStore/.github/actions/build-store-v1@0909364b800950030e71ea82355a5969a1c08b39
+        with:
+          source: .
+          output-zip: dist/store/main.zip
+          report-json: out/build-v1-report.json
+          report-title: MIX-agent legacy ZimaOS store build
+
       - name: Check store output
+        if: steps.images.outputs.ready == 'true'
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
           test -s dist/store.json
           test -s dist/index.json
-          grep -q "\"version\": \"0.2.2\"" dist/index.json || {
-            echo "Generated store version does not match expected v0.2.2 metadata."
-            cat dist/index.json
-            exit 1
-          }
+          test -s dist/store/main.zip
+          python3 - <<'PY'
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+
+          expected = os.environ["EXPECTED_VERSION"]
+          index = json.loads(Path("dist/index.json").read_text(encoding="utf-8"))
+          apps = index.get("apps", [])
+          app = next((item for item in apps if item.get("id") == "io.github.taitai2661.mix-agent"), None)
+          if app is None:
+              raise SystemExit("MIX-agent is missing from generated index.json")
+          if app.get("version") != expected:
+              raise SystemExit(f"Generated version {app.get('version')!r} does not match {expected!r}")
+
+          archive = Path("dist/store/main.zip")
+          with zipfile.ZipFile(archive) as zf:
+              if zf.testzip() is not None:
+                  raise SystemExit("Legacy main.zip failed integrity check")
+              expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml"
+              if expected_entry not in zf.namelist():
+                  raise SystemExit(f"Legacy main.zip is missing {expected_entry}")
+          PY
 
       - name: Publish store
+        if: steps.images.outputs.ready == 'true'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: ./dist
 
-      - name: Update GitHub Release store archive
-        if: github.event_name == 'workflow_dispatch'
+      - name: Refresh jsDelivr store paths
+        if: steps.images.outputs.ready == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            index.json \
+            store.json \
+            store/main.zip \
+            apps/io.github.taitai2661.mix-agent/docker-compose.yml \
+            apps/io.github.taitai2661.mix-agent/meta.json
+          do
+            curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@gh-pages/${path}" >/dev/null || true
+          done
+
+      - name: Update GitHub Release store assets
+        if: steps.images.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REQUESTED_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tar -czf "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" -C dist .
+          bundle="mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz"
+          legacy="mix-agent-zimaos-legacy-${RELEASE_TAG}.zip"
+          tar -czf "$bundle" -C dist .
+          cp dist/store/main.zip "$legacy"
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" --clobber
-            gh release edit "$RELEASE_TAG" --title "MIX-agent $RELEASE_TAG" \
-              --notes-file "docs/release-notes-${RELEASE_TAG}.md"
+            gh release upload "$RELEASE_TAG" "$bundle" "$legacy" --clobber
+          elif [[ -n "${REQUESTED_TAG:-}" ]]; then
+            notes_file="docs/release-notes-${RELEASE_TAG}.md"
+            if [[ -f "$notes_file" ]]; then
+              gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --notes-file "$notes_file"
+            else
+              gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --generate-notes
+            fi
           else
-            gh release create "$RELEASE_TAG" "mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" \
-              --verify-tag --title "MIX-agent $RELEASE_TAG" \
-              --notes-file "docs/release-notes-${RELEASE_TAG}.md"
+            echo "Release $RELEASE_TAG does not exist yet; store is published but release assets are skipped."
           fi
