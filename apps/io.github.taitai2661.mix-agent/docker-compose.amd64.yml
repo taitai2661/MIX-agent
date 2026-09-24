@@ -111,7 +111,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-execution:v0.2.3@sha256:b35d7a47e53c0612347e32ab89f840b56ab2b172a560b113f5d044dc7b17a81c
+    image: ghcr.io/taitai2661/mix-agent-execution:v0.2.3@sha256:9bfc22e1175b7079111d3cd9e5b74eae572fd825784f9389fb85d2c1fc7b56b6
   browser-runner:
     restart: unless-stopped
     read_only: true
@@ -134,7 +134,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.2.3@sha256:e905dbf8e471f3f7a0821e0e87f23705efae9896d8d23adb8c8a0469be2bc515
+    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.2.3@sha256:fdee5b5bf2063eec8a6a5e30ddfb5e945dcc76c5dec1d1ff83e9e4719e422fcd
   browser-provisioner:
     restart: unless-stopped
     read_only: true
@@ -156,7 +156,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.2.3@sha256:9ce4b351eb54b98e218f95cf70a3b40537127d6d51f963834820ace817f02bda
+    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.2.3@sha256:937351bfba2cde70191e5d19fecaf0b9a1da0e8c2a303235cfba8eeffde8a7ab
   mcp-runner:
     restart: unless-stopped
     read_only: true
@@ -181,7 +181,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-mcp:v0.2.3@sha256:dc92c7ebf7123b6980576d9836edb57e53ac662cdd98a80a3d213b5d627261d0
+    image: ghcr.io/taitai2661/mix-agent-mcp:v0.2.3@sha256:65519b1aec4193cebddc19ceb34171b8e7a99b0d08a49f8f1265118f4ab98e85
   mcp-manager:
     restart: unless-stopped
     read_only: true
