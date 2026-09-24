@@ -14,6 +14,10 @@ RUN pip install --no-cache-dir uv==0.12.7 && uv sync --frozen --no-dev --no-inst
 ENV PATH="/app/.venv/bin:$PATH"
 RUN useradd -u 1000 -m mix
 
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS init
+COPY deploy/docker/bootstrap.py /bootstrap.py
+ENTRYPOINT ["python", "/bootstrap.py"]
+
 FROM runtime AS app
 COPY apps/server/ /app/
 COPY --from=web /web/dist /web

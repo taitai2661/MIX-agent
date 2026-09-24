@@ -155,4 +155,3 @@ async def detail(name: str, version: str = "latest") -> dict:
         raise ValueError("Invalid Registry server name")
     raw = await _get(f"/v0.1/servers/{quote(name, safe='')}/versions/{quote(version, safe='')}")
     return normalize(raw)
-

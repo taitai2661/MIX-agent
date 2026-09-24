@@ -38,4 +38,3 @@ def test_external_schema_refs_and_excessive_depth_are_rejected():
         current = current["properties"]["next"]
     with pytest.raises(ValueError):
         validate_schema(value)
-
