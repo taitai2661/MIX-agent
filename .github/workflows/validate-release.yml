@@ -2,9 +2,6 @@ name: Validate release candidate
 
 on:
   pull_request:
-  push:
-    branches:
-      - fix/zimaos-store-compat
   workflow_dispatch:
 
 permissions:
