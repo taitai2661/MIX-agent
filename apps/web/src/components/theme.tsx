@@ -1,5 +1,6 @@
 import { Laptop, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
+import { t } from "@/app/i18n";
 
 export type Theme = "light" | "dark" | "system";
 const key = "mix-agent-theme";
@@ -40,10 +41,10 @@ function ThemeToggle({ theme, onChange }: { theme: Theme; onChange: (theme: Them
     ["system", Laptop, "システム"],
   ];
   return (
-    <div className="theme-toggle" aria-label="テーマ">
+    <div className="theme-toggle" aria-label={t("テーマ")}>
       {options.map(([value, Icon, label]) => (
         <button
-          aria-label={label}
+          aria-label={t(label)}
           aria-pressed={theme === value}
           className={theme === value ? "selected" : ""}
           key={value}

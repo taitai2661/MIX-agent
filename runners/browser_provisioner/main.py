@@ -127,13 +127,19 @@ async def run_install(was_ready=False):
 
 
 @app.post("/install")
-async def start_install():
+async def start_install(force=False):
     global TASK
     if TASK is not None and not TASK.done():
         return current()
-    was_ready = current().get("status") == "ready"
+    was_ready = current().get("status") == "ready" and not force
     state = {"status": "installing", "failure": None, "progress": 0,
              "stage": "起動を確認中" if was_ready else "ダウンロードを準備中"}
     save(state)
     TASK = asyncio.create_task(run_install(was_ready))
     return state
+
+
+@app.post("/update")
+async def start_update():
+    """Install the Chromium revision bundled with the current Playwright image."""
+    return await start_install(force=True)

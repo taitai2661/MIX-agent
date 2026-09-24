@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/button";
 import { ja } from "@/app/strings";
+import { t } from "@/app/i18n";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -91,10 +92,10 @@ export function ConfirmModal({
             onCancel();
           }}
         >
-          {ja.approve}
+          {t(ja.approve)}
         </Button>
         <Button variant="ghost" type="button" onClick={onCancel}>
-          {ja.cancel}
+          {t(ja.cancel)}
         </Button>
       </div>
     </ModalFrame>
@@ -143,9 +144,9 @@ export function PromptModal({
           autoFocus
         />
         <div className="form-actions">
-          <Button type="submit">{ja.confirm}</Button>
+          <Button type="submit">{t(ja.confirm)}</Button>
           <Button variant="ghost" type="button" onClick={onCancel}>
-            {ja.cancel}
+            {t(ja.cancel)}
           </Button>
         </div>
       </form>

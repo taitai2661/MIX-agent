@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
@@ -36,15 +37,15 @@ export function SettingsOverview() {
   };
   const defaultModel = models.data?.find((row) => row.id === settings.data?.data.default_model_id);
   return <div className="settings-overview">
-    <Title title="設定の概要" sub="AIの接続、使い方、安全性をここから管理できます。" />
+    <Title title={t("設定の概要")} sub={t("AIの接続、使い方、安全性をここから管理できます。")} />
     <section className="settings-hero">
-      <div><p className="eyebrow">YOUR WORKSPACE</p><h2>いつでも、あなたの使い方に。</h2><p>接続したAIと権限はこの環境だけで管理されます。</p></div>
-      <Link to="/settings/providers" className="button btn-primary">Providerを追加 <ArrowRight size={16} /></Link>
+      <div><p className="eyebrow">YOUR WORKSPACE</p><h2>{t("いつでも、あなたの使い方に。")}</h2><p>{t("接続したAIと権限はこの環境だけで管理されます。")}</p></div>
+      <Link to="/settings/providers" className="button btn-primary">{t("Providerを追加")} <ArrowRight size={16} /></Link>
     </section>
-    <section className="settings-summary" aria-label="現在の設定">
-      <div><span>既定モデル</span><b>{defaultModel?.data.name || defaultModel?.data.model_id || "未設定"}</b></div>
-      <div><span>接続状態</span><b>{providers.data?.length ? "準備完了" : "Providerを追加"}</b></div>
-      <div><span>テーマ</span><b>表示設定で変更</b></div>
+    <section className="settings-summary" aria-label={t("現在の設定")}>
+      <div><span>{t("既定モデル")}</span><b>{defaultModel?.data.name || defaultModel?.data.model_id || t("未設定")}</b></div>
+      <div><span>{t("接続状態")}</span><b>{providers.data?.length ? t("準備完了") : t("Providerを追加")}</b></div>
+      <div><span>{t("テーマ")}</span><b>{t("表示設定で変更")}</b></div>
     </section>
     <div className="settings-overview-grid">
       {cards.map(([path, title, description, Icon]) => <Link key={path} to={"/settings/" + path} className="settings-overview-card">

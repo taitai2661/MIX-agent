@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQueryClient } from "@tanstack/react-query";
@@ -47,12 +48,12 @@ export function Models() {
   return (
     <>
       <Title
-        title="モデル"
-        sub="対応機能を確認し、不明な項目は手動で設定できます。"
+        title={t("モデル")}
+        sub={t("対応機能を確認し、不明な項目は手動で設定できます。")}
         action={
           <Button onClick={() => setOpen(!open)}>
             <Plus size={16} />
-            手動追加
+            {t("手動追加")}
           </Button>
         }
       />
@@ -88,18 +89,17 @@ export function Models() {
               ))}
             </select>
           </Field>
-          <Field label="モデルID">
-            <input name="model_id" required placeholder="ProviderのモデルID" />
+          <Field label={t("モデルID")}>
+            <input name="model_id" required placeholder={t("ProviderのモデルID")} />
           </Field>
-          <Field label="Context Window" hint="不明なモデルをAutoで使う場合に設定します。">
-            <input name="context_window_override" type="number" min="1024" max="10000000" step="1" placeholder="例: 128000" />
+          <Field label="Context Window" hint={t("不明なモデルをAutoで使う場合に設定します。")}>
+            <input name="context_window_override" type="number" min="1024" max="10000000" step="1" placeholder={t("例: 128000")} />
           </Field>
-          <Button>追加</Button>
+          <Button>{t("追加")}</Button>
         </form>
       )}
       <div className="notice">
-        モデル一覧の取得だけでは、Tool
-        CallingやVision対応は保証されません。確認した機能を「対応」に設定してください。
+        {t("モデル一覧の取得だけでは、Tool CallingやVision対応は保証されません。確認した機能を「対応」に設定してください。")}
       </div>
       {rows.data?.map((row) => (
         <div className="card model-card" key={row.id}>
@@ -115,7 +115,7 @@ export function Models() {
                 ·{" "}
                 {row.data.context_window
                   ? row.data.context_window.toLocaleString() + " context"
-                  : "Context不明"}
+                  : t("Context不明")}
                 {row.data.context_source ? " · " + row.data.context_source : ""}
               </small>
             </div>
@@ -139,9 +139,9 @@ export function Models() {
                     value={value == null ? "unknown" : value ? "yes" : "no"}
                     onChange={(e) => update(row, key, e.target.value)}
                   >
-                    <option value="unknown">不明</option>
-                    <option value="yes">対応</option>
-                    <option value="no">非対応</option>
+                    <option value="unknown">{t("不明")}</option>
+                    <option value="yes">{t("対応")}</option>
+                    <option value="no">{t("非対応")}</option>
                   </select>
                 </Field>
               );
@@ -152,16 +152,16 @@ export function Models() {
               label="Context Window"
               hint={
                 row.data.context_source === "manual"
-                  ? "手動設定。空欄にして保存すると、API取得値に戻します。"
+                  ? t("手動設定。空欄にして保存すると、API取得値に戻します。")
                   : row.data.context_source === "official_catalog"
-                    ? "Provider公式カタログから補完されています。"
+                    ? t("Provider公式カタログから補完されています。")
                     : row.data.context_source === "models_dev"
-                      ? "models.devから補完されています。"
+                      ? t("models.devから補完されています。")
                       : row.data.context_source === "builtin"
-                        ? "内蔵モデルDBから補完されています。"
+                        ? t("内蔵モデルDBから補完されています。")
                     : row.data.context_window
-                      ? "Provider APIから取得しています。"
-                      : "未設定のモデルは、安全のためAutoの候補から除外されます。"
+                      ? t("Provider APIから取得しています。")
+                      : t("未設定のモデルは、安全のためAutoの候補から除外されます。")
               }
             >
               <input
@@ -171,38 +171,38 @@ export function Models() {
                 max="10000000"
                 step="1"
                 defaultValue={row.data.context_window_override ?? ""}
-                placeholder={row.data.context_window ? String(row.data.context_window) : "例: 128000"}
+                placeholder={row.data.context_window ? String(row.data.context_window) : t("例: 128000")}
                 onBlur={(e) => updateContext(row, e.currentTarget.value)}
               />
             </Field>
           </div>
           {!!row.data.metadata && (
             <details className="model-metadata">
-              <summary>取得メタデータと根拠</summary>
-              <small>信頼度: {row.data.context_confidence || "unknown"}</small>
+              <summary>{t("取得メタデータと根拠")}</summary>
+              <small>{t("信頼度:")} {row.data.context_confidence || "unknown"}</small>
               <pre>{JSON.stringify({ metadata: row.data.metadata, provider_metadata: row.data.provider_metadata }, null, 2)}</pre>
             </details>
           )}
           <div className="model-probe">
             <small>
-              Tool Calling自動確認: {({
+              {t("Tool Calling自動確認:")} {({
                 supported: "対応",
                 unsupported: "非対応",
                 unknown: "未確認",
-              } as Record<string, string>)[row.data.tool_probe?.status] || "未実施"}
+              } as Record<string, string>)[row.data.tool_probe?.status] || t("未実施")}
               {row.data.tool_probe?.checked_at
                 ? "（" + new Date(row.data.tool_probe.checked_at).toLocaleString() + "）"
                 : ""}
             </small>
             <Button variant="outline" onClick={() => verifyTools(row)}>
               <RefreshCw size={14} />
-              Tool Callingを再確認
+              {t("Tool Callingを再確認")}
             </Button>
           </div>
         </div>
       ))}
       {!rows.data?.length && (
-        <Empty>Providerの「モデル取得」、または手動追加で登録できます。</Empty>
+        <Empty>{t("Providerの「モデル取得」、または手動追加で登録できます。")}</Empty>
       )}
     </>
   );

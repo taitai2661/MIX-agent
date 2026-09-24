@@ -14,6 +14,7 @@ RUN_STATES = frozenset(
         "queued",
         "running",
         "waiting_approval",
+        "paused",
         "completed",
         "failed",
         "cancelled",
@@ -34,7 +35,8 @@ NON_TERMINAL_STATES = RUN_STATES - TERMINAL_STATES
 # already allowed.  Terminal states cannot move anywhere else.
 TRANSITIONS = {
     "queued": frozenset({"running", "cancelled", "failed"}),
-    "running": frozenset({"waiting_approval", "completed", "failed", "cancelled", "interrupted"}),
+    "running": frozenset({"waiting_approval", "paused", "completed", "failed", "cancelled", "interrupted"}),
+    "paused": frozenset({"queued", "cancelled"}),
     "waiting_approval": frozenset({"running", "cancelled", "failed", "interrupted"}),
     "interrupted": frozenset({"queued", "cancelled"}),
     "completed": frozenset(),

@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
@@ -11,17 +12,17 @@ type Association = { id: string; source_memory_id: string; target_memory_id: str
 
 function MemoryConnections({ memory, content, onSelect, onClose }: { memory: string; content: string; onSelect: (id: string, content: string) => void; onClose: () => void }) {
   const connections = useQuery<Association[]>({ queryKey: ["/memories", memory, "associations"], queryFn: () => api(`/memories/${memory}/associations`) });
-  return <section className="card memory-connections" aria-label="記憶の繋がり">
-    <div className="memory-connections-heading"><div><h3>記憶の繋がり</h3><p>接続先を選ぶと、その記憶を中心に表示します。</p></div><Button variant="ghost" onClick={onClose}>閉じる</Button></div>
+  return <section className="card memory-connections" aria-label={t("記憶の繋がり")}>
+    <div className="memory-connections-heading"><div><h3>{t("記憶の繋がり")}</h3><p>{t("接続先を選ぶと、その記憶を中心に表示します。")}</p></div><Button variant="ghost" onClick={onClose}>{t("閉じる")}</Button></div>
     <ErrorBox error={connections.error} />
     <div className="memory-network-center"><Brain size={18} /><span>{content}</span></div>
-    {connections.isPending && <p>繋がりを読み込み中…</p>}
-    {connections.data?.length === 0 && <p className="memory-network-empty">この記憶に繋がりはまだありません。</p>}
+    {connections.isPending && <p>{t("繋がりを読み込み中…")}</p>}
+    {connections.data?.length === 0 && <p className="memory-network-empty">{t("この記憶に繋がりはまだありません。")}</p>}
     {!!connections.data?.length && <div className="memory-network-list">{connections.data.map(item => {
       const peer = item.connected_memory;
       return <div className="memory-network-edge" key={item.id}>
-        <div className="memory-network-link"><span className="memory-network-line" /><span>{item.relation || "関連"} · {percent(item.weight)}</span></div>
-        {peer ? <button type="button" className="memory-network-node" onClick={() => onSelect(peer.id, peer.content)}><span>{peer.content}</span><small>{states[peer.lifecycle_state] || peer.lifecycle_state} · 確度 {percent(item.confidence)}</small></button> : <div className="memory-network-node unavailable">接続先を表示できません</div>}
+        <div className="memory-network-link"><span className="memory-network-line" /><span>{item.relation || t("関連")} · {percent(item.weight)}</span></div>
+        {peer ? <button type="button" className="memory-network-node" onClick={() => onSelect(peer.id, peer.content)}><span>{peer.content}</span><small>{states[peer.lifecycle_state] || peer.lifecycle_state} {t("· 確度")} {percent(item.confidence)}</small></button> : <div className="memory-network-node unavailable">{t("接続先を表示できません")}</div>}
       </div>;
     })}</div>}
   </section>;
@@ -39,7 +40,7 @@ export function Memories() {
   const refreshMemories = () => qc.invalidateQueries({ predicate: item => String(item.queryKey[0]).startsWith("/memories") });
   const reset = () => { setEditing(null); setContent(""); setStrength(.85); setConfidence(.95); setSalience(.7); };
   return <main className="page">
-    <Title title="Associative Memory" sub="記憶を分類箱ではなく、文脈で意味が変わるTraceネットワークとして管理します。" />
+    <Title title="Associative Memory" sub={t("記憶を分類箱ではなく、文脈で意味が変わるTraceネットワークとして管理します。")} />
     <ErrorBox error={error || rows.error || settings.error} />
     {settings.data && <form className="card memory-settings" onSubmit={async e => {
       e.preventDefault(); const form = new FormData(e.currentTarget);
@@ -50,38 +51,38 @@ export function Memories() {
         memory_min_association_weight: Number(form.get("weight")), memory_activation_decay: Number(form.get("decay")), brave_api_key: null, tavily_api_key: null, exa_api_key: null, serper_api_key: null,
       }); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (reason) { setError(reason); }
     }}>
-      <h3>形成と想起</h3>
-      <label className="check"><input name="auto" type="checkbox" defaultChecked={settings.data.data.memory_auto_formation !== false} />回答後に候補Traceを非同期形成</label>
+      <h3>{t("形成と想起")}</h3>
+      <label className="check"><input name="auto" type="checkbox" defaultChecked={settings.data.data.memory_auto_formation !== false} />{t("回答後に候補Traceを非同期形成")}</label>
       <div className="memory-setting-grid">
-        <Field label="最大hop"><input name="depth" type="number" min="0" max="3" defaultValue={settings.data.data.memory_max_depth ?? 2} /></Field>
-        <Field label="最大候補"><input name="candidates" type="number" min="8" max="256" defaultValue={settings.data.data.memory_max_candidates ?? 96} /></Field>
-        <Field label="検索予算(ms)"><input name="budget" type="number" min="20" max="1000" defaultValue={settings.data.data.memory_retrieval_budget_ms ?? 120} /></Field>
-        <Field label="最小関連weight"><input name="weight" type="number" min=".05" max="1" step=".05" defaultValue={settings.data.data.memory_min_association_weight ?? .2} /></Field>
-        <Field label="活性化decay"><input name="decay" type="number" min=".1" max=".95" step=".05" defaultValue={settings.data.data.memory_activation_decay ?? .55} /></Field>
-      </div><Button>設定を保存</Button>
+        <Field label={t("最大hop")}><input name="depth" type="number" min="0" max="3" defaultValue={settings.data.data.memory_max_depth ?? 2} /></Field>
+        <Field label={t("最大候補")}><input name="candidates" type="number" min="8" max="256" defaultValue={settings.data.data.memory_max_candidates ?? 96} /></Field>
+        <Field label={t("検索予算(ms)")}><input name="budget" type="number" min="20" max="1000" defaultValue={settings.data.data.memory_retrieval_budget_ms ?? 120} /></Field>
+        <Field label={t("最小関連weight")}><input name="weight" type="number" min=".05" max="1" step=".05" defaultValue={settings.data.data.memory_min_association_weight ?? .2} /></Field>
+        <Field label={t("活性化decay")}><input name="decay" type="number" min=".1" max=".95" step=".05" defaultValue={settings.data.data.memory_activation_decay ?? .55} /></Field>
+      </div><Button>{t("設定を保存")}</Button>
     </form>}
     <form className="card" onSubmit={async e => { e.preventDefault(); try {
       await api(`/memories${editing ? `/${editing.id}` : ""}`, editing ? "PATCH" : "POST", { content, strength, confidence, salience, lifecycle_state: "established" });
       reset(); refreshMemories();
     } catch (reason) { setError(reason); } }}>
-      <Field label={editing ? "Traceを訂正" : "明示的なTraceを追加"}><textarea required value={content} onChange={e => setContent(e.target.value)} placeholder="例：回答は日本語で、簡潔な説明を好む" /></Field>
+      <Field label={editing ? t("Traceを訂正") : t("明示的なTraceを追加")}><textarea required value={content} onChange={e => setContent(e.target.value)} placeholder={t("例：回答は日本語で、簡潔な説明を好む")} /></Field>
       <div className="memory-setting-grid">
         <Field label={`Strength ${percent(strength)}`}><input type="range" min="0" max="1" step=".05" value={strength} onChange={e => setStrength(Number(e.target.value))} /></Field>
         <Field label={`Confidence ${percent(confidence)}`}><input type="range" min="0" max="1" step=".05" value={confidence} onChange={e => setConfidence(Number(e.target.value))} /></Field>
         <Field label={`Salience ${percent(salience)}`}><input type="range" min="0" max="1" step=".05" value={salience} onChange={e => setSalience(Number(e.target.value))} /></Field>
-      </div><div className="form-actions"><Button>{editing ? "訂正" : "追加"}</Button>{editing && <Button type="button" variant="ghost" onClick={reset}>キャンセル</Button>}</div>
+      </div><div className="form-actions"><Button>{editing ? t("訂正") : t("追加")}</Button>{editing && <Button type="button" variant="ghost" onClick={reset}>{t("キャンセル")}</Button>}</div>
     </form>
     {selected && <MemoryConnections memory={selected.id} content={selected.content} onSelect={(id, content) => setSelected({ id, content })} onClose={() => setSelected(null)} />}
-    <div className="memory-filters"><input className="search-input" aria-label="Memory検索" placeholder="Traceを検索…" value={q} onChange={e => setQ(e.target.value)} />
-      <select aria-label="定着状態" value={state} onChange={e => setState(e.target.value)}><option value="">すべての状態</option>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
+    <div className="memory-filters"><input className="search-input" aria-label={t("Memory検索")} placeholder={t("Traceを検索…")} value={q} onChange={e => setQ(e.target.value)} />
+      <select aria-label={t("定着状態")} value={state} onChange={e => setState(e.target.value)}><option value="">{t("すべての状態")}</option>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
     {rows.data?.map(row => <div className={`card memory-card ${row.data.lifecycle_state === "deleted" ? "deleted" : ""}`} key={row.id}>
-      <Brain size={20} /><div className="grow"><p>{row.data.content}</p><div className="memory-metrics"><span>{states[row.data.lifecycle_state] || row.data.lifecycle_state}</span><span>強度 {percent(row.data.strength)}</span><span>確度 {percent(row.data.confidence)}</span><span>顕著性 {percent(row.data.salience)}</span><span>活性化 {row.data.activation_count || 0}回</span></div>
-      {!!row.data.concepts?.length && <small>概念: {row.data.concepts.join("、")}</small>}</div>
-      <div className="row-actions">{row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={() => { setEditing(row); setContent(row.data.content); setStrength(row.data.strength); setConfidence(row.data.confidence); setSalience(row.data.salience); }}>訂正</Button>}
-        <Button variant="ghost" onClick={() => setSelected({ id: row.id, content: row.data.content })}><GitBranch size={14} /> 繋がりを見る</Button>
-        <Button variant="ghost" onClick={async () => { try { setHistory({ memory: row.id, rows: await api(`/memories/${row.id}/revisions`) }); } catch (reason) { setError(reason); } }}>履歴</Button>
-        {row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={async () => { if (confirm("このTraceと派生記憶を想起対象外にしますか？履歴から復元できます。")) { try { await api(`/memories/${row.id}`, "DELETE"); refreshMemories(); } catch (reason) { setError(reason); } } }}>忘れる</Button>}
+      <Brain size={20} /><div className="grow"><p>{row.data.content}</p><div className="memory-metrics"><span>{states[row.data.lifecycle_state] || row.data.lifecycle_state}</span><span>{t("強度")} {percent(row.data.strength)}</span><span>{t("確度")} {percent(row.data.confidence)}</span><span>{t("顕著性")} {percent(row.data.salience)}</span><span>{t("活性化")} {row.data.activation_count || 0}{t("回")}</span></div>
+      {!!row.data.concepts?.length && <small>{t("概念:")} {row.data.concepts.join("、")}</small>}</div>
+      <div className="row-actions">{row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={() => { setEditing(row); setContent(row.data.content); setStrength(row.data.strength); setConfidence(row.data.confidence); setSalience(row.data.salience); }}>{t("訂正")}</Button>}
+        <Button variant="ghost" onClick={() => setSelected({ id: row.id, content: row.data.content })}><GitBranch size={14} /> {t("繋がりを見る")}</Button>
+        <Button variant="ghost" onClick={async () => { try { setHistory({ memory: row.id, rows: await api(`/memories/${row.id}/revisions`) }); } catch (reason) { setError(reason); } }}>{t("履歴")}</Button>
+        {row.data.lifecycle_state !== "deleted" && <Button variant="ghost" onClick={async () => { if (confirm("このTraceと派生記憶を想起対象外にしますか？履歴から復元できます。")) { try { await api(`/memories/${row.id}`, "DELETE"); refreshMemories(); } catch (reason) { setError(reason); } } }}>{t("忘れる")}</Button>}
       </div></div>)}
-    {history && <div className="card"><h3>変更履歴</h3>{history.rows.map(row => <div className="revision" key={row.id}><p>{row.data.previous.content}</p><Button variant="outline" onClick={async () => { try { await api(`/memories/${history.memory}/restore/${row.id}`, "POST"); refreshMemories(); setHistory(null); } catch (reason) { setError(reason); } }}>復元</Button></div>)}{!history.rows.length && <p>変更履歴はまだありません。</p>}<Button variant="ghost" onClick={() => setHistory(null)}>閉じる</Button></div>}
+    {history && <div className="card"><h3>{t("変更履歴")}</h3>{history.rows.map(row => <div className="revision" key={row.id}><p>{row.data.previous.content}</p><Button variant="outline" onClick={async () => { try { await api(`/memories/${history.memory}/restore/${row.id}`, "POST"); refreshMemories(); setHistory(null); } catch (reason) { setError(reason); } }}>{t("復元")}</Button></div>)}{!history.rows.length && <p>{t("変更履歴はまだありません。")}</p>}<Button variant="ghost" onClick={() => setHistory(null)}>{t("閉じる")}</Button></div>}
   </main>;
 }

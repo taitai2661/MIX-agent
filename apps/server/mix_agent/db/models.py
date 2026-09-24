@@ -87,6 +87,10 @@ class Conversation(Record, Base):
     __tablename__ = "conversations"
 
 
+class Project(Record, Base):
+    __tablename__ = "projects"
+
+
 class ConversationFolder(Record, Base):
     __tablename__ = "conversation_folders"
 
@@ -262,10 +266,10 @@ class Run(Record, Base):
             "one_active_run",
             "conversation_id",
             unique=True,
-            postgresql_where=status.in_(["queued", "running", "waiting_approval"]),
+            postgresql_where=status.in_(["queued", "running", "waiting_approval", "paused"]),
         ),
         CheckConstraint(
-            "status IN ('queued', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled', 'interrupted')",
+            "status IN ('queued', 'running', 'waiting_approval', 'paused', 'completed', 'failed', 'cancelled', 'interrupted')",
             name="ck_runs_status_valid",
         ),
     )

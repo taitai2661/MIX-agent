@@ -542,6 +542,34 @@ def provider_failure_reason(exc, provider=None):
 
 def complete_tool_call(db, run, call, current, result):
     """Persist one result in provider-call order after execution has settled."""
+    if isinstance(result, dict) and call.data.get("tool_id", "").startswith("browser_"):
+        frame_bytes = result.pop("frame_base64", None)
+        result.pop("frame_unavailable", None)
+        if frame_bytes:
+            try:
+                from mix_agent.tools.execute import save_artifact as _save_artifact
+                import base64
+
+                frame = _save_artifact(db, run.owner_id, base64.b64decode(frame_bytes), "browser-frame.png", "image/png", kind="browser-frame")
+                frames = list(run.data.get("browser_frames") or [])
+                from urllib.parse import urlsplit, urlunsplit
+                address = urlsplit(result.get("url", ""))
+                visible_url = urlunsplit((address.scheme, address.netloc, address.path, "", ""))[:2048]
+                frames.append({"artifact_id": frame["artifact_id"], "call_id": call.id, "url": visible_url, "tool": call.data["tool_id"]})
+                if len(frames) > 30:
+                    from mix_agent.db.models import Artifact
+                    from mix_agent import config
+                    for old in frames[:-30]:
+                        old_id = old["artifact_id"]
+                        old_row = db.get(Artifact, old_id)
+                        if old_row:
+                            (config.ARTIFACTS / old_id).unlink(missing_ok=True)
+                            db.delete(old_row)
+                    frames = frames[-30:]
+                update(run, browser_frames=frames)
+                emit(db, run.id, "browser_frame", frames[-1])
+            except Exception:
+                pass  # A screenshot failure must not fail the browser operation.
     call.status = "completed"
     summary = activity_result((current or {}).get("id", call.data["tool_id"]), result)
     call.data = {**call.data, "result": result, **({"result_activity": summary} if summary else {})}
@@ -922,6 +950,8 @@ async def drive(run_id):
             run = db.get(Run, run_id)
             if not run or run.status in TERMINAL:
                 return
+            if run.status == "waiting_approval" and run.data.get("browser_manual_active"):
+                return
             snapshot = run.data["snapshot"]
             # The DB status decides whether a Run can start: queued and
             # waiting_approval reopen are the only legal entry points.  An
@@ -935,6 +965,11 @@ async def drive(run_id):
             while True:
                 db.refresh(run)
                 if run.status == "cancelled":
+                    return
+                if run.data.get("browser_pause_requested"):
+                    update(run, browser_pause_requested=False, browser_manual_active=True, browser_paused_at=now().isoformat())
+                    transition_run(db, run, "paused")
+                    db.commit()
                     return
                 elapsed = (now() - run.created_at.replace(tzinfo=UTC)).total_seconds()
                 if elapsed >= snapshot.get("max_seconds", 900):
@@ -1028,6 +1063,14 @@ async def drive(run_id):
                             batch.append((next_call, next_current))
                             index += 1
                     await execute_prepared_calls(db, run, snapshot, batch)
+                db.refresh(run)
+                if run.status == "cancelled":
+                    return
+                if run.data.get("browser_pause_requested"):
+                    update(run, browser_pause_requested=False, browser_manual_active=True, browser_paused_at=now().isoformat())
+                    transition_run(db, run, "paused")
+                    db.commit()
+                    return
                 mode = snapshot["mode"]
                 steps = run.data.get("steps", 0)
                 count = run.data.get("tool_count", 0)
@@ -1275,14 +1318,29 @@ async def drive(run_id):
                 )
     finally:
         TASKS.pop(run_id, None)
+        try:
+            with SessionLocal() as db:
+                ended = db.get(Run, run_id)
+                should_close = ended is None or ended.status in TERMINAL
+            if should_close:
+                await runner_request("browser", "/browser-close", {"run_id": run_id}, timeout=5)
+        except Exception:
+            pass
 
 
 async def scheduler():
+    interrupted_browser_runs = []
     with SessionLocal() as db:
         for run in db.scalars(select(Run).where(Run.status == "running")):
+            interrupted_browser_runs.append(run.id)
             finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
         from mix_agent.schedules import reconcile
         reconcile(db, launch)
+    for interrupted_id in interrupted_browser_runs:
+        try:
+            await runner_request("browser", "/browser-close", {"run_id": interrupted_id}, timeout=5)
+        except Exception:
+            pass
     from mix_agent.wakeups import scheduler as wakeup
     seen = wakeup.revision
     while True:

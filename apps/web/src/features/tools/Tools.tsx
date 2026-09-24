@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp, ShieldAlert, ShieldCheck } from "lucide-react";
@@ -69,34 +70,34 @@ export function Tools() {
   return (
     <>
       <Title
-        title="Tools・権限"
-        sub="AIが使える能力と、実行時の確認方法を管理します。"
+        title={t("Tools・権限")}
+        sub={t("AIが使える能力と、実行時の確認方法を管理します。")}
       />
       <div className="notice">
-        <ShieldAlert size={17} /> Terminalは専用workspace全体を操作できます。ホスト・Docker Socketへのアクセスは提供しません。
+        <ShieldAlert size={17} /> {t("Terminalは専用workspace全体を操作できます。ホスト・Docker Socketへのアクセスは提供しません。")}
       </div>
-      <section className="tool-agent-panel" aria-label="権限の適用先">
-        <Field label="権限を設定するAgent" hint="Agentごとに設定を保存します。標準Agentは個別Agentを選ばない会話に適用されます。">
+      <section className="tool-agent-panel" aria-label={t("権限の適用先")}>
+        <Field label={t("権限を設定するAgent")} hint={t("Agentごとに設定を保存します。標準Agentは個別Agentを選ばない会話に適用されます。")}>
           <select value={agent} onChange={(event) => setAgent(event.target.value)}>
-            <option value="">標準Agent</option>
+            <option value="">{t("標準Agent")}</option>
             {agents.data?.map((item) => <option key={item.id} value={item.id}>{item.data.name}</option>)}
           </select>
         </Field>
-        <p className="tool-agent-current"><ShieldCheck size={16} /><b>適用先:</b> {selectedAgent?.data.name || "標準Agent"}</p>
+        <p className="tool-agent-current"><ShieldCheck size={16} /><b>{t("適用先:")}</b> {selectedAgent?.data.name || t("標準Agent")}</p>
       </section>
-      <section className="permission-overview" aria-label="現在のTool権限の内訳">
+      <section className="permission-overview" aria-label={t("現在のTool権限の内訳")}>
         {(Object.keys(permissionInfo) as PermissionValue[]).map((permission) => <div className={'permission-overview-item ' + permission} key={permission}>
-          <span>{permissionInfo[permission].label}</span><b>{counts[permission]} 件</b><small>{permissionInfo[permission].description}</small>
+          <span>{permissionInfo[permission].label}</span><b>{counts[permission]} {t("件")}</b><small>{permissionInfo[permission].description}</small>
         </div>)}
       </section>
       <ErrorBox error={tools.error || rules.error || agents.error || settings.error} />
-      <section className="tool-list" aria-label="Toolごとの権限">
+      <section className="tool-list" aria-label={t("Toolごとの権限")}>
         {permissions.map(({ tool, permission }) => <article className={'tool-card permission-' + permission} key={tool.id} aria-busy={savingToolIds.has(tool.id)}>
-          <div className="tool-card-main"><div className="tool-card-heading"><b>{tool.model_name}</b><span className={'permission-badge ' + permission}>{permissionInfo[permission].label}</span></div><p>{tool.description}</p><div className="tool-meta"><span>{tool.source === "builtin" ? "組み込み" : tool.source}</span><span>{riskLabel(tool.risk)}</span></div></div>
-          <label className="check"><input type="checkbox" checked={settings.data?.data.tool_settings?.[tool.id]?.enabled !== false} onChange={(event) => updateEnabled(tool.id, event.target.checked)} /> 有効</label>
-          <div className="tool-card-control"><label htmlFor={'permission-' + tool.id}>実行時の扱い</label><select id={'permission-' + tool.id} value={permission} disabled={savingToolIds.has(tool.id)} onChange={(event) => updatePermission(tool.id, event.target.value as PermissionValue)}>{(Object.keys(permissionInfo) as PermissionValue[]).map((value) => <option key={value} value={value}>{permissionInfo[value].label}</option>)}</select><small>{savingToolIds.has(tool.id) ? "保存しています…" : permissionInfo[permission].description}</small><ErrorBox error={saveErrors[tool.id]} /></div>
+          <div className="tool-card-main"><div className="tool-card-heading"><b>{tool.model_name}</b><span className={'permission-badge ' + permission}>{permissionInfo[permission].label}</span></div><p>{tool.description}</p><div className="tool-meta"><span>{tool.source === "builtin" ? t("組み込み") : tool.source}</span><span>{riskLabel(tool.risk)}</span></div></div>
+          <label className="check"><input type="checkbox" checked={settings.data?.data.tool_settings?.[tool.id]?.enabled !== false} onChange={(event) => updateEnabled(tool.id, event.target.checked)} /> {t("有効")}</label>
+          <div className="tool-card-control"><label htmlFor={'permission-' + tool.id}>{t("実行時の扱い")}</label><select id={'permission-' + tool.id} value={permission} disabled={savingToolIds.has(tool.id)} onChange={(event) => updatePermission(tool.id, event.target.value as PermissionValue)}>{(Object.keys(permissionInfo) as PermissionValue[]).map((value) => <option key={value} value={value}>{permissionInfo[value].label}</option>)}</select><small>{savingToolIds.has(tool.id) ? t("保存しています…") : permissionInfo[permission].description}</small><ErrorBox error={saveErrors[tool.id]} /></div>
         </article>)}
-        {!tools.isLoading && !permissions.length && <div className="empty"><CircleHelp size={25} /><p>利用可能なToolはありません。</p></div>}
+        {!tools.isLoading && !permissions.length && <div className="empty"><CircleHelp size={25} /><p>{t("利用可能なToolはありません。")}</p></div>}
       </section>
     </>
   );

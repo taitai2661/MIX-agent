@@ -299,6 +299,7 @@ async def execute(db, run, tool, args):
             "browser" if name.startswith("browser_") else "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
                                       "browser_settings": browser_settings}
         )
+        # The frame is a UI observation, never part of the model tool result.
         if "image_base64" in result:
             artifact = save_artifact(
                 db, run.owner_id, base64.b64decode(result.pop("image_base64")), "screenshot.png", "image/png"

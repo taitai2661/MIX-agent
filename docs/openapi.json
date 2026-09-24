@@ -860,6 +860,22 @@
             }
           },
           {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -900,6 +916,90 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ConversationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{key}": {
+      "delete": {
+        "summary": "Delete Project",
+        "operationId": "delete_project_api_v1_projects__key__delete",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Edit Projects",
+        "operationId": "edit_projects_api_v1_projects__key__patch",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectInputPatch"
               }
             }
           }
@@ -1150,6 +1250,110 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/push/key": {
+      "get": {
+        "summary": "Push Key",
+        "operationId": "push_key_api_v1_push_key_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/push/subscriptions": {
+      "get": {
+        "summary": "Push Subscriptions",
+        "operationId": "push_subscriptions_api_v1_push_subscriptions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Push Subscription",
+        "operationId": "save_push_subscription_api_v1_push_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Push Subscription",
+        "operationId": "delete_push_subscription_api_v1_push_subscriptions_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3353,6 +3557,80 @@
         }
       }
     },
+    "/api/v1/projects": {
+      "get": {
+        "summary": "List Projects",
+        "operationId": "list_projects_api_v1_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecordView"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api V1 Projects Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Projects",
+        "operationId": "create_projects_api_v1_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/push-sw.js": {
+      "get": {
+        "summary": "Push Service Worker",
+        "operationId": "push_service_worker_push_sw_js_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/{path}": {
       "get": {
         "summary": "Frontend",
@@ -3960,6 +4238,17 @@
             ],
             "title": "Folder Id"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "pinned": {
             "type": "boolean",
             "title": "Pinned",
@@ -3993,6 +4282,17 @@
               }
             ],
             "title": "Folder Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "pinned": {
             "anyOf": [
@@ -4035,6 +4335,17 @@
                 "type": "null"
               }
             ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           }
         },
         "type": "object",
@@ -4056,6 +4367,7 @@
               "queued",
               "running",
               "waiting_approval",
+              "paused",
               "completed",
               "failed",
               "cancelled",
@@ -4133,6 +4445,11 @@
             ],
             "title": "Mode",
             "default": "chat"
+          },
+          "research_mode": {
+            "type": "boolean",
+            "title": "Research Mode",
+            "default": false
           }
         },
         "type": "object",
@@ -4153,6 +4470,17 @@
               }
             ],
             "title": "Folder Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "pinned": {
             "anyOf": [
@@ -4812,6 +5140,11 @@
             "type": "boolean",
             "title": "Allow Tools",
             "default": false
+          },
+          "research_mode": {
+            "type": "boolean",
+            "title": "Research Mode",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -5236,6 +5569,79 @@
         ],
         "title": "PermissionRuleView"
       },
+      "ProjectInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 20000,
+            "title": "Instructions",
+            "default": ""
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ProjectInput"
+      },
+      "ProjectInputPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProjectInputPatch"
+      },
       "ProviderInput": {
         "properties": {
           "name": {
@@ -5497,12 +5903,23 @@
               "queued",
               "running",
               "waiting_approval",
+              "paused",
               "completed",
               "failed",
               "cancelled",
               "interrupted"
             ],
             "title": "Status"
+          },
+          "browser_manual_active": {
+            "type": "boolean",
+            "title": "Browser Manual Active",
+            "default": false
+          },
+          "browser_pause_requested": {
+            "type": "boolean",
+            "title": "Browser Pause Requested",
+            "default": false
           },
           "reason": {
             "anyOf": [

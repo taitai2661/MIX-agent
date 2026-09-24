@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { t } from "@/app/i18n";
 
 interface Props {
   children: ReactNode;
@@ -23,11 +24,11 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <main className="auth">
-          <h2>エラーが発生しました</h2>
+          <h2>{t("エラーが発生しました")}</h2>
           <p>
-            予期しないエラーが発生しました。以下のボタンで再読み込みしてください。
+            {t("予期しないエラーが発生しました。以下のボタンで再読み込みしてください。")}
           </p>
-          <button onClick={() => window.location.reload()}>再読み込み</button>
+          <button onClick={() => window.location.reload()}>{t("再読み込み")}</button>
         </main>
       );
     }

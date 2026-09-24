@@ -14,7 +14,7 @@ class RecordView(BaseModel):
 
 
 ChatMode = Literal["chat", "thinking", "agent"]
-RunStatus = Literal["queued", "running", "waiting_approval", "completed", "failed", "cancelled", "interrupted"]
+RunStatus = Literal["queued", "running", "waiting_approval", "paused", "completed", "failed", "cancelled", "interrupted"]
 ApprovalDecision = Literal["once", "always", "denied"]
 ApprovalStatus = Literal["pending", "once", "always", "denied", "expired"]
 
@@ -84,12 +84,14 @@ class ConversationSelectionView(BaseModel):
     model_id: str
     agent_id: str = ""
     mode: ChatMode = "chat"
+    research_mode: bool = False
 
 
 class ConversationMessagesView(BaseModel):
     messages: list[MessageView]
     runs: list[ConversationRunView]
     selection: ConversationSelectionView | None = None
+    project_id: str | None = None
 
 
 class SendMessageView(BaseModel):
@@ -160,6 +162,8 @@ class RunBudgetView(BaseModel):
 class RunView(BaseModel):
     id: str
     status: RunStatus
+    browser_manual_active: bool = False
+    browser_pause_requested: bool = False
     reason: str | None = None
     steps: int
     tool_count: int
@@ -316,7 +320,14 @@ class AgentInput(Input):
 class ConversationInput(Input):
     title: str = Field(default="新しいチャット", max_length=200)
     folder_id: str | None = None
+    project_id: str | None = None
     pinned: bool = False
+
+
+class ProjectInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    instructions: str = Field(default="", max_length=20000)
+    sources: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ScheduledJobInput(Input):
@@ -340,6 +351,7 @@ class ConversationFolderInput(Input):
 
 class ConversationStateInput(Input):
     folder_id: str | None = None
+    project_id: str | None = None
     pinned: bool | None = None
     archived: bool | None = None
 
@@ -359,6 +371,7 @@ class MessageInput(Input):
     acknowledge_unknown_capability: bool = False
     temporary_mode: bool = False
     allow_tools: bool = False
+    research_mode: bool = False
 
 
 class DecisionInput(Input):
@@ -421,6 +434,7 @@ class MCPUninstallInput(Input):
 
 
 class SettingsInput(Input):
+    ui_language: Literal["ja", "en"] | None = None
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
     auto_retry_count: int = Field(default=3, ge=0)

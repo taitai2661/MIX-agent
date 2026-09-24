@@ -6,7 +6,7 @@ export type RunStatus = components["schemas"]["RunView"]["status"];
 export type ApprovalDecision = components["schemas"]["DecisionInput"]["decision"];
 export type Artifact = components["schemas"]["ArtifactView"];
 export type ConversationHistory = components["schemas"]["ConversationMessagesView"];
-export type Run = components["schemas"]["RunView"];
+export type Run = components["schemas"]["RunView"] & { browser_manual_active?: boolean; browser_pause_requested?: boolean };
 export type Approval = components["schemas"]["ApprovalView"];
 export type Tool = components["schemas"]["ToolView"];
 export type PermissionRule = components["schemas"]["PermissionRuleView"];
@@ -19,7 +19,7 @@ const runStatuses = new Set<RunStatus>([
 ]);
 const eventKinds = new Set([
   "text", "reasoning", "model_started", "model_selected", "model_rerouted", "plan",
-  "status", "tool_started", "tool_result", "approval", "message", "context_summary",
+  "status", "tool_started", "tool_result", "approval", "message", "context_summary", "browser_frame",
 ]);
 
 export type RunEvent = {
@@ -35,6 +35,11 @@ export type RunEvent = {
   name?: string;
   result?: unknown;
   activity?: ActivitySummary;
+} | {
+  kind: "browser_frame";
+  artifact_id: string;
+  url: string;
+  tool: string;
 } | {
   kind: "approval";
   id: string;
@@ -86,6 +91,9 @@ export function parseRunEvent(data: string): RunEvent | null {
   }
   if (value.kind === "approval" && typeof value.id === "string" && typeof value.tool === "string" && isRecord(value.arguments) && isRecord(value.scope)) {
     return { kind: "approval", id: value.id, tool: value.tool, arguments: value.arguments, scope: value.scope, ...(typeof value.risk === "string" ? { risk: value.risk } : {}) };
+  }
+  if (value.kind === "browser_frame" && typeof value.artifact_id === "string" && typeof value.url === "string" && typeof value.tool === "string") {
+    return { kind: "browser_frame", artifact_id: value.artifact_id, url: value.url, tool: value.tool };
   }
   if (["tool_started", "tool_result", "plan"].includes(value.kind)) {
     const activity = parseActivity(value.activity);

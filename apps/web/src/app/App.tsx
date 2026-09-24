@@ -1,5 +1,6 @@
 import { api, setCSRF, type Row } from "@/app/api";
 import { ja } from "@/app/strings";
+import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -35,8 +36,10 @@ import { Skills } from "@/features/skills/Skills";
 import { Settings } from "@/features/settings/Settings";
 import { Setup } from "@/features/setup/Setup";
 import { Schedules } from "@/features/schedules/Schedules";
+import { Projects } from "@/features/projects/Projects";
 
 export function App() {
+  useLanguage();
   const sidebarMinimum = 220,
     sidebarMaximum = 380,
     sidebarDefault = 248;
@@ -78,10 +81,12 @@ export function App() {
   }, [openConversationMenu]);
   useEffect(() => {
     Promise.all([api("/setup"), api("/auth/me").catch(() => null)])
-      .then(([setup, me]) => {
+      .then(async ([setup, me]) => {
         setNeedsAdmin(setup.needs_admin);
         if (me) {
           setCSRF(me.csrf);
+          const settings = await api("/settings");
+          setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
           setUser(me);
         }
         setReady(true);
@@ -96,17 +101,24 @@ export function App() {
   async function authenticated(value: any) {
     setCSRF(value.csrf);
     setUser(value);
-    if (needsAdmin) navigate("/setup");
+    if (needsAdmin) {
+      try { await api("/settings", "PUT", { ui_language: getLanguage() }); }
+      catch (cause) { setError(cause); return; }
+      navigate("/setup");
+    } else {
+      try { const settings = await api("/settings"); setLanguage(settings.data.ui_language === "en" ? "en" : "ja"); }
+      catch (cause) { setError(cause); return; }
+    }
     setNeedsAdmin(false);
   }
   if (error)
     return (
       <main className="auth">
         <ErrorBox error={error} />
-        <Button onClick={() => location.reload()}>再読み込み</Button>
+        <Button onClick={() => location.reload()}>{t("再読み込み")}</Button>
       </main>
     );
-  if (!ready) return <main className="auth">{ja.loading}</main>;
+  if (!ready) return <main className="auth">{t(ja.loading)}</main>;
   if (!user) return <Auth setup={needsAdmin} onDone={authenticated} />;
   async function newChat() {
     navigate("/");
@@ -170,7 +182,7 @@ export function App() {
   }
   return (
     <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed " : "") + (resizingSidebar ? "sidebar-resizing" : "")}>
-      <aside id="main-navigation" className="sidebar" aria-label="メインメニュー" style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
+      <aside id="main-navigation" className="sidebar" aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
           <Logo />
           <div className="sidebar-controls"><ThemeController /><button className="icon mobile" onClick={() => setSidebar(false)} aria-label="閉じる"><X size={18} /></button></div>
@@ -179,30 +191,31 @@ export function App() {
           <div className="chat-nav-item">
             <NavLink to="/" end onClick={() => setSidebar(false)}>
               <MessageSquare size={18} />
-              {ja.chat}
+              {t(ja.chat)}
             </NavLink>
-            <button className="chat-nav-new" onClick={newChat} aria-label={ja.newChat} title={ja.newChat}>
+            <button className="chat-nav-new" onClick={newChat} aria-label={t(ja.newChat)} title={t(ja.newChat)}>
               <Plus size={17} />
             </button>
           </div>
           <NavLink to="/agents" onClick={() => setSidebar(false)}>
             <Bot size={18} />
-            {ja.agents}
+            {t(ja.agents)}
           </NavLink>
+          <NavLink to="/projects" onClick={() => setSidebar(false)}><Folder size={18} />{t("プロジェクト")}</NavLink>
           <NavLink to="/skills" onClick={() => setSidebar(false)}>
             <BookOpen size={18} />
             {ja.skills}
           </NavLink>
-          <NavLink to="/schedules" onClick={() => setSidebar(false)}><Clock3 size={18} />定期実行</NavLink>
+          <NavLink to="/schedules" onClick={() => setSidebar(false)}><Clock3 size={18} />{t("定期実行")}</NavLink>
         </nav>
-        <div className="sidebar-label">ピン留め</div>
+        <div className="sidebar-label">{t("ピン留め")}</div>
         <div className="history">
           {conversations.data?.filter((c) => c.data.pinned).map(conversationItem)}
-          {!conversations.data?.some((c) => c.data.pinned) && <small>ピン留めした会話が表示されます</small>}
-          <div className="sidebar-label compact"><Folder size={12} />最近のチャット</div>
+          {!conversations.data?.some((c) => c.data.pinned) && <small>{t("ピン留めした会話が表示されます")}</small>}
+          <div className="sidebar-label compact"><Folder size={12} />{t("最近のチャット")}</div>
           {conversations.data?.filter((c) => !c.data.pinned).map(conversationItem)}
-          <NavLink className="conversation-manage-link" to="/history" onClick={() => setSidebar(false)}><Archive size={15} />会話を管理</NavLink>
-          <NavLink className="conversation-manage-link" to="/history/trash" onClick={() => setSidebar(false)}><Trash2 size={15} />ごみ箱</NavLink>
+          <NavLink className="conversation-manage-link" to="/history" onClick={() => setSidebar(false)}><Archive size={15} />{t("会話を管理")}</NavLink>
+          <NavLink className="conversation-manage-link" to="/history/trash" onClick={() => setSidebar(false)}><Trash2 size={15} />{t("ごみ箱")}</NavLink>
         </div>
         <div className="sidebar-bottom">
           <div className="local-badge">
@@ -211,7 +224,7 @@ export function App() {
           </div>
           <NavLink to="/settings/providers" onClick={() => setSidebar(false)}>
             <Settings2 size={18} />
-            {ja.settings}
+            {t(ja.settings)}
           </NavLink>
           <div className="profile">
             <span className="avatar">{user.username[0].toUpperCase()}</span>
@@ -220,7 +233,7 @@ export function App() {
             </div>
             <button
               className="icon"
-              aria-label={ja.logout}
+              aria-label={t(ja.logout)}
               onClick={async () => {
                 try {
                   await api("/auth/logout", "POST");
@@ -257,6 +270,9 @@ export function App() {
           <Routes>
             <Route path="/" element={<Chat />} />
             <Route path="/chat/:id" element={<Chat />} />
+            <Route path="/projects/:projectId/chat" element={<Chat />} />
+            <Route path="/projects" element={<Projects />} />
+            <Route path="/projects/:id" element={<Projects />} />
             <Route path="/history" element={<Conversations />} />
             <Route path="/history/:state" element={<Conversations />} />
             <Route path="/agents" element={<Agents />} />

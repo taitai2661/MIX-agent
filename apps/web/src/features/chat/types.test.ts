@@ -23,4 +23,10 @@ describe("parseRunEvent", () => {
     expect(parseRunEvent(JSON.stringify({ kind: "text" }))).toBeNull();
     expect(parseRunEvent(JSON.stringify({ kind: "status", status: "unknown" }))).toBeNull();
   });
+
+  it("accepts browser frames without carrying manual input into UI state", () => {
+    expect(parseRunEvent(JSON.stringify({
+      kind: "browser_frame", artifact_id: "frame-1", url: "https://example.com", tool: "manual", text: "secret",
+    }))).toEqual({ kind: "browser_frame", artifact_id: "frame-1", url: "https://example.com", tool: "manual" });
+  });
 });

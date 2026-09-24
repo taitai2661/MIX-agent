@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { Brain, FileText, Globe2, Search, Terminal, Wrench } from "lucide-react";
 
 export type ActivitySummary = {
@@ -34,7 +35,7 @@ export function ToolActivity({ activity, running = false }: { activity: Activity
               {source.host}
             </a>
           ))}
-          {!!activity.remaining && <span>あと {activity.remaining} 件</span>}
+          {!!activity.remaining && <span>{t("あと")} {activity.remaining} {t("件")}</span>}
         </div>
       )}
     </section>

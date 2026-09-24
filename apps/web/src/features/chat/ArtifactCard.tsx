@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { Code2, Download, File, FileText, Image, Table2 } from "lucide-react";
 
 export type ChatArtifact = {
@@ -29,11 +30,11 @@ export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
     <section className="artifact-card">
       <div className="artifact-icon"><Icon aria-hidden="true" size={27} /></div>
       <div className="artifact-details">
-        <b>{artifact.name || "成果物"}</b>
+        <b>{artifact.name || t("成果物")}</b>
         <span>{label}{artifact.size ? ` · ${formatSize(artifact.size)}` : ""}</span>
       </div>
       <a className="artifact-download" href={`/api/v1/artifacts/${artifact.artifact_id}`} download={artifact.name || true}>
-        <Download aria-hidden="true" size={17} /> ダウンロード
+        <Download aria-hidden="true" size={17} /> {t("ダウンロード")}
       </a>
     </section>
   );

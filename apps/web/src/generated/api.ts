@@ -461,6 +461,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Project */
+        delete: operations["delete_project_api_v1_projects__key__delete"];
+        options?: never;
+        head?: never;
+        /** Edit Projects */
+        patch: operations["edit_projects_api_v1_projects__key__patch"];
+        trace?: never;
+    };
     "/api/v1/scheduled-jobs": {
         parameters: {
             query?: never;
@@ -543,6 +561,42 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Push Key */
+        get: operations["push_key_api_v1_push_key_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Push Subscriptions */
+        get: operations["push_subscriptions_api_v1_push_subscriptions_get"];
+        put?: never;
+        /** Save Push Subscription */
+        post: operations["save_push_subscription_api_v1_push_subscriptions_post"];
+        /** Delete Push Subscription */
+        delete: operations["delete_push_subscription_api_v1_push_subscriptions_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1340,6 +1394,41 @@ export interface paths {
         patch: operations["edit_agents_api_v1_agents__key__patch"];
         trace?: never;
     };
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Projects */
+        get: operations["list_projects_api_v1_projects_get"];
+        put?: never;
+        /** Create Projects */
+        post: operations["create_projects_api_v1_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push-sw.js": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Push Service Worker */
+        get: operations["push_service_worker_push_sw_js_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/{path}": {
         parameters: {
             query?: never;
@@ -1564,6 +1653,8 @@ export interface components {
             title: string;
             /** Folder Id */
             folder_id?: string | null;
+            /** Project Id */
+            project_id?: string | null;
             /**
              * Pinned
              * @default false
@@ -1576,6 +1667,8 @@ export interface components {
             title?: string | null;
             /** Folder Id */
             folder_id?: string | null;
+            /** Project Id */
+            project_id?: string | null;
             /** Pinned */
             pinned?: boolean | null;
         };
@@ -1586,6 +1679,8 @@ export interface components {
             /** Runs */
             runs: components["schemas"]["ConversationRunView"][];
             selection?: components["schemas"]["ConversationSelectionView"] | null;
+            /** Project Id */
+            project_id?: string | null;
         };
         /** ConversationRunView */
         ConversationRunView: {
@@ -1595,7 +1690,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "interrupted";
+            status: "queued" | "running" | "waiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
             /** Reason */
             reason?: string | null;
             /** Message Id */
@@ -1618,11 +1713,18 @@ export interface components {
              * @enum {string}
              */
             mode: "chat" | "thinking" | "agent";
+            /**
+             * Research Mode
+             * @default false
+             */
+            research_mode: boolean;
         };
         /** ConversationStateInput */
         ConversationStateInput: {
             /** Folder Id */
             folder_id?: string | null;
+            /** Project Id */
+            project_id?: string | null;
             /** Pinned */
             pinned?: boolean | null;
             /** Archived */
@@ -1871,6 +1973,11 @@ export interface components {
              * @default false
              */
             allow_tools: boolean;
+            /**
+             * Research Mode
+             * @default false
+             */
+            research_mode: boolean;
         };
         /** MessageView */
         MessageView: {
@@ -2023,6 +2130,27 @@ export interface components {
             /** Created At */
             created_at: string;
         };
+        /** ProjectInput */
+        ProjectInput: {
+            /** Name */
+            name: string;
+            /**
+             * Instructions
+             * @default
+             */
+            instructions: string;
+            /** Sources */
+            sources?: string[];
+        };
+        /** ProjectInputPatch */
+        ProjectInputPatch: {
+            /** Name */
+            name?: string | null;
+            /** Instructions */
+            instructions?: string | null;
+            /** Sources */
+            sources?: string[] | null;
+        };
         /** ProviderInput */
         ProviderInput: {
             /** Name */
@@ -2113,7 +2241,9 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "interrupted";
+            status: "queued" | "running" | "waiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
+            browser_manual_active?: boolean;
+            browser_pause_requested?: boolean;
             /** Reason */
             reason?: string | null;
             /** Steps */
@@ -3320,6 +3450,7 @@ export interface operations {
             query?: {
                 state?: string;
                 folder_id?: string | null;
+                project_id?: string | null;
                 q?: string;
             };
             header?: never;
@@ -3358,6 +3489,72 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ConversationInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_api_v1_projects__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_projects_api_v1_projects__key__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectInputPatch"];
             };
         };
         responses: {
@@ -3572,6 +3769,116 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_key_api_v1_push_key_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    push_subscriptions_api_v1_push_subscriptions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    save_push_subscription_api_v1_push_subscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_push_subscription_api_v1_push_subscriptions_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5265,6 +5572,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_projects_api_v1_projects_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordView"][];
+                };
+            };
+        };
+    };
+    create_projects_api_v1_projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_service_worker_push_sw_js_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

@@ -24,6 +24,7 @@ import { SettingsOverview } from "@/features/settings/Overview";
 import { Statistics } from "@/features/settings/Statistics";
 import { Diagnostics } from "@/features/settings/Diagnostics";
 import { Memories } from "@/features/memory/Memories";
+import { t, useLanguage } from "@/app/i18n";
 
 export function Settings({
   user,
@@ -34,14 +35,15 @@ export function Settings({
   onUserChange: (user: any) => void;
   onLogout: () => void;
 }) {
+  useLanguage();
   return (
     <div className="settings-layout">
       <nav className="settings-nav">
-        <div className="settings-nav-heading"><h2>設定</h2><p>ワークスペースを管理</p></div>
+        <div className="settings-nav-heading"><h2>{t("設定")}</h2><p>{t("ワークスペースを管理")}</p></div>
         <NavLink className="settings-home" to="/settings" end>
-          <Settings2 size={17} /> 概要
+          <Settings2 size={17} /> {t("概要")}
         </NavLink>
-        <p className="settings-nav-label">AI の設定</p>
+        <p className="settings-nav-label">{t("AI の設定")}</p>
         {[
           ["providers", "AI Providers", Server],
           ["models", "モデル", Sparkles],
@@ -50,12 +52,12 @@ export function Settings({
         ].map(([path, label, Icon]: any) => (
           <NavLink key={path} to={"/settings/" + path}>
             <Icon size={17} />
-            {label}
+            {t(label)}
           </NavLink>
         ))}
-        <p className="settings-nav-label">接続と安全性</p>
-        <NavLink to="/settings/statistics"><BarChart3 size={17} /> 統計</NavLink>
-        <NavLink to="/settings/diagnostics"><Activity size={17} /> 障害診断</NavLink>
+        <p className="settings-nav-label">{t("接続と安全性")}</p>
+        <NavLink to="/settings/statistics"><BarChart3 size={17} /> {t("統計")}</NavLink>
+        <NavLink to="/settings/diagnostics"><Activity size={17} /> {t("障害診断")}</NavLink>
         {[
           ["browser", "Browser", Globe],
           ["web-search", "Web検索", Globe],
@@ -67,7 +69,7 @@ export function Settings({
         ].map(([path, label, Icon]: any) => (
           <NavLink key={path} to={"/settings/" + path}>
             <Icon size={17} />
-            {label}
+            {t(label)}
           </NavLink>
         ))}
       </nav>
