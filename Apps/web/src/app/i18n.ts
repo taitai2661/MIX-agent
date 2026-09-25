@@ -370,6 +370,17 @@ const en: Record<string, string> = {
   "表示テーマ・表示言語と、会話で使う既定モデルを設定します。": "Set appearance, display language, and the default model used in conversations.",
   "外部サービスへの通信許可先は「通信とネットワーク」で設定します。": "Allowed destinations for external services are set in Network.",
   "通信許可先は": "Allowed destinations are set in ", "で設定します。未設定なら公開ドメインへの通信を許可します。": ". If unset, public domains are allowed.",
+  "件のツール": " tools", "件のソース": " sources", "実行を準備しています…": "Preparing to run…",
+  "使用量": "Usage", "トークン使用量と概算コスト": "Token usage and estimated cost",
+  "モデルごとのトークン使用量と、設定した単価に基づく概算コストを確認できます。保存されるのは集計に必要な最小限の記録だけです。": "Review per-model token usage and estimated cost from your configured prices. Only the minimal records needed for aggregation are stored.",
+  "日": "d", "まだ使用履歴がありません。": "No usage history yet.",
+  "概算コスト": "Estimated cost", "入力Token": "Input tokens", "出力Token": "Output tokens",
+  "合計Token": "Total tokens", "リクエスト": "Requests", "出力": "Output",
+  "キャッシュ": "Cached", "合計": "Total", "単価:": "Price:", "価格未設定": "No price",
+  "価格未設定でコスト集計外のリクエスト:": "Requests excluded from cost (no price):",
+  "Providerがusageを返さず推定した件数:": "Requests with estimated tokens (provider returned no usage):",
+  "日別のトークン使用量": "Daily token usage", "モデル別の使用量": "Usage by model",
+  "手動設定": "Manual",
 };
 
 export function t(value: string): string { return language === "en" ? en[value] ?? value : value; }

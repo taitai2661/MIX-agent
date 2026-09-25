@@ -121,6 +121,14 @@ class PerformanceEvent(Record, Base):
     )
 
 
+class ModelUsageEvent(Record, Base):
+    """A privacy-minimal, time-bounded record of one model call's token usage."""
+    __tablename__ = "model_usage_events"
+    __table_args__ = (
+        Index("model_usage_owner_created", "owner_id", "created_at"),
+    )
+
+
 class ScheduledJob(Record, Base):
     __tablename__ = "scheduled_jobs"
     __table_args__ = (Index("scheduled_job_owner_enabled", "owner_id", "created_at"),)

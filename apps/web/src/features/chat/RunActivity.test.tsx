@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToolHistory } from "./ToolHistory";
+import { RunActivity } from "./RunActivity";
 
-describe("ToolHistory", () => {
+describe("RunActivity", () => {
   it("shows a failed call, safe sources, retry state, and collapsed result", () => {
-    const html = renderToStaticMarkup(<ToolHistory onApproval={() => {}} calls={[{
+    const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[{
       id: "call-1", run_id: "run-1", status: "failed", tool_name: "web_search",
       created_at: "2026-08-31T10:00:00+00:00", failure: "Tool failed",
       result: { error: "Tool failed" }, retry: { available: false, label: "個別再実行は未対応です。" },
@@ -14,13 +14,20 @@ describe("ToolHistory", () => {
     expect(html).toContain("失敗");
     expect(html).toContain("Tool failed");
     expect(html).toContain('href="https://example.com/a"');
-    expect(html).toContain("個別再実行は未対応です。");
     expect(html).toContain("結果の詳細");
     expect(html).toContain("1件のソース");
   });
 
+  it("surfaces the retry guidance only when a resume is possible", () => {
+    const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[{
+      id: "call-3", run_id: "run-1", status: "unknown", tool_name: "run_terminal",
+      created_at: "2026-08-31T10:00:00+00:00", retry: { available: true, label: "外部状態を確認後、この実行を再開できます" },
+    }]} />);
+    expect(html).toContain("外部状態を確認後、この実行を再開できます");
+  });
+
   it("renders pending approval controls in the inline card", () => {
-    const html = renderToStaticMarkup(<ToolHistory onApproval={() => {}} calls={[{
+    const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[{
       id: "call-2", run_id: "run-1", status: "waiting_approval", tool_name: "write_file",
       created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "新規メッセージで再依頼してください。" },
       approval: { id: "approval-1", status: "pending" },
@@ -30,14 +37,26 @@ describe("ToolHistory", () => {
     expect(html).toContain("常に許可");
   });
 
-  it("keeps each call as an independently collapsible summary", () => {
-    const html = renderToStaticMarkup(<ToolHistory onApproval={() => {}} calls={[
+  it("collapses the whole run into one summary with a card per call", () => {
+    const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[
       { id: "call-1", run_id: "run-1", status: "completed", tool_name: "search", created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "再依頼してください。" } },
       { id: "call-2", run_id: "run-1", status: "running", tool_name: "fetch", created_at: "2026-08-31T10:01:00+00:00", retry: { available: false, label: "実行中です。" } },
     ]} />);
-    expect((html.match(/class="tool-history-card /g) || []).length).toBe(2);
+    expect((html.match(/class="run-step /g) || []).length).toBe(2);
+    expect((html.match(/class="run-activity-summary"/g) || []).length).toBe(1);
     expect(html).toContain("成功");
     expect(html).toContain("実行中");
-    expect((html.match(/<summary>/g) || []).length).toBe(2);
+    expect(html).toContain("実行履歴");
+  });
+
+  it("auto-opens and narrates the live state while a run is active", () => {
+    const html = renderToStaticMarkup(<RunActivity running onApproval={() => {}} calls={[{
+      id: "call-live", run_id: "", status: "running", tool_name: "web_search",
+      created_at: "2026-08-31T10:00:00+00:00", activity: { icon: "search", label: "Webを検索中", detail: "AIニュース" },
+      retry: { available: false, label: "" },
+    }]} />);
+    expect(html).toContain("run-activity is-running");
+    expect(html).toContain("Webを検索中");
+    expect(html).toContain("AIニュース");
   });
 });

@@ -399,6 +399,11 @@ async def execute(db, run, tool, args):
         result = skills.change(db, run.owner_id, name=args["name"], description=args.get("description", ""), content=args["content"], source_run=run.id)
     elif name == "skill_update":
         result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
+    elif name == "skill_resource":
+        row = skills.find(db, run.owner_id, args.get("skill", ""))
+        if not row:
+            raise ValueError("Skill was not found")
+        result = skills.read_resource(db, run.owner_id, row.id, args.get("path", ""))
     elif name == "update_plan":
         result = {key: args[key] for key in ("steps", "pending", "verification") if key in args}
     elif name == "schedule_list":

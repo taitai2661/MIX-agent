@@ -2,6 +2,7 @@ import {
   Activity,
   BarChart3,
   Brain,
+  Coins,
   Database,
   Globe,
   Network,
@@ -24,6 +25,7 @@ import { Tools } from "@/features/tools/Tools";
 import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSettings";
 import { SettingsOverview } from "@/features/settings/Overview";
 import { Statistics } from "@/features/settings/Statistics";
+import { Usage } from "@/features/settings/Usage";
 import { Diagnostics } from "@/features/settings/Diagnostics";
 import { NetworkSettings } from "@/features/settings/Network";
 import { Memories } from "@/features/memory/Memories";
@@ -61,6 +63,7 @@ const groups = [
   {
     label: "運用",
     items: [
+      ["usage", "使用量", Coins],
       ["statistics", "統計", BarChart3],
       ["diagnostics", "障害診断", Activity],
     ],
@@ -113,6 +116,7 @@ export function Settings({
           <Route path="general" element={<General />} />
           <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />
           <Route path="backups" element={<Backups />} />
+          <Route path="usage" element={<Usage />} />
           <Route path="statistics" element={<Statistics />} />
           <Route path="diagnostics" element={<Diagnostics />} />
         </Routes>

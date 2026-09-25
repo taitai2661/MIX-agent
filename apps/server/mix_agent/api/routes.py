@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse,
 from sqlalchemy import Float, case, cast, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
-from mix_agent import config
+from mix_agent import config, pricing
 from mix_agent.api.schemas import (
     AgentInput,
     ArtifactView,
@@ -48,10 +48,12 @@ from mix_agent.api.schemas import (
     SendMessageView,
     SessionRevocationInput,
     SettingsInput,
+    SkillImportInput,
     SkillInput,
     StatisticsView,
     ToolCallHistoryView,
     ToolView,
+    UsageView,
     UsernameChangeInput,
 )
 from mix_agent.auth.security import (
@@ -93,6 +95,7 @@ from mix_agent.db.models import (
     MemoryRevision,
     Message,
     Model,
+    ModelUsageEvent,
     Notification,
     PerformanceEvent,
     Permission,
@@ -126,6 +129,7 @@ from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.runs.engine import TASKS, auto_retry_count, launch
 from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, tool_allowed
 from mix_agent.runs.state import transition_run
+from mix_agent.skills import package as skill_package
 from mix_agent.skills import service as skills
 from mix_agent.tools.execute import is_user_artifact, runner_request, save_artifact
 from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, registry
@@ -154,6 +158,11 @@ def public(row):
 
 def audit(db, owner, action, target):
     db.add(Audit(owner_id=owner, data={"action": action, "target": target}))
+
+
+def _skill_filename(data):
+    base = re.sub(r"[^A-Za-z0-9_-]+", "-", str(data.get("source_slug") or data.get("name") or "skill")).strip("-")
+    return base or "skill"
 
 
 def _conversation_title(content):
@@ -1015,6 +1024,98 @@ async def settings_statistics(ctx=Depends(context)):
     }
     total["failure_rate"] = round(total["failure"] / total["total"] * 100, 1) if total["total"] else 0
     return {"retention_days": 30, "total": total, "groups": sorted(groups.values(), key=lambda x: (-x["total"], x["model_name"]))}
+
+
+@router.get("/settings/usage", response_model=UsageView)
+async def settings_usage(days: int = 30, ctx=Depends(context)):
+    """Return per-model token usage and estimated cost for the account.
+
+    Only token counts and resolved prices are aggregated; prompt and completion
+    text are never stored.  Rows whose price is unknown stay in the token totals
+    and are reported separately so the cost figure is never silently inflated.
+    """
+    from mix_agent.usage import RETENTION
+
+    db, s = ctx
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(RETENTION.days, days))
+    since = datetime.now(UTC) - timedelta(days=days)
+    models = {row.id: row.data for row in db.scalars(select(Model).where(Model.owner_id == s.owner_id))}
+
+    def token_sum(key):
+        return func.coalesce(func.sum(cast(ModelUsageEvent.data[key].astext, Float)), 0)
+
+    requests = func.count()
+    input_sum, output_sum = token_sum("input_tokens"), token_sum("output_tokens")
+    cached_sum, total_sum = token_sum("cached_tokens"), token_sum("total_tokens")
+    cost = ModelUsageEvent.data["cost_usd"].astext
+    cost_sum = func.coalesce(func.sum(cast(cost, Float)), 0)
+    priced = func.count(cast(cost, Float))
+    estimated = func.coalesce(func.sum(case((ModelUsageEvent.data["input_source"].astext == "estimated", 1), else_=0)), 0)
+    model_id = ModelUsageEvent.data["model_id"].astext
+    provider_id = ModelUsageEvent.data["provider_id"].astext
+    mode = func.coalesce(ModelUsageEvent.data["mode"].astext, "chat")
+    source = func.coalesce(ModelUsageEvent.data["pricing_source"].astext, "unknown")
+    manual_flag = func.max(case((source == "manual", 1), else_=0))
+    priced_source_flag = func.max(case((source != "unknown", 1), else_=0))
+
+    group_rows = db.execute(
+        select(model_id, provider_id, mode, requests, input_sum, output_sum, cached_sum, total_sum,
+               cost_sum, priced, estimated, manual_flag, priced_source_flag)
+        .where(ModelUsageEvent.owner_id == s.owner_id, ModelUsageEvent.created_at >= since)
+        .group_by(model_id, provider_id, mode)
+    ).all()
+    day_rows = db.execute(
+        select(
+            func.date(ModelUsageEvent.created_at), requests, input_sum, output_sum, total_sum, cost_sum, priced,
+        )
+        .where(ModelUsageEvent.owner_id == s.owner_id, ModelUsageEvent.created_at >= since)
+        .group_by(func.date(ModelUsageEvent.created_at))
+        .order_by(func.date(ModelUsageEvent.created_at))
+    ).all()
+
+    totals = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0,
+              "total_tokens": 0, "cost_usd": 0.0, "priced_requests": 0, "unpriced_requests": 0,
+              "estimated_requests": 0}
+    groups = []
+    for (model_key, provider_key, mode_key, count, input_count, output_count, cached_count, total_count,
+         cost_value, priced_count, estimated_count, has_manual, has_known) in group_rows:
+        model_key, provider_key = model_key or "unknown", provider_key or "unknown"
+        known = bool(priced_count)
+        source_name = "manual" if has_manual else ("models_dev" if has_known else "unknown")
+        groups.append({
+            "key": f"{model_key}:{provider_key}:{mode_key}", "model_id": model_key,
+            "provider_id": provider_key, "mode": mode_key,
+            "model_name": models.get(model_key, {}).get("name") or models.get(model_key, {}).get("model_id") or model_key,
+            "requests": int(count), "input_tokens": int(input_count), "output_tokens": int(output_count),
+            "cached_tokens": int(cached_count), "total_tokens": int(total_count),
+            "cost_usd": round(float(cost_value), 6) if known else None,
+            "pricing_source": source_name, "unpriced": not known,
+        })
+        totals["requests"] += int(count)
+        totals["input_tokens"] += int(input_count)
+        totals["output_tokens"] += int(output_count)
+        totals["cached_tokens"] += int(cached_count)
+        totals["total_tokens"] += int(total_count)
+        totals["cost_usd"] += float(cost_value)
+        totals["priced_requests"] += int(priced_count)
+        totals["estimated_requests"] += int(estimated_count)
+    totals["unpriced_requests"] = totals["requests"] - totals["priced_requests"]
+    totals["cost_usd"] = round(totals["cost_usd"], 6) if totals["priced_requests"] else None
+    series = [{
+        "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
+        "requests": int(count), "input_tokens": int(input_count), "output_tokens": int(output_count),
+        "total_tokens": int(total_count),
+        "cost_usd": round(float(cost_value), 6) if priced_count else None,
+    } for day, count, input_count, output_count, total_count, cost_value, priced_count in day_rows]
+
+    return {
+        "retention_days": RETENTION.days, "total": totals, "days": series,
+        "groups": sorted(groups, key=lambda x: (-x["total_tokens"], x["model_name"])),
+    }
 
 
 @router.put("/settings")
@@ -2461,6 +2562,81 @@ async def restore_skill(key: str, revision: str, ctx=Depends(context)):
     return public(row)
 
 
+@router.post("/skills/import")
+async def import_skill(body: SkillImportInput, ctx=Depends(context)):
+    db, s = ctx
+    try:
+        parsed = skill_package.parse_skill_md(body.text)
+    except skill_package.SkillFormatError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    result = skills.import_package(db, s.owner_id, parsed, source="upload")
+    db.commit()
+    return public(db.get(Skill, result["id"]))
+
+
+@router.post("/skills/import/archive")
+async def import_skill_archive(file: UploadFile = File(...), ctx=Depends(context)):
+    db, s = ctx
+    raw = await file.read(skill_package.ARCHIVE_MAX + 1)
+    if len(raw) > skill_package.ARCHIVE_MAX:
+        raise HTTPException(413, "アーカイブは5MBまでです")
+    try:
+        parsed = skill_package.parse_archive(raw)
+    except skill_package.SkillFormatError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    filename = (file.filename or "")[:200]
+    results = [
+        skills.import_package(db, s.owner_id, item, source="archive", source_path=filename)
+        for item in parsed
+    ]
+    db.commit()
+    return [public(db.get(Skill, item["id"])) for item in results]
+
+
+@router.post("/skills/import/directory")
+async def import_skill_directory(ctx=Depends(context)):
+    db, s = ctx
+    packages = await asyncio.to_thread(skill_package.scan_directory, config.SKILLS_DIR)
+    results = [
+        skills.import_package(db, s.owner_id, item, source="directory", source_path=str(config.SKILLS_DIR / item["name"]))
+        for item in packages
+    ]
+    db.commit()
+    return {"imported": len(results), "skills": [public(db.get(Skill, item["id"])) for item in results]}
+
+
+@router.get("/skills/{key}/export")
+async def export_skill(key: str, ctx=Depends(context)):
+    db, s = ctx
+    row = own(db, Skill, key, s.owner_id)
+    return PlainTextResponse(
+        skills.export_markdown(row.data),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{_skill_filename(row.data)}.SKILL.md"'},
+    )
+
+
+@router.get("/skills/{key}/export.zip")
+async def export_skill_zip(key: str, ctx=Depends(context)):
+    db, s = ctx
+    row = own(db, Skill, key, s.owner_id)
+    return Response(
+        skills.export_archive(row.data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{_skill_filename(row.data)}.zip"'},
+    )
+
+
+@router.get("/skills/{key}/resources")
+async def skill_resource(key: str, path: str = "", ctx=Depends(context)):
+    db, s = ctx
+    own(db, Skill, key, s.owner_id)
+    try:
+        return skills.read_resource(db, s.owner_id, key, path)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @router.get("/mcp/connections")
 async def mcp_connections(ctx=Depends(context)):
     db, s = ctx
@@ -2824,6 +3000,7 @@ async def list_collection(collection: str, ctx=Depends(context)):
             data = row["data"]
             provider = providers.get(data["provider_id"], {})
             data["reasoning_control"] = reasoning_control(provider.get("kind", ""), data["model_id"])
+            data["pricing"], data["pricing_source"] = pricing.resolve(data)
     return rows
 
 
@@ -2902,6 +3079,9 @@ async def edit_entity(collection: str, key: str, request: Request, ctx=Depends(c
     validate_entity(collection, value, db, s.owner_id)
     if collection == "models":
         value = apply_context_override(value, row.data)
+        # Omitted pricing keeps the saved override; an explicit null clears it.
+        if "pricing_override" not in payload:
+            value["pricing_override"] = row.data.get("pricing_override")
     # Probe results are system-managed state, not part of the public model
     # editor schema. Keep them when the user edits a model.
     row.data = {**row.data, **value}

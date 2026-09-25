@@ -28,11 +28,12 @@ import remarkGfm from "remark-gfm";
 import { ErrorBox, useRows } from "@/components/shared";
 import { ModelPicker } from "@/components/model-picker";
 import { ModeStatus, ReasoningSummary } from "./ModeStatus";
-import { ToolHistory, type ToolCallHistory } from "./ToolHistory";
+import { RunActivity, type ToolCallHistory } from "./RunActivity";
 import { ArtifactCard } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
 import { randomGreeting } from "./greeting";
 import {
+  liveToolCalls,
   parseRunEvent,
   type Artifact,
   type ChatMode,
@@ -210,6 +211,8 @@ export function Chat() {
   const active =
     run.data &&
     ["running", "queued", "waiting_approval", "paused"].includes(run.data.status);
+  const live = liveToolCalls(events, runId);
+  const currentRunMessageId = history.data?.runs?.find((r) => r.id === runId)?.message_id;
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if ((!text.trim() && !attachments.length) || busy || active) return;
@@ -360,10 +363,16 @@ export function Chat() {
                     </div>
                   )}
                 </article>
-                {m.data.role === "user" && <ToolHistory
-                  calls={(toolHistory.data || []).filter((call) =>
-                    history.data?.runs?.find((run) => run.id === call.run_id)?.message_id === m.id,
-                  )}
+                {m.data.role === "user" && <RunActivity
+                  running={active && currentRunMessageId === m.id}
+                  calls={(() => {
+                    const calls = (toolHistory.data || []).filter((call) =>
+                      history.data?.runs?.find((run) => run.id === call.run_id)?.message_id === m.id,
+                    );
+                    if (!active || currentRunMessageId !== m.id) return calls;
+                    const known = new Set(calls.map((call) => call.id));
+                    return [...calls, ...live.filter((call) => !known.has(call.id))];
+                  })()}
                   onApproval={async (approvalId, decision) => {
                     try {
                       await api("/approvals/" + approvalId + "/decision", "POST", { decision });

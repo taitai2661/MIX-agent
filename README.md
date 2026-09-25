@@ -68,10 +68,15 @@ ZimaOSストアのアーカイブを掲載します。コンテナイメージ�
 - 暗号化バックアップ、復元前退避、復元途中の再起動からの回復
 - 運用診断（DB接続、Runner設定、滞留Run、直近の失敗・中断）
 - Knowledgeのテキスト登録・検索Tool、Skillの登録・履歴・復元、定期実行
+- Agent Skills（`SKILL.md`）の取り込み・書き出し（貼り付け／zip／サーバーディレクトリ）、同梱資料の読取Tool
 - Remote MCPのOAuth認証フロー（対応Serverとの接続が必要）
 - 会話のMarkdown書き出し（回答のみ／会話／Tool実行概要）
 
 Knowledgeはテキストのチャンク検索を提供します。外部資料の自動同期や検索品質の実環境評価は今後の課題です。画像生成・編集、Registry Store、外部向けOpenAI Compatible APIは次段階です。Vision対応モデルへの画像添付・解析は含みます。
+
+### Agent Skills
+
+`name`と`description`を必須とする`SKILL.md`（YAML frontmatter + Markdown）を取り込めます。Skills画面で本文を貼り付けるか、`.zip`をアップロードするか、ホストの`./skills/<name>/SKILL.md`に置いて「サーバーディレクトリから取込」を実行します。各Skillは`SKILL.md`または`.zip`として書き出せます。`scripts`・`references`・`assets`の同梱ファイルは保存され、AIは`skill_resource` Toolで読み取りますが、スクリプトは実行しません。`allowed-tools`は表示のみで、権限の自動許可は行いません。
 
 プロジェクトの資料は現時点では貼り付けたテキストを各Runに渡します。プロジェクトに既存会話を移す場合は「会話を管理」から選択できます。プロジェクトを削除しても会話は残ります。調査モードには有効なWeb検索またはBrowser ToolとTool Calling対応モデルが必要です。出典の正確さは利用者が確認してください。
 

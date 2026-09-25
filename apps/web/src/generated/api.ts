@@ -329,6 +329,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Update */
+        post: operations["browser_update_api_v1_browser_update_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/statistics": {
         parameters: {
             query?: never;
@@ -344,6 +361,30 @@ export interface paths {
          *     event rows into memory just to render a summary.
          */
         get: operations["settings_statistics_api_v1_settings_statistics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Settings Usage
+         * @description Return per-model token usage and estimated cost for the account.
+         *
+         *     Only token counts and resolved prices are aggregated; prompt and completion
+         *     text are never stored.  Rows whose price is unknown stay in the token totals
+         *     and are reported separately so the cost figure is never silently inflated.
+         */
+        get: operations["settings_usage_api_v1_settings_usage_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -828,6 +869,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{key}/browser-frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Frames */
+        get: operations["browser_frames_api_v1_runs__key__browser_frames_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{key}/browser-frames/{artifact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Frame Image */
+        get: operations["browser_frame_image_api_v1_runs__key__browser_frames__artifact_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{key}/browser-pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Pause */
+        post: operations["browser_pause_api_v1_runs__key__browser_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{key}/browser-manual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Manual */
+        post: operations["browser_manual_api_v1_runs__key__browser_manual_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{key}/browser-return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Return */
+        post: operations["browser_return_api_v1_runs__key__browser_return_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{key}/resume": {
         parameters: {
             query?: never;
@@ -1079,6 +1205,108 @@ export interface paths {
         put?: never;
         /** Restore Skill */
         post: operations["restore_skill_api_v1_skills__key__restore__revision__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Skill */
+        post: operations["import_skill_api_v1_skills_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/import/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Skill Archive */
+        post: operations["import_skill_archive_api_v1_skills_import_archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/import/directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Skill Directory */
+        post: operations["import_skill_directory_api_v1_skills_import_directory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/{key}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Skill */
+        get: operations["export_skill_api_v1_skills__key__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/{key}/export.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Skill Zip */
+        get: operations["export_skill_zip_api_v1_skills__key__export_zip_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/skills/{key}/resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Skill Resource */
+        get: operations["skill_resource_api_v1_skills__key__resources_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1615,6 +1843,11 @@ export interface components {
             /** Passphrase */
             passphrase: string;
         };
+        /** Body_import_skill_archive_api_v1_skills_import_archive_post */
+        Body_import_skill_archive_api_v1_skills_import_archive_post: {
+            /** File */
+            file: string;
+        };
         /** Body_restore_api_v1_backups_restore_post */
         Body_restore_api_v1_backups_restore_post: {
             /** File */
@@ -2010,6 +2243,7 @@ export interface components {
             context_window?: number | null;
             /** Context Window Override */
             context_window_override?: number | null;
+            pricing_override?: components["schemas"]["PricingInput"] | null;
             /**
              * Source
              * @default manual
@@ -2036,6 +2270,7 @@ export interface components {
             context_window?: number | null;
             /** Context Window Override */
             context_window_override?: number | null;
+            pricing_override?: components["schemas"]["PricingInput"] | null;
             /** Source */
             source?: string | null;
         };
@@ -2129,6 +2364,15 @@ export interface components {
             data: components["schemas"]["PermissionRuleDataView"];
             /** Created At */
             created_at: string;
+        };
+        /** PricingInput */
+        PricingInput: {
+            /** Input */
+            input?: number | null;
+            /** Output */
+            output?: number | null;
+            /** Cache Read */
+            cache_read?: number | null;
         };
         /** ProjectInput */
         ProjectInput: {
@@ -2242,8 +2486,16 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "waiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
-            browser_manual_active?: boolean;
-            browser_pause_requested?: boolean;
+            /**
+             * Browser Manual Active
+             * @default false
+             */
+            browser_manual_active: boolean;
+            /**
+             * Browser Pause Requested
+             * @default false
+             */
+            browser_pause_requested: boolean;
             /** Reason */
             reason?: string | null;
             /** Steps */
@@ -2312,8 +2564,12 @@ export interface components {
         };
         /** SettingsInput */
         SettingsInput: {
-            /** Ui Language */
-            ui_language?: "ja" | "en";
+            /**
+             * Ui Language
+             * @default ja
+             * @enum {string}
+             */
+            ui_language: "ja" | "en";
             /**
              * Default Model Id
              * @default
@@ -2462,6 +2718,11 @@ export interface components {
              * @default 2
              */
             memory_max_depth: number;
+        };
+        /** SkillImportInput */
+        SkillImportInput: {
+            /** Text */
+            text: string;
         };
         /** SkillInput */
         SkillInput: {
@@ -2621,6 +2882,81 @@ export interface components {
             default_permission: "allow" | "ask" | "deny";
         } & {
             [key: string]: unknown;
+        };
+        /** UsageDayView */
+        UsageDayView: {
+            /** Date */
+            date: string;
+            /** Requests */
+            requests: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cost Usd */
+            cost_usd?: number | null;
+        };
+        /** UsageGroupView */
+        UsageGroupView: {
+            /** Key */
+            key: string;
+            /** Model Id */
+            model_id: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Model Name */
+            model_name: string;
+            /** Mode */
+            mode: string;
+            /** Requests */
+            requests: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cached Tokens */
+            cached_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Pricing Source */
+            pricing_source: string;
+            /** Unpriced */
+            unpriced: boolean;
+        };
+        /** UsageSummaryView */
+        UsageSummaryView: {
+            /** Requests */
+            requests: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cached Tokens */
+            cached_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Priced Requests */
+            priced_requests: number;
+            /** Unpriced Requests */
+            unpriced_requests: number;
+            /** Estimated Requests */
+            estimated_requests: number;
+        };
+        /** UsageView */
+        UsageView: {
+            /** Retention Days */
+            retention_days: number;
+            total: components["schemas"]["UsageSummaryView"];
+            /** Days */
+            days: components["schemas"]["UsageDayView"][];
+            /** Groups */
+            groups: components["schemas"]["UsageGroupView"][];
         };
         /** UsernameChangeInput */
         UsernameChangeInput: {
@@ -3215,6 +3551,26 @@ export interface operations {
             };
         };
     };
+    browser_update_api_v1_browser_update_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     settings_statistics_api_v1_settings_statistics_get: {
         parameters: {
             query?: never;
@@ -3231,6 +3587,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatisticsView"];
+                };
+            };
+        };
+    };
+    settings_usage_api_v1_settings_usage_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4382,6 +4769,162 @@ export interface operations {
             };
         };
     };
+    browser_frames_api_v1_runs__key__browser_frames_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_frame_image_api_v1_runs__key__browser_frames__artifact_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_pause_api_v1_runs__key__browser_pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_manual_api_v1_runs__key__browser_manual_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_return_api_v1_runs__key__browser_return_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     resume_api_v1_runs__key__resume_post: {
         parameters: {
             query?: never;
@@ -4909,6 +5452,187 @@ export interface operations {
             path: {
                 key: string;
                 revision: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_skill_api_v1_skills_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_skill_archive_api_v1_skills_import_archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_skill_archive_api_v1_skills_import_archive_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_skill_directory_api_v1_skills_import_directory_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    export_skill_api_v1_skills__key__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_skill_zip_api_v1_skills__key__export_zip_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skill_resource_api_v1_skills__key__resources_get: {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path: {
+                key: string;
             };
             cookie?: never;
         };

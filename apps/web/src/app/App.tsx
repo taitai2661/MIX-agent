@@ -204,7 +204,13 @@ export function App() {
     <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed " : "") + (resizingSidebar ? "sidebar-resizing" : "")}>
       <aside id="main-navigation" className="sidebar" aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
-          <Logo />
+          {collapsed && !isMobile ? (
+            <button className="brand-toggle" type="button" onClick={() => setCollapsed(false)} aria-label={t("サイドバーを展開する")} title={t("サイドバーを展開する")}>
+              <Logo />
+            </button>
+          ) : (
+            <Logo />
+          )}
           <div className="sidebar-controls">
             <ThemeController />
             <button className="icon sidebar-collapse-toggle" onClick={() => setCollapsed(true)} aria-label={t("サイドバーを折りたたむ")} title={t("サイドバーを折りたたむ")}><PanelLeftClose size={18} /></button>
@@ -284,16 +290,20 @@ export function App() {
       <div className="sidebar-resizer" role="separator" aria-label={t("サイドバーの幅を調整")} aria-orientation="vertical" aria-valuemin={sidebarMinimum} aria-valuemax={sidebarMaximum} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={resizeSidebar} onKeyDown={resizeSidebarWithKeyboard} />
       <div className="main">
         <header className="topbar">
-          <button
-            className="icon"
-            aria-label={isMobile ? (sidebar ? t("メニューを閉じる") : t("メニュー")) : collapsed ? t("サイドバーを展開する") : t("サイドバーを折りたたむ")}
-            aria-expanded={isMobile ? sidebar : undefined}
-            aria-controls="main-navigation"
-            onClick={() => (isMobile ? setSidebar(!sidebar) : setCollapsed(!collapsed))}
-          >
-            {isMobile ? (sidebar ? <X size={19} /> : <PanelLeft size={19} />) : collapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
-          </button>
-          <span className="topbar-title"><b>MIX agent</b></span>
+          {isMobile || collapsed ? (
+            <>
+              <button
+                className="icon"
+                aria-label={isMobile ? (sidebar ? t("メニューを閉じる") : t("メニュー")) : t("サイドバーを展開する")}
+                aria-expanded={isMobile ? sidebar : undefined}
+                aria-controls="main-navigation"
+                onClick={() => (isMobile ? setSidebar(!sidebar) : setCollapsed(!collapsed))}
+              >
+                {isMobile ? (sidebar ? <X size={19} /> : <PanelLeft size={19} />) : <PanelLeftOpen size={19} />}
+              </button>
+              <span className="topbar-title"><b>MIX agent</b></span>
+            </>
+          ) : null}
         </header>
         <ErrorBoundary>
           <Routes>

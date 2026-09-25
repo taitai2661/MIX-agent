@@ -2,7 +2,7 @@ import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowRight, BarChart3, Brain, Database, Globe, Network, Server, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, ArrowRight, BarChart3, Brain, Coins, Database, Globe, Network, Server, Settings2, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const groups = [
@@ -41,6 +41,7 @@ const groups = [
   {
     label: "運用",
     cards: [
+      ["usage", "使用量", "トークン使用量と概算コスト", Coins],
       ["statistics", "統計", "モデルの成功率と失敗傾向", BarChart3],
       ["diagnostics", "障害診断", "サービス状態と最近の失敗", Activity],
     ],
@@ -67,6 +68,7 @@ export function SettingsOverview() {
     network: domains ? `${domains} ドメイン` : "制限なし",
     account: "変更・確認",
     backups: "作成・復元",
+    usage: "30日間",
     statistics: "30日間",
     diagnostics: "状態を確認",
   };

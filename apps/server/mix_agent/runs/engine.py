@@ -49,6 +49,7 @@ from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import effective_capabilities, select_auto_model
+from mix_agent.usage import record as record_usage
 from mix_agent.runs.state import TERMINAL, can_transition, transition_run
 from mix_agent.tools.execute import execute, is_user_artifact, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
@@ -147,6 +148,7 @@ def activity_summary(tool_id, arguments):
         "skill_search": ("memory", "Skillを検索中"),
         "skill_add": ("memory", "Skillを保存中"),
         "skill_update": ("memory", "Skillを更新中"),
+        "skill_resource": ("memory", "Skill資料を読取中"),
         "update_plan": ("plan", "作業計画を更新中"),
         "schedule_list": ("clock", "定期実行を確認中"),
         "schedule_create": ("clock", "定期実行を作成中"),
@@ -322,7 +324,7 @@ def agent_completion_issue(run, calls):
     if changes:
         check_ids = {"read_file", "files_list", "search_files", "workspace_check", "browser_read", "browser_screenshot",
                      "browser_extract", "web_search", "web_fetch", "web_fetch_pdf", "knowledge_search", "memory_search",
-                     "skill_search", "schedule_list", "process_list"}
+                     "skill_search", "skill_resource", "schedule_list", "process_list"}
         if not any(call.data.get("tool_id") in check_ids and isinstance(call.data.get("result"), dict)
                    and not call.data["result"].get("error") and call.data["result"].get("ok", True)
                    for call in completed[changes[-1] + 1:]):
@@ -1166,6 +1168,14 @@ async def drive(run_id):
                         raise
                     snapshot = rerouted
                     continue
+                model_record = db.get(Model, snapshot["model_record_id"]) if snapshot.get("model_record_id") else None
+                record_usage(
+                    db, run.owner_id, model_record.data if model_record else {},
+                    snapshot.get("provider_record_id"), mode, response.get("usage", {}),
+                    run_id=run.id,
+                    input_estimate=(run.data.get("context_trace") or {}).get("estimated_input_tokens"),
+                    model_record_id=snapshot.get("model_record_id"),
+                )
                 if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
                     completed_at = now()
                     first_output_at = first_output_at or completed_at

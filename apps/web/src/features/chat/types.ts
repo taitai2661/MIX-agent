@@ -105,6 +105,51 @@ export function parseRunEvent(data: string): RunEvent | null {
   return null;
 }
 
+/**
+ * Derive the in-flight tool calls from the live SSE stream so the UI can show
+ * progress before the persisted tool-call history is refetched. Raw results are
+ * intentionally omitted; the redacted history replaces these entries by id.
+ */
+export function liveToolCalls(events: RunEvent[], runId = ""): ToolCallHistory[] {
+  const order: string[] = [];
+  const byId = new Map<string, ToolCallHistory>();
+  const now = () => new Date().toISOString();
+  for (const event of events) {
+    if (event.kind === "tool_started") {
+      const id = event.id || `live-${order.length}`;
+      if (!byId.has(id)) order.push(id);
+      byId.set(id, {
+        id,
+        run_id: runId,
+        status: "running",
+        tool_name: event.name || "Tool",
+        activity: event.activity,
+        created_at: now(),
+        retry: { available: false, label: "" },
+      });
+    } else if (event.kind === "tool_result" || event.kind === "plan") {
+      const id = event.id || order.at(-1) || `live-${order.length}`;
+      const call = byId.get(id);
+      const failed = isRecord(event.result) && Boolean(event.result.error);
+      if (!call) order.push(id);
+      byId.set(id, {
+        id,
+        run_id: runId,
+        status: failed ? "failed" : "completed",
+        tool_name: call?.tool_name || event.name || "Tool",
+        activity: call?.activity,
+        result_activity: event.activity,
+        created_at: call?.created_at || now(),
+        retry: { available: false, label: "" },
+      });
+    }
+  }
+  return order.flatMap((id) => {
+    const call = byId.get(id);
+    return call ? [call] : [];
+  });
+}
+
 export function approvalFromEvent(event: Extract<RunEvent, { kind: "approval" }>): Approval {
   return {
     id: event.id,

@@ -9,14 +9,14 @@ export type ActivitySummary = {
   remaining?: number;
 };
 
-function ActivityIcon({ icon }: { icon?: string }) {
+export function ActivityIcon({ icon, size = 22 }: { icon?: string; size?: number }) {
   const Icon =
     icon === "search" ? Search :
     icon === "globe" ? Globe2 :
     icon === "file" ? FileText :
     icon === "terminal" ? Terminal :
     icon === "memory" || icon === "plan" ? Brain : Wrench;
-  return <Icon aria-hidden="true" size={22} />;
+  return <Icon aria-hidden="true" size={size} />;
 }
 
 export function ToolActivity({ activity, running = false }: { activity: ActivitySummary; running?: boolean }) {

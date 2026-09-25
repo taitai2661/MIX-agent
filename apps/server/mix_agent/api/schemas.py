@@ -202,6 +202,56 @@ class StatisticsView(BaseModel):
     groups: list[StatisticsGroupView]
 
 
+class PricingInput(Input):
+    input: float | None = Field(default=None, ge=0)
+    output: float | None = Field(default=None, ge=0)
+    cache_read: float | None = Field(default=None, ge=0)
+
+
+class UsageSummaryView(BaseModel):
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    priced_requests: int
+    unpriced_requests: int
+    estimated_requests: int
+
+
+class UsageDayView(BaseModel):
+    date: str
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+
+
+class UsageGroupView(BaseModel):
+    key: str
+    model_id: str
+    provider_id: str
+    model_name: str
+    mode: str
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    pricing_source: str
+    unpriced: bool
+
+
+class UsageView(BaseModel):
+    retention_days: int
+    total: UsageSummaryView
+    days: list[UsageDayView]
+    groups: list[UsageGroupView]
+
+
 class DiagnosticsFailureView(BaseModel):
     status: Literal["failed", "interrupted"]
     mode: str
@@ -298,6 +348,8 @@ class ModelInput(Input):
     # A user-supplied limit takes precedence over catalog/provider metadata and
     # must survive the next provider refresh.
     context_window_override: int | None = Field(default=None, ge=1024, le=10000000)
+    # USD per 1,000,000 tokens.  An administrator override beats catalog data.
+    pricing_override: PricingInput | None = None
     source: str = "manual"
 
 
@@ -401,6 +453,10 @@ class SkillInput(Input):
     description: str = Field(default="", max_length=1000)
     content: str = Field(min_length=1, max_length=50000)
     enabled: bool = True
+
+
+class SkillImportInput(Input):
+    text: str = Field(min_length=1, max_length=200000)
 
 
 class MCPInput(Input):

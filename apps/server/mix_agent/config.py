@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 DATA = Path(os.getenv("MIX_DATA", ".data")).resolve()
 KEYS = Path(os.getenv("MIX_KEYS", str(DATA / "keys"))).resolve()
 ARTIFACTS = DATA / "artifacts"
+# Optional host-mounted directory scanned for Agent Skills (``*/SKILL.md``).
+SKILLS_DIR = Path(os.getenv("MIX_SKILLS_DIR", str(DATA / "skills"))).resolve()
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     if not os.getenv("DB_PASSWORD_FILE"):
@@ -105,7 +107,7 @@ def allowed_origin(origin: str, *, scheme: str, host: str, forwarded: bool = Fal
 
 
 def initialize():
-    for path in (DATA, KEYS, ARTIFACTS):
+    for path in (DATA, KEYS, ARTIFACTS, SKILLS_DIR):
         path.mkdir(parents=True, exist_ok=True)
     key = KEYS / "master.key"
     try:

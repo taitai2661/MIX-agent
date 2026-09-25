@@ -58,6 +58,7 @@ services:
     volumes:
       - data:/data
       - policy:/data/egress
+      - ./skills:/data/skills
       - keys:/keys
       - db-secret:/db-secret:ro
       - execution-token:/execution-keys:ro

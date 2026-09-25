@@ -45,6 +45,24 @@ export function Models() {
       setError(e);
     }
   }
+  async function updatePricing(row: Row, field: string, raw: string) {
+    const previous = row.data.pricing_override || {};
+    const next: Record<string, number | null> = {
+      input: previous.input ?? null,
+      output: previous.output ?? null,
+      cache_read: previous.cache_read ?? null,
+    };
+    next[field] = raw.trim() ? Number(raw) : null;
+    try {
+      await api("/models/" + row.id, "PATCH", {
+        pricing_override: Object.values(next).some((value) => value != null) ? next : null,
+      });
+      qc.invalidateQueries({ queryKey: ["/models"] });
+      qc.invalidateQueries({ queryKey: ["/settings/usage"] });
+    } catch (e) {
+      setError(e);
+    }
+  }
   return (
     <>
       <Title
