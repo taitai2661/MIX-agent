@@ -100,6 +100,22 @@ export function Providers() {
       setBusy(false);
     }
   }
+  async function remove(row: Row) {
+    if (!confirm(t("Providerと取得済みのモデルを削除しますか？ 元に戻せません。"))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/providers/" + row.id, "DELETE");
+      setNotice(t("Providerを削除しました"));
+      qc.invalidateQueries({ queryKey: ["/providers"] });
+      qc.invalidateQueries({ queryKey: ["/models"] });
+      qc.invalidateQueries({ queryKey: ["/settings"] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
       <Title
@@ -280,6 +296,9 @@ export function Providers() {
               }}
             >
               {t("編集")}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => remove(row)}>
+              {t("削除")}
             </Button>
           </div>
         </div>

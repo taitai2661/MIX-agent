@@ -1374,11 +1374,16 @@ async def scheduler():
                     from mix_agent.schedules import tick
                     tick(db, launch)
                     # Confirm unknown/stale model capabilities in the background so
-                    # Auto does not depend on a user-triggered check.
+                    # Auto does not depend on a user-triggered check.  A hard
+                    # timeout keeps a slow provider from stalling the tick.
                     try:
+                        from mix_agent import config
                         from mix_agent.api.routes import probe_due_models
-                        await probe_due_models(db)
+                        await asyncio.wait_for(
+                            probe_due_models(db), timeout=config.PROBE_TICK_TIMEOUT_SECONDS
+                        )
                     except Exception:
+                        db.rollback()
                         import logging
                         logging.getLogger(__name__).exception("capability probe pass failed")
                     current = now()

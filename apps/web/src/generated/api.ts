@@ -253,7 +253,8 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Provider */
+        delete: operations["delete_provider_api_v1_providers__key__delete"];
         options?: never;
         head?: never;
         /** Edit Provider */
@@ -2316,6 +2317,8 @@ export interface components {
             generation_ms: number;
             /** Tokens Per Second */
             tokens_per_second: number;
+            /** First Output Ms */
+            first_output_ms?: number | null;
         };
         /** PermissionInput */
         PermissionInput: {
@@ -2590,8 +2593,9 @@ export interface components {
             /**
              * Auto Priority
              * @default balanced
+             * @enum {string}
              */
-            auto_priority?: "balanced" | "quality" | "speed" | "cost";
+            auto_priority: "balanced" | "quality" | "speed" | "cost";
             /**
              * Setup Complete
              * @default false
@@ -3392,6 +3396,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    delete_provider_api_v1_providers__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

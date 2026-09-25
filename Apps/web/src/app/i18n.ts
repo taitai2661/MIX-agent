@@ -201,6 +201,8 @@ const en: Record<string, string> = {
   "Providerの「モデル取得」、または手動追加で登録できます。": "Register models by fetching them from a provider or adding them manually.",
   "Providerを保存すると、モデル一覧とAuto候補を自動設定します。": "Saving a provider automatically configures its models and Auto candidates.",
   "Providerを追加": "Add provider", "API Keyは暗号化して保存され、保存後は再表示されません。": "API keys are encrypted and cannot be viewed after saving.",
+  "Providerと取得済みのモデルを削除しますか？ 元に戻せません。": "Delete this provider and its fetched models? This cannot be undone.",
+  "Providerを削除しました": "Provider deleted",
   "Providerを選ぶ": "Choose provider", "プリセットは接続方式を安全に固定します。": "Presets use a fixed connection method.",
   "Providerを検索": "Search providers", "カスタム以外では選択したプリセットの方式が使用されます。": "Non-custom presets use their selected connection method.",
   "OpenAI互換": "OpenAI compatible", "OpenAI Responses（従来設定）": "OpenAI Responses (legacy setting)",

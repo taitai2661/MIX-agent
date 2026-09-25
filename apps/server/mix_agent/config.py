@@ -43,6 +43,8 @@ PROBE_UNKNOWN_RETRY = timedelta(hours=6)
 # may spend on capability confirmation.
 PROBE_BATCH = 2
 PROBE_SELECT_BATCH = 3
+# Never let an unresponsive provider stall the scheduler loop.
+PROBE_TICK_TIMEOUT_SECONDS = 45
 
 
 def _origin_ips(hostname):

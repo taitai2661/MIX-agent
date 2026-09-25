@@ -452,6 +452,41 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Delete Provider",
+        "operationId": "delete_provider_api_v1_providers__key__delete",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/providers/{key}/{action}": {
@@ -5963,6 +5998,17 @@
           "tokens_per_second": {
             "type": "number",
             "title": "Tokens Per Second"
+          },
+          "first_output_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Output Ms"
           }
         },
         "type": "object",

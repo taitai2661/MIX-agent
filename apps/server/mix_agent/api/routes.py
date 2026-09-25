@@ -868,6 +868,43 @@ async def edit_provider(key: str, body: ProviderInput, ctx=Depends(context)):
     return provider_response(row, sync)
 
 
+@router.delete("/providers/{key}")
+async def delete_provider(key: str, ctx=Depends(context)):
+    db, s = ctx
+    row = own(db, Provider, key, s.owner_id)
+    models = [
+        model
+        for model in db.scalars(select(Model).where(Model.owner_id == s.owner_id))
+        if model.data.get("provider_id") == key
+    ]
+    model_ids = {model.id for model in models}
+    for model in models:
+        db.delete(model)
+    secret_id = row.data.get("secret_id")
+    if secret_id:
+        secret = db.get(Secret, secret_id)
+        if secret and secret.owner_id == s.owner_id:
+            db.delete(secret)
+    settings = db.scalar(select(Settings).where(Settings.id == "settings", Settings.owner_id == s.owner_id))
+    if settings:
+        auto_ids = [mid for mid in settings.data.get("auto_model_ids", []) if mid not in model_ids]
+        default_model_id = settings.data.get("default_model_id", "")
+        if default_model_id in model_ids:
+            default_model_id = "auto" if auto_ids else ""
+        settings.data = {**settings.data, "auto_model_ids": auto_ids, "default_model_id": default_model_id}
+    for agent in db.scalars(select(Agent).where(Agent.owner_id == s.owner_id)):
+        if agent.data.get("model_id") in model_ids:
+            agent.data = {**agent.data, "model_id": ""}
+    for conversation in db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)):
+        selection = conversation.data.get("selection")
+        if isinstance(selection, dict) and selection.get("model_id") in model_ids:
+            conversation.data = {**conversation.data, "selection": {**selection, "model_id": "auto"}}
+    db.delete(row)
+    audit(db, s.owner_id, "provider.delete", key)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/providers/{key}/{action}")
 async def provider_action(key: str, action: str, ctx=Depends(context)):
     db, s = ctx
@@ -2042,7 +2079,13 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         # Confirm unknown Tool Calling support before Auto filters candidates, so
         # a capable model is not excluded just because it was never checked.
         if tools_required:
-            await probe_auto_candidates(db, s.owner_id, allowed_ids, ("tools",))
+            try:
+                await asyncio.wait_for(
+                    probe_auto_candidates(db, s.owner_id, allowed_ids, ("tools",)),
+                    timeout=config.PROBE_TICK_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 - a slow probe must not block the message
+                db.rollback()
         model, auto_selection = select_auto_model(
             db, s.owner_id, allowed_ids, task_content, mode, artifact_mimes, tools_required,
             [*prior_content, body.content, agent.get("system_prompt", "")],

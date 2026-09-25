@@ -304,3 +304,48 @@ async def test_provider_sync_updates_existing_model_without_creating_a_duplicate
         assert models[0].id == original_id
         assert models[0].data["context_window"] == 16384
         assert models[0].data["provider_context_window"] == 16384
+
+
+def test_delete_provider_removes_models_and_clears_references(signed):
+    from mix_agent.auth.security import store_secret
+    from mix_agent.db.models import Agent, Conversation, Secret
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        secret_id = store_secret(db, owner, "test-key", "provider")
+        provider = Provider(owner_id=owner, data={"kind": "openai", "secret_id": secret_id})
+        other = Provider(owner_id=owner, data={"kind": "openai"})
+        db.add_all([provider, other])
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "gpt-4o-mini"})
+        kept = Model(owner_id=owner, data={"provider_id": other.id, "model_id": "kept"})
+        db.add_all([model, kept])
+        db.flush()
+        settings = db.get(Settings, "settings")
+        settings.data = {**settings.data, "auto_model_ids": [model.id, kept.id], "default_model_id": model.id}
+        agent = Agent(owner_id=owner, data={"name": "A", "model_id": model.id})
+        conversation = Conversation(owner_id=owner, data={"title": "c", "selection": {"model_id": model.id}})
+        db.add_all([agent, conversation])
+        db.commit()
+        provider_id, model_id, kept_id, agent_id, conversation_id = (
+            provider.id, model.id, kept.id, agent.id, conversation.id
+        )
+
+    response = signed.delete(f"/api/v1/providers/{provider_id}")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+
+    with SessionLocal() as db:
+        assert db.get(Provider, provider_id) is None
+        assert db.get(Model, model_id) is None
+        assert db.get(Secret, secret_id) is None
+        assert db.get(Model, kept_id) is not None
+        settings = db.get(Settings, "settings")
+        assert settings.data["auto_model_ids"] == [kept_id]
+        assert settings.data["default_model_id"] == "auto"
+        assert db.get(Agent, agent_id).data["model_id"] == ""
+        assert db.get(Conversation, conversation_id).data["selection"]["model_id"] == "auto"
+
+
+def test_delete_provider_rejects_unknown_key(signed):
+    assert signed.delete("/api/v1/providers/missing").status_code == 404
