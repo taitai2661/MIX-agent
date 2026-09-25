@@ -61,3 +61,20 @@ async def test_unforced_turn_that_answers_text_still_supported():
     }
     result, _ = await probe(behaviors)
     assert result is True
+
+
+async def test_vision_probe_accepts_a_text_response():
+    stub = Stub({False: [{"kind": "response", "message": {"role": "assistant", "content": "ok"}}]})
+    assert await Adapter.probe_vision(stub, "model-x") is True
+    assert stub.calls[0]["tools"] == []
+
+
+async def test_vision_probe_rejects_an_empty_response():
+    stub = Stub({False: [{"kind": "response", "message": {"role": "assistant", "content": ""}}]})
+    assert await Adapter.probe_vision(stub, "model-x") is False
+
+
+async def test_reasoning_probe_accepts_a_completed_response():
+    stub = Stub({False: [{"kind": "response", "message": {"role": "assistant", "content": "ok"}}]})
+    resolved = {"policy": "required", "control": "openai", "request": {}, "summary": False}
+    assert await Adapter.probe_reasoning(stub, "model-x", resolved) is True

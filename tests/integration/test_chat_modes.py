@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 from mix_agent.api import routes
-from mix_agent.db.models import Message, Model, Provider, Run, User
+from mix_agent.db.models import Message, Model, Provider, Run, Settings, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.runs.mode_policy import mode_prompt, tool_allowed
@@ -289,6 +289,35 @@ def test_manual_tool_override_wins_over_automatic_probe(signed, monkeypatch):
     assert response.status_code == 200
     with SessionLocal() as db:
         assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_background_probe_confirms_auto_candidate_capabilities(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    with SessionLocal() as db:
+        settings = db.get(Settings, "settings")
+        settings.data = {**settings.data, "auto_model_ids": [mid]}
+        db.commit()
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            return True
+
+        async def probe_vision(self, _):
+            return False
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    with SessionLocal() as db:
+        confirmed = await routes.probe_due_models(db, limit=1)
+        db.commit()
+        assert confirmed == 1
+        record = db.get(Model, mid).data["tool_probe"]
+        assert record["status"] == "supported"
+        assert record["vision"] == "unsupported"
+        assert record["source"] == "automatic"
 
 
 @pytest.mark.parametrize(

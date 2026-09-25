@@ -459,6 +459,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
         excluded_model_ids=tuple(used_model_ids),
         prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout", "incomplete"} else None),
+        priority=routing.get("priority", "balanced"),
     )
     if not model:
         return None
@@ -905,6 +906,7 @@ def _reevaluate_auto_model(db, run, snapshot, available):
         routing.get("artifact_mimes", []), tools_required, context_parts,
         routing.get("reserved_output_tokens", 4096), run.request_key,
         routing.get("attachment_bytes", 0), current_model_id=snapshot["model_record_id"],
+        priority=routing.get("priority", snapshot.get("auto_priority", "balanced")),
     )
     if not model:
         return snapshot
@@ -1096,7 +1098,13 @@ async def drive(run_id):
                     finish(db, run, "interrupted", str(exc))
                     return
                 history = run.data["history"]
-                emit(db, run.id, "model_started", {"step": steps + 1, "mode": mode})
+                emit(db, run.id, "model_started", {
+                    "step": steps + 1,
+                    "mode": mode,
+                    "model_id": snapshot.get("model_id"),
+                    "model_record_id": snapshot.get("model_record_id"),
+                    "provider_id": snapshot.get("provider_record_id"),
+                })
                 update(run, steps=steps + 1)
                 db.commit()
                 response = None
@@ -1264,14 +1272,16 @@ async def drive(run_id):
                 if output_count and first_output_at is not None:
                     completed_at = now()
                     generation_ms = max(1, round((completed_at - first_output_at).total_seconds() * 1000))
+                    first_output_ms = max(1, round((first_output_at - provider_started_at).total_seconds() * 1000))
                     event = record_performance(
                         db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
-                        mode, output_count, generation_ms,
+                        mode, output_count, generation_ms, first_output_ms,
                     )
                     db.add(event)
                     performance = {
                         "output_tokens": output_count,
                         "generation_ms": generation_ms,
+                        "first_output_ms": first_output_ms,
                         "tokens_per_second": event.data["tokens_per_second"],
                     }
                 message_data = {
@@ -1363,6 +1373,14 @@ async def scheduler():
                     purge_expired_conversations(db)
                     from mix_agent.schedules import tick
                     tick(db, launch)
+                    # Confirm unknown/stale model capabilities in the background so
+                    # Auto does not depend on a user-triggered check.
+                    try:
+                        from mix_agent.api.routes import probe_due_models
+                        await probe_due_models(db)
+                    except Exception:
+                        import logging
+                        logging.getLogger(__name__).exception("capability probe pass failed")
                     current = now()
                     # Cron is minute-granular, so wake exactly for its next boundary.
                     delay = max(0.05, 60 - current.second - current.microsecond / 1_000_000)

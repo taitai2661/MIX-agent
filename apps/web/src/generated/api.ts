@@ -2588,6 +2588,11 @@ export interface components {
              */
             auto_dynamic_switching: boolean;
             /**
+             * Auto Priority
+             * @default balanced
+             */
+            auto_priority?: "balanced" | "quality" | "speed" | "cost";
+            /**
              * Setup Complete
              * @default false
              */

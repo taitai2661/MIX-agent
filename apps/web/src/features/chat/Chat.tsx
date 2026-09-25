@@ -10,6 +10,7 @@ import {
   Bot,
   Brain,
   FileText,
+  FolderKanban,
   MessageSquare,
   Paperclip,
   ShieldCheck,
@@ -18,16 +19,21 @@ import {
   Square,
   ThumbsDown,
   ThumbsUp,
+  UserCog,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Markdown from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
 import { ErrorBox, useRows } from "@/components/shared";
 import { ModelPicker } from "@/components/model-picker";
+import { SelectMenu } from "@/components/select-menu";
+import { Toggle } from "@/components/toggle";
 import { ModeStatus, ReasoningSummary } from "./ModeStatus";
+import { RunBudget } from "./RunBudget";
 import { RunActivity, type ToolCallHistory } from "./RunActivity";
 import { ArtifactCard } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
@@ -103,11 +109,12 @@ export function Chat() {
       !streamConnected && (q.state.data?.status === "queued" || q.state.data?.status === "running" || q.state.data?.status === "waiting_approval" || q.state.data?.status === "paused")
         ? 1500 : false,
   });
+  const runActive = run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval" || run.data?.status === "paused";
   const toolHistory = useQuery<ToolCallHistory[]>({
     queryKey: ["tool-calls", id],
     queryFn: () => api("/conversations/" + id + "/tool-calls"),
     enabled: !!id,
-    refetchInterval: !streamConnected && (run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval" || run.data?.status === "paused") ? 1500 : false,
+    refetchInterval: !streamConnected && runActive ? 5000 : false,
   });
   useEffect(() => {
     if (!runId || !run.data || streamConnected) return;
@@ -175,6 +182,8 @@ export function Chat() {
         setStreamText("");
         setReasoning((t) => (t ? t + "\n\n" : t));
         setEvents((xs) => [...xs, v]);
+        // A new step was committed on the server; refresh steps/budget.
+        qc.invalidateQueries({ queryKey: ["run", runId] });
       } else {
         setEvents((xs) => [...xs, v]);
         if (v.kind === "approval") {
@@ -186,6 +195,8 @@ export function Chat() {
           qc.invalidateQueries({ queryKey: ["messages", id] });
         }
       }
+      if (["tool_started", "tool_result", "plan"].includes(v.kind))
+        qc.invalidateQueries({ queryKey: ["run", runId] });
       if (["tool_started", "tool_result", "approval", "status"].includes(v.kind))
         qc.invalidateQueries({ queryKey: ["tool-calls", id] });
       if (v.kind === "browser_frame") qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
@@ -339,7 +350,7 @@ export function Chat() {
                     )}
                   </div>
                   <div className="markdown">
-                    <Markdown remarkPlugins={[remarkGfm]}>
+                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                       {m.data.content}
                     </Markdown>
                   </div>
@@ -396,7 +407,7 @@ export function Chat() {
                     MIX agent <span className="pulse" />
                   </div>
                   <div className="markdown">
-                    <Markdown remarkPlugins={[remarkGfm]}>
+                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                       {streamText}
                     </Markdown>
                   </div>
@@ -414,12 +425,7 @@ export function Chat() {
                 <div className="notice">{run.data.reason}</div>
               )}
               {run.data && active && (
-                <p className="run-budget" role="status">
-                  {run.data.mode}
-                  {t(" · 残り ")}{run.data.remaining.max_seconds ?? 0}{t("秒")}
-                  {" · "}{run.data.remaining.max_steps ?? 0}{t("ステップ")}
-                  {" · "}{run.data.remaining.max_tool_calls ?? 0} Tool Call
-                </p>
+                <RunBudget run={run.data} active={!!active} fetchedAt={run.dataUpdatedAt} />
               )}
               {run.data?.status === "interrupted" && (
                 <Button
@@ -492,45 +498,91 @@ export function Chat() {
               />
               <div className="composer-bottom">
                 <details className="assistant-settings">
-                  <summary><SlidersHorizontal size={15} /> {modelLabel} · {modeLabel}</summary>
+                  <summary>
+                    <SlidersHorizontal size={15} />
+                    <span className="assistant-settings-summary">{modelLabel} · {modeLabel}</span>
+                  </summary>
                   <div className="assistant-settings-panel">
-                    <div className="assistant-setting-row">
-                      <span>{t("モデル")}</span>
-                      <ModelPicker models={models.data} value={model} onChange={setModel} temporaryMode={temporaryMode} allowTools={allowTools} onTemporaryModeChange={value => { setTemporaryMode(value); if (value) setResearchMode(false); }} onAllowToolsChange={setAllowTools} />
+                    <div className="assistant-panel-head">
+                      <span className="assistant-panel-icon"><SlidersHorizontal size={15} /></span>
+                      <span className="assistant-panel-title">
+                        <b>{t("アシスタント設定")}</b>
+                        <small>{modelLabel} · {modeLabel}</small>
+                      </span>
                     </div>
-                    <div className="assistant-setting-row mode-row">
-                      <span>{t("応答方法")}</span>
-                      <div className="mode-switch">
-                        {modes.map((m) => (
-                          <button type="button" key={m} disabled={active} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => { setMode(m); if (m !== "agent") setResearchMode(false); }}>
-                            {m === "chat" ? <MessageSquare size={13} /> : m === "thinking" ? <Brain size={13} /> : <Bot size={13} />}
-                            {m}
-                          </button>
-                        ))}
-                      </div>
+                    <div className="assistant-sections">
+                      <section className="assistant-section">
+                        <h4 className="assistant-section-title">{t("モデルと応答方法")}</h4>
+                        <div className="assistant-setting-row">
+                          <span>{t("モデル")}</span>
+                          <ModelPicker models={models.data} value={model} onChange={setModel} temporaryMode={temporaryMode} allowTools={allowTools} onTemporaryModeChange={value => { setTemporaryMode(value); if (value) setResearchMode(false); }} onAllowToolsChange={setAllowTools} />
+                        </div>
+                        <div className="assistant-setting-row mode-row">
+                          <span>{t("応答方法")}</span>
+                          <div className="mode-switch">
+                            {modes.map((m) => (
+                              <button type="button" key={m} disabled={active} className={mode === m ? "selected" : ""} aria-pressed={mode === m} onClick={() => { setMode(m); if (m !== "agent") setResearchMode(false); }}>
+                                {m === "chat" ? <MessageSquare size={13} /> : m === "thinking" ? <Brain size={13} /> : <Bot size={13} />}
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                      <section className="assistant-section">
+                        <h4 className="assistant-section-title">{t("文脈")}</h4>
+                        <div className="assistant-setting-row">
+                          <span>{t("プロジェクト")}</span>
+                          <SelectMenu
+                            value={selectedProject}
+                            disabled={!!id || temporaryMode}
+                            icon={<FolderKanban size={14} />}
+                            ariaLabel={t("プロジェクト")}
+                            onChange={setSelectedProject}
+                            options={[{ value: "", label: t("なし") }, ...(projects.data || []).map(project => ({ value: project.id, label: project.data.name }))]}
+                          />
+                        </div>
+                        <div className="assistant-setting-row assistant-toggle-row">
+                          <span className="assistant-toggle-label">
+                            <span>{t("調査モード")}</span>
+                            <small id="research-mode-hint">{t("Webを調べ、出典つきレポートを作成")}</small>
+                          </span>
+                          <Toggle
+                            checked={researchMode}
+                            disabled={active || temporaryMode}
+                            label={t("調査モード")}
+                            describedBy="research-mode-hint"
+                            onChange={checked => { setResearchMode(checked); if (checked) setMode("agent"); }}
+                          />
+                        </div>
+                      </section>
+                      <section className="assistant-section">
+                        <h4 className="assistant-section-title">{t("アシスタントと権限")}</h4>
+                        <div className="assistant-setting-row">
+                          <span>{t("アシスタント")}</span>
+                          <SelectMenu
+                            value={agent}
+                            icon={<UserCog size={14} />}
+                            ariaLabel={t("アシスタント")}
+                            onChange={(nextAgent) => {
+                              setAgent(nextAgent);
+                              const next = agents.data?.find((x) => x.id === nextAgent);
+                              if (next) {
+                                setMode(next.data.mode);
+                                if (next.data.mode !== "agent") setResearchMode(false);
+                                if (next.data.model_id) setModel(next.data.model_id);
+                              }
+                            }}
+                            options={[{ value: "", label: t("標準") }, ...(agents.data || []).map(a => ({ value: a.id, label: a.data.name }))]}
+                          />
+                        </div>
+                        <div className="assistant-permissions" title={t("現在のアシスタントに適用されるTool権限")}>
+                          <ShieldCheck size={14} />
+                          <span>{t("ツール権限: 許可")} {permissionCounts.allow || 0} {t("· 確認")} {permissionCounts.ask || 0} {t("· 拒否")} {permissionCounts.deny || 0}</span>
+                        </div>
+                        <ModeStatus mode={mode} model={selected} agent={selectedAgent} budget={active && run.data?.mode === mode ? run.data.budget : undefined} />
+                      </section>
                     </div>
-                    <label className="assistant-setting-row"><span>{t("プロジェクト")}</span><select value={selectedProject} disabled={!!id || temporaryMode} onChange={event => setSelectedProject(event.target.value)}><option value="">{t("なし")}</option>{projects.data?.map(project => <option key={project.id} value={project.id}>{project.data.name}</option>)}</select></label>
-                    <label className="assistant-setting-row"><span>{t("調査モード")}</span><input type="checkbox" checked={researchMode} disabled={active || temporaryMode} onChange={event => { setResearchMode(event.target.checked); if (event.target.checked) setMode("agent"); }} />{t("Webを調べ、出典つきレポートを作成")}</label>
-                    <label className="assistant-setting-row">
-                      <span>{t("アシスタント")}</span>
-                      <select className="agent-select" value={agent} onChange={(e) => {
-                        setAgent(e.target.value);
-                        const next = agents.data?.find((x) => x.id === e.target.value);
-                        if (next) {
-                          setMode(next.data.mode);
-                          if (next.data.mode !== "agent") setResearchMode(false);
-                          if (next.data.model_id) setModel(next.data.model_id);
-                        }
-                      }}>
-                        <option value="">{t("標準")}</option>
-                        {agents.data?.map((a) => <option key={a.id} value={a.id}>{a.data.name}</option>)}
-                      </select>
-                    </label>
-                    <div className="assistant-permissions" title={t("現在のアシスタントに適用されるTool権限")}>
-                      <ShieldCheck size={14} />
-                      <span>{t("ツール権限: 許可")} {permissionCounts.allow || 0} {t("· 確認")} {permissionCounts.ask || 0} {t("· 拒否")} {permissionCounts.deny || 0}</span>
-                    </div>
-                    <ModeStatus mode={mode} model={selected} agent={selectedAgent} budget={active && run.data?.mode === mode ? run.data.budget : undefined} />
                   </div>
                 </details>
                 <div className="composer-actions">

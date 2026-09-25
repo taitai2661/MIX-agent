@@ -15,10 +15,10 @@ from mix_agent.db.models import ModelUsageEvent, now
 
 RETENTION = timedelta(days=90)
 
-_INPUT_KEYS = ("input_tokens", "prompt_tokens", "promptTokenCount")
-_OUTPUT_KEYS = ("output_tokens", "completion_tokens", "candidatesTokenCount")
-_TOTAL_KEYS = ("total_tokens", "totalTokenCount")
-_CACHED_KEYS = ("cache_read_input_tokens", "cachedContentTokenCount", "cached_tokens")
+_INPUT_KEYS = ("input_tokens", "prompt_tokens", "promptTokenCount", "prompt_token_count")
+_OUTPUT_KEYS = ("output_tokens", "completion_tokens", "candidatesTokenCount", "candidates_token_count")
+_TOTAL_KEYS = ("total_tokens", "totalTokenCount", "total_token_count")
+_CACHED_KEYS = ("cache_read_input_tokens", "cachedContentTokenCount", "cached_tokens", "cached_content_token_count")
 
 
 def _count(source, keys):
@@ -43,7 +43,7 @@ def token_usage(usage):
     cached_tokens = _count(usage, _CACHED_KEYS)
     if cached_tokens is None:
         cached_tokens = _count(usage.get("prompt_tokens_details"), ("cached_tokens",))
-    reasoning_tokens = _count(usage, ("reasoning_tokens",))
+    reasoning_tokens = _count(usage, ("reasoning_tokens", "thoughts_token_count"))
     if reasoning_tokens is None:
         reasoning_tokens = _count(usage.get("completion_tokens_details"), ("reasoning_tokens",))
     input_tokens = input_tokens or 0

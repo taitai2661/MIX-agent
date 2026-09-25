@@ -40,6 +40,7 @@ class PerformanceView(BaseModel):
     output_tokens: int
     generation_ms: int
     tokens_per_second: float
+    first_output_ms: int | None = None
 
 
 class MessageDataView(BaseModel):
@@ -495,6 +496,7 @@ class SettingsInput(Input):
     auto_model_ids: list[str] | None = None
     auto_retry_count: int = Field(default=3, ge=0)
     auto_dynamic_switching: bool = True
+    auto_priority: Literal["balanced", "quality", "speed", "cost"] = "balanced"
     setup_complete: bool = False
     brave_api_key: str | None = None
     tavily_api_key: str | None = None

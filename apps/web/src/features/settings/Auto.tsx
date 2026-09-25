@@ -41,6 +41,7 @@ export function Auto() {
           auto_model_ids: [...selected],
           auto_retry_count: Number(form.get("auto_retry_count")),
           auto_dynamic_switching: form.get("auto_dynamic_switching") === "on",
+          auto_priority: String(form.get("auto_priority") || "balanced"),
         });
         setSaved(true);
         qc.invalidateQueries({ queryKey: ["/settings"] });
@@ -71,6 +72,14 @@ export function Auto() {
       </Field>
       <Field label={t("実行中のモデル切替")} hint={t("Tool結果や残りのタスクを見て、次のモデル呼び出し前に必要な場合だけ切り替えます。")}>
         <input name="auto_dynamic_switching" type="checkbox" defaultChecked={setting.data.data.auto_dynamic_switching !== false} />
+      </Field>
+      <Field label={t("Autoの最適化方針")} hint={t("品質・速度・コストのどれを優先するかを選びます。")}>
+        <select name="auto_priority" defaultValue={setting.data.data.auto_priority ?? "balanced"}>
+          <option value="balanced">{t("バランス")}</option>
+          <option value="quality">{t("品質優先")}</option>
+          <option value="speed">{t("速度優先")}</option>
+          <option value="cost">{t("コスト優先")}</option>
+        </select>
       </Field>
       <Field label={t("Auto実行の再試行回数")} hint={t("一時的なProvider障害時に、未使用の候補へ切り替える回数です。")}>
         <input name="auto_retry_count" type="number" min="0" step="1" defaultValue={setting.data.data.auto_retry_count ?? 3} />

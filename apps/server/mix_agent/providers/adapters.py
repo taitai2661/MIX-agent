@@ -4,9 +4,10 @@ import httpx
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError, UnprocessableEntityError
 
 from mix_agent.providers.catalog import get_preset
+from mix_agent.providers.capability_probe import VISION_DATA_URL
 from mix_agent.providers.metadata import context_limit, resolve
 from mix_agent.providers.model_roles import chat_capability
 from mix_agent.providers.reasoning import request_options, show_summary
@@ -228,6 +229,32 @@ class Adapter:
                     break
         return False
 
+    async def probe_vision(self, model):
+        """Verify image wire support with a tiny image; never stores the response."""
+        message = [{
+            "role": "user",
+            "content": "Reply with the single word: ok",
+            "images": [VISION_DATA_URL],
+        }]
+        settings = {"max_output_tokens": 16, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}
+        async for event in self.stream(model, message, [], "chat", settings):
+            if event["kind"] == "response":
+                return bool(event.get("message", {}).get("content"))
+        return False
+
+    async def probe_reasoning(self, model, resolved):
+        """Verify that a provider accepts its own reasoning-control request.
+
+        This only confirms the transport accepted the request; providers that
+        silently ignore unknown parameters may still return success.
+        """
+        message = [{"role": "user", "content": "Reply with the single word: ok"}]
+        settings = {"max_output_tokens": 2048, "reasoning_effort": "low", "_resolved_reasoning": resolved}
+        async for event in self.stream(model, message, [], "thinking", settings):
+            if event["kind"] == "response":
+                return True
+        return False
+
     async def _openai(self, model, messages, tools, mode, settings):
         inputs, instructions = [], ""
         for m in messages:
@@ -338,9 +365,14 @@ class Adapter:
             args["tool_choice"] = {"type": "function", "function": {"name": "mix_tool_probe"}}
         content, calls, finished = "", {}, False
         reasoning_details, raw_reasoning = {}, ""
+        usage = None
         async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0) as client:
-            stream = await client.chat.completions.create(**args)
+            stream = await self._compatible_create(client, args)
             async for chunk in stream:
+                # The usage-bearing final chunk carries no choices; capture it
+                # before the empty-choices guard drops it.
+                if getattr(chunk, "usage", None) is not None:
+                    usage = chunk.usage.model_dump()
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -402,7 +434,26 @@ class Adapter:
             "kind": "response",
             "message": {"role": "assistant", "content": content, "native": native},
             "tool_calls": list(calls.values()),
+            "usage": usage or {},
         }
+
+    async def _compatible_create(self, client, args):
+        """Open a streaming chat completion, requesting usage when supported.
+
+        OpenAI-compatible endpoints report token usage during streaming only when
+        ``stream_options.include_usage`` is set, but a few servers reject that
+        option.  Fall back to the plain request in that case so a strict endpoint
+        keeps working while everyone else gains measurable usage.
+        """
+        try:
+            return await client.chat.completions.create(
+                **{**args, "stream_options": {"include_usage": True}}
+            )
+        except (BadRequestError, UnprocessableEntityError) as exc:
+            details = str(exc).casefold()
+            if "stream_options" not in details and "include_usage" not in details:
+                raise
+            return await client.chat.completions.create(**args)
 
     async def _anthropic(self, model, messages, tools, mode, settings):
         wire, system = [], ""
@@ -522,10 +573,13 @@ class Adapter:
                 }
             }
         native, calls, text, finished = [], [], "", False
+        usage = None
         async with genai.Client(api_key=self.key, http_options={"base_url": self.url}).aio as client:
             async for chunk in await client.models.generate_content_stream(
                 model=model, contents=wire, config=cfg
             ):
+                if getattr(chunk, "usage_metadata", None) is not None:
+                    usage = chunk.usage_metadata.model_dump(exclude_none=True)
                 for candidate in chunk.candidates or []:
                     if candidate.finish_reason:
                         if str(candidate.finish_reason) not in ("FinishReason.STOP", "STOP"):
@@ -554,4 +608,5 @@ class Adapter:
             "kind": "response",
             "message": {"role": "assistant", "content": text, "native": native},
             "tool_calls": calls,
+            "usage": usage or {},
         }

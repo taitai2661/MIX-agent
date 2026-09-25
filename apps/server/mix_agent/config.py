@@ -1,5 +1,6 @@
 import os
 import socket
+from datetime import timedelta
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -30,9 +31,18 @@ BROWSER_PROVISIONER_URL = os.getenv("BROWSER_PROVISIONER_URL", "http://browser-p
 PUBLIC_ORIGIN = os.getenv("PUBLIC_ORIGIN", "http://localhost:8080").rstrip("/")
 COOKIE_SECURE = PUBLIC_ORIGIN.startswith("https://")
 MAX_UPLOAD = 20 * 1024 * 1024
-# Bump when the tool-call probe semantics change so previously stored
+# Bump when the capability-probe semantics change so previously stored
 # "unsupported"/"unknown" verdicts are not treated as authoritative.
-TOOL_PROBE_VERSION = 2
+TOOL_PROBE_VERSION = 3
+# A confirmed capability is re-checked after this age so provider updates are
+# noticed without probing on every request.
+PROBE_MAX_AGE = timedelta(days=14)
+# An inconclusive probe is retried sooner, but never on every scheduler tick.
+PROBE_UNKNOWN_RETRY = timedelta(hours=6)
+# Bound the provider calls a single scheduler tick and a single Auto request
+# may spend on capability confirmation.
+PROBE_BATCH = 2
+PROBE_SELECT_BATCH = 3
 
 
 def _origin_ips(hostname):

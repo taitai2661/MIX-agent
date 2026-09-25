@@ -100,15 +100,13 @@ export function RunActivity({
   running?: boolean;
   onApproval: (id: string, decision: ApprovalDecision) => void;
 }) {
-  if (!calls.length && !running) return null;
+  if (!calls.length) return null;
   const active = calls.find((call) => call.status === "running" || call.status === "waiting_approval");
   const failed = calls.some((call) => call.status === "failed" || call.status === "unknown");
   const sources = calls.reduce((total, call) => total + sourceCount(call), 0);
   const open = running || failed || calls.some((call) => call.status === "waiting_approval");
   const head = running && active ? active.activity?.label || active.tool_name : t("実行履歴");
-  const meta = calls.length
-    ? [`${calls.length}${t("件のツール")}`, ...(sources ? [`${sources}${t("件のソース")}`] : [])].join(" · ")
-    : t("実行を準備しています…");
+  const meta = [`${calls.length}${t("件のツール")}`, ...(sources ? [`${sources}${t("件のソース")}`] : [])].join(" · ");
   return (
     <section
       className={"run-activity" + (running ? " is-running" : "") + (failed ? " has-error" : "")}

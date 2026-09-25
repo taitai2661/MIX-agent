@@ -6685,6 +6685,17 @@
             "title": "Auto Dynamic Switching",
             "default": true
           },
+          "auto_priority": {
+            "type": "string",
+            "enum": [
+              "balanced",
+              "quality",
+              "speed",
+              "cost"
+            ],
+            "title": "Auto Priority",
+            "default": "balanced"
+          },
           "setup_complete": {
             "type": "boolean",
             "title": "Setup Complete",

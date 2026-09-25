@@ -49,6 +49,11 @@ describe("RunActivity", () => {
     expect(html).toContain("実行履歴");
   });
 
+  it("stays hidden until a tool call exists, even while the run is active", () => {
+    const html = renderToStaticMarkup(<RunActivity running onApproval={() => {}} calls={[]} />);
+    expect(html).toBe("");
+  });
+
   it("auto-opens and narrates the live state while a run is active", () => {
     const html = renderToStaticMarkup(<RunActivity running onApproval={() => {}} calls={[{
       id: "call-live", run_id: "", status: "running", tool_name: "web_search",

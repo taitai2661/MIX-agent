@@ -121,6 +121,7 @@ from mix_agent.mcp import oauth as mcp_oauth
 from mix_agent.mcp import registry as mcp_registry
 from mix_agent.mcp.protocol import validate_schema as validate_mcp_schema
 from mix_agent.memory import service as memory
+from mix_agent.providers import capability_probe
 from mix_agent.providers.adapters import DEFAULT_URLS, Adapter
 from mix_agent.providers.catalog import CUSTOM_KINDS, KIND_VALUES, catalog, get_preset
 from mix_agent.providers.model_roles import is_auto_chat_eligible
@@ -227,7 +228,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
     if requested_model_id == "auto":
         allowed = settings.data.get("auto_model_ids", [])
         task_content = data["prompt"] + ("\n" + agent.get("system_prompt", "") if mode == "agent" else "")
-        model, auto_selection = select_auto_model(db, owner_id, allowed, task_content, mode, [], bool(agent.get("tool_ids")), [data["prompt"]], agent.get("model_settings", {}).get("max_output_tokens", 4096), scheduled.id, 0)
+        model, auto_selection = select_auto_model(db, owner_id, allowed, task_content, mode, [], bool(agent.get("tool_ids")), [data["prompt"]], agent.get("model_settings", {}).get("max_output_tokens", 4096), scheduled.id, 0, priority=settings.data.get("auto_priority", "balanced"))
         if not model: raise HTTPException(422, (auto_selection or {}).get("reason", "Autoモデルを選択できません"))
     else:
         model, auto_selection = own(db, Model, requested_model_id, owner_id), None
@@ -251,6 +252,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         "model_id": model.data["model_id"], "model_record_id": model.id, "requested_model_id": requested_model_id,
         "auto_retry_count": 0,
         "auto_dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)) if requested_model_id == "auto" else False,
+        "auto_priority": settings.data.get("auto_priority", "balanced") if requested_model_id == "auto" else "balanced",
         "provider": provider.data, "provider_record_id": provider.id, "tool_ids": tool_ids,
         "tools": [available[t] for t in tool_ids if t in available],
         "reasoning": reasoning,
@@ -289,6 +291,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         "mode": mode, "artifact_mimes": [], "tools_required": bool(tool_ids),
         "reserved_output_tokens": agent.get("model_settings", {}).get("max_output_tokens", 4096),
         "attachment_bytes": 0, "dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)),
+        "priority": settings.data.get("auto_priority", "balanced"),
     } if requested_model_id == "auto" else None)
     run = Run(owner_id=owner_id, conversation_id=conversation.id, request_key=f"schedule-{scheduled.id}-{attempt}", data={"snapshot": snapshot, "history": history, "steps": 0, "tool_count": 0, "scheduled_run_id": scheduled.id, "requested_model_id": requested_model_id, "auto_selection": auto_selection, "auto_routing": auto_routing, "auto_model_history": ([{"step": 1, "to_model_record_id": model.id, "model_id": model.data["model_id"]}] if auto_selection else []), "task_state": built["task_state"], "summary": {"text": "", "covered_count": 0, "updated_at": None}, "context_trace": built["trace"], "context_version": 1, "trigger_type": "scheduled", "memory_trace_ids": [m.get("id") for m in memories if isinstance(m, dict) and m.get("id")], "image_refs": [], "tool_refs": []})
     db.add(run); db.add(Message(owner_id=owner_id, conversation_id=conversation.id, data={"role": "user", "content": data["prompt"], "scheduled_run_id": scheduled.id}))
@@ -420,17 +423,16 @@ def revoke_sessions(db, owner_id, current_session_id=None):
 
 def tool_capability(model_data):
     """Return the effective tool capability, respecting explicit user overrides."""
-    overrides = model_data.get("overrides", {})
-    if overrides.get("tools") is not None:
-        return overrides["tools"]
-    detected = model_data.get("capabilities", {}).get("tools")
-    if detected is not None:
-        return detected
-    probe = model_data.get("tool_probe", {})
-    if probe.get("probe_version") != config.TOOL_PROBE_VERSION:
-        return None
-    status = probe.get("status")
-    return {"supported": True, "unsupported": False}.get(status)
+    return capability_probe.capability(model_data, "tools")
+
+
+def capability_targets(model_data, provider_kind):
+    """Capabilities worth confirming automatically for one model."""
+    return capability_probe.due_capabilities(model_data, provider_kind)
+
+
+async def _capability_adapter(db, provider):
+    return Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
 
 
 def effective_tool_ids(settings, agent, requested):
@@ -451,26 +453,95 @@ def effective_tool_ids(settings, agent, requested):
 async def verify_tool_capability(db, owner, model, provider, source):
     """Persist a safe, one-call tool support check without executing a tool."""
     try:
-        supported = await Adapter(provider.data, read_secret(db, provider.data.get("secret_id"))).probe_tools(
-            model.data["model_id"]
+        adapter = await _capability_adapter(db, provider)
+    except Exception as exc:  # noqa: BLE001 - classified; never leaks provider details
+        model.data = capability_probe.merge(
+            model.data, {"tools": "unknown"}, {"tools": type(exc).__name__}, source
         )
-        status = "supported" if supported else "unsupported"
-        failure = "no_required_call" if not supported else None
-    except Exception as exc:  # noqa: BLE001 - provider SDK errors are intentionally classified
-        # Provider SDK errors can contain headers or remote bodies; keep only
-        # a stable category for the settings UI and future retry decisions.
-        status, failure = "unknown", type(exc).__name__
-    model.data = {
-        **model.data,
-        "tool_probe": {
-            "status": status,
-            "checked_at": now().isoformat(),
-            "failure": failure,
-            "source": source,
-            "probe_version": config.TOOL_PROBE_VERSION,
-        },
-    }
-    return status
+        return "unknown"
+    model.data = await capability_probe.probe(adapter, model.data, ["tools"], source, provider.data.get("kind"))
+    return model.data["tool_probe"]["status"]
+
+
+async def verify_model_capabilities(db, owner, model, provider, source, capabilities=None):
+    """Confirm the requested (or all due) capabilities and persist the verdicts."""
+    requested = capabilities or capability_targets(model.data, provider.data.get("kind"))
+    if not requested:
+        return model.data
+    try:
+        adapter = await _capability_adapter(db, provider)
+    except Exception as exc:  # noqa: BLE001 - classified; never leaks provider details
+        model.data = capability_probe.merge(
+            model.data,
+            {capability: "unknown" for capability in requested},
+            {capability: type(exc).__name__ for capability in requested},
+            source,
+        )
+        return model.data
+    model.data = await capability_probe.probe(adapter, model.data, requested, source, provider.data.get("kind"))
+    return model.data
+
+
+async def probe_due_models(db, limit=None):
+    """Confirm due capabilities for Auto candidates across owners, bounded."""
+    limit = config.PROBE_BATCH if limit is None else limit
+    if limit <= 0:
+        return 0
+    seen, pending = set(), []
+    for settings_row in db.scalars(select(Settings)):
+        for model_id in settings_row.data.get("auto_model_ids", []):
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            model = db.get(Model, model_id)
+            provider = db.get(Provider, model.data.get("provider_id")) if model else None
+            if model is None or provider is None or provider.owner_id != settings_row.owner_id:
+                continue
+            due = capability_targets(model.data, provider.data.get("kind"))
+            if due:
+                pending.append((model, provider, due))
+            if len(pending) >= limit:
+                break
+        if len(pending) >= limit:
+            break
+    confirmed = 0
+    for model, provider, due in pending:
+        try:
+            await verify_model_capabilities(db, provider.owner_id, model, provider, "automatic", due)
+            db.commit()
+            confirmed += 1
+        except Exception:  # noqa: BLE001 - one model must not abort the pass
+            db.rollback()
+    return confirmed
+
+
+async def probe_auto_candidates(db, owner_id, allowed_ids, capabilities, limit=None):
+    """Confirm the requested capabilities for Auto candidates before selecting.
+
+    Only unknown capabilities are probed, so confirmed models cost nothing.
+    """
+    limit = config.PROBE_SELECT_BATCH if limit is None else limit
+    confirmed = 0
+    for model_id in allowed_ids:
+        if confirmed >= limit:
+            break
+        model = db.get(Model, model_id)
+        provider = db.get(Provider, model.data.get("provider_id")) if model else None
+        if model is None or model.owner_id != owner_id or provider is None or provider.owner_id != owner_id:
+            continue
+        due = [
+            capability for capability in capabilities
+            if capability_probe.probe_needed(model.data, capability, provider.data.get("kind"))
+        ]
+        if not due:
+            continue
+        try:
+            await verify_model_capabilities(db, owner_id, model, provider, "automatic", due)
+            db.commit()
+            confirmed += 1
+        except Exception:  # noqa: BLE001 - probing must never block a request
+            db.rollback()
+    return confirmed
 
 
 @router.get("/setup")
@@ -821,7 +892,7 @@ async def settings(ctx=Depends(context)):
     row = own(db, Settings, "settings", s.owner_id)
     view = public(row)
     # Older profiles predate these preferences; expose compatible defaults.
-    view["data"] = {"auto_retry_count": 3, "auto_dynamic_switching": True, "browser_enabled": True,
+    view["data"] = {"auto_retry_count": 3, "auto_dynamic_switching": True, "auto_priority": "balanced", "browser_enabled": True,
                      "browser_install_requested": False, "browser_install_status": "not_installed",
                      "browser_install_failure": None, "browser_install_progress": None,
                      "browser_install_stage": None,
@@ -1735,6 +1806,7 @@ async def _build_history_payload(db, s, conversation, body, settings_row, agent,
             if requested_model_id == "auto" else 0
         ),
         "auto_dynamic_switching": bool(settings_row.data.get("auto_dynamic_switching", True)) if requested_model_id == "auto" else False,
+        "auto_priority": settings_row.data.get("auto_priority", "balanced") if requested_model_id == "auto" else "balanced",
         "provider": provider.data,
         "provider_record_id": provider.id,
         "tool_ids": tool_ids,
@@ -1967,11 +2039,16 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         if not allowed_ids:
             raise HTTPException(422, "Autoで使用可能なモデルを設定してください")
         task_content = body.content + ("\n" + agent.get("system_prompt", "") if mode == "agent" else "")
+        # Confirm unknown Tool Calling support before Auto filters candidates, so
+        # a capable model is not excluded just because it was never checked.
+        if tools_required:
+            await probe_auto_candidates(db, s.owner_id, allowed_ids, ("tools",))
         model, auto_selection = select_auto_model(
             db, s.owner_id, allowed_ids, task_content, mode, artifact_mimes, tools_required,
             [*prior_content, body.content, agent.get("system_prompt", "")],
             agent.get("model_settings", {}).get("max_output_tokens", 4096), request_key,
             sum(a.data.get("size", 0) for a in artifacts),
+            priority=settings.data.get("auto_priority", "balanced"),
         )
         if not model:
             raise HTTPException(422, auto_selection["reason"])
@@ -2019,6 +2096,7 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         "reserved_output_tokens": agent.get("model_settings", {}).get("max_output_tokens", 4096),
         "attachment_bytes": sum(a.data.get("size", 0) for a in artifacts),
         "dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)),
+        "priority": settings.data.get("auto_priority", "balanced"),
     } if requested_model_id == "auto" else None)
     run = _build_run_record(
         db, s, conversation, key, body, request_key, request_hash,
@@ -2058,7 +2136,10 @@ async def verify_model_tools(key: str, ctx=Depends(context)):
     db, s = ctx
     model = own(db, Model, key, s.owner_id)
     provider = own(db, Provider, model.data["provider_id"], s.owner_id)
-    await verify_tool_capability(db, s.owner_id, model, provider, "manual")
+    # A manual re-check always re-confirms Tool Calling and additionally covers
+    # any other capability that is still unknown or stale.
+    targets = list(dict.fromkeys(["tools", *capability_targets(model.data, provider.data.get("kind"))]))
+    await verify_model_capabilities(db, s.owner_id, model, provider, "manual", targets)
     audit(db, s.owner_id, "model.verify_tools", key)
     db.commit()
     return public(model)

@@ -203,18 +203,32 @@ export function Models() {
           )}
           <div className="model-probe">
             <small>
-              {t("Tool Calling自動確認:")} {({
-                supported: "対応",
-                unsupported: "非対応",
-                unknown: "未確認",
-              } as Record<string, string>)[row.data.tool_probe?.status] || t("未実施")}
+              {t("自動確認:")}{" "}
+              {([
+                ["tools", "Tool Calling"],
+                ["vision", "Vision"],
+                ["reasoning", "Reasoning"],
+              ] as const)
+                .map(([key, label]) => {
+                  const status = key === "tools" ? row.data.tool_probe?.status : row.data.tool_probe?.[key];
+                  const text =
+                    status === "supported"
+                      ? t("対応")
+                      : status === "unsupported"
+                        ? t("非対応")
+                        : status === "unknown"
+                          ? t("未確認")
+                          : t("未実施");
+                  return `${label}: ${text}`;
+                })
+                .join("・")}
               {row.data.tool_probe?.checked_at
                 ? "（" + new Date(row.data.tool_probe.checked_at).toLocaleString() + "）"
                 : ""}
             </small>
             <Button variant="outline" onClick={() => verifyTools(row)}>
               <RefreshCw size={14} />
-              {t("Tool Callingを再確認")}
+              {t("対応機能を再確認")}
             </Button>
           </div>
         </div>

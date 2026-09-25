@@ -6,7 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   BookOpen,
-  Brain,
   LogOut,
   MessageSquare,
   PanelLeft,
@@ -231,10 +230,6 @@ export function App() {
           <NavLink to="/agents" onClick={() => setSidebar(false)} aria-label={t(ja.agents)} data-tooltip={t(ja.agents)}>
             <Bot size={18} />
             {t(ja.agents)}
-          </NavLink>
-          <NavLink to="/memory" onClick={() => setSidebar(false)} aria-label={t(ja.memory)} data-tooltip={t(ja.memory)}>
-            <Brain size={18} />
-            {t(ja.memory)}
           </NavLink>
           <NavLink to="/projects" onClick={() => setSidebar(false)} aria-label={t("プロジェクト")} data-tooltip={t("プロジェクト")}><Folder size={18} />{t("プロジェクト")}</NavLink>
           <NavLink to="/skills" onClick={() => setSidebar(false)} aria-label={t(ja.skills)} data-tooltip={t(ja.skills)}>

@@ -759,8 +759,6 @@ svg {
   font-size: 14px;
   line-height: 1.8;
   overflow-wrap: anywhere;
-  /* Preserve ordinary newlines in chat messages as visible line breaks. */
-  white-space: pre-wrap;
 }
 .markdown p {
   margin: 8px 0;
@@ -2654,89 +2652,173 @@ body {
 .assistant-settings > summary {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 6px 9px;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 11px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--soft);
   color: var(--muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   list-style: none;
   white-space: nowrap;
+}
+.assistant-settings > summary > svg {
+  color: var(--accent);
+}
+.assistant-settings-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .assistant-settings > summary::-webkit-details-marker {
   display: none;
 }
-.assistant-settings[open] > summary {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+.assistant-settings > summary:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
   background: var(--surface);
   color: var(--text);
+}
+.assistant-settings[open] > summary {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 70%, transparent);
 }
 .assistant-settings-panel {
   position: absolute;
   z-index: 25;
-  bottom: calc(100% + 9px);
+  bottom: calc(100% + 10px);
   left: 0;
-  width: min(390px, calc(100vw - 32px));
-  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  width: min(410px, calc(100vw - 24px));
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  animation: motion-popover 0.18s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  transform-origin: bottom left;
+}
+.assistant-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+  background: color-mix(in srgb, var(--soft) 70%, var(--surface));
+}
+.assistant-panel-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.assistant-panel-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.assistant-panel-title b {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.assistant-panel-title small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-sections {
+  padding: 6px 15px 12px;
+}
+.assistant-section + .assistant-section {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.assistant-section-title {
+  margin: 10px 0 2px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 .assistant-setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 8px 2px;
+  gap: 12px;
+  padding: 7px 0;
 }
 .assistant-setting-row > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 650;
 }
 .assistant-setting-row .model-trigger {
   max-width: 230px;
-  padding: 6px 8px;
-  font-size: 11px;
+  padding: 7px 9px;
+  border-color: var(--line);
+  background: var(--surface);
+  font-size: 11.5px;
 }
 .assistant-setting-row .model-menu {
+  right: 0;
   bottom: calc(100% + 6px);
+  left: auto;
   top: auto;
 }
-.assistant-setting-row .agent-select {
-  min-width: 150px;
-  max-width: 230px;
-  padding: 7px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-}
 .mode-row {
-  align-items: flex-start;
-}
-.mode-row > span {
-  padding-top: 7px;
+  align-items: center;
 }
 .mode-row .mode-switch {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 .mode-row .mode-switch button {
+  gap: 5px;
   font-size: 10px;
+}
+.assistant-toggle-row {
+  align-items: flex-start;
+}
+.assistant-toggle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.assistant-toggle-label > span {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+.assistant-toggle-label small {
+  max-width: 250px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 .assistant-permissions {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  padding: 9px 2px 2px;
-  border-top: 1px solid var(--line);
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 10.5px;
   line-height: 1.5;
 }
 .assistant-permissions svg {
@@ -2744,17 +2826,156 @@ body {
   color: var(--accent);
 }
 .assistant-settings-panel .mode-status {
-  margin: 6px 2px 0;
-  font-size: 10px;
+  margin: 10px 1px 0;
+  font-size: 10.5px;
 }
 .assistant-settings-panel .mode-status span {
   margin-top: 3px;
 }
+
+/* Reusable custom select menu (matches the model picker tone). */
+.select-menu {
+  position: relative;
+  min-width: 0;
+}
+.select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 230px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.select-trigger:hover,
+.select-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--soft);
+}
+.select-trigger > svg:first-child {
+  flex: none;
+  color: var(--accent);
+}
+.select-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-trigger > svg:last-child {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+}
+.select-trigger:disabled {
+  opacity: 0.55;
+}
+.select-menu-pop {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  bottom: calc(100% + 6px);
+  width: min(260px, calc(100vw - 40px));
+  max-height: 262px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: motion-popover 0.16s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  transform-origin: bottom right;
+}
+.select-menu-pop > button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.select-menu-pop > button:hover,
+.select-menu-pop > button.active {
+  background: var(--hover);
+}
+.select-option-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.select-option-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.select-option-text b {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-option-text small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-menu-pop > button > svg:last-child {
+  flex: none;
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* Reusable toggle switch. */
+.toggle {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+}
+.toggle.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px #0003;
+  transition: transform 0.16s ease;
+}
+.toggle.on .toggle-knob {
+  transform: translateX(16px);
+}
+.toggle:disabled {
+  opacity: 0.5;
+}
+
 @media (max-width: 760px) {
   .assistant-settings > summary {
     max-width: calc(100vw - 122px);
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .assistant-settings-panel {
     position: fixed;
@@ -2762,6 +2983,7 @@ body {
     bottom: 72px;
     left: 12px;
     width: auto;
+    transform-origin: bottom center;
   }
   .assistant-setting-row .model-trigger {
     max-width: min(210px, 58vw);
@@ -2779,6 +3001,9 @@ body {
   }
   .mode-row .mode-switch button {
     padding: 6px;
+  }
+  .select-trigger {
+    max-width: min(210px, 56vw);
   }
 }
 
@@ -4169,6 +4394,9 @@ body {
 .button,
 .icon,
 .model-trigger,
+.select-trigger,
+.toggle,
+.assistant-settings > summary,
 .toolbar-action,
 .send,
 .theme-toggle button,
