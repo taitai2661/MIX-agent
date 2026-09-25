@@ -3514,6 +3514,259 @@ body {
   cursor: wait;
   opacity: 0.65;
 }
+.notice-soft {
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.notice-soft + .tool-agent-panel {
+  margin-top: -4px;
+}
+.permission-bulk {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.permission-bulk-label {
+  font-size: 11px;
+  font-weight: 700;
+}
+.permission-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.permission-bulk-actions button {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.permission-bulk-actions button:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+.permission-bulk-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.permission-bulk-actions .bulk-allow {
+  color: var(--accent);
+}
+.permission-bulk-actions .bulk-ask {
+  color: #a36a00;
+}
+.permission-bulk-actions .bulk-deny {
+  color: var(--danger);
+}
+.permission-bulk-hint {
+  width: 100%;
+  color: var(--muted);
+  font-size: 10px;
+}
+.tool-filters {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.tool-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--soft);
+  color: var(--muted);
+}
+.tool-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.tool-search input::placeholder {
+  color: var(--muted);
+}
+.tool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.tool-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.tool-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tool-chip span {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+  font-size: 10px;
+}
+.tool-groups {
+  display: grid;
+  gap: 12px;
+}
+.tool-group {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.tool-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+.tool-group summary::-webkit-details-marker {
+  display: none;
+}
+.tool-group summary::before {
+  content: "▾";
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+.tool-group:not([open]) summary::before {
+  transform: rotate(-90deg);
+}
+.tool-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tool-group-title svg {
+  flex: none;
+  color: var(--accent);
+}
+.tool-group-title b {
+  font-size: 13px;
+}
+.tool-group-title small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.tool-group-counts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.tool-group-counts .allow {
+  color: var(--accent);
+}
+.tool-group-counts .ask {
+  color: #a36a00;
+}
+.tool-group-counts .deny {
+  color: var(--danger);
+}
+.tool-group-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+.tool-card {
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+.tool-card-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.tool-card-note {
+  min-height: 14px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.permission-segment {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+.permission-segment button {
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.permission-segment button:hover:not(:disabled) {
+  background: var(--surface);
+}
+.permission-segment button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.permission-segment button.allow.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.permission-segment button.ask.active {
+  background: color-mix(in srgb, #a36a00 14%, transparent);
+  color: #a36a00;
+}
+.permission-segment button.deny.active {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
 @media (max-width: 760px) {
   .tool-agent-panel {
     align-items: stretch;
@@ -3545,6 +3798,35 @@ body {
   }
   .tool-card-control small {
     min-height: 0;
+  }
+  .permission-bulk {
+    align-items: flex-start;
+  }
+  .permission-bulk-actions {
+    width: 100%;
+  }
+  .permission-bulk-actions button {
+    flex: 1;
+  }
+  .tool-filters {
+    padding: 14px;
+  }
+  .tool-group summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 13px 16px;
+  }
+  .tool-group-counts {
+    margin-left: 19px;
+    gap: 12px;
+  }
+  .tool-group-body {
+    padding: 0 16px 14px;
+  }
+  .permission-segment button {
+    font-size: 9px;
+    padding: 7px 3px;
   }
 }
 
@@ -3626,6 +3908,9 @@ body {
 .tool-card,
 .tool-agent-panel,
 .permission-overview,
+.permission-bulk,
+.tool-filters,
+.tool-group,
 .artifact-card {
   animation: motion-enter 0.3s cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }

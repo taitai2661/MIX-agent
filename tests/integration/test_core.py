@@ -384,6 +384,27 @@ def test_web_search_is_allowed_by_default_but_explicit_rules_win(signed):
         assert permission(db, run, tool, arguments) == "ask"
 
 
+def test_builtin_tools_default_to_allow_while_mcp_keeps_ask(signed):
+    run_id, tool = make_run(tool_name="write_file", mode="agent")
+    mcp_tool = {
+        "id": "mcp_x", "model_name": "mcp_x", "description": "MCP tool",
+        "source": "mcp", "source_ref": "key", "executor_ref": "mcp",
+        "default_permission": "ask", "risk": "external",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "allowed_modes": ["chat", "thinking", "agent"],
+    }
+    listed = {row["id"]: row for row in signed.get("/api/v1/tools").json()}
+    assert listed["write_file"]["default_permission"] == "allow"
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert tool["default_permission"] == "ask"
+        assert permission(db, run, tool, {"path": "x.txt", "content": "x"}) == "allow"
+        run.data["snapshot"]["tool_ids"] = [*run.data["snapshot"]["tool_ids"], "mcp_x"]
+        run.data["snapshot"]["tools"] = [*run.data["snapshot"]["tools"], mcp_tool]
+        db.commit()
+        assert permission(db, run, mcp_tool, {}) == "ask"
+
+
 def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(signed):
     run_id, tool = make_run(tool_name="run_terminal", mode="chat")
     with SessionLocal() as db:

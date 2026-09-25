@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from sqlalchemy import select
 
+from mix_agent import config
 from mix_agent.db.models import Feedback, Model
 from mix_agent.providers.model_roles import is_auto_chat_eligible
 from mix_agent.reliability import _events, context_failure_ceiling, now, reliability, speed, usage_scope
@@ -19,9 +20,9 @@ def effective_capabilities(data):
     caps = dict(data.get("capabilities", {}))
     caps.update(data.get("overrides", {}))
     if caps.get("tools") is None:
-        caps["tools"] = {"supported": True, "unsupported": False}.get(
-            data.get("tool_probe", {}).get("status")
-        )
+        probe = data.get("tool_probe", {})
+        status = probe.get("status") if probe.get("probe_version") == config.TOOL_PROBE_VERSION else None
+        caps["tools"] = {"supported": True, "unsupported": False}.get(status)
     return caps
 
 

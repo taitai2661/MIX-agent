@@ -283,7 +283,7 @@ export function Chat() {
       const rule = permissionRules.data
         ?.filter((r) => r.data.agent_id === agent && r.data.tool_id === tool.id)
         .at(-1);
-      const value = rule?.data.permission || tool.default_permission || "ask";
+      const value = rule?.data.permission || tool.default_permission || "allow";
       counts[value] = (counts[value] || 0) + 1;
       return counts;
     },

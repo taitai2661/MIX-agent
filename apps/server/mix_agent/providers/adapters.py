@@ -206,26 +206,26 @@ class Adapter:
             yield event
 
     async def probe_tools(self, model):
-        """Verify tool-call wire support without exposing or running a real tool."""
+        """Verify tool-call wire support without exposing or running a real tool.
+
+        Most providers honor a forced tool_choice, but a few compatible endpoints
+        (for example NVIDIA NIM) ignore the forced choice and answer with text or
+        an empty stop turn.  Retry once with an unforced tool choice so a genuinely
+        tool-capable model is not misclassified as unsupported.
+        """
         probe = {
             "model_name": "mix_tool_probe",
             "description": "Internal compatibility check. Call this function now.",
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         }
-        settings = {
-            "max_output_tokens": 64,
-            "_tool_probe": True,
-            "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False},
-        }
-        async for event in self.stream(
-            model,
-            [{"role": "user", "content": "Call mix_tool_probe now. Do not answer with text."}],
-            [probe],
-            "chat",
-            settings,
-        ):
-            if event["kind"] == "response":
-                return any(call.get("name") == "mix_tool_probe" for call in event.get("tool_calls", []))
+        message = [{"role": "user", "content": "Call mix_tool_probe now. Do not answer with text."}]
+        base = {"max_output_tokens": 64, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}
+        for forced in (True, False):
+            async for event in self.stream(model, message, [probe], "chat", {**base, "_tool_probe": forced}):
+                if event["kind"] == "response":
+                    if any(call.get("name") == "mix_tool_probe" for call in event.get("tool_calls", [])):
+                        return True
+                    break
         return False
 
     async def _openai(self, model, messages, tools, mode, settings):

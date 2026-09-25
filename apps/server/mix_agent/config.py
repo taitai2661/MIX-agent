@@ -27,6 +27,9 @@ BROWSER_PROVISIONER_URL = os.getenv("BROWSER_PROVISIONER_URL", "http://browser-p
 PUBLIC_ORIGIN = os.getenv("PUBLIC_ORIGIN", "http://localhost:8080").rstrip("/")
 COOKIE_SECURE = PUBLIC_ORIGIN.startswith("https://")
 MAX_UPLOAD = 20 * 1024 * 1024
+# Bump when the tool-call probe semantics change so previously stored
+# "unsupported"/"unknown" verdicts are not treated as authoritative.
+TOOL_PROBE_VERSION = 2
 
 
 def allowed_origin(origin: str, *, scheme: str, host: str, forwarded: bool = False) -> bool:

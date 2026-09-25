@@ -417,7 +417,10 @@ def tool_capability(model_data):
     detected = model_data.get("capabilities", {}).get("tools")
     if detected is not None:
         return detected
-    status = model_data.get("tool_probe", {}).get("status")
+    probe = model_data.get("tool_probe", {})
+    if probe.get("probe_version") != config.TOOL_PROBE_VERSION:
+        return None
+    status = probe.get("status")
     return {"supported": True, "unsupported": False}.get(status)
 
 
@@ -444,13 +447,19 @@ async def verify_tool_capability(db, owner, model, provider, source):
         )
         status = "supported" if supported else "unsupported"
         failure = "no_required_call" if not supported else None
-    except Exception as exc:  # noqa: BLE001 - provider SDK failures are intentionally classified
+    except Exception as exc:  # noqa: BLE001 - provider SDK errors are intentionally classified
         # Provider SDK errors can contain headers or remote bodies; keep only
         # a stable category for the settings UI and future retry decisions.
         status, failure = "unknown", type(exc).__name__
     model.data = {
         **model.data,
-        "tool_probe": {"status": status, "checked_at": now().isoformat(), "failure": failure, "source": source},
+        "tool_probe": {
+            "status": status,
+            "checked_at": now().isoformat(),
+            "failure": failure,
+            "source": source,
+            "probe_version": config.TOOL_PROBE_VERSION,
+        },
     }
     return status
 
@@ -1084,7 +1093,10 @@ async def enable_browser_tools(ctx=Depends(context)):
 @router.get("/tools", response_model=list[ToolView])
 async def tools_list(ctx=Depends(context)):
     db, s = ctx
-    return list(registry(db, s.owner_id).values())
+    return [
+        {**tool, "default_permission": "allow"} if tool.get("source") == "builtin" else tool
+        for tool in registry(db, s.owner_id).values()
+    ]
 
 
 @router.post("/permission-rules")
@@ -1873,11 +1885,16 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     tools_capability = tool_capability(model.data)
+    # A stored probe from an older probe_version is unreliable (e.g. recorded
+    # when the check could not force a tool call from compatible endpoints).
+    # Re-run it once so such models are not permanently stripped of tools.
+    stored_probe = model.data.get("tool_probe", {})
+    probe_stale = bool(stored_probe) and stored_probe.get("probe_version") != config.TOOL_PROBE_VERSION
     if (
         tool_ids
         and tools_capability is None
-        and "tool_probe" not in model.data
-        and mode == "thinking"
+        and (mode == "thinking" or (mode == "chat" and probe_stale))
+        and (not stored_probe or probe_stale)
     ):
         tools_capability = await verify_tool_capability(db, s.owner_id, model, provider, "automatic")
         tools_capability = {"supported": True, "unsupported": False}.get(tools_capability)

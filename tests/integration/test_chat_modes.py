@@ -639,6 +639,10 @@ async def test_running_stream_can_be_cancelled(signed, monkeypatch, mode):
     finally:
         task.cancel()
         await task
-    assert cancels == [("execution", "/cancel"), ("mcp", "/cancel")]
+    assert cancels == [
+        ("execution", "/cancel"),
+        ("mcp", "/cancel"),
+        ("browser", "/browser-close"),
+    ]
     with SessionLocal() as db:
         assert db.get(Run, run_id).status == "cancelled"
