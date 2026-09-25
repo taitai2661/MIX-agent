@@ -1,14 +1,16 @@
 import {
+  Activity,
+  BarChart3,
+  Brain,
   Database,
   Globe,
+  Network,
   Server,
   Settings2,
   ShieldCheck,
   Sparkles,
-  BarChart3,
-  Brain,
-  Activity,
 } from "lucide-react";
+import { Fragment } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
 import { MCP } from "@/features/mcp/MCP";
@@ -23,8 +25,47 @@ import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSett
 import { SettingsOverview } from "@/features/settings/Overview";
 import { Statistics } from "@/features/settings/Statistics";
 import { Diagnostics } from "@/features/settings/Diagnostics";
+import { NetworkSettings } from "@/features/settings/Network";
 import { Memories } from "@/features/memory/Memories";
 import { t, useLanguage } from "@/app/i18n";
+
+const groups = [
+  { label: null, items: [["", "概要", Settings2]] },
+  {
+    label: "AI",
+    items: [
+      ["providers", "AI Providers", Server],
+      ["models", "モデル", Sparkles],
+      ["auto", "Auto", Sparkles],
+      ["memory", "Associative Memory", Brain],
+    ],
+  },
+  {
+    label: "ツールと連携",
+    items: [
+      ["tools", "Tools・権限", ShieldCheck],
+      ["mcp", "MCP", Globe],
+      ["browser", "Browser", Globe],
+      ["web-search", "Web検索", Globe],
+    ],
+  },
+  { label: "基本設定", items: [["general", "一般", Settings2]] },
+  {
+    label: "セキュリティとデータ",
+    items: [
+      ["network", "通信とネットワーク", Network],
+      ["account", "アカウント・安全性", ShieldCheck],
+      ["backups", "バックアップ", Database],
+    ],
+  },
+  {
+    label: "運用",
+    items: [
+      ["statistics", "統計", BarChart3],
+      ["diagnostics", "障害診断", Activity],
+    ],
+  },
+] as const;
 
 export function Settings({
   user,
@@ -40,37 +81,21 @@ export function Settings({
     <div className="settings-layout">
       <nav className="settings-nav">
         <div className="settings-nav-heading"><h2>{t("設定")}</h2><p>{t("ワークスペースを管理")}</p></div>
-        <NavLink className="settings-home" to="/settings" end>
-          <Settings2 size={17} /> {t("概要")}
-        </NavLink>
-        <p className="settings-nav-label">{t("AI の設定")}</p>
-        {[
-          ["providers", "AI Providers", Server],
-          ["models", "モデル", Sparkles],
-          ["auto", "Auto", Sparkles],
-          ["memory", "Memory", Brain],
-        ].map(([path, label, Icon]: any) => (
-          <NavLink key={path} to={"/settings/" + path}>
-            <Icon size={17} />
-            {t(label)}
-          </NavLink>
-        ))}
-        <p className="settings-nav-label">{t("接続と安全性")}</p>
-        <NavLink to="/settings/statistics"><BarChart3 size={17} /> {t("統計")}</NavLink>
-        <NavLink to="/settings/diagnostics"><Activity size={17} /> {t("障害診断")}</NavLink>
-        {[
-          ["browser", "Browser", Globe],
-          ["web-search", "Web検索", Globe],
-          ["tools", "Tools・権限", ShieldCheck],
-          ["mcp", "MCP", Globe],
-          ["general", "一般・通信", Settings2],
-          ["account", "アカウント・安全性", ShieldCheck],
-          ["backups", "バックアップ", Database],
-        ].map(([path, label, Icon]: any) => (
-          <NavLink key={path} to={"/settings/" + path}>
-            <Icon size={17} />
-            {t(label)}
-          </NavLink>
+        {groups.map((group) => (
+          <Fragment key={group.label ?? "home"}>
+            {group.label && <p className="settings-nav-label">{t(group.label)}</p>}
+            {group.items.map(([path, label, Icon]) => (
+              <NavLink
+                key={path || "overview"}
+                to={"/settings" + (path ? "/" + path : "")}
+                end={!path}
+                className={path ? undefined : "settings-home"}
+              >
+                <Icon size={17} />
+                {t(label)}
+              </NavLink>
+            ))}
+          </Fragment>
         ))}
       </nav>
       <main className="settings-content">
@@ -83,6 +108,7 @@ export function Settings({
           <Route path="tools" element={<Tools />} />
           <Route path="browser" element={<BrowserSettings />} />
           <Route path="web-search" element={<WebSearchSettings />} />
+          <Route path="network" element={<NetworkSettings />} />
           <Route path="mcp" element={<MCP />} />
           <Route path="general" element={<General />} />
           <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />

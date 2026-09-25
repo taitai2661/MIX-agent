@@ -9,6 +9,7 @@ import { MCP } from "@/features/mcp/MCP";
 import { Models } from "@/features/providers/Models";
 import { Providers } from "@/features/providers/Providers";
 import { General } from "@/features/settings/General";
+import { NetworkSettings } from "@/features/settings/Network";
 import { Tools } from "@/features/tools/Tools";
 import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 
@@ -45,7 +46,7 @@ export function Setup() {
         <p className="muted">{t("数百MBのダウンロードが必要です。後から設定画面で導入・再試行できます。")}</p>
       </div>
     </section>,
-    <Providers />, <Models />, <General />, <Tools />, <MCP />,
+    <Providers />, <Models />, <><General /><NetworkSettings /></>, <Tools />, <MCP />,
   ];
 
   async function complete() {

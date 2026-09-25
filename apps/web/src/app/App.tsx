@@ -6,13 +6,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   BookOpen,
+  Brain,
   LogOut,
   MessageSquare,
   PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings2,
   Clock3,
-  ChevronsLeft,
   Archive,
   Folder,
   Trash2,
@@ -38,6 +40,20 @@ import { Setup } from "@/features/setup/Setup";
 import { Schedules } from "@/features/schedules/Schedules";
 import { Projects } from "@/features/projects/Projects";
 
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const update = () => setMatches(list.matches);
+    update();
+    list.addEventListener("change", update);
+    return () => list.removeEventListener("change", update);
+  }, [query]);
+  return matches;
+}
+
 export function App() {
   useLanguage();
   const sidebarMinimum = 220,
@@ -48,12 +64,13 @@ export function App() {
     [needsAdmin, setNeedsAdmin] = useState(false),
     [error, setError] = useState<unknown>(null),
     [sidebar, setSidebar] = useState(false),
-    [collapsed, setCollapsed] = useState(false),
+    [collapsed, setCollapsed] = useState(() => localStorage.getItem("mix-agent-sidebar-collapsed") === "1"),
     [resizingSidebar, setResizingSidebar] = useState(false),
     [sidebarWidth, setSidebarWidth] = useState(() => {
       const stored = Number(localStorage.getItem("mix-agent-sidebar-width"));
       return Number.isFinite(stored) && stored >= sidebarMinimum && stored <= sidebarMaximum ? stored : sidebarDefault;
     });
+  const isMobile = useMediaQuery("(max-width: 760px)");
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [openConversationMenu, setOpenConversationMenu] = useState<string | null>(null);
@@ -67,6 +84,9 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("mix-agent-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
+  useEffect(() => {
+    localStorage.setItem("mix-agent-sidebar-collapsed", collapsed ? "1" : "0");
+  }, [collapsed]);
   useEffect(() => {
     if (!openConversationMenu) return;
     const close = (event: MouseEvent) => {
@@ -185,33 +205,41 @@ export function App() {
       <aside id="main-navigation" className="sidebar" aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
           <Logo />
-          <div className="sidebar-controls"><ThemeController /><button className="icon mobile" onClick={() => setSidebar(false)} aria-label={t("閉じる")}><X size={18} /></button></div>
+          <div className="sidebar-controls">
+            <ThemeController />
+            <button className="icon sidebar-collapse-toggle" onClick={() => setCollapsed(true)} aria-label={t("サイドバーを折りたたむ")} title={t("サイドバーを折りたたむ")}><PanelLeftClose size={18} /></button>
+            <button className="icon mobile" onClick={() => setSidebar(false)} aria-label={t("閉じる")}><X size={18} /></button>
+          </div>
         </div>
-        <nav className="primary-nav">
+        <nav className="primary-nav" aria-label={t("ワークスペース")}>
+          <div className="sidebar-label nav-label">{t("ワークスペース")}</div>
           <div className="chat-nav-item">
-            <NavLink to="/" end onClick={() => setSidebar(false)}>
+            <NavLink to="/" end onClick={() => setSidebar(false)} aria-label={t(ja.chat)} data-tooltip={t(ja.chat)}>
               <MessageSquare size={18} />
               {t(ja.chat)}
             </NavLink>
-            <button className="chat-nav-new" onClick={newChat} aria-label={t(ja.newChat)} title={t(ja.newChat)}>
+            <button className="chat-nav-new" onClick={newChat} aria-label={t(ja.newChat)} data-tooltip={t(ja.newChat)}>
               <Plus size={17} />
             </button>
           </div>
-          <NavLink to="/agents" onClick={() => setSidebar(false)}>
+          <NavLink to="/agents" onClick={() => setSidebar(false)} aria-label={t(ja.agents)} data-tooltip={t(ja.agents)}>
             <Bot size={18} />
             {t(ja.agents)}
           </NavLink>
-          <NavLink to="/projects" onClick={() => setSidebar(false)}><Folder size={18} />{t("プロジェクト")}</NavLink>
-          <NavLink to="/skills" onClick={() => setSidebar(false)}>
+          <NavLink to="/memory" onClick={() => setSidebar(false)} aria-label={t(ja.memory)} data-tooltip={t(ja.memory)}>
+            <Brain size={18} />
+            {t(ja.memory)}
+          </NavLink>
+          <NavLink to="/projects" onClick={() => setSidebar(false)} aria-label={t("プロジェクト")} data-tooltip={t("プロジェクト")}><Folder size={18} />{t("プロジェクト")}</NavLink>
+          <NavLink to="/skills" onClick={() => setSidebar(false)} aria-label={t(ja.skills)} data-tooltip={t(ja.skills)}>
             <BookOpen size={18} />
             {t(ja.skills)}
           </NavLink>
-          <NavLink to="/schedules" onClick={() => setSidebar(false)}><Clock3 size={18} />{t("定期実行")}</NavLink>
+          <NavLink to="/schedules" onClick={() => setSidebar(false)} aria-label={t("定期実行")} data-tooltip={t("定期実行")}><Clock3 size={18} />{t("定期実行")}</NavLink>
         </nav>
-        <div className="sidebar-label">{t("ピン留め")}</div>
+        {conversations.data?.some((c) => c.data.pinned) && <div className="sidebar-label">{t("ピン留め")}</div>}
         <div className="history">
           {conversations.data?.filter((c) => c.data.pinned).map(conversationItem)}
-          {!conversations.data?.some((c) => c.data.pinned) && <small>{t("ピン留めした会話が表示されます")}</small>}
           <div className="sidebar-label compact"><Folder size={12} />{t("最近のチャット")}</div>
           {conversations.data?.filter((c) => !c.data.pinned).map(conversationItem)}
           <NavLink className="conversation-manage-link" to="/history" onClick={() => setSidebar(false)}><Archive size={15} />{t("会話を管理")}</NavLink>
@@ -222,18 +250,19 @@ export function App() {
             <span />
             SELF-HOSTED<span className="version">v0.1</span>
           </div>
-          <NavLink to="/settings/providers" onClick={() => setSidebar(false)}>
+          <NavLink to="/settings/providers" onClick={() => setSidebar(false)} aria-label={t(ja.settings)} data-tooltip={t(ja.settings)}>
             <Settings2 size={18} />
             {t(ja.settings)}
           </NavLink>
           <div className="profile">
-            <span className="avatar">{user.username[0].toUpperCase()}</span>
+            <span className="avatar" data-tooltip={user.username}>{user.username[0].toUpperCase()}</span>
             <div>
               <b>{user.username}</b>
             </div>
             <button
               className="icon"
               aria-label={t(ja.logout)}
+              data-tooltip={t(ja.logout)}
               onClick={async () => {
                 try {
                   await api("/auth/logout", "POST");
@@ -257,12 +286,12 @@ export function App() {
         <header className="topbar">
           <button
             className="icon"
-            aria-label={t("メニュー")}
-            aria-expanded={window.matchMedia("(max-width: 760px)").matches ? sidebar : undefined}
+            aria-label={isMobile ? (sidebar ? t("メニューを閉じる") : t("メニュー")) : collapsed ? t("サイドバーを展開する") : t("サイドバーを折りたたむ")}
+            aria-expanded={isMobile ? sidebar : undefined}
             aria-controls="main-navigation"
-            onClick={() => window.matchMedia("(max-width: 760px)").matches ? setSidebar(!sidebar) : setCollapsed(!collapsed)}
+            onClick={() => (isMobile ? setSidebar(!sidebar) : setCollapsed(!collapsed))}
           >
-            {sidebar ? <X size={19} /> : collapsed ? <PanelLeft size={19} /> : <ChevronsLeft size={19} />}
+            {isMobile ? (sidebar ? <X size={19} /> : <PanelLeft size={19} />) : collapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
           </button>
           <span className="topbar-title"><b>MIX agent</b></span>
         </header>

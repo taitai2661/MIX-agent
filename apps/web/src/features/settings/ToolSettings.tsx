@@ -4,6 +4,7 @@ import { api } from "@/app/api";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title } from "@/components/shared";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 function useSettings() {
   return useQuery({ queryKey: ["/settings"], queryFn: () => api("/settings"), refetchInterval: (query) => query.state.data?.data.browser_install_status === "installing" ? 3000 : false });
@@ -21,7 +22,7 @@ export function BrowserSettings() {
   const stage = data.browser_install_stage;
   const install = async () => { setStartingInstall(true); setError(null); try { await api("/browser/enable", "POST"); await api("/browser/install", "POST"); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } finally { setStartingInstall(false); } };
   const updateBrowser = async () => { setStartingInstall(true); setError(null); try { await api("/browser/update", "POST"); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } finally { setStartingInstall(false); } };
-  const payload = (form: FormData) => ({ browser_enabled: form.get("enabled") === "on", browser_timeout_ms: Number(form.get("timeout")), browser_locale: String(form.get("locale") || "ja-JP").trim(), browser_user_agent: String(form.get("userAgent") || "").trim(), browser_viewport_width: Number(form.get("viewportWidth")), browser_viewport_height: Number(form.get("viewportHeight")), browser_block_images: form.get("blockImages") === "on", allowed_domains: String(form.get("domains")).split("\n").map((x) => x.trim()).filter(Boolean) });
+  const payload = (form: FormData) => ({ browser_enabled: form.get("enabled") === "on", browser_timeout_ms: Number(form.get("timeout")), browser_locale: String(form.get("locale") || "ja-JP").trim(), browser_user_agent: String(form.get("userAgent") || "").trim(), browser_viewport_width: Number(form.get("viewportWidth")), browser_viewport_height: Number(form.get("viewportHeight")), browser_block_images: form.get("blockImages") === "on" });
   return <><Title title="Browser" sub={t("Docker内のPlaywright ChromiumでWebページを操作します。")} />
     <ErrorBox error={error || query.error} />
     <form className="card" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api("/settings", "PUT", payload(form)); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (e) { setError(e); } }}>
@@ -33,7 +34,7 @@ export function BrowserSettings() {
       <Field label={t("画面サイズ")} hint={t("Webサイトへ渡す仮想ブラウザの表示領域です。")}><div className="inline-fields"><input name="viewportWidth" type="number" min="320" max="2560" defaultValue={data.browser_viewport_width ?? 1280} /><span>×</span><input name="viewportHeight" type="number" min="320" max="2560" defaultValue={data.browser_viewport_height ?? 720} /></div></Field>
       <Field label={t("User-Agent（任意）")} hint={t("空欄ならChromium標準のUser-Agentを使います。")}><input name="userAgent" defaultValue={data.browser_user_agent || ""} placeholder={t("標準を使用")} /></Field>
       <Field label={t("画像を読み込まない")} hint={t("帯域を抑え、テキスト中心の確認を速くします。")}><input name="blockImages" type="checkbox" defaultChecked={data.browser_block_images === true} /></Field>
-      <Field label={t("許可ドメイン（1行1ドメイン）")} hint={t("未設定なら公開ドメインへの通信を許可します。入力すると、BrowserとRunnerは指定ドメインだけに接続します。")}><textarea name="domains" rows={8} defaultValue={data.allowed_domains?.join("\n")} placeholder="example.com" /></Field>
+      <p className="muted">{t("通信許可先は")}<Link to="/settings/network">{t("通信とネットワーク")}</Link>{t("で設定します。未設定なら公開ドメインへの通信を許可します。")}</p>
       <p className="muted">{t("ダウンロード、Service Worker、HTTP(S)以外のURLは無効です。Cookieやページ状態はRunnerの再起動・設定変更時に破棄され、バックアップにも含まれません。")}</p>
       <Button>{t("保存")}</Button>
     </form></>;

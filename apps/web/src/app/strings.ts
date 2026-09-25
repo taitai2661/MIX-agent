@@ -1,7 +1,7 @@
 export const ja = {
   chat: "チャット",
   agents: "アシスタント設定",
-  memory: "Memory",
+  memory: "Associative Memory",
   skills: "Skills",
   settings: "設定",
   newChat: "新しいチャット",

@@ -251,11 +251,30 @@ def test_direct_private_origin_allows_setup_and_followup_settings(client):
 @pytest.mark.parametrize(
     "headers",
     [
+        {"host": "localhost:8080", "origin": "http://localhost:8080"},
+        {"host": "localhost:5173", "origin": "http://localhost:5173"},
+        {"host": "127.0.0.1:8080", "origin": "http://localhost:8080"},
+    ],
+)
+def test_hostname_origin_matching_request_destination_is_allowed(client, headers):
+    response = client.post(
+        "/api/v1/setup/admin",
+        json={"username": "lan-admin", "password": "lan-password-12345"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
         {"host": "192.168.1.24:8080", "origin": "http://192.168.1.25:8080"},
         {"host": "192.168.1.24:8080", "origin": "http://192.168.1.24:8081"},
         {"host": "192.168.1.24:8080", "origin": "https://192.168.1.24:8080"},
         {"host": "8.8.8.8:8080", "origin": "http://8.8.8.8:8080"},
         {"host": "192.168.1.24:8080", "origin": "http://192.168.1.24:8080", "x-forwarded-host": "example.test"},
+        {"host": "localhost:8080", "origin": "http://localhost:5173"},
+        {"host": "localhost:8080", "origin": "http://127.0.0.1:8081"},
     ],
 )
 def test_direct_origin_rejects_mismatched_public_or_forwarded_hosts(client, headers):

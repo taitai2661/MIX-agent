@@ -302,4 +302,9 @@ def permission(db, run, tool, args):
     ]
     if any(x["permission"] == "deny" for x in matching):
         return "deny"
-    return matching[-1]["permission"] if matching else tool["default_permission"]
+    if matching:
+        return matching[-1]["permission"]
+    # Built-in tools run with confirmation-free defaults; their definition still
+    # records an "ask" default so older permission rule fingerprints stay valid.
+    # MCP and custom tools keep their explicit (ask) default until the owner sets a rule.
+    return "allow" if tool.get("source") == "builtin" else tool.get("default_permission", "ask")

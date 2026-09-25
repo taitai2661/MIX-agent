@@ -365,8 +365,10 @@ async def execute(body: Execute):
                     await p.goto(args["url"], wait_until="domcontentloaded")
                 elif name == "browser_click":
                     await p.locator(args["selector"]).first.click()
+                    return await browser_frame(p)
                 elif name == "browser_type":
                     await p.locator(args["selector"]).first.fill(args["text"])
+                    return await browser_frame(p)
                 elif name == "browser_extract":
                     limit = max(1, min(100, int(args.get("limit", 20) or 20)))
                     items = await p.locator(args["selector"]).evaluate_all(
@@ -385,7 +387,10 @@ async def execute(body: Execute):
                     return {**await browser_frame(p), "ready": True}
                 elif name == "browser_screenshot":
                     shot = await browser_frame(p)
-                    return {**shot, **({"image_base64": shot["frame_base64"]} if "frame_base64" in shot else {"error": "Screen capture unavailable"})}
+                    # Reuse the single capture for both the UI frame and the model-visible image.
+                    if "frame_base64" in shot:
+                        return {**shot, "image_base64": shot.pop("frame_base64")}
+                    return {**shot, "error": "Screen capture unavailable"}
                 elif name != "browser_read":
                     raise ValueError("Unknown browser tool")
                 return {

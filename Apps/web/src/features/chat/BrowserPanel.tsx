@@ -40,9 +40,13 @@ export function BrowserPanel({ runId, run, onChange }: { runId: string; run?: Ru
   }
   function click(event: MouseEvent<HTMLImageElement>) {
     if (!manual || working || !atLatest) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * event.currentTarget.naturalWidth / rect.width;
-    const y = (event.clientY - rect.top) * event.currentTarget.naturalHeight / rect.height;
+    const target = event.currentTarget;
+    const rect = target.getBoundingClientRect();
+    if (!target.naturalWidth || !target.naturalHeight || !rect.width || !rect.height) return;
+    // Map the pointer against the rendered image box, not the scroll container,
+    // so clicks stay correct regardless of the surrounding layout.
+    const x = (event.clientX - rect.left) * target.naturalWidth / rect.width;
+    const y = (event.clientY - rect.top) * target.naturalHeight / rect.height;
     void action("browser-manual", { action: "click", x, y });
   }
   return <section className="browser-panel" aria-label={t("ブラウザ操作画面")}>

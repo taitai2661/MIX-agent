@@ -15,7 +15,7 @@ export type ToolCallHistory = components["schemas"]["ToolCallHistoryView"];
 
 type JsonRecord = Record<string, unknown>;
 const runStatuses = new Set<RunStatus>([
-  "queued", "running", "waiting_approval", "completed", "failed", "cancelled", "interrupted",
+  "queued", "running", "waiting_approval", "paused", "completed", "failed", "cancelled", "interrupted",
 ]);
 const eventKinds = new Set([
   "text", "reasoning", "model_started", "model_selected", "model_rerouted", "plan",

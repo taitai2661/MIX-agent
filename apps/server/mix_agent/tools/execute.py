@@ -23,6 +23,21 @@ DDGS_TIMELIMIT = {"day": "d", "week": "w", "month": "m", "year": "y"}
 BRAVE_FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
 TAVILY_TIME_RANGE = {"day": "day", "week": "week", "month": "month", "year": "year"}
 
+# Artifact kinds that exist only for model context / internal bookkeeping and
+# must never surface as user-facing downloads (see save_artifact lifecycle docs).
+INTERNAL_ARTIFACT_KINDS = {"context-tool-output", "context-image", "browser-frame"}
+
+
+def is_user_artifact(value):
+    """True when a value looks like an artifact the user should see.
+
+    Context-internal artifacts carry kind in INTERNAL_ARTIFACT_KINDS. Missing
+    or unknown kinds are treated as user-visible so explicit tools keep working.
+    """
+    if not isinstance(value, dict) or not value.get("artifact_id"):
+        return False
+    return value.get("kind") not in INTERNAL_ARTIFACT_KINDS
+
 
 def _sanitize_domains(domains):
     from urllib.parse import urlsplit

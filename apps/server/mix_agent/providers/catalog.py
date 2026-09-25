@@ -81,9 +81,11 @@ PRESETS = (
     preset("azure-ai-foundry", "Azure AI Foundry", "クラウド", "compatible", extra_config_schema=(
         {"key": "deployment_name", "label": "Deployment name", "required": True},
         {"key": "api_version", "label": "API version", "required": False},)),
+    preset("opencode-zen", "OpenCode Zen", "ゲートウェイ", "compatible", "https://opencode.ai/zen/v1"),
+    preset("opencode-go", "OpenCode Go", "ゲートウェイ", "compatible", "https://opencode.ai/zen/go/v1"),
     preset("custom", "カスタム", "カスタム", "compatible"),
 )
-assert len(PRESETS) == 50
+assert len(PRESETS) == 52
 BY_ID = {item["id"]: item for item in PRESETS}
 assert all(item["transport_id"] and item["discovery_id"] and item["metadata_resolver_ids"] for item in PRESETS)
 

@@ -2,21 +2,49 @@ import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowRight, BarChart3, Brain, Database, Globe, Server, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, ArrowRight, BarChart3, Brain, Database, Globe, Network, Server, Settings2, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 
-const cards = [
-  ["providers", "AI Providers", "接続済みのAIサービス", Server],
-  ["models", "モデル", "会話で使うモデル", Sparkles],
-  ["memory", "Memory", "記憶の形成・想起・管理", Brain],
-  ["tools", "Tools・権限", "Agentの実行権限", ShieldCheck],
-  ["browser", "Browser", "Webページの操作と許可先", Globe],
-  ["web-search", "Web検索", "検索サービスと結果数", Globe],
-  ["mcp", "MCP", "外部サービスとの接続", Globe],
-  ["account", "アカウント・安全性", "認証とログイン履歴", ShieldCheck],
-  ["backups", "バックアップ", "データを安全に保管", Database],
-  ["statistics", "統計", "モデルの成功率と失敗傾向", BarChart3],
-  ["diagnostics", "障害診断", "サービス状態と最近の失敗", Activity],
+const groups = [
+  {
+    label: "AI",
+    cards: [
+      ["providers", "AI Providers", "接続済みのAIサービス", Server],
+      ["models", "モデル", "会話で使うモデル", Sparkles],
+      ["auto", "Auto", "自動選択の候補と再試行", Sparkles],
+      ["memory", "Associative Memory", "記憶の形成・想起・管理", Brain],
+    ],
+  },
+  {
+    label: "ツールと連携",
+    cards: [
+      ["tools", "Tools・権限", "Agentの実行権限", ShieldCheck],
+      ["mcp", "MCP", "外部サービスとの接続", Globe],
+      ["browser", "Browser", "Webページの操作と許可先", Globe],
+      ["web-search", "Web検索", "検索サービスと結果数", Globe],
+    ],
+  },
+  {
+    label: "基本設定",
+    cards: [
+      ["general", "一般", "表示テーマ・言語・既定モデル", Settings2],
+    ],
+  },
+  {
+    label: "セキュリティとデータ",
+    cards: [
+      ["network", "通信とネットワーク", "Runnerの通信許可先", Network],
+      ["account", "アカウント・安全性", "認証とログイン履歴", ShieldCheck],
+      ["backups", "バックアップ", "データを安全に保管", Database],
+    ],
+  },
+  {
+    label: "運用",
+    cards: [
+      ["statistics", "統計", "モデルの成功率と失敗傾向", BarChart3],
+      ["diagnostics", "障害診断", "サービス状態と最近の失敗", Activity],
+    ],
+  },
 ] as const;
 
 export function SettingsOverview() {
@@ -25,11 +53,18 @@ export function SettingsOverview() {
   const tools = useQuery<any[]>({ queryKey: ["/tools"], queryFn: () => api("/tools") });
   const mcp = useRows("/mcp/connections");
   const settings = useQuery<any>({ queryKey: ["/settings"], queryFn: () => api("/settings") });
+  const domains = settings.data?.data.allowed_domains?.length || 0;
   const counts: Record<string, string> = {
     providers: `${providers.data?.length || 0} 件`,
     models: `${models.data?.length || 0} 件`,
+    auto: `${settings.data?.data.auto_model_ids?.length || 0} 件`,
+    memory: "記憶を管理",
     tools: `${tools.data?.length || 0} 件`,
     mcp: `${mcp.data?.filter((row) => row.data.enabled).length || 0} 件接続中`,
+    browser: "操作と許可先",
+    "web-search": "検索の設定",
+    general: "表示・既定モデル",
+    network: domains ? `${domains} ドメイン` : "制限なし",
     account: "変更・確認",
     backups: "作成・復元",
     statistics: "30日間",
@@ -47,10 +82,13 @@ export function SettingsOverview() {
       <div><span>{t("接続状態")}</span><b>{providers.data?.length ? t("準備完了") : t("Providerを追加")}</b></div>
       <div><span>{t("テーマ")}</span><b>{t("表示設定で変更")}</b></div>
     </section>
-    <div className="settings-overview-grid">
-      {cards.map(([path, title, description, Icon]) => <Link key={path} to={"/settings/" + path} className="settings-overview-card">
-        <span className="settings-card-icon"><Icon size={20} /></span><span className="settings-card-copy"><b>{t(title)}</b><small>{t(description)}</small></span><strong>{counts[path]}</strong><ArrowRight size={17} />
-      </Link>)}
-    </div>
+    {groups.map((group) => <section key={group.label} className="settings-overview-section">
+      <h3 className="settings-overview-label">{t(group.label)}</h3>
+      <div className="settings-overview-grid">
+        {group.cards.map(([path, title, description, Icon]) => <Link key={path} to={"/settings/" + path} className="settings-overview-card">
+          <span className="settings-card-icon"><Icon size={20} /></span><span className="settings-card-copy"><b>{t(title)}</b><small>{t(description)}</small></span><strong>{t(counts[path])}</strong><ArrowRight size={17} />
+        </Link>)}
+      </div>
+    </section>)}
   </div>;
 }

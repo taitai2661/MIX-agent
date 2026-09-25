@@ -50,7 +50,7 @@ from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.runs.state import TERMINAL, can_transition, transition_run
-from mix_agent.tools.execute import execute, runner_request
+from mix_agent.tools.execute import execute, is_user_artifact, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
 
 TASKS = {}
@@ -631,7 +631,7 @@ def complete_tool_call(db, run, call, current, result):
         history=[*run.data["history"], history_entry],
     )
     artifact = result.get("artifact") if isinstance(result, dict) else None
-    if isinstance(artifact, dict) and artifact.get("artifact_id"):
+    if is_user_artifact(artifact):
         existing = run.data.get("artifacts", [])
         if not any(item.get("artifact_id") == artifact["artifact_id"] for item in existing):
             update(run, artifacts=[*existing, artifact])
@@ -639,9 +639,6 @@ def complete_tool_call(db, run, call, current, result):
         refs = list(run.data.get("tool_refs") or [])
         if artifact_info["artifact_id"] not in refs:
             update(run, tool_refs=[*refs, artifact_info["artifact_id"]])
-        existing = run.data.get("artifacts", [])
-        if not any(item.get("artifact_id") == artifact_info["artifact_id"] for item in existing):
-            update(run, artifacts=[*existing, artifact_info])
     event_data = {"id": call.id, "name": call.data["name"], "result": result}
     if summary:
         event_data["activity"] = summary
@@ -1271,7 +1268,7 @@ async def drive(run_id):
                     "role": "assistant",
                     "content": message["content"],
                     "run_id": run.id,
-                    "artifacts": run.data.get("artifacts", []),
+                    "artifacts": [a for a in run.data.get("artifacts", []) if is_user_artifact(a)],
                 }
                 if performance:
                     message_data["performance"] = performance

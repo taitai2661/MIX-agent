@@ -31,6 +31,7 @@ import { ModeStatus, ReasoningSummary } from "./ModeStatus";
 import { ToolHistory, type ToolCallHistory } from "./ToolHistory";
 import { ArtifactCard } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
+import { randomGreeting } from "./greeting";
 import {
   parseRunEvent,
   type Artifact,
@@ -76,6 +77,7 @@ export function Chat() {
     [reasoning, setReasoning] = useState(""),
     [events, setEvents] = useState<RunEvent[]>([]),
     [streamConnected, setStreamConnected] = useState(false);
+  const [welcome] = useState(() => randomGreeting());
   const fileRef = useRef<HTMLInputElement>(null),
     bottom = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -307,7 +309,7 @@ export function Chat() {
                 <Sparkles size={30} />
               </div>
               <p className="eyebrow">MIX</p>
-              <h1>{t("何をお手伝いできますか？")}</h1>
+              <h1>{t(welcome)}</h1>
               <div className="welcome-note">
                 <ShieldCheck size={14} /> {t("必要なときだけ、確認のうえで作業を進めます")}
               </div>
@@ -322,9 +324,6 @@ export function Chat() {
                     <p>{t("古い会話は以下の要約としてモデルに渡しました。元の会話は画面に残っています。")}</p>
                     <div className="context-summary-text">{r.context_summary?.text}</div>
                   </details>
-                ))}
-                {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && r.id !== runId && r.answer_evaluation).map(r => (
-                  <p className="run-evaluation" key={r.id}>{t("回答チェック:")} {t(r.answer_evaluation?.status === "provided" ? "最終回答あり" : r.answer_evaluation?.status === "needs_review" ? "要確認" : "未回答")}。{r.answer_evaluation?.reason}</p>
                 ))}
                 <article className={"message " + m.data.role}>
                   <div className="message-label">
@@ -405,9 +404,6 @@ export function Chat() {
               {run.data?.reason && (
                 <div className="notice">{run.data.reason}</div>
               )}
-              {run.data?.answer_evaluation && <p className="run-evaluation" role="status">
-                {t("回答チェック:")} {t(run.data.answer_evaluation.status === "provided" ? "最終回答あり" : run.data.answer_evaluation.status === "needs_review" ? "要確認" : "未回答")}。{run.data.answer_evaluation.reason}
-              </p>}
               {run.data && active && (
                 <p className="run-budget" role="status">
                   {run.data.mode}

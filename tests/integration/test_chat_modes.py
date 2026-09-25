@@ -195,6 +195,60 @@ def test_unknown_tool_probe_failure_is_not_retried_until_manual_check(signed, mo
     assert len(calls) == 2
 
 
+def test_chat_reprobes_stale_probe_and_keeps_tools(signed, monkeypatch):
+    from mix_agent import config
+
+    mid = create_model("compatible", {})
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        model.data = {**model.data, "tool_probe": {"status": "unsupported", "source": "automatic"}}
+        db.commit()
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "chat")
+    assert response.status_code == 200
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "supported"
+        assert model.data["tool_probe"]["probe_version"] == config.TOOL_PROBE_VERSION
+        assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"]
+
+
+def test_thinking_reprobes_stale_probe(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        model.data = {**model.data, "tool_probe": {"status": "unsupported", "source": "automatic"}}
+        db.commit()
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "thinking")
+    assert response.status_code == 200
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        assert db.get(Model, mid).data["tool_probe"]["status"] == "supported"
+        assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"]
+
+
 def test_tool_probe_survives_model_edit_and_provider_sync(signed, monkeypatch):
     mid = create_model("compatible", {})
     with SessionLocal() as db:

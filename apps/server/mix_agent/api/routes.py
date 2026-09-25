@@ -127,7 +127,7 @@ from mix_agent.runs.engine import TASKS, auto_retry_count, launch
 from mix_agent.runs.mode_policy import apply_mode_defaults, mode_prompt, tool_allowed
 from mix_agent.runs.state import transition_run
 from mix_agent.skills import service as skills
-from mix_agent.tools.execute import runner_request, save_artifact
+from mix_agent.tools.execute import is_user_artifact, runner_request, save_artifact
 from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, registry
 
 router = APIRouter(prefix="/api/v1")
@@ -1507,7 +1507,7 @@ async def conversation_tool_calls(key: str, ctx=Depends(context)):
             "created_at": call.created_at.isoformat(),
             "result": _redact_tool_result(raw_result) if raw_result is not None else None,
             "failure": raw_result.get("error") if failed else None,
-            "artifact": raw_result.get("artifact") if isinstance(raw_result, dict) else None,
+            "artifact": raw_result.get("artifact") if isinstance(raw_result, dict) and is_user_artifact(raw_result.get("artifact")) else None,
             "approval": ({"id": approval.id, "status": approval.status, "tool": approval.data.get("tool"), "risk": approval.data.get("risk")}
                          if approval and approval.status == "pending" else None),
             "retry": retry,

@@ -34,9 +34,9 @@ def test_override_wins_over_detection():
     assert adapter.get_capabilities({"capabilities":{"tools":True},"overrides":{"tools":False}})["tools"] is False
 
 
-def test_catalog_has_fifty_unique_presets_and_custom_is_last():
-    assert len(PRESETS) == 50
-    assert len({item["id"] for item in PRESETS}) == 50
+def test_catalog_has_fifty_two_unique_presets_and_custom_is_last():
+    assert len(PRESETS) == 52
+    assert len({item["id"] for item in PRESETS}) == 52
     assert PRESETS[-1]["id"] == "custom"
 
 
@@ -47,7 +47,7 @@ def test_catalog_endpoint_and_custom_provider_validation(signed, monkeypatch):
     monkeypatch.setattr(Adapter, "list_models", no_models)
     catalog = signed.get("/api/v1/provider-presets")
     assert catalog.status_code == 200
-    assert len(catalog.json()) == 50
+    assert len(catalog.json()) == 52
     created = signed.post("/api/v1/providers", json={
         "name": "Fast Groq", "preset_id": "groq", "base_url": "", "api_key": "test-key", "allow_private": True,
     })
@@ -141,7 +141,7 @@ def test_context_limit_rejects_boolean_provider_values():
 
 
 def test_each_preset_declares_transport_discovery_and_metadata_chain():
-    assert len(PRESETS) == 50
+    assert len(PRESETS) == 52
     for preset in PRESETS:
         assert preset["transport_id"]
         assert preset["discovery_id"]
