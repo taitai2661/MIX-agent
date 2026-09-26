@@ -2,8 +2,8 @@ import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { Plus, RefreshCw, Search, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
 
@@ -12,7 +12,17 @@ export function Models() {
     providers = useRows("/providers"),
     qc = useQueryClient();
   const [error, setError] = useState<unknown>(null),
-    [open, setOpen] = useState(false);
+    [open, setOpen] = useState(false),
+    [query, setQuery] = useState("");
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return rows.data || [];
+    return (rows.data || []).filter((row) => {
+      const providerName = providers.data?.find((provider) => provider.id === row.data.provider_id)?.data.name || "";
+      return [row.data.name, row.data.model_id, providerName]
+        .some((value) => String(value || "").toLocaleLowerCase().includes(needle));
+    });
+  }, [providers.data, query, rows.data]);
   async function update(row: Row, cap: string, value: string) {
     try {
       await api("/models/" + row.id, "PATCH", {
@@ -119,7 +129,17 @@ export function Models() {
       <div className="notice">
         {t("モデル一覧の取得だけでは、Tool CallingやVision対応は保証されません。確認した機能を「対応」に設定してください。")}
       </div>
-      {rows.data?.map((row) => (
+      <label className="tool-search models-search">
+        <Search size={15} />
+        <input
+          aria-label={t("モデルを検索")}
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("モデルを検索")}
+        />
+      </label>
+      {filteredRows.map((row) => (
         <div className="card model-card" key={row.id}>
           <div className="model-heading">
             <Sparkles size={20} />
@@ -171,14 +191,8 @@ export function Models() {
               hint={
                 row.data.context_source === "manual"
                   ? t("手動設定。空欄にして保存すると、API取得値に戻します。")
-                    : row.data.context_source === "model_info"
-                      ? t("model-infoから補完されています。")
-                    : row.data.context_source === "official_catalog"
-                    ? t("Provider公式カタログから補完されています。")
-                    : row.data.context_source === "models_dev"
-                      ? t("models.devから補完されています。")
-                      : row.data.context_source === "builtin"
-                        ? t("内蔵モデルDBから補完されています。")
+                  : row.data.context_source === "model_info"
+                    ? t("model-infoから補完されています。")
                     : row.data.context_window
                       ? t("Provider APIから取得しています。")
                       : t("未設定のモデルは、安全のためAutoの候補から除外されます。")
@@ -237,6 +251,9 @@ export function Models() {
       ))}
       {!rows.data?.length && (
         <Empty>{t("Providerの「モデル取得」、または手動追加で登録できます。")}</Empty>
+      )}
+      {!!rows.data?.length && !filteredRows.length && (
+        <Empty>{t("該当するモデルがありません。")}</Empty>
       )}
     </>
   );

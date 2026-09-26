@@ -4042,6 +4042,9 @@ body {
   background: var(--soft);
   color: var(--muted);
 }
+.models-search {
+  margin-bottom: 14px;
+}
 .tool-search input {
   flex: 1;
   min-width: 0;
