@@ -15,7 +15,9 @@ from mix_agent.auth.security import read_secret, store_secret
 from mix_agent.db.models import Agent, Artifact, Conversation, MCPConnection, ScheduledJob, Settings, now
 from mix_agent.knowledge import service as knowledge
 from mix_agent.mcp import oauth as mcp_oauth
+from mix_agent.memory import runtime as memory_runtime
 from mix_agent.memory import service as memory
+from mix_agent.memory import tools as memory_tools
 from mix_agent.skills import service as skills
 from mix_agent.tools.network import fetch_public, fetch_public_bytes
 
@@ -370,28 +372,75 @@ async def execute(db, run, tool, args):
             result = await _search_searxng(query, count, data.get("searxng_url", ""))
         else:
             result = await _search_ddgs(query, count, freshness)
-    elif name == "memory_search":
-        searched = memory.search(db, run.owner_id, args.get("query", ""), scopes, debug=bool(args.get("debug")))
-        result = searched if args.get("debug") else {"memories": searched}
-    elif name.startswith("memory_"):
+    elif name == "memory_recall":
         if not scopes:
             raise ValueError("Memory is disabled for this agent")
-        result = memory.change(
+        result = memory_tools.recall(
             db,
             run.owner_id,
-            args.get("content"),
-            args.get("id"),
-            name == "memory_delete",
-            scope=scopes[0],
-            source_run=run.id,
+            query=args.get("query", ""),
             scopes=scopes,
-            importance=args.get("importance", 2),
-            category=args.get("category"),
-            pinned=args.get("pinned", False),
-            confidence=args.get("confidence"),
-            salience=args.get("salience"),
+            roles=args.get("roles"),
+            limit=int(args.get("limit") or 8),
+        )
+    elif name == "memory_remember":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.remember(
+            db,
+            run.owner_id,
+            content=args.get("content", ""),
+            role=args.get("role") or "fact",
+            scope=args.get("scope") or scopes[0],
+            role_metadata=args.get("role_metadata"),
             entities=args.get("entities"),
             concepts=args.get("concepts"),
+            evidence=args.get("evidence"),
+            task_id=run.id,
+            source_kind="agent",
+        )
+    elif name == "memory_forget":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.forget(
+            db,
+            run.owner_id,
+            memory_id=args.get("id"),
+            query=args.get("query"),
+            reason=str(args.get("reason") or "agent forget"),
+        )
+    elif name == "memory_search":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        # Legacy alias: redirect through the role-based Recall Pipeline so
+        # older agents transparently benefit from the role taxonomy.
+        result = memory_tools.recall(
+            db, run.owner_id,
+            query=args.get("query", ""),
+            scopes=scopes,
+            limit=8,
+        )
+    elif name in ("memory_add", "memory_update"):
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.remember(
+            db,
+            run.owner_id,
+            content=args.get("content", ""),
+            role="fact",
+            scope=scopes[0],
+            entities=args.get("entities"),
+            concepts=args.get("concepts"),
+            task_id=run.id,
+            source_kind="agent",
+        )
+    elif name == "memory_delete":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.forget(
+            db, run.owner_id,
+            memory_id=args.get("id"),
+            reason="agent forget",
         )
     elif name == "skill_search":
         result = {"skills": skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))}

@@ -18,6 +18,7 @@ def test_run_states_are_defined_in_one_place():
         "running",
         "waiting_approval",
         "paused",
+        "budget_extension_pending",
         "completed",
         "failed",
         "cancelled",

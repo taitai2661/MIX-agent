@@ -42,11 +42,25 @@ def render_block(title: str, items: list[dict], per_item_limit: int = 1200) -> s
 
 
 def search_memories(db, owner: str, query: str, scopes: list, settings: dict, limit: int = 8):
-    """Thin wrapper so ContextBuilder stays decoupled from memory internals."""
-    from mix_agent.memory import service as memory_service
+    """Thin wrapper so ContextBuilder stays decoupled from memory internals.
 
+    The retrieval is delegated to the role-based Memory Runtime pipeline so
+    the Context Engine surfaces role-organized memories (Decisions, Failures,
+    Facts) rather than a flat list of associative traces.
+    """
+    from mix_agent.memory import runtime as memory_runtime
+
+    task = {"text": query, "kind": "context_build"}
     try:
-        return memory_service.search(db, owner, query, scopes, settings=settings) or []
+        result = memory_runtime.recall(
+            db,
+            owner,
+            task,
+            scopes=scopes or None,
+            limit=limit,
+            settings=settings,
+        )
+        return result if isinstance(result, list) else []
     except Exception:
         LOGGER.exception("memory retrieval failed owner=%s", owner)
         return []

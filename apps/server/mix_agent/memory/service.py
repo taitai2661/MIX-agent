@@ -19,6 +19,7 @@ from mix_agent.db.models import (
     MemoryRevision,
     now,
 )
+from mix_agent.memory import types as mem_types
 
 SENSITIVE = re.compile(
     r"(?:api[_ -]?key|password|passwd|secret|access[_ -]?token|session[_ -]?token|authorization|private[_ -]?key|cookie|認証コード|パスワード)\s*[:=：]",
@@ -33,7 +34,10 @@ LOGGER = logging.getLogger(__name__)
 DEFAULTS = {"seed_limit": 24, "result_limit": 8}
 AUTO_OVERRIDES_IGNORED = ("max_depth", "max_candidates", "min_association_weight", "activation_decay", "retrieval_budget_ms")
 AUTOMATIC_SETTING_KEYS = ("memory_max_depth", "memory_max_candidates", "memory_retrieval_budget_ms", "memory_min_association_weight", "memory_activation_decay")
-SEED_THRESHOLD = {"established": 0.18, "latent": 0.32}
+SEED_THRESHOLD = {
+    "established": 0.18, "active": 0.18,
+    "latent": 0.32, "candidate": 0.32,
+}
 
 
 def clamp(value, low=0.0, high=1.0):
@@ -42,7 +46,7 @@ def clamp(value, low=0.0, high=1.0):
 
 def _auto_config(db, owner):
     """Derive retrieval shape from the owner's trace/graph scale, never from settings."""
-    trace_count = int(db.scalar(select(func.count()).select_from(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_(("established", "latent")))) or 0)
+    trace_count = int(db.scalar(select(func.count()).select_from(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_((mem_types.LIFECYCLE_ACTIVE, mem_types.LIFECYCLE_CANDIDATE, "established", "latent")))) or 0)
     edge_count = int(db.scalar(select(func.count()).select_from(MemoryAssociation).where(MemoryAssociation.owner_id == owner)) or 0)
     max_candidates = max(32, min(256, max(32, trace_count // 2)))
     min_weight = 0.20
@@ -108,17 +112,34 @@ def redact_sensitive(content):
 
 
 def _state(row):
-    return "deleted" if row.data.get("deleted") else (row.lifecycle_state or "established")
+    if row.data.get("deleted"):
+        return "deleted"
+    return row.lifecycle_state or mem_types.LIFECYCLE_ACTIVE
 
 
 def _trace_data(row):
+    """Render a Memory row for the legacy associative-memory API.
+
+    Preserves the historic ``lifecycle_state`` vocabulary (``established`` /
+    ``latent`` / ``deleted``) so legacy tests and clients keep working.  New
+    consumers should use :func:`mix_agent.memory.views.render` which exposes
+    the role-based vocabulary.
+    """
     data = dict(row.data or {})
     metadata = dict(data.get("metadata") or {})
     if data.get("category") and "legacy_category" not in metadata:
         metadata["legacy_category"] = data["category"]
     data.pop("category", None)
     data.pop("importance", None)
-    return {**data, "lifecycle_state": _state(row), "strength": round(row.strength, 4), "confidence": round(row.confidence, 4), "salience": round(row.salience, 4), "activation_count": row.activation_count, "last_activated_at": row.last_activated_at.isoformat() if row.last_activated_at else None, "last_reinforced_at": row.last_reinforced_at.isoformat() if row.last_reinforced_at else None, "metadata": metadata, "importance": max(1, min(5, round(row.salience * 5))), "pinned": bool(data.get("pinned"))}
+    lifecycle = _state(row)
+    legacy_lifecycle = lifecycle
+    if lifecycle == mem_types.LIFECYCLE_ACTIVE:
+        legacy_lifecycle = "established"
+    elif lifecycle == mem_types.LIFECYCLE_CANDIDATE:
+        legacy_lifecycle = "latent"
+    elif lifecycle == mem_types.LIFECYCLE_EXPIRED:
+        legacy_lifecycle = "deleted"
+    return {**data, "lifecycle_state": legacy_lifecycle, "strength": round(row.strength, 4), "confidence": round(row.confidence, 4), "salience": round(row.salience, 4), "activation_count": row.activation_count, "last_activated_at": row.last_activated_at.isoformat() if row.last_activated_at else None, "last_reinforced_at": row.last_reinforced_at.isoformat() if row.last_reinforced_at else None, "metadata": metadata, "importance": max(1, min(5, round(row.salience * 5))), "pinned": bool(data.get("pinned"))}
 
 
 def _sync_features(db, row):
@@ -140,7 +161,7 @@ def _candidate_rows(db, owner, query_terms, limit):
     ids = []
     if query_terms:
         ids = list(db.scalars(select(MemoryFeature.memory_id).where(MemoryFeature.owner_id == owner, MemoryFeature.value.in_(list(query_terms)[:128])).group_by(MemoryFeature.memory_id).order_by(func.count().desc()).limit(limit)))
-    statement = select(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_(("established", "latent")))
+    statement = select(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_((mem_types.LIFECYCLE_ACTIVE, mem_types.LIFECYCLE_CANDIDATE, "established", "latent")))
     if ids:
         statement = statement.where(Memory.id.in_(ids))
     elif query_terms:
@@ -161,7 +182,8 @@ def _base_score(row, query_terms, query_vector, preferred_scopes):
         activated = activated.replace(tzinfo=UTC)
     recency = 1 / (1 + max(0, (datetime.now(UTC) - activated).days) / 180)
     value = 0.31 * overlap + 0.19 * semantic + 0.16 * row.confidence + 0.14 * row.strength + 0.10 * row.salience + 0.06 * recency + 0.04 * scope_factor
-    if _state(row) == "latent":
+    state_value = _state(row)
+    if state_value in ("latent", mem_types.LIFECYCLE_CANDIDATE):
         value *= 0.55 if overlap < 0.5 else 0.8
     return value, {"lexical": overlap, "feature": semantic, "scope": scope_factor, "recency": recency}
 
@@ -211,7 +233,7 @@ def search(db, owner, query="", scopes=None, *, settings=None, debug=False, acti
         next_frontier, accepted = {}, 0
         for association in associations:
             row = rows.get(association.target_memory_id)
-            if not row or _state(row) not in ("established", "latent"):
+            if not row or _state(row) not in ("established", "latent", mem_types.LIFECYCLE_ACTIVE, mem_types.LIFECYCLE_CANDIDATE):
                 continue
             activation = frontier.get(association.source_memory_id, 0) * association.weight * float(cfg["activation_decay"])
             if activation <= scores.get(row.id, 0):
@@ -301,23 +323,34 @@ def change(db, owner, content=None, memory_id=None, delete=False, scope="user", 
             data["metadata"] = {**data.get("metadata", {}), "legacy_category": category}
         data.update({"scope": scope or data.get("scope", "user"), "source_run": source_run or data.get("source_run"), "deleted": delete, "pinned": pinned})
         row.data = data
-        row.lifecycle_state = "deleted" if delete else (lifecycle_state or row.lifecycle_state or "established")
+        lifecycle_value = lifecycle_state or row.lifecycle_state or mem_types.LIFECYCLE_ACTIVE
+        if lifecycle_value == mem_types.LIFECYCLE_ACTIVE:
+            lifecycle_value = "established"
+        elif lifecycle_value == mem_types.LIFECYCLE_CANDIDATE:
+            lifecycle_value = "latent"
+        elif lifecycle_value == mem_types.LIFECYCLE_EXPIRED:
+            lifecycle_value = "deleted"
+        row.lifecycle_state = "deleted" if delete else lifecycle_value
         row.strength, row.confidence, row.salience, row.updated_at = clamp(target_strength), clamp(target_confidence), clamp(target_salience), now()
     else:
         if not content:
             raise ValueError("Memory content is required")
         normalized = content.casefold()
-        existing = next((candidate for candidate in _candidate_rows(db, owner, terms(content), 24) if _state(candidate) != "deleted" and candidate.data.get("content", "").casefold() == normalized), None)
+        existing = next((candidate for candidate in _candidate_rows(db, owner, terms(content), 24) if _state(candidate) not in ("deleted", mem_types.LIFECYCLE_EXPIRED) and candidate.data.get("content", "").casefold() == normalized), None)
         if existing:
             before = existing.strength
             existing.strength = clamp(existing.strength + (0.14 if explicit else 0.08))
             existing.confidence = clamp(max(existing.confidence, target_confidence) + 0.03)
             existing.salience, existing.last_reinforced_at, existing.updated_at = clamp(max(existing.salience, target_salience)), now(), now()
-            if existing.lifecycle_state == "latent" and existing.strength >= 0.65 and existing.confidence >= 0.72:
-                existing.lifecycle_state = "established"
+            if existing.lifecycle_state in ("latent", mem_types.LIFECYCLE_CANDIDATE) and existing.strength >= 0.65 and existing.confidence >= 0.72:
+                existing.lifecycle_state = "established" if existing.lifecycle_state == "latent" else mem_types.LIFECYCLE_ACTIVE
             _event(db, owner, source_run, "REINFORCE_TRACE", existing.id, before, existing.strength, "equivalent trace", candidate_index)
             return {"id": existing.id, **_trace_data(existing), "deduplicated": True}
         state = lifecycle_state or ("established" if explicit or target_confidence >= 0.82 else "latent")
+        if state == mem_types.LIFECYCLE_ACTIVE:
+            state = "established"
+        elif state == mem_types.LIFECYCLE_CANDIDATE:
+            state = "latent"
         trace_metadata = dict(metadata or {})
         if category:
             trace_metadata["legacy_category"] = category
@@ -388,14 +421,14 @@ def restore(db, owner, row, previous):
 
 def decay(db, owner, limit=200):
     changed = 0
-    for row in db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_(("latent", "established"))).order_by(Memory.updated_at).limit(limit)):
+    for row in db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_((mem_types.LIFECYCLE_CANDIDATE, mem_types.LIFECYCLE_ACTIVE, "latent", "established"))).order_by(Memory.updated_at).limit(limit)):
         updated = row.updated_at.replace(tzinfo=UTC) if row.updated_at.tzinfo is None else row.updated_at
         age_days = (datetime.now(UTC) - updated).days
         if age_days < 30 or row.data.get("pinned"):
             continue
         row.strength = clamp(row.strength - min(0.18, age_days / 3650) * (1.2 - row.salience))
         row.updated_at = now()
-        if row.lifecycle_state == "latent" and row.strength < 0.15:
-            row.lifecycle_state = "archived"
+        if row.lifecycle_state in ("latent", mem_types.LIFECYCLE_CANDIDATE) and row.strength < 0.15:
+            row.lifecycle_state = mem_types.LIFECYCLE_ARCHIVED
         changed += 1
     return changed

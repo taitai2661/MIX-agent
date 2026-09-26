@@ -15,6 +15,7 @@ RUN_STATES = frozenset(
         "running",
         "waiting_approval",
         "paused",
+        "budget_extension_pending",
         "completed",
         "failed",
         "cancelled",
@@ -32,11 +33,17 @@ NON_TERMINAL_STATES = RUN_STATES - TERMINAL_STATES
 # Permitted transitions, derived from the existing engine/API behaviour.
 # ``interrupted -> queued`` is the explicit resume path used by the existing
 # resume endpoint; ``interrupted -> cancelled`` is what the cancel endpoint
-# already allowed.  Terminal states cannot move anywhere else.
+# already allowed.  Terminal states cannot move anywhere else.  Agent-mode
+# budget pauses (``budget_extension_pending``) act like ``paused``: the run
+# keeps its place while the user decides whether to extend the budget.
 TRANSITIONS = {
     "queued": frozenset({"running", "cancelled", "failed"}),
-    "running": frozenset({"waiting_approval", "paused", "completed", "failed", "cancelled", "interrupted"}),
+    "running": frozenset(
+        {"waiting_approval", "paused", "budget_extension_pending",
+         "completed", "failed", "cancelled", "interrupted"}
+    ),
     "paused": frozenset({"queued", "cancelled"}),
+    "budget_extension_pending": frozenset({"running", "cancelled", "failed"}),
     "waiting_approval": frozenset({"running", "cancelled", "failed", "interrupted"}),
     "interrupted": frozenset({"queued", "cancelled"}),
     "completed": frozenset(),

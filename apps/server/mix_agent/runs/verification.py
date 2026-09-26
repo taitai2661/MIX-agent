@@ -17,9 +17,9 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-# Risk categories used by the engine and tool registry.  ``read`` covers any
-# tool whose ``risk`` is "read" in the registry; the names below are the
-# write-risk tools we want stricter evidence for.
+# Tools whose persisted tool_id alone is enough to identify them as writes.
+# ``_is_write`` checks this set first so a stale or missing ``risk`` field on a
+# persisted call record cannot let a destructive tool slip past as a read.
 WRITE_TOOLS = {
     "write_file", "edit_file", "delete_file", "run_terminal",
     "create_artifact", "web_clip_save", "knowledge_add", "knowledge_delete",
@@ -28,7 +28,7 @@ WRITE_TOOLS = {
 }
 
 DESTRUCTIVE_TERMINAL_PATTERNS = (
-    re.compile(r"\brm\b\s+(-[a-zA-Z]*[rfRF][a-zA-Z]*\s+)?[^|;]+"),
+    re.compile(r"\brm\b\s+"),
     re.compile(r"\brmdir\b"),
     re.compile(r"\bmv\b\s+"),
     re.compile(r"\bgit\s+(?:reset|checkout|clean|restore)\b"),
@@ -77,7 +77,22 @@ def _is_check(call) -> bool:
 
 
 def _is_write(call) -> bool:
-    return (call.data or {}).get("risk") != "read" and (call.data or {}).get("tool_id") not in {"update_plan"}
+    """Whether ``call`` mutates persistent state.
+
+    A call is treated as a write when its ``tool_id`` is in :data:`WRITE_TOOLS`
+    or when the explicit ``risk`` field is set to a non-``"read"`` value.  A
+    missing ``risk`` field is treated as read because the tool registry marks
+    the unsafe tools in ``WRITE_TOOLS`` explicitly; this keeps the strict
+    verifier from flagging benign reads whose ``risk`` was not yet persisted.
+    """
+    data = call.data or {}
+    tool_id = data.get("tool_id")
+    if tool_id in {"update_plan"}:
+        return False
+    if tool_id in WRITE_TOOLS:
+        return True
+    risk = data.get("risk")
+    return risk is not None and risk != "read"
 
 
 def _destructive_terminal(call) -> bool:
@@ -87,26 +102,6 @@ def _destructive_terminal(call) -> bool:
     if not isinstance(command, str):
         return False
     return any(pattern.search(command) for pattern in DESTRUCTIVE_TERMINAL_PATTERNS)
-
-
-def _write_over_existing(runs_history: list[dict], call) -> bool:
-    """Heuristic: a write_file whose target was read earlier in the run."""
-    if (call.data or {}).get("tool_id") != "write_file":
-        return False
-    path = ((call.data or {}).get("arguments") or {}).get("path")
-    if not isinstance(path, str) or not path:
-        return False
-    for entry in runs_history:
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("role") != "tool":
-            continue
-        if entry.get("name") != "read_file":
-            continue
-        # Tool-result arguments are not preserved in history; only path search
-        # via the matching call record works.
-        _ = entry
-    return False
 
 
 def _read_preceded(runs_calls: list, write_index: int) -> bool:
