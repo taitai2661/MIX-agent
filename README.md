@@ -86,13 +86,31 @@ Contextの上限が近づくと、古い会話を要約してモデルへ渡し�
 
 - **Chat**: 対応が確認されたモデルでは、必要に応じて思考・検索・作成・実行を使います。思考やTool Callingが未対応・未確認でも通常会話は可能です。
 - **Thinking**: 通常推論を使いながら必要に応じて検索・作成・実行を進めます。Reasoning対応モデルではProvider固有の思考機能も有効にしますが、非対応モデルでもThinkingは利用できます。毎回の検索や思考文の表示・長さを保証するものではありません。
-- **Agent**: 従来の思考設定と、長い作業向けの実行ループを維持します。
+- **Agent**: 従来の思考設定と、長い作業向けの実行ループを維持します。さらに、定期チェックポイント、停滞検知と自己修復ガイダンス、厳格な検証ループ、階層的な文脈圧縮、予算の動的調整を備えます。
 
 標準では全モードに組み込みツールを提供します。プリセット選択時はそのツール一覧（空リストを含む）を優先し、MCPを自動追加しません。Ask / Deny・承認・Runner隔離はモードにかかわらず適用されます。上限はChatが20分・12ステップ・12 Tool Call、Thinkingが45分・24ステップ・24 Tool Call、Agentが90分・300ステップ・750 Tool Callです。長い作業はAgentを使ってください。
+
+#### Agent の自律性
+
+- **中間チェックポイント**: 10ステップごとに履歴・task_state・plan・直近Tool Callを `run_checkpoints` に保存。中断後の再開はチェックポイント単位で選択可能で、`POST /runs/{key}/resume` の `from_checkpoint` で任意の地点から再開できます。
+- **停滞検知と自己修復**: 直近12 Tool Callから繰り返し失敗・読み取り停滞・Provider不安定を検知し、ステップ毎に修復ガイダンスを user-role 履歴へ注入。`stagnation_detected` イベントでUIにも表示。
+- **厳格な検証ループ**: `update_plan` の `phase:<name>` 区切りごとに検証を要求。`delete_file` 後の `files_list` / `search_files`、`write_file` 上書き前の `read_file`、破壊的ターミナル操作後の check Tool を必須化。
+- **階層的な文脈圧縮**: active サマリ（4000字まで）と archive rows（最大12件）を別管理。task_state（goal/plan/pending/important_facts/artifacts/open_questions）を head ブロックで優先保持。
+- **予算の動的調整**: ステップまたはツール上限到達時にユーザーへ延長確認（既定2回まで）。`POST /runs/{key}/budget-extension` で `grant: true/false` を返却。確認なしで停止しないよう UX を強化。
+- **結果不明操作の選択的処理**: 再開APIの `unknown_actions` で `executing` のまま残った各Tool Callを `retry` / `discard` / `mark_unknown` 単位で制御。
 
 Chat / ThinkingのProvider固有思考制御はOpenAI Responses、OpenRouter、識別可能なClaude 3.7 / 4系とGemini 2.5 / 3系に対応しています。Ollama / LM Studio / 汎用互換APIと未識別モデルでは、その専用パラメーターを送らず通常推論でThinkingを実行します。Tool Callingが未確認のモデルを使うときは、Chat / Thinking / Agent のいずれも実行前に副作用のないダミー関数で自動確認します。結果は保存され、未確認・非対応時はツールなしで続行します。再実行は capability probe の鮮度ポリシー（未確定6時間、確定14日）に従い、Scheduler tick でも並行して走ります。モデル設定の「Tool Callingを再確認」でだけ手動再試行できます。手動Overrideは自動確認より優先します。
 
 APIの `mode` は変更していません。`GET /models` の各レコードの `data.reasoning_control` は計算した制御方式またはnullで、`data.tool_probe` は保存済みのTool Calling確認結果です。`POST /models/{id}/verify-tools` は副作用のない再確認を実行します。Runには解決済みの思考方針とツール一覧を保存し、追加情報のない旧Runは従来動作を維持します。公開された思考要約だけを表示し、署名付きコンテキストはツール継続用に保持します。
+
+### Run Events
+
+`GET /runs/{key}/events` のSSEストリームは次の `kind` 値を流します（Engine→UIの表現契約）：
+
+- 既存の `text` / `reasoning` / `model_started` / `model_selected` / `model_rerouted` / `message` / `status` / `tool_started` / `tool_result` / `plan` / `approval` / `browser_frame` / `context_summary`
+- 新規 `checkpoint_saved` / `budget_extension_requested` / `budget_extension_resolved` / `stagnation_detected` / `verification_required` / `phase_advanced`
+
+`run_checkpoints` のチェックポイントは `GET /runs/{key}/checkpoints` で一覧可能。`budget_extension_pending` 状態のRunに対する応答は `POST /runs/{key}/budget-extension` で `grant` と任意の予算上書きを受け付けます。
 
 制御仕様の参照: [OpenAI](https://developers.openai.com/api/docs/guides/reasoning)、[Claude](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking)、[Gemini GenerateContent](https://ai.google.dev/gemini-api/docs/generate-content/thinking)、[OpenRouter](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)。実Providerでの確認範囲は検証記録を参照してください。
 

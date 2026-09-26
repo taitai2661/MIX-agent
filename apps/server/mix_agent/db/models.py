@@ -274,12 +274,34 @@ class Run(Record, Base):
             "one_active_run",
             "conversation_id",
             unique=True,
-            postgresql_where=status.in_(["queued", "running", "waiting_approval", "paused"]),
+            postgresql_where=status.in_([
+                "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
+            ]),
         ),
         CheckConstraint(
-            "status IN ('queued', 'running', 'waiting_approval', 'paused', 'completed', 'failed', 'cancelled', 'interrupted')",
+            "status IN ('queued', 'running', 'waiting_approval', 'paused', "
+            "'budget_extension_pending', 'completed', 'failed', 'cancelled', 'interrupted')",
             name="ck_runs_status_valid",
         ),
+    )
+
+
+class RunCheckpoint(Record, Base):
+    """Durable per-step snapshot of a long-running Run for selective resume.
+
+    A checkpoint freezes the structured state (history, task_state, agent_plan,
+    summary, recent tool calls, and bookkeeping counters) at a known step so
+    the user can resume from that exact point instead of starting over.
+    """
+
+    __tablename__ = "run_checkpoints"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    tool_count: Mapped[int] = mapped_column(Integer, default=0)
+    trigger: Mapped[str] = mapped_column(String(30), default="interval")
+    __table_args__ = (
+        Index("run_checkpoint_run_step", "run_id", "step"),
+        Index("run_checkpoint_run_created", "run_id", "created_at"),
     )
 
 

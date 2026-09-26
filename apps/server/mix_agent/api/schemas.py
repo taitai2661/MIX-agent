@@ -14,7 +14,10 @@ class RecordView(BaseModel):
 
 
 ChatMode = Literal["chat", "thinking", "agent"]
-RunStatus = Literal["queued", "running", "waiting_approval", "paused", "completed", "failed", "cancelled", "interrupted"]
+RunStatus = Literal[
+    "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
+    "completed", "failed", "cancelled", "interrupted",
+]
 ApprovalDecision = Literal["once", "always", "denied"]
 ApprovalStatus = Literal["pending", "once", "always", "denied", "expired"]
 
@@ -160,6 +163,24 @@ class RunBudgetView(BaseModel):
     max_tool_calls: int | None = None
 
 
+class BudgetExtensionRequestView(BaseModel):
+    tool_calls_used: int
+    tool_calls_limit: int
+    steps_used: int
+    steps_limit: int
+    elapsed_seconds: int
+    max_seconds: int
+    requested_at: str
+
+
+class RunCheckpointView(BaseModel):
+    id: str
+    step: int
+    tool_count: int
+    trigger: str
+    created_at: str | None = None
+
+
 class RunView(BaseModel):
     id: str
     status: RunStatus
@@ -175,6 +196,12 @@ class RunView(BaseModel):
     approvals: list[ApprovalView]
     context_summary: ContextSummaryView | None = None
     answer_evaluation: AnswerEvaluationView | None = None
+    budget_extension_request: BudgetExtensionRequestView | None = None
+    budget_extensions_used: int = 0
+    budget_extensions_max: int = 0
+    stagnation: list[dict] | None = None
+    checkpoint_resumed_from: dict | None = None
+    checkpoints: list[RunCheckpointView] = Field(default_factory=list)
 
 
 class StatisticsSummaryView(BaseModel):
@@ -551,6 +578,15 @@ class PermissionInput(Input):
 
 class ResumeInput(Input):
     acknowledge_unknown_result: bool = False
+    max_seconds: int | None = Field(default=None, ge=30, le=86400)
+    max_steps: int | None = Field(default=None, ge=1, le=2000)
+    max_tool_calls: int | None = Field(default=None, ge=1, le=5000)
+    from_checkpoint: str | None = Field(default=None, max_length=64)
+    unknown_actions: list[dict] | None = Field(default=None, max_length=50)
+
+
+class BudgetExtensionDecisionInput(Input):
+    grant: bool
     max_seconds: int | None = Field(default=None, ge=30, le=86400)
     max_steps: int | None = Field(default=None, ge=1, le=2000)
     max_tool_calls: int | None = Field(default=None, ge=1, le=5000)

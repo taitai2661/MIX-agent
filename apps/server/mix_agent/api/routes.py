@@ -18,6 +18,7 @@ from mix_agent import config, pricing
 from mix_agent.api.schemas import (
     AgentInput,
     ArtifactView,
+    BudgetExtensionDecisionInput,
     ConversationFolderInput,
     ConversationInput,
     ConversationMessagesView,
@@ -38,8 +39,8 @@ from mix_agent.api.schemas import (
     PasswordChangeInput,
     PermissionInput,
     PermissionRuleView,
-    ProviderInput,
     ProjectInput,
+    ProviderInput,
     ProviderView,
     RecordView,
     ResumeInput,
@@ -99,8 +100,8 @@ from mix_agent.db.models import (
     Notification,
     PerformanceEvent,
     Permission,
-    Provider,
     Project,
+    Provider,
     PushSubscription,
     Run,
     ScheduledJob,
@@ -2221,6 +2222,9 @@ async def get_run(key: str, ctx=Depends(context)):
         "max_steps": max(0, budget["max_steps"] - run.data.get("steps", 0)) if budget["max_steps"] is not None else None,
         "max_tool_calls": max(0, budget["max_tool_calls"] - run.data.get("tool_count", 0)) if budget["max_tool_calls"] is not None else None,
     }
+    policy = snapshot.get("policy") or {}
+    from mix_agent.runs import checkpoints as run_checkpoints
+    checkpoints = run_checkpoints.list_for_run(db, run.id) if run.status in {"interrupted", "failed", "paused", "budget_extension_pending", "completed"} else []
     return {
         "id": run.id,
         "status": run.status,
@@ -2230,7 +2234,7 @@ async def get_run(key: str, ctx=Depends(context)):
         "steps": run.data.get("steps", 0),
         "tool_count": run.data.get("tool_count", 0),
         "mode": snapshot.get("mode", "chat"),
-        "policy": snapshot.get("policy", {}),
+        "policy": policy,
         "budget": budget,
         "remaining": remaining,
         "approvals": [
@@ -2239,7 +2243,21 @@ async def get_run(key: str, ctx=Depends(context)):
         ],
         "context_summary": run.data.get("summary") if (run.data.get("summary") or {}).get("text") else None,
         "answer_evaluation": run.data.get("answer_evaluation"),
+        "budget_extension_request": run.data.get("budget_extension_request"),
+        "budget_extensions_used": int(run.data.get("budget_extensions_used", 0)),
+        "budget_extensions_max": int(policy.get("max_budget_extensions", 0)),
+        "stagnation": run.data.get("stagnation_findings"),
+        "checkpoint_resumed_from": run.data.get("checkpoint_resumed_from"),
+        "checkpoints": checkpoints,
     }
+
+
+@router.get("/runs/{key}/checkpoints")
+async def list_checkpoints(key: str, ctx=Depends(context)):
+    db, s = ctx
+    run = own(db, Run, key, s.owner_id)
+    from mix_agent.runs import checkpoints as run_checkpoints
+    return {"checkpoints": run_checkpoints.list_for_run(db, run.id)}
 
 
 @router.get("/runs/{key}/events")
@@ -2442,11 +2460,21 @@ async def resume(key: str, body: ResumeInput, ctx=Depends(context)):
     if run.data.get("snapshot", {}).get("mode") != "agent":
         raise HTTPException(409, "再開は長作業モードでのみ利用できます")
     unknown = list(db.scalars(select(ToolCall).where(ToolCall.run_id == key, ToolCall.status == "executing")))
-    if unknown and not body.acknowledge_unknown_result:
+    actions = {item.get("call_id"): item for item in (body.unknown_actions or []) if isinstance(item, dict)}
+    if unknown and not body.acknowledge_unknown_result and not actions:
         raise HTTPException(409, "結果不明の操作があります。外部状態を確認してください")
     for call in unknown:
+        action = actions.get(call.id, {})
+        decision = action.get("decision") if isinstance(action, dict) else None
+        if decision == "retry":
+            # Leave the call in executing; the resumed drive loop will pick it up.
+            continue
+        if decision == "mark_unknown":
+            message_text = "Operation result was marked unknown by the user; treat as inconclusive."
+        else:
+            message_text = "Operation result unknown after restart; do not repeat without confirmation."
         call.status = "completed"
-        call.data = {**call.data, "result": {"error": "Operation result unknown after restart; do not repeat without confirmation.", "type": "unknown_result"}}
+        call.data = {**call.data, "result": {"error": message_text, "type": "unknown_result", "code": "unknown_result"}}
         run.data = {
             **run.data,
             "history": [
@@ -2455,10 +2483,17 @@ async def resume(key: str, body: ResumeInput, ctx=Depends(context)):
                     "role": "tool",
                     "call_id": call.data["provider_call_id"],
                     "name": call.data["name"],
-                    "content": "Operation result unknown after restart; do not repeat without confirmation.",
+                    "content": message_text,
                 },
             ],
         }
+    # Optional: restore state from a specific checkpoint.
+    if body.from_checkpoint:
+        from mix_agent.runs import checkpoints as run_checkpoints
+        checkpoint = run_checkpoints.get(db, key, body.from_checkpoint)
+        if not checkpoint:
+            raise HTTPException(404, "指定したチェックポイントが見つかりません")
+        run_checkpoints.apply_to_run(run, checkpoint)
     transition_run(db, run, "queued")
     snapshot = run.data["snapshot"]
     for field in ("max_seconds", "max_steps", "max_tool_calls"):
@@ -2494,6 +2529,63 @@ async def resume(key: str, body: ResumeInput, ctx=Depends(context)):
         raise HTTPException(409, "別の実行が進行中です")
     launch(key)
     return {"ok": True}
+
+
+@router.post("/runs/{key}/budget-extension")
+async def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=Depends(context)):
+    db, s = ctx
+    run = own(db, Run, key, s.owner_id)
+    if run.status != "budget_extension_pending":
+        raise HTTPException(409, "予算延長要求中の実行ではありません")
+    if body.grant:
+        snapshot = run.data.get("snapshot") or {}
+        for field in ("max_seconds", "max_steps", "max_tool_calls"):
+            value = getattr(body, field)
+            if value is not None:
+                snapshot[field] = value
+        # Bump the effective limits by 50% of the original ceiling when the
+        # caller did not specify overrides so a single extension always
+        # meaningfully extends the budget.
+        policy = snapshot.get("policy") or {}
+        max_ext = int(policy.get("max_budget_extensions", 0))
+        used = int(run.data.get("budget_extensions_used", 0))
+        for field, fallback in (("max_seconds", 5400), ("max_steps", 300), ("max_tool_calls", 750)):
+            if snapshot.get(field) is None:
+                snapshot[field] = fallback
+        if body.max_seconds is None:
+            snapshot["max_seconds"] = int(snapshot["max_seconds"] + max(900, snapshot["max_seconds"] // 2))
+        if body.max_steps is None:
+            snapshot["max_steps"] = int(snapshot["max_steps"] + max(20, snapshot["max_steps"] // 5))
+        if body.max_tool_calls is None:
+            snapshot["max_tool_calls"] = int(snapshot["max_tool_calls"] + max(50, snapshot["max_tool_calls"] // 5))
+        run.data = {
+            **run.data,
+            "snapshot": snapshot,
+            "budget_extension_request": None,
+        }
+        from mix_agent.runs.engine import emit
+        emit(db, run.id, "budget_extension_resolved", {
+            "grant": True,
+            "max_seconds": snapshot["max_seconds"],
+            "max_steps": snapshot["max_steps"],
+            "max_tool_calls": snapshot["max_tool_calls"],
+            "extensions_used": used,
+            "extensions_max": max_ext,
+        })
+        transition_run(db, run, "running", expected_from="budget_extension_pending")
+        db.commit()
+        launch(run.id)
+        return {"ok": True, "granted": True, "snapshot": {
+            "max_seconds": snapshot["max_seconds"],
+            "max_steps": snapshot["max_steps"],
+            "max_tool_calls": snapshot["max_tool_calls"],
+        }}
+    # Denied: stop the run cleanly so the user can inspect the outcome.
+    from mix_agent.runs.engine import finish
+    run.data = {**run.data, "budget_extension_request": None}
+    emit(db, run.id, "budget_extension_resolved", {"grant": False})
+    finish(db, run, "completed", "予算の延長が許可されなかったため、Runは取得済みの結果で終了しました。")
+    return {"ok": True, "granted": False}
 
 
 @router.post("/approvals/{key}/decision")

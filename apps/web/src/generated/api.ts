@@ -836,6 +836,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{key}/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Checkpoints */
+        get: operations["list_checkpoints_api_v1_runs__key__checkpoints_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{key}/events": {
         parameters: {
             query?: never;
@@ -966,6 +983,23 @@ export interface paths {
         put?: never;
         /** Resume */
         post: operations["resume_api_v1_runs__key__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{key}/budget-extension": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Budget Extension */
+        post: operations["decide_budget_extension_api_v1_runs__key__budget_extension_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1861,6 +1895,34 @@ export interface components {
             /** File */
             file: string;
         };
+        /** BudgetExtensionDecisionInput */
+        BudgetExtensionDecisionInput: {
+            /** Grant */
+            grant: boolean;
+            /** Max Seconds */
+            max_seconds?: number | null;
+            /** Max Steps */
+            max_steps?: number | null;
+            /** Max Tool Calls */
+            max_tool_calls?: number | null;
+        };
+        /** BudgetExtensionRequestView */
+        BudgetExtensionRequestView: {
+            /** Tool Calls Used */
+            tool_calls_used: number;
+            /** Tool Calls Limit */
+            tool_calls_limit: number;
+            /** Steps Used */
+            steps_used: number;
+            /** Steps Limit */
+            steps_limit: number;
+            /** Elapsed Seconds */
+            elapsed_seconds: number;
+            /** Max Seconds */
+            max_seconds: number;
+            /** Requested At */
+            requested_at: string;
+        };
         /** ContextSummaryView */
         ContextSummaryView: {
             /** Text */
@@ -1924,7 +1986,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "queued" | "running" | "waiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
+            status: "queued" | "running" | "waiting_approval" | "paused" | "budget_extension_pending" | "completed" | "failed" | "cancelled" | "interrupted";
             /** Reason */
             reason?: string | null;
             /** Message Id */
@@ -2465,6 +2527,12 @@ export interface components {
             max_steps?: number | null;
             /** Max Tool Calls */
             max_tool_calls?: number | null;
+            /** From Checkpoint */
+            from_checkpoint?: string | null;
+            /** Unknown Actions */
+            unknown_actions?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** RunBudgetView */
         RunBudgetView: {
@@ -2475,6 +2543,19 @@ export interface components {
             /** Max Tool Calls */
             max_tool_calls?: number | null;
         };
+        /** RunCheckpointView */
+        RunCheckpointView: {
+            /** Id */
+            id: string;
+            /** Step */
+            step: number;
+            /** Tool Count */
+            tool_count: number;
+            /** Trigger */
+            trigger: string;
+            /** Created At */
+            created_at?: string | null;
+        };
         /** RunView */
         RunView: {
             /** Id */
@@ -2483,7 +2564,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "queued" | "running" | "waiting_approval" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
+            status: "queued" | "running" | "waiting_approval" | "paused" | "budget_extension_pending" | "completed" | "failed" | "cancelled" | "interrupted";
             /**
              * Browser Manual Active
              * @default false
@@ -2515,6 +2596,27 @@ export interface components {
             approvals: components["schemas"]["ApprovalView"][];
             context_summary?: components["schemas"]["ContextSummaryView"] | null;
             answer_evaluation?: components["schemas"]["AnswerEvaluationView"] | null;
+            budget_extension_request?: components["schemas"]["BudgetExtensionRequestView"] | null;
+            /**
+             * Budget Extensions Used
+             * @default 0
+             */
+            budget_extensions_used: number;
+            /**
+             * Budget Extensions Max
+             * @default 0
+             */
+            budget_extensions_max: number;
+            /** Stagnation */
+            stagnation?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Checkpoint Resumed From */
+            checkpoint_resumed_from?: {
+                [key: string]: unknown;
+            } | null;
+            /** Checkpoints */
+            checkpoints?: components["schemas"]["RunCheckpointView"][];
         };
         /** ScheduledJobInput */
         ScheduledJobInput: {
@@ -4740,6 +4842,37 @@ export interface operations {
             };
         };
     };
+    list_checkpoints_api_v1_runs__key__checkpoints_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_events_api_v1_runs__key__events_get: {
         parameters: {
             query?: {
@@ -4972,6 +5105,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ResumeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_budget_extension_api_v1_runs__key__budget_extension_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BudgetExtensionDecisionInput"];
             };
         };
         responses: {

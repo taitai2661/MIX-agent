@@ -10,6 +10,25 @@
 
 今回の確認: WebのTypeScript/Vite buildとVitest 22件、Contextの対象テスト14件、Composeの使い捨てPostgreSQLで書き出し・回答チェックの対象テスト4件が成功。画面の実操作とスクリーンリーダーでの確認は未実施です。一時モードの添付は選択時にアップロードされるため、送信せず画面を離れた場合の孤立添付を自動削除する処理は今後の課題です。
 
+## Agent 実行ループと自律性の強化（2026-09-26追記）
+
+長時間作業向けに新しい状態・データ・APIを追加し、5テーマ（文脈圧縮、停滞検知、動的予算、中間チェックポイント、検証ループ厳密化）をまとめて導入しました。実装にはAlembic migration `0020_run_checkpoints.py` が必要で、`runs` テーブルの CHECK 制約に `budget_extension_pending` を追加し、新規 `run_checkpoints` テーブルを作成します。
+
+確認した項目:
+
+- バックエンドのPython: 21件のVitest相当（`test_tiered_summary`, `test_stagnation_and_verification`, `test_agent_completion`, `test_mode_policy`）が成功。`test_run_checkpoints` / `test_budget_extension_state` は PostgreSQL が必要で本環境では未実行。
+- TypeScript / Vite build が成功。Vitest 11ファイル52テストが成功（`types.test.ts` に新イベントの parse テストを追加）。
+- `ruff check` で `mix_agent/runs/{checkpoints,stagnation,verification,events}.py` と `mix_agent/context/tiered_summary.py` と `mix_agent/api/schemas.py` はすべて通過。`mix_agent/runs/engine.py` と `mix_agent/api/routes.py` の残存警告は既存の `except Exception: pass` パターンの踏襲によるもので新機能由来ではない。
+- `apps/server/migrations/versions/0020_run_checkpoints.py` がマイグレーション一覧の末尾に追加され、`RunCheckpoint` モデル・`budget_extension_pending` 状態・`one_active_run` 部分Indexが新CHECK制約と整合。
+- 公開API: `POST /runs/{key}/resume` の `from_checkpoint` / `unknown_actions` 拡張、`POST /runs/{key}/budget-extension`、`GET /runs/{key}/checkpoints`、`GET /runs/{key}` の新フィールド（`budget_extension_request` / `budget_extensions_used` / `budget_extensions_max` / `stagnation` / `checkpoint_resumed_from` / `checkpoints`）。
+- フロントエンドの `parseRunEvent` が新イベント `checkpoint_saved` / `budget_extension_requested` / `budget_extension_resolved` / `stagnation_detected` / `verification_required` / `phase_advanced` をすべて型安全に解釈。
+
+未確認の項目:
+
+- 実Provider・実Runner・実Dockerでの中間チェックポイント復元動作、予算延長フローのUX、停滞検知の実会話での精度検証。
+- 階層的サマリの Tier 2 fallback が、巨大Tool出力の繰り返しで正しく発火するかどうかの負荷試験。
+- Agentモード以外のモード（Chat / Thinking）で `RunView` の新フィールドが UI にどう露出するかの最終デザイン整合。
+
 2026-08-30。これは初期実装の検証記録であり、本番運用の認定ではありません。
 
 ## Chat / Thinking拡張の確認（2026-08-30追記）

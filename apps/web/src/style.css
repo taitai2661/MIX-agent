@@ -5626,3 +5626,119 @@ body {
 .browser-panel-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: #000d; }
 .browser-panel-overlay img { max-width: 95vw; max-height: 88vh; object-fit: contain; }
 .browser-panel-overlay button { background: white; color: black; }
+
+/* Long-work agent mode: resume, budget extension, stagnation */
+.run-resume {
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: fit-content;
+}
+.run-resume-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: .9rem;
+}
+.run-resume-detail {
+  margin: 0;
+  font-size: .8rem;
+  color: var(--muted);
+}
+.run-resume-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.checkpoint-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.checkpoint-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.checkpoint-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: .8rem;
+}
+.checkpoint-row small {
+  color: var(--muted);
+}
+.budget-extension ul.checkpoint-list li span {
+  display: block;
+  font-size: .85rem;
+}
+.run-stagnation {
+  margin: 8px 0 14px;
+  padding: 8px 12px;
+  border: 1px dashed var(--warn);
+  border-radius: 10px;
+  background: var(--panel);
+  width: fit-content;
+}
+.run-stagnation-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+  font-size: .85rem;
+}
+.run-stagnation ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: .8rem;
+}
+.run-stagnation code {
+  background: var(--code-bg);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.run-budget-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+}
+.run-budget-card .run-budget { margin: 0; }
+.run-budget-extension {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: .8rem;
+}
+.run-budget-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 320px;
+  max-width: 100%;
+}
+.run-budget-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.run-budget-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent, #4c8bf5);
+  transition: width .3s ease;
+}

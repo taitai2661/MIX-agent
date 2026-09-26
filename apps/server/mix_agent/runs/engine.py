@@ -302,9 +302,21 @@ def answer_fallback(history):
 
 
 def agent_completion_issue(run, calls):
-    """Require a current plan and post-change evidence before agent completion."""
+    """Require a current plan and post-change evidence before agent completion.
+
+    When the policy enables ``strict_verification``, this delegates to
+    :func:`mix_agent.runs.verification.strict_issue` which adds risk-specific
+    and phase-specific checks.
+    """
+    from mix_agent.runs.verification import strict_issue
+
     if run.data.get("snapshot", {}).get("mode") != "agent":
         return None
+    policy = (run.data.get("snapshot") or {}).get("policy") or {}
+    if policy.get("strict_verification"):
+        strict = strict_issue(run, calls)
+        if strict:
+            return strict
     completed = [call for call in calls if call.status == "completed"]
     plan = run.data.get("agent_plan") or {}
     if not completed and not plan:
@@ -393,6 +405,18 @@ def finish(db, run, status, reason=None):
                 "finished_at": now().isoformat(),
             },
         )
+        if status in {"interrupted", "failed"}:
+            try:
+                from mix_agent.runs import checkpoints as run_checkpoints
+                checkpoint = run_checkpoints.save(db, run, trigger=f"terminal:{status}")
+                emit(db, run.id, "checkpoint_saved", {
+                    "id": checkpoint.id,
+                    "step": checkpoint.step,
+                    "trigger": checkpoint.trigger,
+                    "tool_count": checkpoint.tool_count,
+                })
+            except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+                db.rollback()
     scheduled_id = run.data.get("scheduled_run_id")
     if scheduled_id:
         scheduled = db.get(ScheduledRun, scheduled_id)
@@ -767,6 +791,7 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
     Returns provider-ready history (refs resolved).
     """
     from mix_agent.db.models import Model as _Model
+    from mix_agent.context import tiered_summary as tiered
 
     history = run.data.get("history") or []
     # Checkpoint: keep structured task state alive even for legacy runs.
@@ -779,7 +804,7 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             history = [{**history[0], "content": head}, *history[1:]]
             update(run, history=history)
     if run.data.get("summary") is None:
-        update(run, summary={"text": "", "covered_count": 0, "updated_at": None})
+        tiered.install_summary(run.data, "", 0)
     model_record = db.get(_Model, snapshot.get("model_record_id")) if snapshot.get("model_record_id") else None
     model_data = dict((model_record.data if model_record else {}) or {})
     window_info = context_budget.resolve_window(model_data, snapshot)
@@ -816,30 +841,55 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
                         summary_text = event["message"]["content"]
             summary_text = finalize_summary(summary_text)
             if summary_text:
-                from mix_agent.db.models import now as _now
-
-                update(run, summary={
-                    "text": summary_text,
-                    "covered_count": int((run.data.get("summary") or {}).get("covered_count", 0)) + len(evicted),
-                    "updated_at": _now().isoformat(),
+                # Tiered summary: rotate the previous active text into the
+                # archive so the next compaction can reuse it as evidence.
+                new_covered = int((run.data.get("summary") or {}).get("covered_count", 0)) + len(evicted)
+                tiered.archive_summary(run.data, summary_text, new_covered)
+                summarized = [{"evicted": len(evicted), "tier": 0}]
+                emit(db, run.id, "context_summary", {
+                    "status": "completed",
+                    "summary": summary_text,
+                    "archive_rows": len(tiered.current_archive(run.data)),
                 })
-                summarized = [{"evicted": len(evicted)}]
-                emit(db, run.id, "context_summary", {"status": "completed", "summary": summary_text})
                 # Rewrite head summary line progressively (no full re-summarization).
                 head_text = (head[0].get("content") if head else "")
                 head_text = _replace_summary_block(head_text, summary_text)
                 if head:
                     head = [{**head[0], "content": head_text}]
                 db.commit()
+        except ContextBudgetError:
+            # Re-raise upstream so the caller can decide.  We still want to
+            # preserve the existing summary text; no archive rotation.
+            emit(db, run.id, "context_summary", {"status": "failed"})
+            db.commit()
+            raise
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             # Summarizer failure must not destroy state; keep old summary.
             emit(db, run.id, "context_summary", {"status": "failed"})
             db.commit()
-            raise ContextBudgetError("context summary failed; previous conversation was preserved")
+            # Degrade gracefully: drop the evicted tail rather than aborting the
+            # whole Run.  Tiered archive keeps the older summary intact, and
+            # the next compaction will try again with the new tail.
+            recent = select_recent(tail, recent_budget * 2, model_id)[0]
+            compacted = [*head, *recent]
+            update(run, history=compacted)
+            _persist_trace(db, run, snapshot, compacted,
+                           context_tokens.count_messages(compacted, model_id),
+                           total, tool_cost, [{"evicted": len(evicted), "tier": "fallback_drop"}])
+            db.commit()
+            return _resolve_history_for_provider(db, run, compacted)
         if not summary_text:
             emit(db, run.id, "context_summary", {"status": "failed"})
             db.commit()
-            raise ContextBudgetError("context summary was empty; previous conversation was preserved")
+            # Same fallback as the exception path: drop evicted rather than halt.
+            recent = select_recent(tail, recent_budget * 2, model_id)[0]
+            compacted = [*head, *recent]
+            update(run, history=compacted)
+            _persist_trace(db, run, snapshot, compacted,
+                           context_tokens.count_messages(compacted, model_id),
+                           total, tool_cost, [{"evicted": len(evicted), "tier": "fallback_drop"}])
+            db.commit()
+            return _resolve_history_for_provider(db, run, compacted)
     compacted = [*head, *recent]
     estimated = context_tokens.count_messages(compacted, model_id)
     if estimated > total + 2000 and len(compacted) <= 2:
@@ -1073,15 +1123,105 @@ async def drive(run_id):
                     transition_run(db, run, "paused")
                     db.commit()
                     return
+                # Periodic durable checkpoint so resume can pick a recent step.
+                from mix_agent.runs import checkpoints as run_checkpoints
+                if (
+                    snapshot.get("policy", {}).get("checkpointing")
+                    and run_checkpoints.should_checkpoint(snapshot, int(run.data.get("steps", 0)))
+                ):
+                    try:
+                        checkpoint = run_checkpoints.save(db, run, trigger="interval")
+                        emit(db, run.id, "checkpoint_saved", {
+                            "id": checkpoint.id,
+                            "step": checkpoint.step,
+                            "trigger": checkpoint.trigger,
+                            "tool_count": checkpoint.tool_count,
+                        })
+                        db.commit()
+                    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+                        # A failed checkpoint must never break the drive loop.
+                        db.rollback()
+                # Stagnation self-repair: detect repeated failures / no-progress
+                # patterns and inject a corrective user-role entry on the fly.
+                if snapshot.get("policy", {}).get("stagnation_detection"):
+                    try:
+                        from mix_agent.runs import stagnation as run_stagnation
+                        findings = run_stagnation.detect_stagnation(db, run)
+                        if findings:
+                            already = run.data.get("last_stagnation_step")
+                            current_step = int(run.data.get("steps", 0))
+                            if already is None or current_step - int(already) >= 3:
+                                msg = run_stagnation.repair_history_message(findings)
+                                if msg:
+                                    update(
+                                        run,
+                                        history=[*run.data["history"], {"role": "user", "content": msg}],
+                                        last_stagnation_step=current_step,
+                                        stagnation_findings=[
+                                            {"code": f["code"], "severity": f.get("severity"),
+                                             "tool_id": f.get("tool_id"), "count": f.get("count")}
+                                            for f in findings
+                                        ],
+                                    )
+                                    emit(db, run.id, "stagnation_detected", {
+                                        "findings": [
+                                            {"code": f["code"], "severity": f.get("severity"),
+                                             "tool_id": f.get("tool_id"), "count": f.get("count")}
+                                            for f in findings
+                                        ],
+                                        "step": current_step,
+                                    })
+                                    db.commit()
+                    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+                        db.rollback()
                 mode = snapshot["mode"]
-                steps = run.data.get("steps", 0)
-                count = run.data.get("tool_count", 0)
+                steps = int(run.data.get("steps", 0))
+                count = int(run.data.get("tool_count", 0))
                 call_limit = snapshot.get("max_tool_calls", 50 if mode == "agent" else 8)
+                step_limit = snapshot.get("max_steps", 8)
+                seconds_limit = snapshot.get("max_seconds", 900)
                 available = [t for t in snapshot["tools"] if t["id"] in registry(db, run.owner_id)]
                 tool_limit_reached = count >= call_limit
                 if tool_limit_reached:
                     available = []
-                step_limit_reached = steps >= snapshot.get("max_steps", 8)
+                step_limit_reached = steps >= step_limit
+                # Budget extension request: when policy allows it and limits are
+                # close to exhaustion, pause and ask the user before stopping.
+                if (
+                    snapshot.get("policy", {}).get("budget_extension")
+                    and (tool_limit_reached or step_limit_reached)
+                ):
+                    extensions_used = int(run.data.get("budget_extensions_used", 0))
+                    extensions_max = int(snapshot.get("policy", {}).get("max_budget_extensions", 0))
+                    if extensions_used < extensions_max:
+                        update(
+                            run,
+                            budget_extension_request={
+                                "tool_calls_used": count,
+                                "tool_calls_limit": call_limit,
+                                "steps_used": steps,
+                                "steps_limit": step_limit,
+                                "elapsed_seconds": int(elapsed),
+                                "max_seconds": int(seconds_limit),
+                                "requested_at": now().isoformat(),
+                            },
+                            budget_extensions_used=extensions_used + 1,
+                        )
+                        emit(db, run.id, "budget_extension_requested", {
+                            "tool_calls_used": count, "tool_calls_limit": call_limit,
+                            "steps_used": steps, "steps_limit": step_limit,
+                            "elapsed_seconds": int(elapsed), "max_seconds": int(seconds_limit),
+                            "extensions_used": extensions_used + 1,
+                            "extensions_max": extensions_max,
+                        })
+                        transition_run(db, run, "budget_extension_pending")
+                        db.commit()
+                        return
+                if tool_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
+                    finish(db, run, "interrupted", agent_interruption_reason(run, "Tool Call数の上限に到達しました。途中成果を確認して再開してください。"))
+                    return
+                if tool_limit_reached:
+                    available = []
                 if step_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
                     finish(db, run, "interrupted", agent_interruption_reason(run, "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。"))
                     return
@@ -1234,6 +1374,19 @@ async def drive(run_id):
                     update(run, tool_count=min(call_limit, count + len(tool_calls)))
                     if snapshot.get("policy", {}).get("checkpointing"):
                         update(run, checkpoint={"status": "working", "steps": steps + 1, "tool_count": min(call_limit, count + len(tool_calls))})
+                        # Persist a durable checkpoint at every step boundary so
+                        # the user can pick the most recent working state.
+                        try:
+                            from mix_agent.runs import checkpoints as run_checkpoints
+                            checkpoint = run_checkpoints.save(db, run, trigger="working")
+                            emit(db, run.id, "checkpoint_saved", {
+                                "id": checkpoint.id,
+                                "step": checkpoint.step,
+                                "trigger": checkpoint.trigger,
+                                "tool_count": checkpoint.tool_count,
+                            })
+                        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+                            db.rollback()
                     db.commit()
                     continue
                 if not is_user_facing_answer(message["content"]):

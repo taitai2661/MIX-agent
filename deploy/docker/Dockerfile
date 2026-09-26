@@ -67,6 +67,7 @@ COPY --from=web /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 COPY runners/mcp/main.py /app/mcp_runner.py
 COPY apps/server/mix_agent/mcp/protocol.py /app/mcp_protocol.py
+COPY apps/server/mix_agent/tools/network.py /app/mix_agent/tools/network.py
 COPY packages/tool_contracts/snapshots.py /app/snapshots.py
 USER 1000:1000
 CMD ["uvicorn", "mcp_runner:app", "--host", "0.0.0.0", "--port", "8002"]

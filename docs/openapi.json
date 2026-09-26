@@ -2016,6 +2016,43 @@
         }
       }
     },
+    "/api/v1/runs/{key}/checkpoints": {
+      "get": {
+        "summary": "List Checkpoints",
+        "operationId": "list_checkpoints_api_v1_runs__key__checkpoints_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/runs/{key}/events": {
       "get": {
         "summary": "Run Events",
@@ -2315,6 +2352,53 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ResumeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{key}/budget-extension": {
+      "post": {
+        "summary": "Decide Budget Extension",
+        "operationId": "decide_budget_extension_api_v1_runs__key__budget_extension_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetExtensionDecisionInput"
               }
             }
           }
@@ -4683,6 +4767,102 @@
         ],
         "title": "Body_upload_api_v1_artifacts_post"
       },
+      "BudgetExtensionDecisionInput": {
+        "properties": {
+          "grant": {
+            "type": "boolean",
+            "title": "Grant"
+          },
+          "max_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400.0,
+                "minimum": 30.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seconds"
+          },
+          "max_steps": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Steps"
+          },
+          "max_tool_calls": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tool Calls"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "grant"
+        ],
+        "title": "BudgetExtensionDecisionInput"
+      },
+      "BudgetExtensionRequestView": {
+        "properties": {
+          "tool_calls_used": {
+            "type": "integer",
+            "title": "Tool Calls Used"
+          },
+          "tool_calls_limit": {
+            "type": "integer",
+            "title": "Tool Calls Limit"
+          },
+          "steps_used": {
+            "type": "integer",
+            "title": "Steps Used"
+          },
+          "steps_limit": {
+            "type": "integer",
+            "title": "Steps Limit"
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "title": "Elapsed Seconds"
+          },
+          "max_seconds": {
+            "type": "integer",
+            "title": "Max Seconds"
+          },
+          "requested_at": {
+            "type": "string",
+            "title": "Requested At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_calls_used",
+          "tool_calls_limit",
+          "steps_used",
+          "steps_limit",
+          "elapsed_seconds",
+          "max_seconds",
+          "requested_at"
+        ],
+        "title": "BudgetExtensionRequestView"
+      },
       "ContextSummaryView": {
         "properties": {
           "text": {
@@ -4877,6 +5057,7 @@
               "running",
               "waiting_approval",
               "paused",
+              "budget_extension_pending",
               "completed",
               "failed",
               "cancelled",
@@ -6424,6 +6605,34 @@
               }
             ],
             "title": "Max Tool Calls"
+          },
+          "from_checkpoint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Checkpoint"
+          },
+          "unknown_actions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unknown Actions"
           }
         },
         "additionalProperties": false,
@@ -6469,6 +6678,45 @@
         "type": "object",
         "title": "RunBudgetView"
       },
+      "RunCheckpointView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "step": {
+            "type": "integer",
+            "title": "Step"
+          },
+          "tool_count": {
+            "type": "integer",
+            "title": "Tool Count"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "step",
+          "tool_count",
+          "trigger"
+        ],
+        "title": "RunCheckpointView"
+      },
       "RunView": {
         "properties": {
           "id": {
@@ -6482,6 +6730,7 @@
               "running",
               "waiting_approval",
               "paused",
+              "budget_extension_pending",
               "completed",
               "failed",
               "cancelled",
@@ -6576,6 +6825,60 @@
                 "type": "null"
               }
             ]
+          },
+          "budget_extension_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetExtensionRequestView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budget_extensions_used": {
+            "type": "integer",
+            "title": "Budget Extensions Used",
+            "default": 0
+          },
+          "budget_extensions_max": {
+            "type": "integer",
+            "title": "Budget Extensions Max",
+            "default": 0
+          },
+          "stagnation": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stagnation"
+          },
+          "checkpoint_resumed_from": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Resumed From"
+          },
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/RunCheckpointView"
+            },
+            "type": "array",
+            "title": "Checkpoints"
           }
         },
         "type": "object",

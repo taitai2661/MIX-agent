@@ -37,6 +37,11 @@ import { RunBudget } from "./RunBudget";
 import { RunActivity, type ToolCallHistory } from "./RunActivity";
 import { ArtifactCard } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
+import {
+  BudgetExtensionPanel,
+  CheckpointsPanel,
+  StagnationPanel,
+} from "./AgentLoop";
 import { randomGreeting } from "./greeting";
 import {
   liveToolCalls,
@@ -48,6 +53,7 @@ import {
   type Run,
   type RunEvent,
   type SendMessage,
+  type StagnationFinding,
   type Tool,
 } from "./types";
 
@@ -200,6 +206,16 @@ export function Chat() {
       if (["tool_started", "tool_result", "approval", "status"].includes(v.kind))
         qc.invalidateQueries({ queryKey: ["tool-calls", id] });
       if (v.kind === "browser_frame") qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
+      if (
+        v.kind === "checkpoint_saved" ||
+        v.kind === "budget_extension_requested" ||
+        v.kind === "budget_extension_resolved" ||
+        v.kind === "stagnation_detected" ||
+        v.kind === "verification_required" ||
+        v.kind === "phase_advanced"
+      ) {
+        qc.invalidateQueries({ queryKey: ["run", runId] });
+      }
     };
     source.addEventListener("activity", onActivity);
     source.addEventListener("done", finish);
@@ -427,29 +443,27 @@ export function Chat() {
                 <RunBudget run={run.data} active={!!active} fetchedAt={run.dataUpdatedAt} />
               )}
               {run.data?.status === "interrupted" && (
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    if (
-                      confirm(
-                        t("結果不明の操作は再実行しません。外部状態を確認してから続けてください。"),
-                      )
-                    ) {
-                      try {
-                        await api("/runs/" + runId + "/resume", "POST", {
-                          acknowledge_unknown_result: true,
-                        });
-                        qc.invalidateQueries({ queryKey: ["run", runId] });
-                        setRunId("");
-                        setTimeout(() => setRunId(runId), 10);
-                      } catch (e) {
-                        setError(e);
-                      }
-                    }
+                <CheckpointsPanel run={run.data} onError={setError} onResumed={() => {
+                  qc.invalidateQueries({ queryKey: ["run", runId] });
+                  qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+                  setRunId("");
+                  setTimeout(() => setRunId(runId), 10);
+                }} />
+              )}
+              {run.data?.status === "budget_extension_pending" && run.data.budget_extension_request && (
+                <BudgetExtensionPanel
+                  runId={runId}
+                  request={run.data.budget_extension_request}
+                  used={run.data.budget_extensions_used}
+                  max={run.data.budget_extensions_max}
+                  onError={setError}
+                  onResolved={() => {
+                    qc.invalidateQueries({ queryKey: ["run", runId] });
                   }}
-                >
-                  {t("確認して再開")}
-                </Button>
+                />
+              )}
+              {run.data?.stagnation && run.data.stagnation.length > 0 && (
+                <StagnationPanel findings={run.data.stagnation as StagnationFinding[]} />
               )}
               <div ref={bottom} />
             </div>
