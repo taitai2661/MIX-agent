@@ -2,8 +2,8 @@
   "id": "io.github.taitai2661.mix-agent",
   "title": "MIX-agent",
   "tagline": "家庭内ネットワークで使うAIワークスペース。",
-  "description": "チャット・Agent・Tool・MCPをまとめたセルフホスト環境。信頼できるLAN/VPNの単一管理者向け。インターネット公開は非推奨。",
   "release_note": "LAN内HTTPでの初期設定互換性を修正し、ChatとMemoryの挙動を改善。",
+  "description": "チャット・Agent・Tool・MCPをまとめたセルフホスト環境。信頼できるLAN/VPNの単一管理者向け。インターネット公開は非推奨。",
   "tips": {
     "before_install": "8080番ポートとPostgreSQL・Browser・MCPなど複数コンテナを使用します。十分なメモリと空き容量が必要です。信頼できるLAN/VPN内でのみ使用してください。MCP管理用コンテナはDocker socketをマウントします。更新前にデータをバックアップし、OAuth・Web Push利用時はPUBLIC_ORIGINに実際のHTTPS URLを設定してください。"
   }
