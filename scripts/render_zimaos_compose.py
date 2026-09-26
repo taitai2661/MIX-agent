@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.2.3
+Run with: python scripts/render_zimaos_compose.py v0.3.0
 PyYAML is required for this maintainer-only script.
 """
 
@@ -29,7 +29,7 @@ TARGETS = {
 
 def render(tag: str) -> str:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
-        raise ValueError("Expected a release tag such as v0.2.3")
+        raise ValueError("Expected a release tag such as v0.3.0")
     source = yaml.safe_load((ROOT / "compose.yaml").read_text())
     source.pop("x-restricted", None)
     source.pop("secrets", None)
@@ -110,4 +110,4 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.2.3"))
+    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.3.0"))
