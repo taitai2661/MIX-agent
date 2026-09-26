@@ -234,6 +234,10 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         model, auto_selection = own(db, Model, requested_model_id, owner_id), None
     provider = own(db, Provider, model.data["provider_id"], owner_id)
     tool_ids = effective_tool_ids(settings, agent, agent.get("tool_ids", []))
+    # Scheduled runs are unattended, so capability confirmation is left to the
+    # scheduler tick (probe_due_models).  An unverified model keeps its tools
+    # disabled here, matching the historical behaviour and avoiding added
+    # latency on every cron tick.
     if tool_ids and tool_capability(model.data) is not True: tool_ids = []
     try:
         reasoning = resolve_reasoning(provider.data["kind"], model.data["model_id"], effective_capabilities(model.data), mode, agent.get("model_settings", {}))
@@ -1152,6 +1156,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
     days = max(1, min(RETENTION.days, days))
     since = datetime.now(UTC) - timedelta(days=days)
     models = {row.id: row.data for row in db.scalars(select(Model).where(Model.owner_id == s.owner_id))}
+    providers = {row.id: row.data for row in db.scalars(select(Provider).where(Provider.owner_id == s.owner_id))}
 
     def token_sum(key):
         return func.coalesce(func.sum(cast(ModelUsageEvent.data[key].astext, Float)), 0)
@@ -1176,6 +1181,11 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
         .where(ModelUsageEvent.owner_id == s.owner_id, ModelUsageEvent.created_at >= since)
         .group_by(model_id, provider_id, mode)
     ).all()
+    provider_rows = db.execute(
+        select(provider_id, requests, input_sum, output_sum, cached_sum, total_sum, cost_sum, priced)
+        .where(ModelUsageEvent.owner_id == s.owner_id, ModelUsageEvent.created_at >= since)
+        .group_by(provider_id)
+    ).all()
     day_rows = db.execute(
         select(
             func.date(ModelUsageEvent.created_at), requests, input_sum, output_sum, total_sum, cost_sum, priced,
@@ -1198,6 +1208,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
             "key": f"{model_key}:{provider_key}:{mode_key}", "model_id": model_key,
             "provider_id": provider_key, "mode": mode_key,
             "model_name": models.get(model_key, {}).get("name") or models.get(model_key, {}).get("model_id") or model_key,
+            "provider_name": providers.get(provider_key, {}).get("name"),
             "requests": int(count), "input_tokens": int(input_count), "output_tokens": int(output_count),
             "cached_tokens": int(cached_count), "total_tokens": int(total_count),
             "cost_usd": round(float(cost_value), 6) if known else None,
@@ -1213,6 +1224,17 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
         totals["estimated_requests"] += int(estimated_count)
     totals["unpriced_requests"] = totals["requests"] - totals["priced_requests"]
     totals["cost_usd"] = round(totals["cost_usd"], 6) if totals["priced_requests"] else None
+    provider_view = []
+    for provider_key, count, input_count, output_count, cached_count, total_count, cost_value, priced_count in provider_rows:
+        provider_key = provider_key or "unknown"
+        provider_view.append({
+            "provider_id": provider_key,
+            "provider_name": providers.get(provider_key, {}).get("name"),
+            "requests": int(count), "input_tokens": int(input_count), "output_tokens": int(output_count),
+            "cached_tokens": int(cached_count), "total_tokens": int(total_count),
+            "cost_usd": round(float(cost_value), 6) if priced_count else None,
+            "unpriced": not bool(priced_count),
+        })
     series = [{
         "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
         "requests": int(count), "input_tokens": int(input_count), "output_tokens": int(output_count),
@@ -1223,6 +1245,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
     return {
         "retention_days": RETENTION.days, "total": totals, "days": series,
         "groups": sorted(groups, key=lambda x: (-x["total_tokens"], x["model_name"])),
+        "providers": sorted(provider_view, key=lambda x: -x["total_tokens"]),
     }
 
 
@@ -2106,24 +2129,25 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     tools_capability = tool_capability(model.data)
-    # A stored probe from an older probe_version is unreliable (e.g. recorded
-    # when the check could not force a tool call from compatible endpoints).
-    # Re-run it once so such models are not permanently stripped of tools.
-    stored_probe = model.data.get("tool_probe", {})
-    probe_stale = bool(stored_probe) and stored_probe.get("probe_version") != config.TOOL_PROBE_VERSION
+    # Run a one-call Tool Calling probe for every interactive mode (chat,
+    # thinking, agent) when the capability is unknown and the stored verdict is
+    # stale or absent. capability_probe.probe_needed also re-checks outdated
+    # verdicts, so this catches both fresh models and older probe_versions.
+    # Manual overrides already short-circuit probe_needed, so this never
+    # contradicts an explicit user setting.
     if (
         tool_ids
         and tools_capability is None
-        and (mode == "thinking" or (mode == "chat" and probe_stale))
-        and (not stored_probe or probe_stale)
+        and capability_probe.probe_needed(model.data, "tools", provider.data.get("kind"))
     ):
         tools_capability = await verify_tool_capability(db, s.owner_id, model, provider, "automatic")
         tools_capability = {"supported": True, "unsupported": False}.get(tools_capability)
     if tool_ids and tools_capability is not True:
-        if mode in ("chat", "thinking"):
-            tool_ids = []
-        elif tools_capability is False or not body.acknowledge_unknown_capability:
-            raise HTTPException(422, "Tool Calling対応をモデル設定で確認してください")
+        # A failed (or inconclusive) probe never blocks a run: tools are dropped
+        # silently and the scheduler tick retries on the next due check.
+        tool_ids = []
+        if tools_capability is False:
+            raise HTTPException(422, "Tool Callingに対応していないため、このモデルはツールを利用できません")
     snapshot, history, _, memory_trace_ids, _ = await _build_history_payload(
         db, s, conversation, body, settings, agent, artifacts,
         mode, requested_model_id, requested_agent_id, model, provider, caps,

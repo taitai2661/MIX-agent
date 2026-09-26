@@ -90,7 +90,7 @@ Contextの上限が近づくと、古い会話を要約してモデルへ渡し�
 
 標準では全モードに組み込みツールを提供します。プリセット選択時はそのツール一覧（空リストを含む）を優先し、MCPを自動追加しません。Ask / Deny・承認・Runner隔離はモードにかかわらず適用されます。上限はChatが20分・12ステップ・12 Tool Call、Thinkingが45分・24ステップ・24 Tool Call、Agentが90分・300ステップ・750 Tool Callです。長い作業はAgentを使ってください。
 
-Chat / ThinkingのProvider固有思考制御はOpenAI Responses、OpenRouter、識別可能なClaude 3.7 / 4系とGemini 2.5 / 3系に対応しています。Ollama / LM Studio / 汎用互換APIと未識別モデルでは、その専用パラメーターを送らず通常推論でThinkingを実行します。ThinkingでTool Callingが未確認の場合は、初回だけ副作用のないダミー関数を強制呼出しして互換性を確認します。結果は保存され、未確認・非対応時はツールなしで続行します。モデル設定の「Tool Callingを再確認」でだけ手動再試行できます。手動Overrideは自動確認より優先します。
+Chat / ThinkingのProvider固有思考制御はOpenAI Responses、OpenRouter、識別可能なClaude 3.7 / 4系とGemini 2.5 / 3系に対応しています。Ollama / LM Studio / 汎用互換APIと未識別モデルでは、その専用パラメーターを送らず通常推論でThinkingを実行します。Tool Callingが未確認のモデルを使うときは、Chat / Thinking / Agent のいずれも実行前に副作用のないダミー関数で自動確認します。結果は保存され、未確認・非対応時はツールなしで続行します。再実行は capability probe の鮮度ポリシー（未確定6時間、確定14日）に従い、Scheduler tick でも並行して走ります。モデル設定の「Tool Callingを再確認」でだけ手動再試行できます。手動Overrideは自動確認より優先します。
 
 APIの `mode` は変更していません。`GET /models` の各レコードの `data.reasoning_control` は計算した制御方式またはnullで、`data.tool_probe` は保存済みのTool Calling確認結果です。`POST /models/{id}/verify-tools` は副作用のない再確認を実行します。Runには解決済みの思考方針とツール一覧を保存し、追加情報のない旧Runは従来動作を維持します。公開された思考要約だけを表示し、署名付きコンテキストはツール継続用に保持します。
 

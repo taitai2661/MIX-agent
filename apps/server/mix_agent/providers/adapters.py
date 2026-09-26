@@ -159,7 +159,8 @@ class Adapter:
             modalities = item.get("architecture", {}).get("input_modalities")
             if modalities is not None:
                 caps["vision"] = "image" in modalities
-            resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"])
+            resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"],
+                                     preset_id=self.preset.get("id"))
             metadata = resolved["metadata"]
             context = metadata.get("context_window")
             result.append({

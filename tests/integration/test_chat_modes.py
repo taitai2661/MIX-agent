@@ -100,7 +100,7 @@ def test_default_tools_and_resolved_snapshot(signed, monkeypatch, mode):
 
 def test_long_work_snapshots_autonomous_policy_and_tools(signed, monkeypatch):
     mid = create_model(caps={"reasoning": True, "tools": True})
-    response = send(signed, monkeypatch, mid, "agent", acknowledge_unknown_capability=True)
+    response = send(signed, monkeypatch, mid, "agent")
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
         run = db.get(Run, response.json()["run_id"])
@@ -130,6 +130,15 @@ def test_preset_tool_restrictions(signed, monkeypatch, tool_ids):
 @pytest.mark.parametrize("caps", [{}, {"reasoning": False, "tools": False}])
 def test_chat_keeps_plain_conversation_available(signed, monkeypatch, caps):
     mid = create_model(caps=caps)
+
+    class UnsupportedProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            return False
+
+    monkeypatch.setattr(routes, "Adapter", UnsupportedProbeAdapter)
     response = send(signed, monkeypatch, mid)
     assert response.status_code == 200
     with SessionLocal() as db:
@@ -289,6 +298,73 @@ def test_manual_tool_override_wins_over_automatic_probe(signed, monkeypatch):
     assert response.status_code == 200
     with SessionLocal() as db:
         assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"] == []
+
+
+def test_chat_probes_unknown_tools_automatically(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "chat")
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "supported"
+        assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"]
+
+
+def test_agent_probes_unknown_tools_automatically(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "agent")
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "supported"
+        snapshot = db.get(Run, response.json()["run_id"]).data["snapshot"]
+        assert snapshot["tools"]
+        assert snapshot["mode"] == "agent"
+
+
+def test_agent_silently_drops_tools_when_probe_returns_unknown(signed, monkeypatch):
+    mid = create_model("compatible", {})
+
+    class UnknownProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            raise TimeoutError()
+
+    monkeypatch.setattr(routes, "Adapter", UnknownProbeAdapter)
+    response = send(signed, monkeypatch, mid, "agent")
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "unknown"
+        snapshot = db.get(Run, response.json()["run_id"]).data["snapshot"]
+        assert snapshot["tool_ids"] == []
+        assert snapshot["tools"] == []
 
 
 @pytest.mark.asyncio

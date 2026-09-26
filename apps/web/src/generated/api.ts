@@ -2193,11 +2193,6 @@ export interface components {
             /** Artifact Ids */
             artifact_ids?: string[];
             /**
-             * Acknowledge Unknown Capability
-             * @default false
-             */
-            acknowledge_unknown_capability: boolean;
-            /**
              * Temporary Mode
              * @default false
              */
@@ -2935,6 +2930,29 @@ export interface components {
             pricing_source: string;
             /** Unpriced */
             unpriced: boolean;
+            /** Provider Name */
+            provider_name?: string | null;
+        };
+        /** UsageProviderView */
+        UsageProviderView: {
+            /** Provider Id */
+            provider_id: string;
+            /** Provider Name */
+            provider_name?: string | null;
+            /** Requests */
+            requests: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cached Tokens */
+            cached_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Unpriced */
+            unpriced: boolean;
         };
         /** UsageSummaryView */
         UsageSummaryView: {
@@ -2966,6 +2984,8 @@ export interface components {
             days: components["schemas"]["UsageDayView"][];
             /** Groups */
             groups: components["schemas"]["UsageGroupView"][];
+            /** Providers */
+            providers: components["schemas"]["UsageProviderView"][];
         };
         /** UsernameChangeInput */
         UsernameChangeInput: {

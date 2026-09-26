@@ -5053,17 +5053,87 @@ body {
   height: 100%;
   gap: 4px;
 }
-.usage-day i {
-  display: block;
-  width: 100%;
-  min-width: 6px;
-  border-radius: 4px 4px 2px 2px;
-  background: var(--accent);
-}
 .usage-day small {
   color: var(--muted);
   font-size: 9px;
   white-space: nowrap;
+}
+.usage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.usage-toolbar .usage-range {
+  margin-bottom: 0;
+}
+.usage-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  width: 100%;
+  min-width: 6px;
+  border-radius: 4px 4px 2px 2px;
+  overflow: hidden;
+}
+.usage-stack i {
+  display: block;
+  width: 100%;
+  min-height: 0;
+}
+.usage-stack i.out {
+  background: var(--accent);
+}
+.usage-stack i.in {
+  background: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+.usage-stack i.cached {
+  background: color-mix(in srgb, var(--accent) 72%, var(--line));
+}
+.usage-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.usage-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.usage-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+.usage-legend i.out {
+  background: var(--accent);
+}
+.usage-legend i.in {
+  background: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+.usage-legend i.cached {
+  background: color-mix(in srgb, var(--accent) 72%, var(--line));
+}
+.usage-sort {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.usage-sort button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.usage-sort button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .chat-nav-item {
   display: flex;

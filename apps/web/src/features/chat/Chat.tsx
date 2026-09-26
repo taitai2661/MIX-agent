@@ -236,7 +236,6 @@ export function Chat() {
         mode: researchMode ? "agent" : mode,
         agent_id: agent,
         artifact_ids: attachments.map((a) => a.artifact_id),
-        acknowledge_unknown_capability: false,
         temporary_mode: temporaryMode,
         allow_tools: allowTools,
         research_mode: researchMode && !temporaryMode,

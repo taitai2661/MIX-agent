@@ -163,6 +163,46 @@ async def test_metadata_resolver_prefers_provider_api_and_records_evidence(monke
     assert evidence["confidence"] == "official"
     assert result["metadata_candidates"]["official_catalog"]["context_window"]["value"] == 128_000
 
+
+async def test_nvidia_nim_metadata_resolves_through_preset_catalog_and_models_dev(monkeypatch):
+    from mix_agent.providers import metadata
+
+    seen = {}
+
+    async def fake_models_dev(keys, model_id):
+        seen["keys"] = tuple(keys)
+        return {"context_window": 99_999}
+
+    monkeypatch.setattr(metadata, "models_dev", fake_models_dev)
+    result = await resolve("compatible", "nvidia/llama-3.3-nemotron-super-49b-v1.5", {},
+                           preset_id="nvidia-nim")
+    evidence = result["metadata"]["context_window"]
+    assert evidence["value"] == 131_072
+    assert evidence["source"] == "official_catalog"
+    assert seen["keys"][0] == "nvidia"
+    assert "compatible" in seen["keys"]
+    assert result["metadata_candidates"]["models_dev"]["context_window"]["value"] == 99_999
+
+
+def test_context_limit_accepts_models_dev_limit_shape():
+    from mix_agent.providers.metadata import context_limit
+
+    assert context_limit({"limit": {"context": 131_072, "output": 65_536}}) == 131_072
+    assert context_limit({"limit": {"context": False}}) is None
+
+
+def test_nim_non_chat_model_families_are_excluded():
+    from mix_agent.providers.model_roles import chat_capability
+
+    for model_id in ("nvidia/nv-embed-v1", "nvidia/rerank-qa-mistral-4b",
+                     "black-forest-labs/flux.1-dev", "baai/bge-m3",
+                     "nvidia/magpie-tts-zeroshot", "nvidia/nemotron-parse"):
+        assert chat_capability("compatible", model_id) is False, model_id
+    for model_id in ("nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                     "nvidia/nemotron-voicechat", "meta/llama-3.3-70b-instruct"):
+        assert chat_capability("compatible", model_id) is None, model_id
+
+
 def test_provider_save_syncs_models_and_auto_candidates(signed, monkeypatch):
     async def list_models(self):
         return [

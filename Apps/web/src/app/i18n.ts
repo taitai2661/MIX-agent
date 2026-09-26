@@ -387,6 +387,9 @@ const en: Record<string, string> = {
   "価格未設定でコスト集計外のリクエスト:": "Requests excluded from cost (no price):",
   "Providerがusageを返さず推定した件数:": "Requests with estimated tokens (provider returned no usage):",
   "日別のトークン使用量": "Daily token usage", "モデル別の使用量": "Usage by model",
+  "Provider別の使用量": "Usage by provider", "並び替え": "Sort",
+  "トークン順": "By tokens", "コスト順": "By cost", "リクエスト順": "By requests",
+  "CSVをダウンロード": "Download CSV",
   "手動設定": "Manual",
 };
 

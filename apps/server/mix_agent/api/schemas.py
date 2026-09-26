@@ -244,6 +244,19 @@ class UsageGroupView(BaseModel):
     cost_usd: float | None = None
     pricing_source: str
     unpriced: bool
+    provider_name: str | None = None
+
+
+class UsageProviderView(BaseModel):
+    provider_id: str
+    provider_name: str | None = None
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    unpriced: bool
 
 
 class UsageView(BaseModel):
@@ -251,6 +264,7 @@ class UsageView(BaseModel):
     total: UsageSummaryView
     days: list[UsageDayView]
     groups: list[UsageGroupView]
+    providers: list[UsageProviderView]
 
 
 class DiagnosticsFailureView(BaseModel):
@@ -421,7 +435,6 @@ class MessageInput(Input):
     agent_id: str = ""
     mode: Literal["chat", "thinking", "agent"] = "chat"
     artifact_ids: list[str] = Field(default_factory=list, max_length=5)
-    acknowledge_unknown_capability: bool = False
     temporary_mode: bool = False
     allow_tools: bool = False
     research_mode: bool = False
