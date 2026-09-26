@@ -44,7 +44,7 @@ def _headers(method: str, tool: str = "", headers: dict | None = None) -> dict:
 def _request(method: str, params: dict | None = None) -> dict:
     params = dict(params or {})
     meta = dict(params.get("_meta") or {})
-    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.2.3"}
+    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.3.0"}
     meta["io.modelcontextprotocol/protocolVersion"] = MODERN_VERSION
     params["_meta"] = meta
     return {"jsonrpc": "2.0", "id": next(_IDS), "method": method, "params": params}

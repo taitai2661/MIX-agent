@@ -50,7 +50,7 @@ docker compose up -d --build
 
 ### GitHub Releases
 
-リリースページには、バージョンごとの[変更内容](docs/release-notes-v0.2.3.md)と
+リリースページには、バージョンごとの[変更内容](docs/release-notes-v0.3.0.md)と
 ZimaOSストアのアーカイブを掲載します。コンテナイメージはGitHub Container Registry
 （GHCR）から取得します。初回リリースの公開作業には、GHCRパッケージをPublicに
 設定してからストアとReleaseを配布する手順が含まれます。
