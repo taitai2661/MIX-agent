@@ -941,10 +941,8 @@ async def settings(ctx=Depends(context)):
                      "browser_viewport_width": 1280, "browser_viewport_height": 720, "browser_block_images": False,
                      "ui_language": "ja", "web_search_enabled": True,
                      "web_search_backend": "ddgs", "web_search_count": 5, "searxng_url": "", "tool_settings": {},
-                     "memory_auto_formation": True, "memory_seed_limit": 24,
-                     "memory_max_candidates": 96, "memory_result_limit": 8,
-                     "memory_min_association_weight": 0.2, "memory_activation_decay": 0.55,
-                     "memory_retrieval_budget_ms": 120, "memory_max_depth": 2, **view["data"]}
+                     "memory_auto_formation": True, "memory_seed_limit": 24, "memory_result_limit": 8,
+                     **{key: value for key, value in view["data"].items() if key not in memory.AUTOMATIC_SETTING_KEYS}}
     if view["data"].get("browser_install_requested"):
         state = await browser_install_state(db, row)
         view["data"] = {**view["data"], "browser_install_status": state["status"],
@@ -1203,7 +1201,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
          cost_value, priced_count, estimated_count, has_manual, has_known) in group_rows:
         model_key, provider_key = model_key or "unknown", provider_key or "unknown"
         known = bool(priced_count)
-        source_name = "manual" if has_manual else ("models_dev" if has_known else "unknown")
+        source_name = "manual" if has_manual else ("model_info" if has_known else "unknown")
         groups.append({
             "key": f"{model_key}:{provider_key}:{mode_key}", "model_id": model_key,
             "provider_id": provider_key, "mode": mode_key,
@@ -1258,6 +1256,8 @@ async def set_settings(body: SettingsInput, ctx=Depends(context)):
         raise HTTPException(422, "通信許可先は正確なドメイン名で指定してください")
     update_values = body.model_dump(exclude={"brave_api_key", "tavily_api_key", "exa_api_key", "serper_api_key", "auto_model_ids"}, exclude_unset=True)
     data = {**row.data, **update_values, "allowed_domains": domains}
+    for key in memory.AUTOMATIC_SETTING_KEYS:
+        data.pop(key, None)
     if "searxng_url" in body.model_fields_set and body.searxng_url is not None:
         url = body.searxng_url.strip()
         if url:
@@ -1909,12 +1909,7 @@ async def _build_history_payload(db, s, conversation, body, settings_row, agent,
         system_text += "\nThis is an unattended scheduled run. Use only already-allowed tools; never request approval. Give a concise user-facing result."
     memory_settings = {
         "seed_limit": settings_row.data.get("memory_seed_limit", 24),
-        "max_candidates": settings_row.data.get("memory_max_candidates", 96),
         "result_limit": settings_row.data.get("memory_result_limit", 8),
-        "min_association_weight": settings_row.data.get("memory_min_association_weight", 0.2),
-        "activation_decay": settings_row.data.get("memory_activation_decay", 0.55),
-        "retrieval_budget_ms": settings_row.data.get("memory_retrieval_budget_ms", 120),
-        "max_depth": settings_row.data.get("memory_max_depth", 2),
     }
     # Retrieval is trigger-aware but pipeline-shared: temporary runs skip
     # memory/skills entirely; scheduled runs use the same builder.

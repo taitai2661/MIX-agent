@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 import time
@@ -28,11 +29,36 @@ SENSITIVE_VALUE = re.compile(
     re.IGNORECASE,
 )
 STOP_WORDS = frozenset({"これ", "それ", "ため", "です", "ます", "する", "した", "して", "with", "that", "this", "from", "your"})
-DEFAULTS = {"seed_limit": 24, "max_candidates": 96, "result_limit": 8, "min_association_weight": 0.20, "activation_decay": 0.55, "retrieval_budget_ms": 120, "max_depth": 2}
+LOGGER = logging.getLogger(__name__)
+DEFAULTS = {"seed_limit": 24, "result_limit": 8}
+AUTO_OVERRIDES_IGNORED = ("max_depth", "max_candidates", "min_association_weight", "activation_decay", "retrieval_budget_ms")
+AUTOMATIC_SETTING_KEYS = ("memory_max_depth", "memory_max_candidates", "memory_retrieval_budget_ms", "memory_min_association_weight", "memory_activation_decay")
+SEED_THRESHOLD = {"established": 0.18, "latent": 0.32}
 
 
 def clamp(value, low=0.0, high=1.0):
     return max(low, min(high, float(value)))
+
+
+def _auto_config(db, owner):
+    """Derive retrieval shape from the owner's trace/graph scale, never from settings."""
+    trace_count = int(db.scalar(select(func.count()).select_from(Memory).where(Memory.owner_id == owner, Memory.lifecycle_state.in_(("established", "latent")))) or 0)
+    edge_count = int(db.scalar(select(func.count()).select_from(MemoryAssociation).where(MemoryAssociation.owner_id == owner)) or 0)
+    max_candidates = max(32, min(256, max(32, trace_count // 2)))
+    min_weight = 0.20
+    if edge_count:
+        percentile = db.scalar(select(func.percentile_cont(0.25).within_group(MemoryAssociation.weight)).where(MemoryAssociation.owner_id == owner))
+        min_weight = clamp(percentile if percentile is not None else 0.20, 0.10, 0.30)
+    density = min(1.0, edge_count / max(1, trace_count * 5))
+    return {
+        "max_depth": 0 if edge_count == 0 else (1 if edge_count < 40 else (2 if edge_count < 600 else 3)),
+        "max_candidates": max_candidates,
+        "retrieval_budget_ms": max(60, min(400, 50 + max_candidates)),
+        "min_association_weight": round(min_weight, 4),
+        "activation_decay": round(clamp(0.60 - 0.15 * density, 0.40, 0.70), 4),
+        "trace_count": trace_count,
+        "edge_count": edge_count,
+    }
 
 
 def terms(value):
@@ -141,28 +167,48 @@ def _base_score(row, query_terms, query_vector, preferred_scopes):
 
 
 def search(db, owner, query="", scopes=None, *, settings=None, debug=False, activate=False):
-    cfg = {**DEFAULTS, **(settings or {})}
+    auto = _auto_config(db, owner)
+    overrides = {key: value for key, value in (settings or {}).items() if key in DEFAULTS}
+    cfg = {**DEFAULTS, **auto, **overrides}
+    cfg["seed_limit"] = max(4, min(64, int(cfg["seed_limit"])))
+    cfg["result_limit"] = max(1, min(30, int(cfg["result_limit"])))
     cfg["max_depth"] = max(0, min(3, int(cfg["max_depth"])))
     cfg["max_candidates"] = max(8, min(256, int(cfg["max_candidates"])))
-    cfg["result_limit"] = max(1, min(30, int(cfg["result_limit"])))
-    deadline = time.monotonic() + max(20, min(1000, int(cfg["retrieval_budget_ms"]))) / 1000
+    started = time.monotonic()
+    deadline = started + max(60, min(400, int(cfg["retrieval_budget_ms"]))) / 1000
     query_terms, query_vector = terms(query), feature_vector(terms(query))
-    seed_rows = _candidate_rows(db, owner, query_terms, min(int(cfg["seed_limit"]), cfg["max_candidates"]))
+    seed_rows = _candidate_rows(db, owner, query_terms, min(cfg["seed_limit"], cfg["max_candidates"]))
     scores, reasons, rows, frontier = {}, {}, {row.id: row for row in seed_rows}, {}
+    steps, rejected = [], []
     for row in seed_rows:
         value, breakdown = _base_score(row, query_terms, query_vector, scopes or [])
-        if value >= (0.32 if _state(row) == "latent" else 0.18):
+        threshold = SEED_THRESHOLD.get(_state(row), SEED_THRESHOLD["established"])
+        if value >= threshold:
             scores[row.id] = frontier[row.id] = value
             reasons[row.id] = breakdown
+        else:
+            rejected.append({"id": row.id, "score": round(value, 4), "threshold": threshold})
+    steps.append({"stage": "seed", "found": len(seed_rows), "admitted": len(frontier), "rejected": rejected[:12], "thresholds": dict(SEED_THRESHOLD)})
     expanded = []
+    stop_reason = "depth" if cfg["max_depth"] else "no_edges"
     for depth in range(cfg["max_depth"]):
-        if not frontier or len(scores) >= cfg["max_candidates"] or time.monotonic() >= deadline:
+        if not frontier:
+            stop_reason = "no_frontier"
             break
-        associations = list(db.scalars(select(MemoryAssociation).where(MemoryAssociation.owner_id == owner, MemoryAssociation.source_memory_id.in_(list(frontier)), MemoryAssociation.weight >= float(cfg["min_association_weight"])).order_by(MemoryAssociation.weight.desc()).limit(cfg["max_candidates"])))
+        if len(scores) >= cfg["max_candidates"]:
+            stop_reason = "candidate_budget"
+            break
+        if time.monotonic() >= deadline:
+            stop_reason = "deadline"
+            break
+        frontier_ids = list(frontier)
+        edge_statement = select(MemoryAssociation).where(MemoryAssociation.owner_id == owner, MemoryAssociation.source_memory_id.in_(frontier_ids))
+        considered = int(db.scalar(select(func.count()).select_from(edge_statement.subquery())) or 0)
+        associations = list(db.scalars(edge_statement.where(MemoryAssociation.weight >= float(cfg["min_association_weight"])).order_by(MemoryAssociation.weight.desc()).limit(cfg["max_candidates"])))
         target_ids = {item.target_memory_id for item in associations} - rows.keys()
         for row in db.scalars(select(Memory).where(Memory.owner_id == owner, Memory.id.in_(target_ids))) if target_ids else []:
             rows[row.id] = row
-        next_frontier = {}
+        next_frontier, accepted = {}, 0
         for association in associations:
             row = rows.get(association.target_memory_id)
             if not row or _state(row) not in ("established", "latent"):
@@ -174,8 +220,10 @@ def search(db, owner, query="", scopes=None, *, settings=None, debug=False, acti
             scores[row.id], next_frontier[row.id] = base + activation, activation
             reasons[row.id] = {**breakdown, "association": activation, "depth": depth + 1}
             expanded.append({"source": association.source_memory_id, "target": row.id, "activation": round(activation, 4)})
+            accepted += 1
             if len(scores) >= cfg["max_candidates"]:
                 break
+        steps.append({"stage": "hop", "depth": depth + 1, "edges_considered": considered, "edges_below_threshold": max(0, considered - len(associations)), "accepted": accepted, "frontier_after": len(next_frontier), "elapsed_ms": round((time.monotonic() - started) * 1000, 2)})
         frontier = next_frontier
     ranked = sorted(scores, key=lambda key: (scores[key], rows[key].updated_at), reverse=True)[:cfg["result_limit"]]
     if activate and ranked:
@@ -192,8 +240,23 @@ def search(db, owner, query="", scopes=None, *, settings=None, debug=False, acti
         if debug:
             item["score_breakdown"] = {name: round(value, 4) if isinstance(value, float) else value for name, value in why.items()}
         result.append(item)
+    steps.append({"stage": "rank", "considered": len(scores), "kept": len(ranked), "result_limit": cfg["result_limit"]})
+    elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+    budget_exhausted = time.monotonic() >= deadline
+    if stop_reason == "deadline":
+        LOGGER.warning("memory retrieval budget exhausted owner=%s elapsed_ms=%s budget_ms=%s", owner, elapsed_ms, int(cfg["retrieval_budget_ms"]))
     if debug:
-        return {"memories": result, "debug": {"seed_ids": [row.id for row in seed_rows], "association_expansion": expanded, "budget_exhausted": time.monotonic() >= deadline}}
+        return {"memories": result, "debug": {
+            "auto": {key: cfg[key] for key in ("max_depth", "max_candidates", "retrieval_budget_ms", "min_association_weight", "activation_decay", "trace_count", "edge_count")},
+            "trace": steps,
+            "stop_reason": stop_reason,
+            "elapsed_ms": elapsed_ms,
+            "honored_settings": sorted(overrides),
+            "ignored_settings": sorted(key for key in (settings or {}) if key in AUTO_OVERRIDES_IGNORED),
+            "seed_ids": [row.id for row in seed_rows],
+            "association_expansion": expanded,
+            "budget_exhausted": budget_exhausted,
+        }}
     return result
 
 

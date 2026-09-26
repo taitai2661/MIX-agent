@@ -171,7 +171,9 @@ export function Models() {
               hint={
                 row.data.context_source === "manual"
                   ? t("手動設定。空欄にして保存すると、API取得値に戻します。")
-                  : row.data.context_source === "official_catalog"
+                    : row.data.context_source === "model_info"
+                      ? t("model-infoから補完されています。")
+                    : row.data.context_source === "official_catalog"
                     ? t("Provider公式カタログから補完されています。")
                     : row.data.context_source === "models_dev"
                       ? t("models.devから補完されています。")

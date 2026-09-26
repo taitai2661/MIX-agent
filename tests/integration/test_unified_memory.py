@@ -33,6 +33,8 @@ def test_spreading_activation_is_bounded_and_explained(signed):
         assert outgoing[0]["connected_memory"] == {"id": target["id"], "content": "一時障害だけ再試行する", "lifecycle_state": "established"}
         assert incoming[0]["connected_memory"]["id"] == source["id"]
         result = service.search(db, owner, "MIX Provider", settings={"max_depth": 1, "max_candidates": 8}, debug=True)
+        assert result["debug"]["ignored_settings"] == ["max_candidates", "max_depth"]
+        assert result["debug"]["auto"]["max_depth"] == 1
         assert len(result["memories"]) <= 8
         assert target["id"] in {row["id"] for row in result["memories"]}
         assert result["debug"]["association_expansion"]

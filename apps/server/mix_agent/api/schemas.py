@@ -535,12 +535,7 @@ class SettingsInput(Input):
     tool_settings: dict[str, dict[str, object]] = Field(default_factory=dict)
     memory_auto_formation: bool = True
     memory_seed_limit: int = Field(default=24, ge=4, le=64)
-    memory_max_candidates: int = Field(default=96, ge=8, le=256)
     memory_result_limit: int = Field(default=8, ge=1, le=30)
-    memory_min_association_weight: float = Field(default=0.2, ge=0.05, le=1)
-    memory_activation_decay: float = Field(default=0.55, ge=0.1, le=0.95)
-    memory_retrieval_budget_ms: int = Field(default=120, ge=20, le=1000)
-    memory_max_depth: int = Field(default=2, ge=0, le=3)
 
 
 class FeedbackInput(Input):

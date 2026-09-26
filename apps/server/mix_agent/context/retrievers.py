@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from mix_agent.context import tokens
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _item_tokens(item: dict, model_id: str = "") -> int:
@@ -44,7 +47,8 @@ def search_memories(db, owner: str, query: str, scopes: list, settings: dict, li
 
     try:
         return memory_service.search(db, owner, query, scopes, settings=settings) or []
-    except Exception:  # noqa: BLE001 - retrieval failure means no memories, not a failed run
+    except Exception:
+        LOGGER.exception("memory retrieval failed owner=%s", owner)
         return []
 
 

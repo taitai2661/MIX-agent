@@ -1,7 +1,7 @@
 """Local model price resolution for usage cost estimates.
 
 All prices are USD per 1,000,000 tokens.  This module never contacts a
-provider: the models.dev catalog is resolved during a model sync and stored on
+provider: the model-info catalog is resolved during a model sync and stored on
 the model record, while an administrator can override it per model.
 """
 
@@ -14,9 +14,12 @@ MILLION = 1_000_000
 _ALIASES = {
     "input": ("input", "prompt", "input_cost_per_token", "prompt_cost_per_token"),
     "output": ("output", "completion", "output_cost_per_token", "completion_cost_per_token"),
-    "cache_read": ("cache_read", "cache_read_input_tokens", "cached"),
-    "cache_write": ("cache_write", "cache_creation_input_tokens"),
+    "cache_read": ("cache_read", "cache_read_input_tokens", "cached", "cached_input"),
+    "cache_write": ("cache_write", "cache_creation_input_tokens", "cached_write"),
 }
+# model-info states a price unit explicitly; anything else (per-request fees,
+# unknown units) is unusable for token-based estimates and must not be guessed.
+_UNITS = {"1M_tokens": 1.0, "1K_tokens": 1_000.0, "1_token": 1_000_000.0}
 
 
 def _number(value):
@@ -31,12 +34,19 @@ def normalize(raw):
     """Return USD-per-million prices from a catalog row, or ``None``."""
     if not isinstance(raw, dict):
         return None
+    currency = raw.get("currency")
+    if currency is not None and currency != "USD":
+        return None
+    unit = raw.get("unit")
+    factor = 1.0 if unit is None else _UNITS.get(unit)
+    if factor is None:
+        return None
     prices = {}
     for field, keys in _ALIASES.items():
         for key in keys:
             value = _number(raw.get(key))
             if value is not None:
-                prices[field] = value
+                prices[field] = value * factor
                 break
     if prices.get("input") is None and prices.get("output") is None:
         return None
@@ -60,7 +70,7 @@ def resolve(model_data):
     external = normalize(value)
     if external:
         source = evidence.get("source") if isinstance(evidence, dict) else None
-        return external, source or "models_dev"
+        return external, source or "model_info"
     return None, "unknown"
 
 

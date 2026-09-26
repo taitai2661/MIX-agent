@@ -82,7 +82,11 @@ async def _evaluate(job, run, provider, key):
     content = ""
     try:
         async with asyncio.timeout(EVALUATE_TIMEOUT):
-            async for event in Adapter(provider.data, key).stream(snapshot["model_id"], messages, [], "chat", {"max_output_tokens": 1200, "temperature": 0, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}):
+            async for event in Adapter(provider.data, key).stream(
+                snapshot["model_id"], messages, [], "chat",
+                {"max_output_tokens": 1200, "temperature": 0, "_session_id": run.conversation_id,
+                 "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}},
+            ):
                 if event["kind"] == "response":
                     content = event["message"]["content"]
     except TimeoutError as exc:

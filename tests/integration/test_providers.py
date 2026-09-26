@@ -69,6 +69,12 @@ def test_catalog_endpoint_and_custom_provider_validation(signed, monkeypatch):
 
 
 async def test_known_context_is_filled_when_provider_omits_it(monkeypatch):
+    from mix_agent.providers import metadata
+
+    async def fake_lookup(provider_ids, model_id):
+        return {"context_window": 128_000} if model_id == "gpt-4o-mini" else {}
+
+    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
     original = httpx.AsyncClient
 
     def handle(request):
@@ -77,7 +83,7 @@ async def test_known_context_is_filled_when_provider_omits_it(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
     models = await Adapter({"kind": "openai", "base_url": "https://provider.example/v1"}, "test-key").list_models()
     assert models[0]["context_window"] == 128000
-    assert models[0]["context_source"] == "official_catalog"
+    assert models[0]["context_source"] == "model_info"
     assert models[1]["context_window"] is None
 
 
@@ -152,43 +158,93 @@ def test_each_preset_declares_transport_discovery_and_metadata_chain():
 
 
 async def test_metadata_resolver_prefers_provider_api_and_records_evidence(monkeypatch):
-    async def empty_models_dev(kind, model_id):
-        return {}
+    from mix_agent.providers import metadata
 
-    monkeypatch.setattr("mix_agent.providers.metadata.models_dev", empty_models_dev)
+    async def fake_lookup(provider_ids, model_id):
+        return {"context_window": 128_000, "max_output_tokens": 16_384}
+
+    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
     result = await resolve("openai", "gpt-4o-mini", {"id": "gpt-4o-mini", "context_length": 64_000})
     evidence = result["metadata"]["context_window"]
     assert evidence["value"] == 64_000
     assert evidence["source"] == "provider_api"
     assert evidence["confidence"] == "official"
-    assert result["metadata_candidates"]["official_catalog"]["context_window"]["value"] == 128_000
+    assert result["metadata_candidates"]["model_info"]["context_window"]["value"] == 128_000
+    assert result["metadata"]["max_output_tokens"]["value"] == 16_384
 
 
-async def test_nvidia_nim_metadata_resolves_through_preset_catalog_and_models_dev(monkeypatch):
+async def test_metadata_resolver_reads_model_info_when_provider_says_nothing(monkeypatch):
     from mix_agent.providers import metadata
 
+    async def fake_lookup(provider_ids, model_id):
+        seen["keys"] = tuple(provider_ids)
+        return {"context_window": 131_072}
+
     seen = {}
-
-    async def fake_models_dev(keys, model_id):
-        seen["keys"] = tuple(keys)
-        return {"context_window": 99_999}
-
-    monkeypatch.setattr(metadata, "models_dev", fake_models_dev)
+    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
     result = await resolve("compatible", "nvidia/llama-3.3-nemotron-super-49b-v1.5", {},
                            preset_id="nvidia-nim")
     evidence = result["metadata"]["context_window"]
     assert evidence["value"] == 131_072
-    assert evidence["source"] == "official_catalog"
-    assert seen["keys"][0] == "nvidia"
-    assert "compatible" in seen["keys"]
-    assert result["metadata_candidates"]["models_dev"]["context_window"]["value"] == 99_999
+    assert evidence["source"] == "model_info"
+    assert evidence["confidence"] == "external"
+    assert seen["keys"] == ("nvidia",)
+    assert result["metadata_candidates"]["model_info"]["context_window"]["value"] == 131_072
 
 
-def test_context_limit_accepts_models_dev_limit_shape():
+async def test_metadata_resolver_leaves_context_unknown_without_any_source(monkeypatch):
+    from mix_agent.providers import metadata
+
+    async def empty_lookup(provider_ids, model_id):
+        return {}
+
+    monkeypatch.setattr(metadata.model_info, "lookup", empty_lookup)
+    result = await resolve("compatible", "some/undocumented-model", {}, preset_id="nvidia-nim")
+    assert result["metadata"] == {}
+
+
+def test_context_limit_accepts_nested_limit_shape():
     from mix_agent.providers.metadata import context_limit
 
     assert context_limit({"limit": {"context": 131_072, "output": 65_536}}) == 131_072
     assert context_limit({"limit": {"context": False}}) is None
+
+
+async def test_documented_capabilities_fill_only_unknown_slots(monkeypatch):
+    from mix_agent.providers import metadata
+
+    async def fake_lookup(provider_ids, model_id):
+        return {"capabilities": {"tools": True, "vision": False, "reasoning": None,
+                                 "structured_output": True}}
+
+    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    original = httpx.AsyncClient
+
+    def undocumented(request):
+        # OpenAI-style listings carry no capability hints at all.
+        return httpx.Response(200, json={"data": [{"id": "example"}]})
+
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda **kw: original(transport=httpx.MockTransport(undocumented), **kw))
+    models = await Adapter({"kind": "openai", "base_url": "https://provider.example/v1"}, "key").list_models()
+    assert models[0]["capabilities"] == {
+        "chat": None, "tools": True, "vision": False, "reasoning": None, "structured_output": True,
+    }
+
+    def with_parameters(request):
+        # The wire listing is authoritative wherever it does speak.
+        return httpx.Response(200, json={"data": [{"id": "example", "supported_parameters": ["tools"]}]})
+
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda **kw: original(transport=httpx.MockTransport(with_parameters), **kw))
+    models = await Adapter({"kind": "openai", "base_url": "https://provider.example/v1"}, "key").list_models()
+    caps = models[0]["capabilities"]
+    assert caps["tools"] is True
+    # A parameter listing that omits a feature denies it; documentation never
+    # overrides that, and it only fills the slots the listing left silent.
+    assert caps["reasoning"] is False
+    assert caps["structured_output"] is False
+    assert caps["vision"] is False
 
 
 def test_nim_non_chat_model_families_are_excluded():
@@ -389,3 +445,119 @@ def test_delete_provider_removes_models_and_clears_references(signed):
 
 def test_delete_provider_rejects_unknown_key(signed):
     assert signed.delete("/api/v1/providers/missing").status_code == 404
+
+
+async def test_opencode_presets_resolve_metadata_through_model_info(monkeypatch):
+    from mix_agent.providers import metadata
+
+    seen = {}
+
+    async def fake_lookup(provider_ids, model_id):
+        seen["keys"] = tuple(provider_ids)
+        return {"context_window": 1_000_000}
+
+    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    go = await resolve("compatible", "glm-5.3-flash", {}, preset_id="opencode-go")
+    assert go["metadata"]["context_window"]["value"] == 1_000_000
+    assert seen["keys"] == ("opencode-go",)
+    zen = await resolve("compatible", "glm-5.3-flash", {}, preset_id="opencode-zen")
+    assert zen["metadata"]["context_window"]["value"] == 1_000_000
+    assert seen["keys"] == ("opencode",)
+
+
+def test_opencode_models_use_the_documented_gateway_endpoint():
+    go = Adapter(
+        {"kind": "compatible", "base_url": "https://opencode.ai/zen/go/v1", "preset_id": "opencode-go"}, "key"
+    )
+    assert go.transport_for("glm-5.3-flash") == "openai_compatible"
+    assert go.transport_for("minimax-m3") == "anthropic_messages"
+    assert go.transport_for("grok-4.6") == "openai_responses"
+    assert go.transport_for("model-added-later") == "openai_compatible"
+    zen = Adapter(
+        {"kind": "compatible", "base_url": "https://opencode.ai/zen/v1", "preset_id": "opencode-zen"}, "key"
+    )
+    # The same id is served on different endpoints by each gateway.
+    assert zen.transport_for("minimax-m3") == "openai_compatible"
+    assert zen.transport_for("claude-sonnet-5") == "anthropic_messages"
+    assert zen.transport_for("gpt-5.1") == "openai_responses"
+
+
+async def test_stream_dispatches_each_model_on_its_own_transport(monkeypatch):
+    adapter = Adapter(
+        {"kind": "compatible", "base_url": "https://opencode.ai/zen/go/v1", "preset_id": "opencode-go"}, "key"
+    )
+    used = []
+
+    def recorder(name):
+        async def record(self, model, messages, tools, mode, settings):
+            used.append((name, model))
+            if False:
+                yield None
+
+        return record
+
+    monkeypatch.setattr(Adapter, "_compatible", recorder("openai_compatible"))
+    monkeypatch.setattr(Adapter, "_openai", recorder("openai_responses"))
+    monkeypatch.setattr(Adapter, "_anthropic", recorder("anthropic_messages"))
+    for model_id in ("glm-5.3-flash", "grok-4.6", "minimax-m3"):
+        async for _ in adapter.stream(model_id, [], [], "chat", {}):
+            pass
+    assert used == [
+        ("openai_compatible", "glm-5.3-flash"),
+        ("openai_responses", "grok-4.6"),
+        ("anthropic_messages", "minimax-m3"),
+    ]
+
+
+def test_anthropic_transport_does_not_duplicate_v1_path():
+    from mix_agent.providers.adapters import anthropic_base_url
+
+    assert anthropic_base_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go"
+    assert anthropic_base_url("https://api.anthropic.com/v1") == "https://api.anthropic.com"
+    assert anthropic_base_url("https://api.anthropic.com") == "https://api.anthropic.com"
+
+
+def test_only_opencode_go_declares_a_session_header():
+    assert get_preset("opencode-go")["session_header"] == "x-opencode-session"
+    assert get_preset("opencode-zen")["session_header"] is None
+    assert get_preset("groq")["session_header"] is None
+
+
+def test_gateway_headers_carry_the_conversation_session():
+    provider = {"kind": "compatible", "base_url": "https://opencode.ai/zen/go/v1", "preset_id": "opencode-go"}
+    adapter = Adapter(provider, "key")
+    assert adapter.gateway_headers("conversation-1") == {"x-opencode-session": "conversation-1"}
+    # Without a conversation (probes, memory jobs) the value stays stable.
+    fallback = adapter.gateway_headers()
+    assert fallback == Adapter(provider, "key").gateway_headers()
+    assert set(fallback) == {"x-opencode-session"}
+    groq = Adapter({"kind": "compatible", "base_url": "https://api.groq.com/openai/v1", "preset_id": "groq"}, "key")
+    assert groq.gateway_headers() == {}
+
+
+async def test_session_header_reaches_the_openai_client(monkeypatch):
+    adapter = Adapter(
+        {"kind": "compatible", "base_url": "https://opencode.ai/zen/go/v1", "preset_id": "opencode-go"}, "key"
+    )
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def stop(self, client, args):
+        raise RuntimeError("captured")
+
+    monkeypatch.setattr("mix_agent.providers.adapters.AsyncOpenAI", FakeOpenAI)
+    monkeypatch.setattr(Adapter, "_compatible_create", stop)
+    settings = {"max_output_tokens": 32, "_session_id": "conversation-1"}
+    with pytest.raises(RuntimeError, match="captured"):
+        async for _ in adapter.stream("deepseek-v4-flash", [{"role": "user", "content": "hi"}], [], "chat", settings):
+            pass
+    assert captured["default_headers"] == {"x-opencode-session": "conversation-1"}

@@ -809,7 +809,8 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             summary_input = summary_merge_prompt(previous, evicted)
             async with asyncio.timeout(90):
                 async for event in Adapter(provider, key).stream(
-                    snapshot["model_id"], summary_input, [], "chat", {"max_output_tokens": 2048}
+                    snapshot["model_id"], summary_input, [], "chat",
+                    {"max_output_tokens": 2048, "_session_id": run.conversation_id},
                 ):
                     if event["kind"] == "response":
                         summary_text = event["message"]["content"]
@@ -1118,6 +1119,8 @@ async def drive(run_id):
                 }
                 if "reasoning" in snapshot:
                     model_settings["_resolved_reasoning"] = snapshot["reasoning"]
+                # One stable session id per conversation for gateway routing/caching.
+                model_settings["_session_id"] = run.conversation_id
                 try:
                     async with asyncio.timeout(max(1, snapshot.get("max_seconds", 900) - elapsed)):
                         await wait_for_provider_slot({**provider, "id": snapshot.get("provider_record_id")})

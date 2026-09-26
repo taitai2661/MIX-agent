@@ -1,5 +1,7 @@
 """Provider-specific wire formats stay here; the run engine sees normalized events."""
 
+import hashlib
+
 import httpx
 from anthropic import AsyncAnthropic
 from google import genai
@@ -75,6 +77,15 @@ def is_nvidia_nim_chat_incompatible(provider, model_id, exc):
     return status_code == 400
 
 
+def anthropic_base_url(url):
+    """Base URL for the Anthropic SDK, which appends ``/v1/messages`` itself.
+
+    OpenCode gateways and user-entered Anthropic URLs commonly already end in
+    ``/v1``; passing those straight through would request ``/v1/v1/messages``.
+    """
+    return url.rstrip("/").removesuffix("/v1")
+
+
 def is_context_limit_error(exc):
     if isinstance(exc, ProviderContextLimitError):
         return True
@@ -91,6 +102,10 @@ class Adapter:
         self.key = key
         self.kind = provider["kind"]
         self.url = provider.get("base_url") or DEFAULT_URLS[self.kind]
+        # Gateways that route on a session header need one even when no
+        # conversation exists (probes, memory jobs); a config-derived value
+        # keeps those requests on the same routing path across restarts.
+        self.session_id = hashlib.sha256(self.url.encode()).hexdigest()[:32]
         self.preset = get_preset(provider.get("preset_id"))
         # Records created before presets retain a deliberate legacy mapping.
         if not self.preset:
@@ -104,6 +119,15 @@ class Adapter:
                    if field.get("required") and not provider.get("extra_config", {}).get(field["key"])]
         if missing:
             raise ProviderConfigurationError("missing_extra_config:" + ",".join(missing))
+
+    def transport_for(self, model):
+        """Wire format for one model; gateways may pin a model to an endpoint."""
+        return self.preset.get("model_transports", {}).get(model) or self.transport_id
+
+    def gateway_headers(self, session_id=None):
+        """Headers a gateway requires to route and cache a session."""
+        header = self.preset.get("session_header")
+        return {header: session_id or self.session_id} if header else {}
 
     async def list_models(self):
         headers = {"Authorization": "Bearer " + self.key} if self.key else {}
@@ -120,6 +144,7 @@ class Adapter:
             headers = {"x-goog-api-key": self.key}
             root = self.url.rstrip("/")
             url = root + ("/models" if root.endswith("/v1beta") else "/v1beta/models")
+        headers = {**headers, **self.gateway_headers()}
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             if self.discovery_id == "ollama_tags":
                 root = self.url.rstrip("/").removesuffix("/v1")
@@ -162,6 +187,13 @@ class Adapter:
             resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"],
                                      preset_id=self.preset.get("id"))
             metadata = resolved["metadata"]
+            # Documented capabilities fill only what the wire listing left
+            # unknown; a probe still decides whatever both leave unanswered.
+            catalog_caps = metadata.get("capabilities", {}).get("value")
+            if isinstance(catalog_caps, dict):
+                for key in ("tools", "vision", "reasoning", "structured_output"):
+                    if caps.get(key) is None:
+                        caps[key] = catalog_caps.get(key)
             context = metadata.get("context_window")
             result.append({
                 "model_id": model_id, "name": item.get("displayName", item.get("name", model_id)),
@@ -179,6 +211,7 @@ class Adapter:
         return {**model.get("capabilities", {}), **model.get("overrides", {})}
 
     async def stream(self, model, messages, tools, mode, settings):
+        transport_id = self.transport_for(model)
         method = {
             "openai_responses": self._openai,
             "openai_compatible": self._compatible,
@@ -186,9 +219,9 @@ class Adapter:
             "gemini_generate_content": self._gemini,
             "ollama": self._ollama,
             "lmstudio": self._lmstudio,
-        }.get(self.transport_id)
+        }.get(transport_id)
         if method is None:
-            raise ValueError(f"Unsupported transport: {self.transport_id}")
+            raise ValueError(f"Unsupported transport: {transport_id}")
         try:
             async for event in method(model, messages, tools, mode, settings):
                 yield event
@@ -303,7 +336,8 @@ class Adapter:
             )
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "function", "name": "mix_tool_probe"}
-        async with AsyncOpenAI(api_key=self.key, base_url=self.url, max_retries=0) as client:
+        async with AsyncOpenAI(api_key=self.key, base_url=self.url, max_retries=0,
+                               default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
             stream = await client.responses.create(**args)
             async for event in stream:
                 if event.type == "response.output_text.delta":
@@ -367,7 +401,8 @@ class Adapter:
         content, calls, finished = "", {}, False
         reasoning_details, raw_reasoning = {}, ""
         usage = None
-        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0) as client:
+        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0,
+                               default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
             stream = await self._compatible_create(client, args)
             async for chunk in stream:
                 # The usage-bearing final chunk carries no choices; capture it
@@ -501,7 +536,8 @@ class Adapter:
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "tool", "name": "mix_tool_probe"}
         async with (
-            AsyncAnthropic(api_key=self.key, base_url=self.url, max_retries=0) as client,
+            AsyncAnthropic(api_key=self.key, base_url=anthropic_base_url(self.url), max_retries=0,
+                           default_headers=self.gateway_headers(settings.get("_session_id"))) as client,
             client.messages.stream(**args) as stream,
         ):
             async for event in stream:
@@ -575,7 +611,8 @@ class Adapter:
             }
         native, calls, text, finished = [], [], "", False
         usage = None
-        async with genai.Client(api_key=self.key, http_options={"base_url": self.url}).aio as client:
+        async with genai.Client(api_key=self.key,
+                                http_options={"base_url": self.url, "headers": self.gateway_headers(settings.get("_session_id"))}).aio as client:
             async for chunk in await client.models.generate_content_stream(
                 model=model, contents=wire, config=cfg
             ):

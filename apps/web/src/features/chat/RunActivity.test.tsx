@@ -14,7 +14,7 @@ describe("RunActivity", () => {
     expect(html).toContain("失敗");
     expect(html).toContain("Tool failed");
     expect(html).toContain('href="https://example.com/a"');
-    expect(html).toContain("結果の詳細");
+    expect(html).toContain("詳細");
     expect(html).toContain("1件のソース");
   });
 
@@ -35,18 +35,35 @@ describe("RunActivity", () => {
     expect(html).toContain("承認待ち");
     expect(html).toContain("今回のみ");
     expect(html).toContain("常に許可");
+    expect(html).toContain('class="run-activity-details" open');
   });
 
-  it("collapses the whole run into one summary with a card per call", () => {
+  it("collapses the whole run into one summary with a flat row per call", () => {
     const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[
       { id: "call-1", run_id: "run-1", status: "completed", tool_name: "search", created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "再依頼してください。" } },
       { id: "call-2", run_id: "run-1", status: "running", tool_name: "fetch", created_at: "2026-08-31T10:01:00+00:00", retry: { available: false, label: "実行中です。" } },
     ]} />);
     expect((html.match(/class="run-step /g) || []).length).toBe(2);
     expect((html.match(/class="run-activity-summary"/g) || []).length).toBe(1);
+    expect(html).not.toContain("run-step-status");
+    expect(html).toContain("sr-only");
     expect(html).toContain("成功");
     expect(html).toContain("実行中");
-    expect(html).toContain("実行履歴");
+    expect(html).toContain("ツール実行履歴");
+  });
+
+  it("collapses itself once the run has finished", () => {
+    const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[
+      { id: "call-1", run_id: "run-1", status: "failed", tool_name: "search", created_at: "2026-08-31T10:00:00+00:00", failure: "Tool failed", retry: { available: false, label: "" } },
+    ]} />);
+    expect(html).not.toContain('class="run-activity-details" open');
+  });
+
+  it("stays expanded while the run is active", () => {
+    const html = renderToStaticMarkup(<RunActivity running onApproval={() => {}} calls={[
+      { id: "call-1", run_id: "run-1", status: "running", tool_name: "search", created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "" } },
+    ]} />);
+    expect(html).toContain('class="run-activity-details" open');
   });
 
   it("stays hidden until a tool call exists, even while the run is active", () => {

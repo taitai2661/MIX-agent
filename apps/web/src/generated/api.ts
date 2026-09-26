@@ -2693,35 +2693,10 @@ export interface components {
              */
             memory_seed_limit: number;
             /**
-             * Memory Max Candidates
-             * @default 96
-             */
-            memory_max_candidates: number;
-            /**
              * Memory Result Limit
              * @default 8
              */
             memory_result_limit: number;
-            /**
-             * Memory Min Association Weight
-             * @default 0.2
-             */
-            memory_min_association_weight: number;
-            /**
-             * Memory Activation Decay
-             * @default 0.55
-             */
-            memory_activation_decay: number;
-            /**
-             * Memory Retrieval Budget Ms
-             * @default 120
-             */
-            memory_retrieval_budget_ms: number;
-            /**
-             * Memory Max Depth
-             * @default 2
-             */
-            memory_max_depth: number;
         };
         /** SkillImportInput */
         SkillImportInput: {

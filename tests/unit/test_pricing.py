@@ -2,10 +2,27 @@ from mix_agent import pricing
 from mix_agent.usage import token_usage
 
 
-def test_normalize_models_dev_cost():
-    assert pricing.normalize({"input": 3, "output": 15, "cache_read": 0.3}) == {
-        "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": None,
+def test_normalize_model_info_pricing():
+    assert pricing.normalize({"currency": "USD", "unit": "1M_tokens",
+                              "input": 3, "output": 15, "cached_input": 0.3, "cached_write": 3.75}) == {
+        "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75,
     }
+
+
+def test_normalize_converts_stated_units():
+    assert pricing.normalize({"unit": "1K_tokens", "input": 0.003, "output": 0.015}) == {
+        "input": 3.0, "output": 15.0, "cache_read": None, "cache_write": None,
+    }
+    assert pricing.normalize({"unit": "1_token", "input": 0.000003, "output": 0.000015}) == {
+        "input": 3.0, "output": 15.0, "cache_read": None, "cache_write": None,
+    }
+
+
+def test_normalize_rejects_unusable_units_and_currencies():
+    # Prices are only estimated in USD per million tokens; anything else is
+    # unknown rather than silently converted.
+    assert pricing.normalize({"currency": "JPY", "input": 100, "output": 300}) is None
+    assert pricing.normalize({"unit": "per_request", "input": 1, "output": 2}) is None
 
 
 def test_normalize_keeps_explicit_zero_prices():
@@ -31,7 +48,7 @@ def test_normalize_accepts_alias_keys():
 
 def test_resolve_prefers_manual_override():
     data = {
-        "metadata": {"pricing": {"value": {"input": 1, "output": 1}, "source": "models_dev"}},
+        "metadata": {"pricing": {"value": {"input": 1, "output": 1}, "source": "model_info"}},
         "pricing_override": {"input": 5, "output": 10},
     }
     prices, source = pricing.resolve(data)
@@ -40,10 +57,15 @@ def test_resolve_prefers_manual_override():
 
 
 def test_resolve_uses_catalog_evidence():
-    data = {"metadata": {"pricing": {"value": {"input": 2, "output": 4}, "source": "models_dev"}}}
+    data = {"metadata": {"pricing": {"value": {"input": 2, "output": 4}, "source": "model_info"}}}
     prices, source = pricing.resolve(data)
-    assert source == "models_dev"
+    assert source == "model_info"
     assert prices["output"] == 4.0
+
+
+def test_resolve_defaults_to_model_info_source():
+    data = {"metadata": {"pricing": {"value": {"input": 2, "output": 4}}}}
+    assert pricing.resolve(data)[1] == "model_info"
 
 
 def test_resolve_unknown_without_prices():

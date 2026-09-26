@@ -113,6 +113,8 @@ APIの `mode` は変更していません。`GET /models` の各レコードの 
 
 Node.js 22以上、pnpmを使用します。アプリケーションDBはPostgreSQL専用で、起動はDocker Compose経由です。
 
+モデルのコンテキスト長・料金・能力などの補完データは [model-info](https://github.com/taitai2661/model-info) の静的JSONから取得します。既定の取得先はGitHub Pagesで、`MIX_MODEL_INFO_URL` に `https://` のアドレスまたはローカルのmodel-infoチェックアウト(その `v1/` を含むディレクトリ)を指定して差し替えられます。取得できない場合、当該モデルの補完データは未設定のまま扱われます。
+
 ```sh
 cd apps/web
 pnpm install --frozen-lockfile

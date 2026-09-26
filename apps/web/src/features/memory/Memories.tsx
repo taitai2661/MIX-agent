@@ -7,8 +7,13 @@ import { Brain, GitBranch } from "lucide-react";
 import { useState } from "react";
 
 const states: Record<string, string> = { latent: "未定着", established: "定着", superseded: "過去の状態", archived: "アーカイブ", deleted: "削除済み" };
+const stopReasons: Record<string, string> = { depth: "最大hop到達", no_frontier: "探索終了", deadline: "検索予算超過", candidate_budget: "候補上限", no_edges: "関連エッジなし" };
 const percent = (value: unknown) => `${Math.round(Number(value || 0) * 100)}%`;
+const metric = (value: unknown) => (typeof value === "number" && !Number.isInteger(value) ? percent(value) : String(value));
 type Association = { id: string; source_memory_id: string; target_memory_id: string; weight: number; confidence: number; relation?: string; connected_memory?: { id: string; content: string; lifecycle_state: string } | null };
+type TraceStep = { stage: string; depth?: number; found?: number; admitted?: number; rejected?: { id: string; score: number; threshold: number }[]; edges_considered?: number; edges_below_threshold?: number; accepted?: number; frontier_after?: number; considered?: number; kept?: number; elapsed_ms?: number };
+type TraceHit = { id: string; content: string; relevance: number; selection_reason: string; score_breakdown?: Record<string, number | string> };
+type ProbeResult = { memories: TraceHit[]; debug: { auto: Record<string, number>; trace: TraceStep[]; stop_reason: string; elapsed_ms: number; budget_exhausted: boolean; ignored_settings: string[]; association_expansion: { source: string; target: string; activation: number }[] } };
 
 function MemoryConnections({ memory, content, onSelect, onClose }: { memory: string; content: string; onSelect: (id: string, content: string) => void; onClose: () => void }) {
   const connections = useQuery<Association[]>({ queryKey: ["/memories", memory, "associations"], queryFn: () => api(`/memories/${memory}/associations`) });
@@ -34,7 +39,8 @@ export function Memories() {
     [content, setContent] = useState(""), [strength, setStrength] = useState(.85), [confidence, setConfidence] = useState(.95),
     [salience, setSalience] = useState(.7), [error, setError] = useState<unknown>(null),
     [history, setHistory] = useState<{ memory: string; rows: Row[] } | null>(null),
-    [selected, setSelected] = useState<{ id: string; content: string } | null>(null);
+    [selected, setSelected] = useState<{ id: string; content: string } | null>(null),
+    [probeQuery, setProbeQuery] = useState(""), [probe, setProbe] = useState<ProbeResult | null>(null);
   const rows = useRows(`/memories?q=${encodeURIComponent(q)}${state ? `&state=${state}` : ""}`);
   const settings = useQuery<any>({ queryKey: ["/settings"], queryFn: () => api("/settings") });
   const refreshMemories = () => qc.invalidateQueries({ predicate: item => String(item.queryKey[0]).startsWith("/memories") });
@@ -46,21 +52,54 @@ export function Memories() {
       e.preventDefault(); const form = new FormData(e.currentTarget);
       try { const { has_secret_id, has_brave_secret_id, has_tavily_secret_id, has_exa_secret_id, has_serper_secret_id, ...rest } = settings.data.data;
         await api("/settings", "PUT", { ...rest,
-        memory_auto_formation: form.get("auto") === "on", memory_max_depth: Number(form.get("depth")),
-        memory_max_candidates: Number(form.get("candidates")), memory_retrieval_budget_ms: Number(form.get("budget")),
-        memory_min_association_weight: Number(form.get("weight")), memory_activation_decay: Number(form.get("decay")), brave_api_key: null, tavily_api_key: null, exa_api_key: null, serper_api_key: null,
+        memory_auto_formation: form.get("auto") === "on", brave_api_key: null, tavily_api_key: null, exa_api_key: null, serper_api_key: null,
       }); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (reason) { setError(reason); }
     }}>
       <h3>{t("形成と想起")}</h3>
       <label className="check"><input name="auto" type="checkbox" defaultChecked={settings.data.data.memory_auto_formation !== false} />{t("回答後に候補Traceを非同期形成")}</label>
-      <div className="memory-setting-grid">
-        <Field label={t("最大hop")}><input name="depth" type="number" min="0" max="3" defaultValue={settings.data.data.memory_max_depth ?? 2} /></Field>
-        <Field label={t("最大候補")}><input name="candidates" type="number" min="8" max="256" defaultValue={settings.data.data.memory_max_candidates ?? 96} /></Field>
-        <Field label={t("検索予算(ms)")}><input name="budget" type="number" min="20" max="1000" defaultValue={settings.data.data.memory_retrieval_budget_ms ?? 120} /></Field>
-        <Field label={t("最小関連weight")}><input name="weight" type="number" min=".05" max="1" step=".05" defaultValue={settings.data.data.memory_min_association_weight ?? .2} /></Field>
-        <Field label={t("活性化decay")}><input name="decay" type="number" min=".1" max=".95" step=".05" defaultValue={settings.data.data.memory_activation_decay ?? .55} /></Field>
-      </div><Button>{t("設定を保存")}</Button>
+      <p className="memory-auto-note">{t("最大hop・最大候補・検索予算(ms)・最小関連weight・活性化decayは記憶ネットワークの規模から自動計算され、設定では変更できません。")}</p>
+      <Button>{t("設定を保存")}</Button>
     </form>}
+    <form className="card memory-settings" onSubmit={async e => {
+      e.preventDefault(); setError(null);
+      try { setProbe(await api<ProbeResult>(`/memories-debug/search?q=${encodeURIComponent(probeQuery.trim())}`)); } catch (reason) { setError(reason); }
+    }}>
+      <h3>{t("想起トレース")}</h3>
+      <Field label={t("クエリを入力して想起過程を確認")}><input required value={probeQuery} onChange={e => setProbeQuery(e.target.value)} placeholder={t("Traceを検索…")} /></Field>
+      <div className="form-actions"><Button>{t("トレースを実行")}</Button></div>
+      {probe && <div className="memory-trace-result">
+        <div className="memory-metrics">
+          <span>{t("最大hop")} {probe.debug.auto.max_depth}</span>
+          <span>{t("最大候補")} {probe.debug.auto.max_candidates}</span>
+          <span>{t("検索予算(ms)")} {probe.debug.auto.retrieval_budget_ms}</span>
+          <span>{t("最小関連weight")} {probe.debug.auto.min_association_weight}</span>
+          <span>{t("活性化decay")} {probe.debug.auto.activation_decay}</span>
+          <span>{t("記憶")} {probe.debug.auto.trace_count}{t("件")}</span>
+          <span>{t("関連エッジ")} {probe.debug.auto.edge_count}</span>
+          <span>{t("経過")} {probe.debug.elapsed_ms}ms</span>
+          <span>{t("停止理由")}: {t(stopReasons[probe.debug.stop_reason] || probe.debug.stop_reason)}</span>
+          {probe.debug.budget_exhausted && <span>{t("予算を使い切りました")}</span>}
+        </div>
+        {!!probe.debug.ignored_settings.length && <p className="memory-auto-note">{t("指定された上書きは無視されました")}: {probe.debug.ignored_settings.join(", ")}</p>}
+        <div className="memory-trace-steps">{probe.debug.trace.map((step, index) => <div className="memory-trace-step" key={index}>
+          <strong>{step.stage === "seed" ? t("seed") : step.stage === "rank" ? t("rank") : `${t("hop")} ${step.depth}`}</strong>
+          <span>{step.stage === "seed"
+            ? `${t("候補")} ${step.found} / ${t("採用")} ${step.admitted} / ${t("却下")} ${step.rejected?.length ?? 0}`
+            : step.stage === "rank"
+              ? `${t("候補")} ${step.considered} / ${t("採用")} ${step.kept}`
+              : `${t("考慮エッジ")} ${step.edges_considered} / ${t("閾値未満")} ${step.edges_below_threshold} / ${t("展開")} ${step.accepted} / ${t("経過")} ${step.elapsed_ms}ms`}</span>
+        </div>)}</div>
+        {!probe.memories.length && <p className="memory-network-empty">{t("該当するTraceはありません。")}</p>}
+        {probe.memories.map(hit => <div className="memory-trace-hit" key={hit.id}>
+          <p>{hit.content}</p>
+          <div className="memory-metrics">
+            <span>{t("関連度")} {percent(hit.relevance)}</span>
+            <span>{hit.selection_reason}</span>
+            {Object.entries(hit.score_breakdown || {}).map(([name, value]) => <span key={name}>{name} {metric(value)}</span>)}
+          </div>
+        </div>)}
+      </div>}
+    </form>
     <form className="card" onSubmit={async e => { e.preventDefault(); try {
       await api(`/memories${editing ? `/${editing.id}` : ""}`, editing ? "PATCH" : "POST", { content, strength, confidence, salience, lifecycle_state: "established" });
       reset(); refreshMemories();
