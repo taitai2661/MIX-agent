@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mix_agent.context import head_blocks
 from mix_agent.context.types import EMPTY_TASK_STATE, TASK_STATE_LIST_FIELDS
 
 
@@ -75,4 +76,4 @@ def render(state: dict | None) -> str:
         values = state.get(key) or []
         if values:
             lines.append(key + ": " + " | ".join(values[:12]))
-    return "Task state (data):\n" + "\n".join(lines)
+    return head_blocks.heading(head_blocks.TASK_STATE) + "\n" + "\n".join(lines)

@@ -300,10 +300,21 @@ def _event(db, owner, run_id, action, memory_id, before, after, reason, candidat
     db.add(MemoryActionEvent(owner_id=owner, run_id=run_id if run_id and run_id != "explicit-user-request" else None, candidate_index=candidate_index, data={"action": action, "memory_id": memory_id, "strength_before": before, "strength_after": after, "reason": reason}))
 
 
-def change(db, owner, content=None, memory_id=None, delete=False, scope="user", source_run=None, scopes=None, *, importance=2, category=None, pinned=False, strength=None, confidence=None, salience=None, lifecycle_state=None, gist=None, entities=None, concepts=None, temporal_context=None, metadata=None, candidate_index=0):
+def change(db, owner, content=None, memory_id=None, delete=False, scope="user", source_run=None, scopes=None, *, importance=2, category=None, pinned=False, strength=None, confidence=None, salience=None, lifecycle_state=None, gist=None, entities=None, concepts=None, temporal_context=None, metadata=None, candidate_index=0, role=None, source_kind=None, role_metadata=None, verification=None):
     if content is not None and SENSITIVE.search(content):
         raise ValueError("Memoryには認証情報・トークン・パスワードを保存できません")
     content = re.sub(r"\s+", " ", content).strip() if content is not None else None
+    # Role taxonomy columns live on the row as well as in the JSONB blob, so an
+    # explicit edit keeps both copies in step with the runtime's writer.
+    if role is not None and role not in mem_types.ROLES:
+        raise ValueError(f"Unknown memory role: {role}")
+    if source_kind is not None and source_kind not in mem_types.SOURCES:
+        raise ValueError(f"Unknown memory source_kind: {source_kind}")
+    if verification is not None and verification not in mem_types.VERIFICATIONS:
+        raise ValueError(f"Unknown memory verification: {verification}")
+    # Scopes are the five taxonomy buckets plus the per-agent "agent:<id>" form.
+    if scope not in mem_types.SCOPES and not scope.startswith("agent:"):
+        raise ValueError(f"Unknown memory scope: {scope}")
     explicit = source_run == "explicit-user-request" or pinned or importance >= 4
     target_salience = salience if salience is not None else max(0.2, min(1.0, importance / 5))
     target_strength = strength if strength is not None else (0.85 if explicit else 0.45)
@@ -321,8 +332,24 @@ def change(db, owner, content=None, memory_id=None, delete=False, scope="user", 
             data["metadata"] = {**data.get("metadata", {}), **metadata}
         if category:
             data["metadata"] = {**data.get("metadata", {}), "legacy_category": category}
+        if role_metadata is not None:
+            data["role_metadata"] = {**(data.get("role_metadata") or {}), **role_metadata}
+        if role is not None:
+            data["role"] = role
+        if source_kind is not None:
+            data["source_kind"] = source_kind
+        if verification is not None:
+            data["verification"] = verification
         data.update({"scope": scope or data.get("scope", "user"), "source_run": source_run or data.get("source_run"), "deleted": delete, "pinned": pinned})
         row.data = data
+        if scope:
+            row.scope = scope
+        if role is not None:
+            row.role = role
+        if source_kind is not None:
+            row.source_kind = source_kind
+        if verification is not None:
+            row.verification = verification
         lifecycle_value = lifecycle_state or row.lifecycle_state or mem_types.LIFECYCLE_ACTIVE
         if lifecycle_value == mem_types.LIFECYCLE_ACTIVE:
             lifecycle_value = "established"
@@ -354,7 +381,7 @@ def change(db, owner, content=None, memory_id=None, delete=False, scope="user", 
         trace_metadata = dict(metadata or {})
         if category:
             trace_metadata["legacy_category"] = category
-        row = Memory(owner_id=owner, lifecycle_state=state, strength=clamp(target_strength), confidence=clamp(target_confidence), salience=clamp(target_salience), last_reinforced_at=now(), updated_at=now(), data={"content": content, "gist": gist or content[:300], "scope": scope, "source_run": source_run, "deleted": False, "pinned": pinned, "entities": entities or [], "concepts": concepts or [], "temporal_context": temporal_context, "metadata": trace_metadata})
+        row = Memory(owner_id=owner, lifecycle_state=state, role=role or mem_types.ROLE_FACT, scope=scope, source_kind=source_kind or mem_types.SOURCE_USER, verification=verification or mem_types.VERIFICATION_UNVERIFIED, strength=clamp(target_strength), confidence=clamp(target_confidence), salience=clamp(target_salience), last_reinforced_at=now(), updated_at=now(), data={"content": content, "gist": gist or content[:300], "scope": scope, "role": role or mem_types.ROLE_FACT, "source_kind": source_kind or mem_types.SOURCE_USER, "verification": verification or mem_types.VERIFICATION_UNVERIFIED, "role_metadata": dict(role_metadata or {}), "source_run": source_run, "deleted": False, "pinned": pinned, "entities": entities or [], "concepts": concepts or [], "temporal_context": temporal_context, "metadata": trace_metadata})
         db.add(row)
         db.flush()
     _sync_features(db, row)

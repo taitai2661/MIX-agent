@@ -40,6 +40,9 @@ NON_CHAT_MODEL_PREFIXES = {
         "nvidia/llama-3.1-nemotron-safety-guard",
         "meta/esmfold",
         "meta/esm2-",
+        # Translation / recurrent models that reject chat completions.
+        "nvidia/riva-translate-4b-instruct",
+        "google/recurrentgemma-2b",
     ),
 }
 

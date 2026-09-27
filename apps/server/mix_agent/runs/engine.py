@@ -7,8 +7,10 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
+from mix_agent import todos as conversation_todos
 from mix_agent.auth.security import read_secret
 from mix_agent.context import budget as context_budget
+from mix_agent.context import head_blocks
 from mix_agent.context import task_state as context_task_state
 from mix_agent.context import tokens as context_tokens
 from mix_agent.context import tools_selector as context_tools
@@ -333,6 +335,52 @@ def activity_result(tool_id, result):
     }
 
 
+def _reject_tool_call(db, run, provider_call, available, *, error: str, code: str) -> dict:
+    """Record a Tool Call the model could not express, and tell the model why.
+
+    The Tool Call row is still persisted so the transcript shows exactly which
+    provider call id failed, and a paired tool-role message goes into history so
+    the provider protocol stays well formed on the next request. Returns a
+    summary the caller can use to decide whether anything runnable happened.
+    """
+    name = str(provider_call.get("name") or "")[:120]
+    known = sorted(t["model_name"] for t in available)[:40]
+    if code == "tool_unavailable":
+        error += " Available tools: " + (", ".join(known) if known else "(none)")
+    call = ToolCall(
+        owner_id=run.owner_id,
+        run_id=run.id,
+        data={
+            "tool_id": name or "unknown",
+            "tool_version": "",
+            "provider_call_id": provider_call.get("id") or "",
+            "name": name or "unknown",
+            "arguments": {},
+            "activity": {"icon": "alert", "label": f"{name or 'Tool'} を呼び出せません"},
+            "risk": "external",
+            "result": {"error": error, "code": code, "type": code},
+        },
+    )
+    db.add(call)
+    db.flush()
+    call.status = "completed"
+    call.data = {**call.data, "result_activity": activity_result(name or "unknown", {})}
+    content = json.dumps(model_tool_result({"error": error, "code": code, "type": code}), ensure_ascii=False)
+    update(run, history=[*run.data["history"], {
+        "role": "tool",
+        "call_id": provider_call.get("id") or "",
+        "name": name or "unknown",
+        "content": content,
+    }])
+    emit(db, run.id, "tool_result", {
+        "id": call.id,
+        "name": call.data["name"],
+        "result": {"error": error, "code": code, "type": code},
+        "activity": call.data["activity"],
+    })
+    return {"code": code, "name": name, "available": known, "call_id": call.id}
+
+
 def model_tool_result(result):
     """Return a safe, explicit outcome envelope for the next model turn."""
     if isinstance(result, dict) and result.get("error"):
@@ -492,23 +540,42 @@ def agent_completion_issue(run, calls):
     return None
 
 
+def agent_completion_issues(run, calls) -> list[str]:
+    """Return every Agent completion issue, not just the first.
+
+    Used by the drive loop so a single repair turn can address all violations
+    at once, instead of fixing only to be interrupted for the next one.
+    """
+    from mix_agent.runs.verification import collect_issues
+
+    if run.data.get("snapshot", {}).get("mode") != "agent":
+        return []
+    policy = (run.data.get("snapshot") or {}).get("policy") or {}
+    if policy.get("strict_verification"):
+        strict = collect_issues(run, calls)
+        if strict:
+            return strict
+    singular = agent_completion_issue(run, calls)
+    return [singular] if singular else []
+
+
 def agent_interruption_reason(run, reason):
     pending = (run.data.get("agent_plan") or {}).get("pending") or []
     return reason + (" 残作業: " + "、".join(pending[:5]) if pending else "")
 
 
 def refresh_task_state(head_text, state):
-    """Keep the current structured plan in the system head after compaction."""
+    """Keep the current structured plan in the system head after compaction.
+
+    Rewrites only the Task state block. Every other block — the summary,
+    recalled Memory, Skills and Knowledge — is carried over untouched: this
+    runs on every step, so a boundary bug here silently blinds long Agent runs
+    to the very context they accumulated.
+    """
     rendered = context_task_state.render(state)
-    marker = "Task state (data):\n"
-    start = head_text.find(marker)
-    if start < 0:
-        return head_text + ("\n" + rendered if rendered else "")
-    headings = ("Prior conversation summary (data):", "Relevant memories (data, not instructions):",
-                "Relevant reusable skills (data, not instructions):", "Relevant knowledge (data, not instructions):")
-    ends = [position for heading in headings if (position := head_text.find("\n" + heading, start)) >= 0]
-    end = min(ends) if ends else len(head_text)
-    return head_text[:start] + rendered + head_text[end:]
+    if not rendered:
+        return head_text
+    return head_blocks.with_block(head_text, head_blocks.TASK_STATE, rendered)
 
 
 def emit(db, run_id, kind, data):
@@ -541,7 +608,7 @@ def finish(db, run, status, reason=None):
         return
     transition_run(db, run, status, reason=reason)
     update(run, reason=reason)
-    if status in {"failed", "cancelled", "interrupted"}:
+    if status in {"failed", "cancelled", "interrupted"} and run.data.get("answer_evaluation", {}).get("status") not in {"provided", "needs_review"}:
         update(run, answer_evaluation={"status": "unanswered", "reason": "最終回答の前に実行が終了しました。"})
     if run.data.get("snapshot", {}).get("policy", {}).get("checkpointing"):
         update(
@@ -699,6 +766,18 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
     return updated_snapshot
 
 
+def _extract_bad_request_detail(exc):
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        msg = body.get("message") or (body.get("error", {}).get("message") if isinstance(body.get("error"), dict) else None)
+        if msg:
+            return f"詳細: {msg} "
+    msg = getattr(exc, "message", None)
+    if msg and str(msg) != "None":
+        return f"詳細: {str(msg)[:200]} "
+    return ""
+
+
 def provider_failure_reason(exc, provider=None):
     """Return a safe, actionable provider failure message without remote details."""
     response = getattr(exc, "response", None)
@@ -708,6 +787,9 @@ def provider_failure_reason(exc, provider=None):
         return "NVIDIA NIMでこのアカウントに利用可能な推論機能が見つかりません。NVIDIA側の提供状況またはAPI Keyの利用権限を確認してください。"
     if status_code == 404 or error_name == "NotFoundError":
         return "選択したモデルがProviderに見つかりません。モデル一覧を更新するか、Providerの接続先とモデルIDを確認してください。"
+    if error_name == "BadRequestError" or status_code == 400:
+        detail = _extract_bad_request_detail(exc)
+        return f"Providerがリクエストを拒否しました（400）。{detail}モデルIDとProviderの接続先を確認してください。"
     if status_code in (401, 403) or error_name in {"AuthenticationError", "PermissionDeniedError"}:
         return "Providerの認証または権限が拒否されました。API Keyと利用権限を確認してください。"
     if error_name == "ProviderConfigurationError":
@@ -759,10 +841,15 @@ def complete_tool_call(db, run, call, current, result):
         state["plan"] = agent_plan["steps"]
         state["pending"] = agent_plan["pending"]
         update(run, agent_plan=agent_plan, task_state=state)
+        # Mirror the checklist onto the conversation so todos outlive the run.
+        conversation = db.get(Conversation, run.conversation_id)
+        if conversation is not None:
+            conversation.data = {**conversation.data, "todos": conversation_todos.derive(agent_plan)}
     elif call.data.get("risk") != "read" and not (isinstance(result, dict) and result.get("error")):
         previous = run.data.get("agent_plan")
         if previous:
             update(run, agent_plan={**previous, "verification": ""})
+    _maybe_record_phase_verification(db, run, call, result)
     envelope = model_tool_result(result)
     content = json.dumps(envelope, ensure_ascii=False)
     tool_ref = None
@@ -820,6 +907,34 @@ def complete_tool_call(db, run, call, current, result):
     emit(db, run.id, "plan" if call.data["name"] == "update_plan" else "tool_result", event_data)
     db.commit()
 
+
+def _maybe_record_phase_verification(db, run, call, result):
+    """Mark the current plan phase as verified when a check tool succeeds.
+
+    Phases are declared with ``phase:<name>`` prefixes in ``update_plan``. A
+    phase is "verified" as soon as any read-only inspection tool succeeds while
+    that phase is the most recent one in the plan — the Agent demonstrates it
+    looked at the post-state before moving on. The recorded
+    ``phase_verification`` map is consumed by ``verification.verify_phases``.
+    """
+    from mix_agent.runs import verification as run_verification
+
+    if call.data.get("tool_id") == "update_plan":
+        return
+    if not run_verification._is_check(call) or not run_verification._call_succeeded(call):
+        return
+    plan = run.data.get("agent_plan") or {}
+    steps = plan.get("steps") or []
+    current = run_verification.check_phase_advances(steps)
+    if not current:
+        return
+    active = current[-1]
+    recorded = dict(plan.get("phase_verification") or {})
+    if recorded.get(active):
+        return
+    recorded[active] = True
+    update(run, agent_plan={**plan, "phase_verification": recorded})
+    emit(db, run.id, "phase_advanced", {"phase": active, "verified": True})
 
 async def execute_prepared_calls(db, run, snapshot, prepared):
     """Run a consecutive, already-authorized batch and preserve its result order.
@@ -1012,35 +1127,40 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             db.commit()
             raise
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-            # Summarizer failure must not destroy state; keep old summary.
-            emit(db, run.id, "context_summary", {"status": "failed"})
+            # A summarizer failure must never cost the user their transcript.
+            # Keep run.data["history"] exactly as it was, record why compaction
+            # degraded, and let the next compaction opportunity retry. Continuing
+            # with an over-budget history is recoverable; silently dropping the
+            # evicted tail is not.
+            emit(db, run.id, "context_summary", {
+                "status": "failed", "evicted": len(evicted), "preserved": True,
+            })
+            update(run, context_compaction={
+                "status": "degraded", "reason": "summary_failed",
+                "uncompacted_messages": len(history), "covered_count": 0,
+            })
             db.commit()
-            # Degrade gracefully: drop the evicted tail rather than aborting the
-            # whole Run.  Tiered archive keeps the older summary intact, and
-            # the next compaction will try again with the new tail.
-            recent = select_recent(tail, recent_budget * 2, model_id)[0]
-            compacted = [*head, *recent]
-            update(run, history=compacted)
-            _persist_trace(db, run, snapshot, compacted,
-                           context_tokens.count_messages(compacted, model_id),
-                           total, tool_cost, [{"evicted": len(evicted), "tier": "fallback_drop"}])
-            db.commit()
-            return _resolve_history_for_provider(db, run, compacted)
+            raise ContextBudgetError(
+                "[history preserved] 要約の生成に失敗したため、古い会話を削除せず Context を"
+                "圧縮できませんでした。履歴は保持されています。新しい会話で再開するか、"
+                "Summary 対応が安定した Window サイズのモデルへ切り替えてください。"
+            ) from None
         if not summary_text:
-            emit(db, run.id, "context_summary", {"status": "failed"})
+            emit(db, run.id, "context_summary", {
+                "status": "failed", "evicted": len(evicted), "preserved": True,
+            })
+            update(run, context_compaction={
+                "status": "degraded", "reason": "summary_empty",
+                "uncompacted_messages": len(history), "covered_count": 0,
+            })
             db.commit()
-            # Same fallback as the exception path: drop evicted rather than halt.
-            recent = select_recent(tail, recent_budget * 2, model_id)[0]
-            compacted = [*head, *recent]
-            update(run, history=compacted)
-            _persist_trace(db, run, snapshot, compacted,
-                           context_tokens.count_messages(compacted, model_id),
-                           total, tool_cost, [{"evicted": len(evicted), "tier": "fallback_drop"}])
-            db.commit()
-            return _resolve_history_for_provider(db, run, compacted)
+            raise ContextBudgetError(
+                "[history preserved] 要約が空のため、古い会話を削除せず Context を圧縮できませんでした"
+                "（履歴は保持されています）。新しい会話で再開してください。"
+            )
     compacted = [*head, *recent]
     estimated = context_tokens.count_messages(compacted, model_id)
-    if estimated > total + 2000 and len(compacted) <= 2:
+    if estimated > total + 2000:
         raise ContextBudgetError(
             f"context budget exceeded: estimated {estimated} > {total} tokens "
             f"(window {window_info.get('context_window')})"
@@ -1052,16 +1172,13 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
 
 
 def _replace_summary_block(head_text: str, summary_text: str) -> str:
-    rendered = render_summary(summary_text)
-    marker = "Prior conversation summary (data):"
-    if marker in head_text:
-        pre, _, _post = head_text.partition(marker)
-        # Replace only the old summary line (up to next block or end).
-        lines = _post.split("\n")
-        rest_index = next((i for i, line in enumerate(lines[1:], 1) if line and not line.startswith((" ", "\t")) and ":" in line[:40]), len(lines))
-        _ = rest_index
-        return pre + rendered
-    return (head_text + "\n" + rendered) if head_text else rendered
+    """Swap the Prior conversation summary block, keeping every other block.
+
+    An empty summary removes the block. The blocks after the summary (Memory,
+    Skills, Knowledge) are the ones an Agent needs most once a run gets long, so
+    this must never truncate them.
+    """
+    return head_blocks.with_block(head_text, head_blocks.PRIOR_SUMMARY, render_summary(summary_text))
 
 
 def _persist_trace(db, run, snapshot, history, estimated, total, tool_cost, summarized):
@@ -1463,10 +1580,40 @@ async def drive(run_id):
                         if run.data.get("requested_model_id") == "auto" and retryable and first_output_at is None
                         else None
                     )
-                    if not rerouted:
-                        raise
-                    snapshot = rerouted
-                    continue
+                    if rerouted:
+                        snapshot = rerouted
+                        continue
+                    # Pinned (non-Auto) models had no retry path: the first
+                    # transient 503/429/timeout killed a 90-minute Run. Allow one
+                    # bounded retry on genuinely transient provider errors. Never
+                    # replay a partially streamed answer — once text is visible,
+                    # repeating the request would create a duplicate response.
+                    # NVIDIA NIM "function not found" and chat-incompatible 400s
+                    # are NOT retried: they are deterministic per-model failures,
+                    # and the Auto path already routes around them.
+                    retries = int(run.data.get("provider_retry_attempts", 0))
+                    is_pinned = run.data.get("requested_model_id") != "auto"
+                    transient = is_pinned and is_retryable_provider_error(exc) and first_output_at is None
+                    retry_budget = max(0, seconds_limit - elapsed)
+                    if transient and retries < 1 and retry_budget > 0:
+                        delay = max(0.0, (retry_until - now()).total_seconds()) if retry_until else 0.5
+                        if delay < retry_budget:
+                            update(
+                                run,
+                                provider_retry_attempts=retries + 1,
+                                steps=max(0, int(run.data.get("steps", 0)) - 1),
+                                last_provider_retry={
+                                    "classification": classification,
+                                    "error_type": type(exc).__name__,
+                                    "attempt": retries + 1,
+                                    "at": now().isoformat(),
+                                },
+                            )
+                            db.commit()
+                            if delay:
+                                await asyncio.sleep(delay)
+                            continue
+                    raise
                 model_record = db.get(Model, snapshot["model_record_id"]) if snapshot.get("model_record_id") else None
                 record_usage(
                     db, run.owner_id, model_record.data if model_record else {},
@@ -1496,8 +1643,32 @@ async def drive(run_id):
                     for index, c in enumerate(tool_calls):
                         tool = by_name.get(c["name"])
                         if not tool:
-                            raise ValueError("Model requested an unavailable tool")
-                        args = json.loads(c["arguments"]) if isinstance(c["arguments"], str) else c["arguments"]
+                            # A hallucinated or renamed Tool is a recoverable
+                            # model mistake: report it back so the next turn can
+                            # correct itself. Raising here used to fail a Run
+                            # that may already have spent an hour of budget.
+                            _reject_tool_call(
+                                db, run, c, available,
+                                error="The requested tool is not available in this Run.",
+                                code="tool_unavailable",
+                            )
+                            continue
+                        try:
+                            args = json.loads(c["arguments"]) if isinstance(c["arguments"], str) else c["arguments"]
+                        except (TypeError, ValueError):
+                            _reject_tool_call(
+                                db, run, c, available,
+                                error="The tool arguments were not valid JSON. Send a JSON object matching the tool schema.",
+                                code="tool_arguments_invalid_json",
+                            )
+                            continue
+                        if not isinstance(args, dict):
+                            _reject_tool_call(
+                                db, run, c, available,
+                                error="The tool arguments must be a JSON object.",
+                                code="tool_arguments_not_object",
+                            )
+                            continue
                         call = ToolCall(
                             owner_id=run.owner_id,
                             run_id=run.id,
@@ -1558,16 +1729,32 @@ async def drive(run_id):
                     update(run, answer_evaluation={"status": "needs_review", "reason": "自動補足で終了しました。依頼の達成を確認してください。"})
                 else:
                     update(run, answer_evaluation={"status": "provided", "reason": "ユーザー向けの最終回答を確認しました。内容の正しさは自動判定していません。"})
-                issue = agent_completion_issue(run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at))))
-                if issue:
+                issues = agent_completion_issues(run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at))))
+                if issues:
                     repairs = run.data.get("agent_completion_repairs", 0)
                     if run.data.get("agent_plan") and repairs < 1 and steps < snapshot.get("max_steps", 8):
                         update(run, agent_completion_repairs=repairs + 1,
                                history=[*run.data["history"], {"role": "user", "content":
-                               "The task is not yet verified: " + issue + " Continue the work, update the plan with remaining tasks and verification, then answer. If blocked, report the blocker and remaining work."}])
+                               "The task is not yet verified:\n- " + "\n- ".join(issues) + "\nContinue the work, update the plan with remaining tasks and verification, then answer. If blocked, report the blocker and remaining work."}])
                         db.commit()
                         continue
-                    finish(db, run, "interrupted", agent_interruption_reason(run, issue))
+                    # Keep the model's useful partial answer visible even when
+                    # the Agent cannot satisfy the verification gate. The Run
+                    # remains interrupted and the answer is explicitly marked
+                    # for review; silently discarding it made a successful
+                    # final response disappear because of a bookkeeping gate.
+                    update(run, answer_evaluation={
+                        "status": "needs_review",
+                        "reason": "作業結果を自動確認できませんでした。回答と残作業を確認してください。",
+                    })
+                    db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data={
+                        "role": "assistant",
+                        "content": message["content"],
+                        "run_id": run.id,
+                        "artifacts": [a for a in run.data.get("artifacts", []) if is_user_artifact(a)],
+                        "answer_evaluation": run.data["answer_evaluation"],
+                    }))
+                    finish(db, run, "interrupted", agent_interruption_reason(run, issues[0]))
                     return
                 performance = None
                 output_count = output_tokens(response.get("usage", {}))
@@ -1613,16 +1800,23 @@ async def drive(run_id):
                     try:
                         from mix_agent.memory.runtime import apply_plan, evaluate
 
-                        for observation in _collect_memory_observations(db, run, message["content"]):
-                            plan = evaluate(
-                                db, run.owner_id,
-                                task_id=run.id,
-                                observation=observation,
-                                explicit_user=bool(observation.get("explicit_user")),
-                            ).get("plan") or []
-                            apply_plan(db, run.owner_id, plan, run_id=run.id)
+                        # Scope the optional synchronous memory pass to a
+                        # SAVEPOINT. A full db.rollback() here used to discard
+                        # the assistant Message and Run updates already staged
+                        # for completion, turning a memory failure into a
+                        # completed Run with no answer.
+                        with db.begin_nested():
+                            for observation in _collect_memory_observations(db, run, message["content"]):
+                                plan = evaluate(
+                                    db, run.owner_id,
+                                    task_id=run.id,
+                                    observation=observation,
+                                    explicit_user=bool(observation.get("explicit_user")),
+                                ).get("plan") or []
+                                apply_plan(db, run.owner_id, plan, run_id=run.id)
                     except Exception:  # noqa: BLE001 - synchronous memory writes must never block completion
-                        db.rollback()
+                        # begin_nested() rolls back only the memory SAVEPOINT.
+                        pass
                     from mix_agent.memory.jobs import enqueue as enqueue_memory
                     enqueue_memory(db, run, user_content, message["content"], run.data.get("memory_trace_ids", []))
                 conversation = db.get(Conversation, run.conversation_id)

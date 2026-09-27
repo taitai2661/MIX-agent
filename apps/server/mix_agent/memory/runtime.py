@@ -28,7 +28,7 @@ import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from mix_agent.db.models import (
     Memory,
@@ -647,6 +647,16 @@ def evaluate(
     if not summary:
         return {"plan": [], "skipped": True, "reason": "empty summary"}
 
+    # Every writer of memory funnels through the Evaluator, so the credential
+    # filter lives here: the API path (``service.change``) and the background
+    # job already refuse secrets, and without this guard ``memory_remember``
+    # could write one straight into the system prompt of future Runs.
+    content = (observation.get("content") or summary)
+    if legacy_service.SENSITIVE.search(summary) or legacy_service.SENSITIVE.search(content):
+        return {"plan": [], "skipped": True, "reason": "contains credentials"}
+    summary = legacy_service.redact_sensitive(summary)
+    content = legacy_service.redact_sensitive(content)
+
     role = observation.get("role") or mem_types.ROLE_FACT
     if role not in mem_types.ROLES:
         role = mem_types.ROLE_FACT
@@ -659,7 +669,7 @@ def evaluate(
     candidate = _candidate_payload(
         owner=owner,
         summary=summary,
-        content=observation.get("content") or summary,
+        content=content,
         role=role,
         scope=scope,
         source_kind=observation.get("source_kind") or mem_types.SOURCE_AGENT,
@@ -925,10 +935,32 @@ def _bump_activation(row: Memory | None) -> None:
     row.last_activated_at = row.updated_at = now()
 
 
+def _next_candidate_index(db, run_id: str | None) -> int:
+    """Allocate the next free candidate slot for a Run.
+
+    ``MemoryActionEvent`` is unique on ``(run_id, candidate_index,
+    action_version)``. Leaving ``candidate_index`` on its column default made
+    every event of a Run claim slot 0, so the second event of the same Run
+    violated the constraint and failed the whole Run. Count both the persisted
+    rows and the events still pending in this session so the allocator stays
+    correct before an autoflush happens.
+    """
+    if not run_id:
+        return 0
+    stored = db.scalar(
+        select(func.count())
+        .select_from(MemoryActionEvent)
+        .where(MemoryActionEvent.run_id == run_id)
+    )
+    pending = sum(1 for obj in db.new if isinstance(obj, MemoryActionEvent) and obj.run_id == run_id)
+    return int(stored or 0) + pending
+
+
 def _emit_event(db, owner: str, run_id: str | None, action: str, memory_id: str | None, before, after, reason: str) -> None:
     db.add(MemoryActionEvent(
         owner_id=owner,
         run_id=run_id,
+        candidate_index=_next_candidate_index(db, run_id),
         data={
             "action": action,
             "memory_id": memory_id,

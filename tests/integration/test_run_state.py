@@ -4,7 +4,7 @@ import pytest
 from mix_agent.db.models import Approval, Conversation, Event, Run, User, uid
 from mix_agent.db.session import SessionLocal
 from mix_agent.runs import engine
-from mix_agent.runs.state import InvalidRunTransition, transition_run
+from mix_agent.runs.state import RUN_STATES, InvalidRunTransition, transition_run
 from mix_agent.tools.registry import BUILTINS
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -117,7 +117,11 @@ def test_invalid_status_value_is_rejected_by_db_constraint(signed):
     run_id = make_run()
     with SessionLocal() as db:
         run = db.get(Run, run_id)
-        run.status = "paused"
+        # "paused" became a real status with the browser-pause work, so the
+        # CHECK constraint now has to be probed with a value outside the
+        # vocabulary. Keep this derived so a new status cannot silently pass.
+        assert "paused" in RUN_STATES
+        run.status = "definitely_not_a_status"
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
@@ -125,7 +129,7 @@ def test_invalid_status_value_is_rejected_by_db_constraint(signed):
         run = db.get(Run, run_id)
         assert run.status == "queued"
         with pytest.raises(InvalidRunTransition):
-            transition_run(db, run, "paused")
+            transition_run(db, run, "definitely_not_a_status")
 
 
 def test_same_status_retransition_is_an_explicit_noop(signed):

@@ -219,13 +219,16 @@ BUILTINS = [
             "evidence": {"type": "array", "items": {"type": "object"}, "maxItems": 20},
         },
         ["content"],
-        executor="builtin",
+        "ask",
+        "builtin",
     ),
     definition(
         "memory_forget",
         "Remove (supersede) a memory. Provide an id, or a short query that resolves through memory_recall to find the target.",
         {"id": S, "query": S, "reason": {"type": "string", "maxLength": 200}},
-        executor="builtin",
+        None,
+        "ask",
+        "builtin",
     ),
     # Legacy compatibility shims that re-route to the runtime.  They remain
     # available so existing tests and older agents keep working, but new agents
@@ -236,14 +239,16 @@ BUILTINS = [
         "Create or reinforce a reusable memory (legacy alias for memory_remember)",
         {"content": S, "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "salience": {"type": "number", "minimum": 0, "maximum": 1}, "entities": {"type": "array", "items": S}, "concepts": {"type": "array", "items": S}},
         ["content"],
-        executor="builtin",
+        "ask",
+        "builtin",
     ),
     definition(
         "memory_update",
         "Update existing memory (legacy alias)",
         {"id": S, "content": S, "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "salience": {"type": "number", "minimum": 0, "maximum": 1}, "entities": {"type": "array", "items": S}, "concepts": {"type": "array", "items": S}},
         ["id", "content"],
-        executor="builtin",
+        "ask",
+        "builtin",
     ),
     definition("skill_search", "Search reusable work instructions", {"query": S}, executor="builtin", parallel_safe=True),
     definition(
@@ -254,8 +259,8 @@ BUILTINS = [
         executor="builtin",
         parallel_safe=True,
     ),
-    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "content"], executor="builtin", allowed_modes=("agent",)),
-    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], executor="builtin", allowed_modes=("agent",)),
+    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "content"], "ask", "builtin", allowed_modes=("agent",)),
+    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
     definition("memory_delete", "Delete existing memory with approval", {"id": S}, ["id"], "ask", "builtin"),
     definition(
         "update_plan",
@@ -336,19 +341,24 @@ def permission(db, run, tool, args):
         if ".." in path.parts or (path.is_absolute() and path.parts[:2] != ("/", "workspace")):
             return "deny"
     rules = list(db.scalars(select(Permission).where(Permission.owner_id == run.owner_id)))
-    matching = [
+    scoped = [
         r.data
         for r in rules
         if r.data.get("tool_id") == tool["id"]
         and r.data.get("agent_id", "") == snapshot.get("agent_id", "")
         and rule_scope(tool, r.data.get("scope", {})) == call_scope(tool, args)
-        and r.data.get("tool_version") == fingerprint(tool)
     ]
+    matching = [rule for rule in scoped if rule.get("tool_version") == fingerprint(tool)]
     if any(x["permission"] == "deny" for x in matching):
         return "deny"
     if matching:
         return matching[-1]["permission"]
-    # Built-in tools run with confirmation-free defaults; their definition still
-    # records an "ask" default so older permission rule fingerprints stay valid.
-    # MCP and custom tools keep their explicit (ask) default until the owner sets a rule.
-    return "allow" if tool.get("source") == "builtin" else tool.get("default_permission", "ask")
+    # The owner configured this tool before, but the stored rule was pinned to a
+    # definition we no longer recognise. Falling back to the default would hand a
+    # re-defined tool the loosest permission, so re-ask instead of trusting it.
+    if scoped:
+        return "ask"
+    # No rule exists: honour the tool's own default. Built-ins declare "ask" for
+    # every destructive or externally visible action and "allow" for reads, so a
+    # fresh install only interrupts for the calls that need a human.
+    return tool.get("default_permission", "ask")

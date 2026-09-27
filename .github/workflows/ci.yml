@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run application test suite
+        run: docker compose --profile test run --build --rm test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv==0.12.7
+      - name: Ruff check
+        run: |
+          cd apps/server
+          uv run ruff check
+      - name: Ruff format check
+        run: |
+          cd apps/server
+          uv run ruff format --check
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.11.0"
+      - name: Check frontend
+        run: |
+          cd apps/web
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"

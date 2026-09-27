@@ -5627,6 +5627,19 @@ body {
 .browser-panel-overlay img { max-width: 95vw; max-height: 88vh; object-fit: contain; }
 .browser-panel-overlay button { background: white; color: black; }
 
+/* Conversation todos: agent-maintained checklist shown in the transcript */
+.todo-panel { margin: 12px 0; padding: 12px; border: 1px solid var(--border, #7775); border-radius: 12px; max-width: 850px; }
+.todo-panel-heading { display: flex; align-items: center; gap: 8px; }
+.todo-panel-heading span { font-size: .8rem; opacity: .7; margin-left: auto; }
+.todo-panel-list { list-style: none; display: grid; gap: 6px; margin: 10px 0 0; padding: 0; }
+.todo-item { display: flex; align-items: center; gap: 8px; font-size: .9rem; }
+.todo-item svg { flex: none; }
+.todo-item-text { flex: 1; overflow-wrap: anywhere; }
+.todo-item.completed .todo-item-text { text-decoration: line-through; opacity: .6; }
+.todo-item.completed svg { opacity: .6; }
+.todo-item.in_progress svg { color: var(--accent); }
+.todo-item-status { font-size: .75rem; opacity: .6; }
+
 /* Long-work agent mode: resume, budget extension, stagnation */
 .run-resume {
   margin: 8px 0 14px;

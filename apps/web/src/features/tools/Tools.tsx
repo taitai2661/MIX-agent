@@ -192,7 +192,7 @@ export function Tools() {
         <ShieldAlert size={17} /> {t("Terminalは専用workspace全体を操作できます。ホスト・Docker Socketへのアクセスは提供しません。")}
       </div>
       <div className="notice notice-soft">
-        <ShieldCheck size={17} /> {t("標準ではすべての組み込みToolが確認なしで実行できます。必要なToolだけ「毎回確認」や「使用しない」に変更してください。")}
+        <ShieldCheck size={17} /> {t("読み取り専用の組み込みToolは確認なしで実行されます。ファイル変更・Terminal・Memory/Skill保存などの変更を伴うToolは既定で「毎回確認」です。")}
       </div>
       <section className="tool-agent-panel" aria-label={t("権限の適用先")}>
         <Field label={t("権限を設定するAgent")} hint={t("Agentごとに設定を保存します。標準Agentは個別Agentを選ばない会話に適用されます。")}>

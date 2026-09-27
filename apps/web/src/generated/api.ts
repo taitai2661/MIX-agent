@@ -1977,6 +1977,10 @@ export interface components {
             selection?: components["schemas"]["ConversationSelectionView"] | null;
             /** Project Id */
             project_id?: string | null;
+            /** Todos */
+            todos?: {
+                [key: string]: unknown;
+            }[];
         };
         /** ConversationRunView */
         ConversationRunView: {
@@ -2188,7 +2192,7 @@ export interface components {
             /** Salience */
             salience?: number | null;
             /** Lifecycle State */
-            lifecycle_state?: ("latent" | "established" | "superseded" | "archived" | "deleted") | null;
+            lifecycle_state?: ("candidate" | "active" | "superseded" | "expired" | "archived" | "disputed" | "latent" | "established" | "deleted") | null;
             /** Entities */
             entities?: string[] | null;
             /** Concepts */
@@ -2199,6 +2203,16 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
+            /** Role */
+            role?: ("fact" | "decision" | "preference" | "goal" | "constraint" | "experience" | "failure" | "solution" | "observation" | "hypothesis" | "question") | null;
+            /** Source Kind */
+            source_kind?: ("user" | "agent" | "tool" | "browser" | "external" | "consolidation") | null;
+            /** Role Metadata */
+            role_metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Verification */
+            verification?: ("unverified" | "pending" | "verified" | "disputed" | "rejected") | null;
             /**
              * Importance
              * @default 2

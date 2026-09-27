@@ -8,6 +8,8 @@ from google import genai
 from google.genai import types
 from openai import AsyncOpenAI, BadRequestError, UnprocessableEntityError
 
+PROVIDER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+
 from mix_agent.providers.capability_probe import VISION_DATA_URL
 from mix_agent.providers.catalog import get_preset
 from mix_agent.providers.metadata import context_limit, resolve
@@ -337,6 +339,7 @@ class Adapter:
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "function", "name": "mix_tool_probe"}
         async with AsyncOpenAI(api_key=self.key, base_url=self.url, max_retries=0,
+                               timeout=PROVIDER_TIMEOUT,
                                default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
             stream = await client.responses.create(**args)
             async for event in stream:
@@ -402,6 +405,7 @@ class Adapter:
         reasoning_details, raw_reasoning = {}, ""
         usage = None
         async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0,
+                               timeout=PROVIDER_TIMEOUT,
                                default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
             stream = await self._compatible_create(client, args)
             async for chunk in stream:
@@ -537,6 +541,7 @@ class Adapter:
             args["tool_choice"] = {"type": "tool", "name": "mix_tool_probe"}
         async with (
             AsyncAnthropic(api_key=self.key, base_url=anthropic_base_url(self.url), max_retries=0,
+                           timeout=PROVIDER_TIMEOUT,
                            default_headers=self.gateway_headers(settings.get("_session_id"))) as client,
             client.messages.stream(**args) as stream,
         ):
@@ -612,7 +617,8 @@ class Adapter:
         native, calls, text, finished = [], [], "", False
         usage = None
         async with genai.Client(api_key=self.key,
-                                http_options={"base_url": self.url, "headers": self.gateway_headers(settings.get("_session_id"))}).aio as client:
+                                http_options={"base_url": self.url, "timeout": 120000,
+                                               "headers": self.gateway_headers(settings.get("_session_id"))}).aio as client:
             async for chunk in await client.models.generate_content_stream(
                 model=model, contents=wire, config=cfg
             ):

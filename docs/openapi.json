@@ -5035,6 +5035,14 @@
               }
             ],
             "title": "Project Id"
+          },
+          "todos": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Todos"
           }
         },
         "type": "object",
@@ -5610,10 +5618,14 @@
               {
                 "type": "string",
                 "enum": [
+                  "candidate",
+                  "active",
+                  "superseded",
+                  "expired",
+                  "archived",
+                  "disputed",
                   "latent",
                   "established",
-                  "superseded",
-                  "archived",
                   "deleted"
                 ]
               },
@@ -5676,6 +5688,79 @@
               }
             ],
             "title": "Metadata"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "preference",
+                  "goal",
+                  "constraint",
+                  "experience",
+                  "failure",
+                  "solution",
+                  "observation",
+                  "hypothesis",
+                  "question"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "agent",
+                  "tool",
+                  "browser",
+                  "external",
+                  "consolidation"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
+          },
+          "role_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Metadata"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "unverified",
+                  "pending",
+                  "verified",
+                  "disputed",
+                  "rejected"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification"
           },
           "importance": {
             "type": "integer",

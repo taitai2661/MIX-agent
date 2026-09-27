@@ -96,6 +96,7 @@ class ConversationMessagesView(BaseModel):
     runs: list[ConversationRunView]
     selection: ConversationSelectionView | None = None
     project_id: str | None = None
+    todos: list[dict] = Field(default_factory=list)
 
 
 class SendMessageView(BaseModel):

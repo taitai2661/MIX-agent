@@ -15,6 +15,7 @@ from sqlalchemy import Float, case, cast, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from mix_agent import config, pricing
+from mix_agent import todos as conversation_todos
 from mix_agent.api.schemas import (
     AgentInput,
     ArtifactView,
@@ -1329,10 +1330,9 @@ async def enable_browser_tools(ctx=Depends(context)):
 @router.get("/tools", response_model=list[ToolView])
 async def tools_list(ctx=Depends(context)):
     db, s = ctx
-    return [
-        {**tool, "default_permission": "allow"} if tool.get("source") == "builtin" else tool
-        for tool in registry(db, s.owner_id).values()
-    ]
+    # Report the permission the tool actually falls back to, so the Tools screen
+    # never shows "always allow" for a destructive tool that will ask.
+    return list(registry(db, s.owner_id).values())
 
 
 @router.post("/permission-rules")
@@ -1691,7 +1691,13 @@ async def messages(key: str, ctx=Depends(context)):
         }
         for r in run_rows
     ]
-    return {"messages": rows, "runs": runs, "selection": conversation.data.get("selection"), "project_id": conversation.data.get("project_id")}
+    return {
+        "messages": rows,
+        "runs": runs,
+        "selection": conversation.data.get("selection"),
+        "project_id": conversation.data.get("project_id"),
+        "todos": conversation_todos.sanitize(conversation.data.get("todos")),
+    }
 
 
 def _redact_tool_result(value):
@@ -1898,6 +1904,11 @@ async def _build_history_payload(db, s, conversation, body, settings_row, agent,
     # resumed tool turns on the same behavioral contract even if defaults change.
     snapshot["mode_prompt"] = mode_prompt(mode)
     system_text += snapshot["mode_prompt"]
+    # Carry conversation todos into the next run so the agent resumes the list.
+    if mode == "agent" and "update_plan" in tool_ids and not temporary_mode:
+        carried = conversation_todos.render_for_prompt(conversation.data.get("todos"))
+        if carried:
+            system_text += "\n" + carried
     if body.research_mode:
         system_text += ("\n## Research task\nInvestigate the user's question with multiple relevant sources. "
                         "Make a short investigation plan, search and inspect source pages, check dates and disagreements, "
@@ -2143,10 +2154,9 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         tools_capability = {"supported": True, "unsupported": False}.get(tools_capability)
     if tool_ids and tools_capability is not True:
         # A failed (or inconclusive) probe never blocks a run: tools are dropped
-        # silently and the scheduler tick retries on the next due check.
+        # silently and the scheduler tick retries on the next due check. Plain
+        # conversation stays available on models without Tool Calling.
         tool_ids = []
-        if tools_capability is False:
-            raise HTTPException(422, "Tool Callingに対応していないため、このモデルはツールを利用できません")
     snapshot, history, _, memory_trace_ids, _ = await _build_history_payload(
         db, s, conversation, body, settings, agent, artifacts,
         mode, requested_model_id, requested_agent_id, model, provider, caps,

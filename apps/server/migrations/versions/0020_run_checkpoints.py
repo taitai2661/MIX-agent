@@ -31,20 +31,29 @@ def upgrade():
         ),
     )
 
-    op.create_table(
-        "run_checkpoints",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("owner_id", sa.String(length=36), nullable=False),
-        sa.Column("data", sa.JSON, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey("runs.id"), nullable=False),
-        sa.Column("step", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("tool_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("trigger", sa.String(length=30), nullable=False, server_default="interval"),
-    )
-    op.create_index("run_checkpoint_run_step", "run_checkpoints", ["run_id", "step"])
-    op.create_index("run_checkpoint_run_created", "run_checkpoints", ["run_id", "created_at"])
-    op.create_index("ix_run_checkpoints_owner_id", "run_checkpoints", ["owner_id"])
+    # 0001 creates every current model table on a fresh database, so guard the
+    # table and its indexes the same way 0010 does to keep upgrades re-runnable.
+    inspector = sa.inspect(bind)
+    if "run_checkpoints" not in inspector.get_table_names():
+        op.create_table(
+            "run_checkpoints",
+            sa.Column("id", sa.String(length=36), primary_key=True),
+            sa.Column("owner_id", sa.String(length=36), nullable=False),
+            sa.Column("data", sa.JSON, nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("run_id", sa.String(length=36), sa.ForeignKey("runs.id"), nullable=False),
+            sa.Column("step", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("tool_count", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("trigger", sa.String(length=30), nullable=False, server_default="interval"),
+        )
+    existing_indexes = {index["name"] for index in sa.inspect(bind).get_indexes("run_checkpoints")}
+    for name, columns in (
+        ("run_checkpoint_run_step", ["run_id", "step"]),
+        ("run_checkpoint_run_created", ["run_id", "created_at"]),
+        ("ix_run_checkpoints_owner_id", ["owner_id"]),
+    ):
+        if name not in existing_indexes:
+            op.create_index(name, "run_checkpoints", columns)
 
 
 def downgrade():

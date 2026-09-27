@@ -104,19 +104,35 @@ def _destructive_terminal(call) -> bool:
     return any(pattern.search(command) for pattern in DESTRUCTIVE_TERMINAL_PATTERNS)
 
 
-def _read_preceded(runs_calls: list, write_index: int) -> bool:
-    """Return whether a read_file touched the same path within WINDOW calls."""
-    if (runs_calls[write_index].data or {}).get("tool_id") != "write_file":
+def _read_preceded(calls: list, write_index: int) -> bool:
+    """Return whether the ``write_file`` at ``write_index`` is safe.
+
+    A write is safe when either (a) a prior ``read_file`` on the same path
+    succeeded (the agent checked what it is overwriting), or (b) a prior
+    ``read_file`` on the same path *errored* — which on a fresh path means the
+    file does not exist yet, so this write is a creation, not an overwrite, and
+    there is nothing stale to clobber.
+    """
+    if (calls[write_index].data or {}).get("tool_id") != "write_file":
         return True
-    path = ((runs_calls[write_index].data or {}).get("arguments") or {}).get("path")
+    path = ((calls[write_index].data or {}).get("arguments") or {}).get("path")
     if not isinstance(path, str) or not path:
         return True
-    for prior in runs_calls[max(0, write_index - 12):write_index]:
-        if (prior.data or {}).get("tool_id") == "read_file":
-            prior_path = ((prior.data or {}).get("arguments") or {}).get("path")
-            if prior_path == path:
-                return True
-    return False
+    window_start = max(0, write_index - 12)
+    saw_read = False
+    for prior in calls[window_start:write_index]:
+        if (prior.data or {}).get("tool_id") != "read_file":
+            continue
+        prior_path = ((prior.data or {}).get("arguments") or {}).get("path")
+        if prior_path != path:
+            continue
+        saw_read = True
+        # A successful read proves the agent inspected the existing content.
+        if _call_succeeded(prior):
+            return True
+    # No read at all on this path within the window → the agent never looked.
+    # If a read was attempted and failed, treat the file as new (creation).
+    return saw_read
 
 
 def check_phase_advances(plan_steps: Iterable[str]) -> list[str]:
@@ -134,37 +150,32 @@ def check_phase_advances(plan_steps: Iterable[str]) -> list[str]:
 def verify_phases(run, calls: list) -> dict[str, bool]:
     """Return per-phase verification result.
 
-    The engine records verification evidence by tracking the last successful
-    check tool after a write tool.  If the plan contains ``phase:<name>``
-    boundaries, this returns the verification status for each phase based on
-    whether a successful check tool occurred within the phase's window.
+    Combines two sources: explicit ``phase_verification`` recorded by the
+    engine as check tools succeed, and a counter-based fallback that marks a
+    phase verified when any successful check tool appears in the call log while
+    that phase is the most recent unverified one. The fallback keeps existing
+    Runs well-behaved even when they were completed before explicit recording
+    landed.
     """
     plan = (run.data.get("agent_plan") or {}).get("steps") or []
     plan_phases = check_phase_advances(plan)
     if not plan_phases:
         return {}
-    verification = (run.data.get("agent_plan") or {}).get("phase_verification") or {}
+    recorded = (run.data.get("agent_plan") or {}).get("phase_verification") or {}
     completed = [call for call in calls if call.status == "completed"]
-    phase_progress = {name: False for name in plan_phases}
-    # Walk through completed calls in order, tracking the current phase based
-    # on the plan index that the call's tool references indirectly.
-    for index, call in enumerate(completed):
-        if (call.data or {}).get("tool_id") == "update_plan":
-            # update_plan itself resets phase_verification for the steps it sets.
+    phase_progress = {name: bool(recorded.get(name)) for name in plan_phases}
+    for call in completed:
+        if call.data.get("tool_id") == "update_plan":
             continue
         if _is_write(call):
             continue
-        if _is_check(call):
-            # Mark the current phase as verified if a check landed after a write.
-            for phase in plan_phases:
-                if phase not in verification:
-                    phase_progress[phase] = True
-                    break
-    merged = dict(verification)
-    for phase, ok in phase_progress.items():
-        if phase not in merged and ok:
-            merged[phase] = True
-    return merged
+        if not _is_check(call):
+            continue
+        for phase in plan_phases:
+            if not phase_progress.get(phase):
+                phase_progress[phase] = True
+                break
+    return phase_progress
 
 
 def strict_issue(run, calls: list) -> str | None:
@@ -172,13 +183,28 @@ def strict_issue(run, calls: list) -> str | None:
 
     Mirrors ``agent_completion_issue`` for the baseline rules and adds risk-
     specific verification for destructive operations and per-phase evidence.
+    Returns the first issue found; collect_issues returns them all.
     """
     if run.data.get("snapshot", {}).get("mode") != "agent":
         return None
+    issues = collect_issues(run, calls)
+    return issues[0] if issues else None
+
+
+def collect_issues(run, calls: list) -> list[str]:
+    """Return every Agent completion issue, not just the first.
+
+    The verifier used to return on the first violation, which could deadlock an
+    Agent that fixed one issue only to be interrupted for the next. Surfacing
+    them all lets a single repair turn address everything at once.
+    """
+    if run.data.get("snapshot", {}).get("mode") != "agent":
+        return []
     completed = [call for call in calls if call.status == "completed"]
     plan = run.data.get("agent_plan") or {}
+    issues: list[str] = []
     if not completed and not plan:
-        return None
+        return []
     if not plan:
         if all(
             (call.data or {}).get("risk") == "read"
@@ -186,12 +212,13 @@ def strict_issue(run, calls: list) -> str | None:
             and ((call.data or {}).get("result") or {}).get("ok", True)
             for call in completed
         ):
-            return None
-        return "作業計画と残作業が記録されていません。"
+            return []
+        issues.append("作業計画と残作業が記録されていません。")
+        return issues
     if plan.get("pending"):
-        return "未完了の作業があります: " + "、".join(plan["pending"][:5])
+        issues.append("未完了の作業があります: " + "、".join(plan["pending"][:5]))
     if not plan.get("verification"):
-        return "成果を確認した根拠が記録されていません。"
+        issues.append("成果を確認した根拠が記録されていません。")
 
     write_indices = [
         index for index, call in enumerate(completed)
@@ -204,7 +231,7 @@ def strict_issue(run, calls: list) -> str | None:
         if not any(
             _is_check(call) for call in completed[last_write + 1:]
         ):
-            return "最後の変更後に成功した確認結果がありません。"
+            issues.append("最後の変更後に成功した確認結果がありません。")
 
     # Risk-specific checks: walk completed calls in order.
     for index, call in enumerate(completed):
@@ -216,17 +243,17 @@ def strict_issue(run, calls: list) -> str | None:
                 and _call_succeeded(other)
                 for other in completed[index + 1:]
             ):
-                return "削除後に files_list または search_files で状態を確認してください。"
+                issues.append("削除後に files_list または search_files で状態を確認してください。")
         elif tool_id == "write_file":
             if not _read_preceded(completed, index):
-                return (
+                issues.append(
                     "write_file は既存ファイルの上書きです。"
                     "事前に read_file で対象ファイルの内容を確認してください。"
                 )
         elif _destructive_terminal(call) and not any(
             _is_check(other) for other in completed[index + 1:]
         ):
-            return (
+            issues.append(
                 "破壊的なターミナル操作 (rm / mv / git reset 等) の後に"
                 "状態確認の check Tool が必要です。"
             )
@@ -237,9 +264,9 @@ def strict_issue(run, calls: list) -> str | None:
         verification = verify_phases(run, calls)
         for phase in phases:
             if not verification.get(phase):
-                return f"フェーズ '{phase}' の検証結果が記録されていません。"
+                issues.append(f"フェーズ '{phase}' の検証結果が記録されていません。")
 
-    return None
+    return issues
 
 
 def verification_proof(run, calls: list) -> dict:

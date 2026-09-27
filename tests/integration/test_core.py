@@ -132,7 +132,10 @@ async def test_agent_does_not_complete_while_plan_has_pending_work(signed, monke
         assert run.status == "interrupted"
         assert "検証" in run.data["reason"]
         assert run.data["agent_completion_repairs"] == 1
-        assert db.scalar(select(Message).where(Message.conversation_id == run.conversation_id)) is None
+        answer = db.scalar(select(Message).where(Message.conversation_id == run.conversation_id))
+        assert answer is not None
+        assert answer.data["content"] == "完了しました。"
+        assert run.data["answer_evaluation"]["status"] == "needs_review"
 
 
 @pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])
@@ -158,6 +161,48 @@ async def test_approval_resume_and_no_double_execution(signed, monkeypatch, mode
     assert len(executions) == 1
     with SessionLocal() as db:
         assert db.get(Run, run_id).status == ("interrupted" if mode == "agent" else "completed")
+
+
+@pytest.mark.parametrize(
+    "tool_name,arguments,expected_code",
+    [
+        ("not_a_real_tool", "{}", "tool_unavailable"),
+        ("write_file", "{broken json", "tool_arguments_invalid_json"),
+    ],
+)
+async def test_invalid_model_tool_call_gets_repair_turn_instead_of_failing_run(
+    signed, monkeypatch, tool_name, arguments, expected_code,
+):
+    run_id, _ = make_run(tool_name="write_file", mode="chat")
+    requests = []
+
+    class InvalidThenAnswerAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def stream(self, model, history, tools, mode, settings):
+            requests.append((history, tools))
+            if len(requests) == 1:
+                yield {
+                    "kind": "response",
+                    "message": {"role": "assistant", "content": "Trying a tool"},
+                    "tool_calls": [{"id": "bad-call", "name": tool_name, "arguments": arguments}],
+                }
+            else:
+                yield {
+                    "kind": "response",
+                    "message": {"role": "assistant", "content": "依頼について回答します。"},
+                    "tool_calls": [],
+                }
+
+    monkeypatch.setattr(engine, "Adapter", InvalidThenAnswerAdapter)
+    await engine.drive(run_id)
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run.status == "completed", run.data.get("reason")
+        assert len(requests) == 2
+        assert any(expected_code in item.get("content", "") for item in run.data["history"] if item["role"] == "tool")
+        assert not any(call.status == "executing" for call in db.scalars(select(ToolCall).where(ToolCall.run_id == run_id)))
         sequence = list(
             db.scalars(
                 select(Event.sequence)
@@ -384,7 +429,25 @@ def test_web_search_is_allowed_by_default_but_explicit_rules_win(signed):
         assert permission(db, run, tool, arguments) == "ask"
 
 
-def test_builtin_tools_default_to_allow_while_mcp_keeps_ask(signed):
+def test_every_builtin_declares_a_valid_permission_and_executor(signed):
+    """Guard against positional-argument slips in definition().
+
+    ``definition`` takes (name, description, properties, required, permission,
+    executor). A single misordered argument silently turns a tool's permission
+    into an executor name, which then fails response validation at /tools.
+    """
+    for tool in BUILTINS:
+        assert tool["default_permission"] in {"allow", "ask", "deny"}, tool["id"]
+        assert tool["executor_ref"] in {"execution", "builtin", "browser", "mcp"}, tool["id"]
+        # risk is derived from the declared permission; keep them consistent so
+        # the verification loop cannot treat a persistent write as a read.
+        assert tool["risk"] == ("read" if tool["default_permission"] == "allow" else "write"), tool["id"]
+    response = signed.get("/api/v1/tools")
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == len(BUILTINS)
+
+
+def test_builtin_defaults_follow_the_declared_permission(signed):
     run_id, tool = make_run(tool_name="write_file", mode="agent")
     mcp_tool = {
         "id": "mcp_x", "model_name": "mcp_x", "description": "MCP tool",
@@ -394,15 +457,35 @@ def test_builtin_tools_default_to_allow_while_mcp_keeps_ask(signed):
         "allowed_modes": ["chat", "thinking", "agent"],
     }
     listed = {row["id"]: row for row in signed.get("/api/v1/tools").json()}
-    assert listed["write_file"]["default_permission"] == "allow"
+    # The Tools screen must report the permission a call actually falls back to.
+    assert listed["write_file"]["default_permission"] == "ask"
+    assert listed["read_file"]["default_permission"] == "allow"
     with SessionLocal() as db:
         run = db.get(Run, run_id)
         assert tool["default_permission"] == "ask"
-        assert permission(db, run, tool, {"path": "x.txt", "content": "x"}) == "allow"
-        run.data["snapshot"]["tool_ids"] = [*run.data["snapshot"]["tool_ids"], "mcp_x"]
-        run.data["snapshot"]["tools"] = [*run.data["snapshot"]["tools"], mcp_tool]
+        assert permission(db, run, tool, {"path": "x.txt", "content": "x"}) == "ask"
+        read_tool = next(t for t in BUILTINS if t["id"] == "read_file")
+        run.data["snapshot"]["tool_ids"] = [*run.data["snapshot"]["tool_ids"], "mcp_x", "read_file"]
+        run.data["snapshot"]["tools"] = [*run.data["snapshot"]["tools"], mcp_tool, read_tool]
         db.commit()
         assert permission(db, run, mcp_tool, {}) == "ask"
+        assert permission(db, run, read_tool, {"path": "x.txt"}) == "allow"
+
+
+def test_stale_permission_fingerprint_re_asks_instead_of_defaulting_to_allow(signed):
+    """A rule pinned to an old definition must not hand the tool its loosest permission."""
+    run_id, tool = make_run(tool_name="write_file", mode="agent")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        db.add(Permission(
+            owner_id=run.owner_id,
+            data={
+                "agent_id": "", "tool_id": "write_file", "permission": "deny",
+                "scope": call_scope(tool, {}), "tool_version": "an-older-fingerprint",
+            },
+        ))
+        db.commit()
+        assert permission(db, run, tool, {"path": "x.txt", "content": "x"}) == "ask"
 
 
 def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(signed):
@@ -582,7 +665,12 @@ def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monk
     second = signed.post(url, json={"content": "again"}, headers={"Idempotency-Key": "auto-second"})
     assert second.status_code == 200, second.text
     history = signed.get(url).json()
-    assert history["selection"] == {"model_id": "auto", "agent_id": "", "mode": "chat"}
+    # The conversation remembers what the next turn should reuse. Compare the
+    # fields under test rather than the whole dict: selection also carries
+    # per-conversation options such as research_mode.
+    assert {key: history["selection"][key] for key in ("model_id", "agent_id", "mode")} == {
+        "model_id": "auto", "agent_id": "", "mode": "chat",
+    }
     with SessionLocal() as db:
         assert db.get(Run, first.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"
         assert db.get(Run, second.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"

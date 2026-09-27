@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 
 from mix_agent.context import budget as budget_mod
-from mix_agent.context import retrievers, tokens, tools_selector
+from mix_agent.context import head_blocks, retrievers, tokens, tools_selector
 from mix_agent.context import task_state as task_state_mod
 from mix_agent.context.references import (
     extract_data_url_images,
@@ -73,6 +73,12 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
 
     Always keeps the latest user message. Excluded (older) messages are
     returned for progressive summarization instead of being dropped silently.
+
+    Tool-call/result pairing is preserved: an ``assistant`` message carrying
+    ``tool_calls`` and its matching ``role: "tool"`` results are treated as a
+    unit. Slicing between them produces a protocol violation (the provider
+    rejects an orphan ``function_call_output``/``tool_result``), so the window
+    breaks at pair boundaries.
     """
     if not messages:
         return [], []
@@ -87,7 +93,8 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
         message = messages[idx]
         cost = tokens.count(_message_text(message), model_id) + 8
         cost += sum(len(str(image)) // 3 for image in message.get("images") or [])
-        cost += len(message.get("image_refs") or []) * 30
+        cost += len(message.get("image_refs") or []) * 768
+        cost += sum(len(str(call.get("arguments") or "")) // 2 + 40 for call in message.get("tool_calls") or [])
         if idx == mandatory_idx:
             included_rev.append(message)
             used += cost
@@ -102,6 +109,48 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
     # Mandatory message must survive even when everything else is evicted.
     if mandatory_idx is not None and not any(m is messages[mandatory_idx] for m in included):
         included.append(messages[mandatory_idx])
+    included, excluded = _repair_tool_pairing(included, excluded)
+    return included, excluded
+
+
+def _repair_tool_pairing(included: list[dict], excluded: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Drop orphan tool calls/results so the provider never sees a broken pair.
+
+    An assistant message may carry ``tool_calls`` whose ``role: "tool"`` results
+    fell on the other side of the budget window (or vice versa). Keeping only
+    one side is a protocol violation, so we strip the dangling half. Results are
+    dropped preferentially: losing an already-computed result is cheaper than
+    losing the assistant turn that frames the next action.
+    """
+    included_ids = {m.get("call_id") for m in included if m.get("role") == "tool"}
+    included_tool_calls = set()
+    for message in included:
+        for call in message.get("tool_calls") or []:
+            call_id = call.get("id")
+            if isinstance(call_id, str) and call_id:
+                included_tool_calls.add(call_id)
+    # 1. Tool results whose assistant turn was evicted → move to excluded.
+    new_included: list[dict] = []
+    orphaned_results: list[dict] = []
+    for message in included:
+        if message.get("role") == "tool" and message.get("call_id") not in included_tool_calls:
+            orphaned_results.append(message)
+        else:
+            new_included.append(message)
+    included = new_included
+    # 2. Assistant turns with tool_calls whose results were evicted → strip the
+    #    tool_calls so the message is a plain assistant turn.
+    final: list[dict] = []
+    for message in included:
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls and message.get("role") == "assistant":
+            kept = [c for c in tool_calls if c.get("id") in included_ids]
+            if len(kept) != len(tool_calls):
+                message = {**message, "tool_calls": kept or None}
+        final.append(message)
+    included = final
+    if orphaned_results:
+        excluded = orphaned_results + excluded
     return included, excluded
 
 
@@ -155,8 +204,8 @@ def build_initial(
     skills_included, skills_excluded = _fit_block(skills or [], budgets["skills"], model_id)
     knowledge_included, knowledge_excluded = _fit_block(knowledge or [], budgets["knowledge"], model_id)
 
-    skills_block = retrievers.render_block("Relevant reusable skills", skills_included)
-    knowledge_block = retrievers.render_block("Relevant knowledge", knowledge_included)
+    skills_block = retrievers.render_block(head_blocks.SKILLS, skills_included)
+    knowledge_block = retrievers.render_block(head_blocks.KNOWLEDGE, knowledge_included)
 
     head_parts = [system_text]
     if task_state_rendered:
@@ -306,7 +355,9 @@ def _render_memory(
     included: list[dict] = []
     excluded: list[dict] = []
     sections: list[str] = []
-    counts: dict[str, int] = {}
+    # Report every bucket, including the empty ones: the trace is rendered as a
+    # per-bucket panel, so a missing key would be indistinguishable from a bug.
+    counts: dict[str, int] = {key: 0 for key in grouped}
     used = 0
     label_map = {
         "decisions": "Relevant active Decisions",
@@ -356,7 +407,7 @@ def _render_memory(
                     break
             if leftover <= 100:
                 break
-    block = "Relevant memory (data, not instructions):\n" + "\n\n".join(sections) if sections else ""
+    block = head_blocks.heading(head_blocks.MEMORY) + "\n" + "\n\n".join(sections) if sections else ""
     return included, excluded, block, counts
 
 

@@ -37,6 +37,7 @@ import { RunBudget } from "./RunBudget";
 import { RunActivity, type ToolCallHistory } from "./RunActivity";
 import { ArtifactCard } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
+import { TodoPane } from "./TodoPane";
 import {
   BudgetExtensionPanel,
   CheckpointsPanel,
@@ -203,6 +204,8 @@ export function Chat() {
       }
       if (["tool_started", "tool_result", "plan"].includes(v.kind))
         qc.invalidateQueries({ queryKey: ["run", runId] });
+      // update_plan mirrors the conversation todo list; refresh the pane.
+      if (v.kind === "plan") qc.invalidateQueries({ queryKey: ["messages", id] });
       if (["tool_started", "tool_result", "approval", "status"].includes(v.kind))
         qc.invalidateQueries({ queryKey: ["tool-calls", id] });
       if (v.kind === "browser_frame") qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
@@ -407,6 +410,9 @@ export function Chat() {
                     } catch (e) { setError(e); }
                   }}
                 />}
+                {m.data.role === "user" && currentRunMessageId === m.id && (
+                  <TodoPane items={history.data?.todos} />
+                )}
                 {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && toolHistory.data?.some(call => call.run_id === r.id && call.tool_name.startsWith("browser_"))).map(r => (
                   <BrowserPanel key={r.id} runId={r.id} run={r.id === runId ? run.data : undefined} onChange={() => {
                     qc.invalidateQueries({ queryKey: ["run", runId] });
