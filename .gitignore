@@ -13,3 +13,15 @@ playwright-report/
 .DS_Store
 *.tsbuildinfo
 .codex/
+
+# Cargo / Rust
+**/target/
+**/*.rs.bk
+
+# Tauri generated assets
+**/src-tauri/gen/
+**/src-tauri/target/
+
+# Desktop app local data (kept outside repo)
+desktop/mix-agent-desktop/.data/
+desktop/mix-agent-desktop/app/.data/

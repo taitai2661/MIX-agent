@@ -17,14 +17,13 @@ on:
     branches:
       - main
     paths:
-      - "Apps/**"
-      - "apps/**"
-      - "build/**"
-      - "category-list.json"
-      - "featured-apps.json"
-      - "recommend-list.json"
-      - "store-config.json"
-      - "supported-languages.json"
+      - "docker/MIX-agent/apps/**"
+      - "docker/MIX-agent/build/**"
+      - "docker/MIX-agent/category-list.json"
+      - "docker/MIX-agent/featured-apps.json"
+      - "docker/MIX-agent/recommend-list.json"
+      - "docker/MIX-agent/store-config.json"
+      - "docker/MIX-agent/supported-languages.json"
       - ".github/workflows/publish-store.yml"
 
 permissions:
@@ -41,12 +40,13 @@ jobs:
 
       - name: Resolve store version
         id: version
+        working-directory: docker/MIX-agent
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          COMPOSE_VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
+          COMPOSE_VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' apps/MIX-agent/docker-compose.yml)"
           test -n "$COMPOSE_VERSION"
 
           if [[ -n "${INPUT_TAG:-}" ]]; then
@@ -67,6 +67,7 @@ jobs:
 
       - name: Verify public image manifests
         id: images
+        working-directory: docker/MIX-agent
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
@@ -98,7 +99,7 @@ jobs:
         if: steps.images.outputs.ready == 'true'
         uses: IceWhaleTech/build-appstore-action@c9bb47fad5b32d7928a07978fad68801f52e910f
         with:
-          source: .
+          source: docker/MIX-agent
           output: dist
           base-url: https://cdn.jsdelivr.net/gh/${{ github.repository }}@gh-pages
           cache-file: .cache/build_appstore/image-size-cache.json
@@ -108,7 +109,7 @@ jobs:
         if: steps.images.outputs.ready == 'true'
         uses: IceWhaleTech/CasaOS-AppStore/.github/actions/build-store-v1@0909364b800950030e71ea82355a5969a1c08b39
         with:
-          source: .
+          source: docker/MIX-agent
           output-zip: dist/store/main.zip
           report-json: out/build-v1-report.json
           report-title: MIX-agent legacy ZimaOS store build
@@ -141,7 +142,7 @@ jobs:
           with zipfile.ZipFile(archive) as zf:
               if zf.testzip() is not None:
                   raise SystemExit("Legacy main.zip failed integrity check")
-              expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml"
+              expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/docker/MIX-agent/apps/MIX-agent/docker-compose.yml"
               if expected_entry not in zf.namelist():
                   raise SystemExit(f"Legacy main.zip is missing {expected_entry}")
           PY
@@ -186,7 +187,7 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$bundle" "$legacy" --clobber
           elif [[ -n "${REQUESTED_TAG:-}" ]]; then
-            notes_file="docs/release-notes-${RELEASE_TAG}.md"
+            notes_file="docker/MIX-agent/docs/release-notes-${RELEASE_TAG}.md"
             if [[ -f "$notes_file" ]]; then
               gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --notes-file "$notes_file"
             else

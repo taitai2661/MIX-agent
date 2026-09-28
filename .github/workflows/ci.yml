@@ -9,14 +9,15 @@ permissions:
   contents: read
 
 jobs:
-  backend:
+  docker-backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run application test suite
+        working-directory: docker/MIX-agent
         run: docker compose --profile test run --build --rm test
 
-  lint:
+  docker-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,15 +27,13 @@ jobs:
       - name: Install uv
         run: pip install uv==0.12.7
       - name: Ruff check
-        run: |
-          cd apps/server
-          uv run ruff check
+        working-directory: docker/MIX-agent/apps/server
+        run: uv run ruff check
       - name: Ruff format check
-        run: |
-          cd apps/server
-          uv run ruff format --check
+        working-directory: docker/MIX-agent/apps/server
+        run: uv run ruff format --check
 
-  frontend:
+  docker-frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,10 +44,72 @@ jobs:
         with:
           version: "10.11.0"
       - name: Check frontend
+        working-directory: docker/MIX-agent/apps/web
         run: |
-          cd apps/web
           pnpm install --frozen-lockfile
           pnpm test
           pnpm build
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
+
+  desktop-rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/mix-agent-desktop
+      - name: cargo fmt check
+        working-directory: desktop/mix-agent-desktop
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        working-directory: desktop/mix-agent-desktop
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo check
+        working-directory: desktop/mix-agent-desktop
+        run: cargo check --workspace --all-targets
+      - name: cargo test
+        working-directory: desktop/mix-agent-desktop
+        run: cargo test --workspace
+
+  desktop-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.11.0"
+      - name: Install UI dependencies
+        working-directory: desktop/mix-agent-desktop
+        run: pnpm install --frozen-lockfile
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"
+      - name: UI lint + build + test
+        working-directory: desktop/mix-agent-desktop/ui
+        run: |
+          pnpm lint
+          pnpm build
+          pnpm test
+
+      # The bundling assets (icons, resource mapping) are only exercised by an
+      # actual `tauri build`, and a missing icon or wrong resource key is
+      # invisible to cargo check.
+      - name: Bundle smoke test
+        working-directory: desktop/mix-agent-desktop
+        run: pnpm tauri build --bundles app --no-bundle
+        env:
+          MIX_SKIP_CHROMIUM: "1"
+
+      - name: Chromium fetch script is valid
+        working-directory: desktop/mix-agent-desktop
+        run: node --check scripts/fetch-chromium.mjs

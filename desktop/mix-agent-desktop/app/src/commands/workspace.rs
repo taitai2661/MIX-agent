@@ -1,0 +1,312 @@
+//! Workspace browsing commands for the file tree / review UI.
+//!
+//! The WebView has no `fs` / `shell` access, so directory listing, file
+//! preview and git status all go through these commands. Every path is
+//! resolved against the requested project root with the same traversal checks
+//! as the `files` Tool.
+
+use serde::Serialize;
+use tauri::State;
+
+use crate::AppState;
+
+/// Hard cap per directory listing (defensive against huge folders).
+const MAX_DIR_ENTRIES: usize = 2_000;
+/// Hard cap for a previewed file.
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// Cap for git diff output handed to the UI.
+const MAX_DIFF_BYTES: usize = 512 * 1024;
+/// Wall-clock limit for git subprocesses.
+const GIT_TIMEOUT_MS: u64 = 10_000;
+
+/// Directory names hidden from the tree by default (always-hidden noise).
+const HIDDEN_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+];
+
+fn resolve_root(root_path: &str) -> Result<std::path::PathBuf, String> {
+    let trimmed = root_path.trim();
+    if trimmed.is_empty() {
+        return Err("root_path required".to_string());
+    }
+    let path = std::path::PathBuf::from(trimmed);
+    if !path.is_dir() {
+        return Err(format!("フォルダが見つかりません: {trimmed}"));
+    }
+    path.canonicalize().map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+pub struct DirEntryView {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+    pub hidden: bool,
+}
+
+/// List one directory level for the file tree. `path` is root-relative;
+/// dotfiles are returned with `hidden: true` so the tree can filter them.
+#[tauri::command]
+pub async fn list_dir(
+    _state: State<'_, AppState>,
+    root_path: String,
+    path: String,
+) -> Result<Vec<DirEntryView>, String> {
+    let root = resolve_root(&root_path)?;
+    let target =
+        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(|e| e.to_string())?;
+    if !target.is_dir() {
+        return Ok(Vec::new());
+    }
+    let read = tokio::task::spawn_blocking(move || -> Result<Vec<DirEntryView>, String> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(&target).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let meta = match entry.metadata() {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            let name = entry.file_name().to_string_lossy().to_string();
+            let hidden = name.starts_with('.') || HIDDEN_DIRS.contains(&name.as_str());
+            entries.push(DirEntryView {
+                is_dir: meta.is_dir(),
+                size: meta.len(),
+                name,
+                hidden,
+            });
+            if entries.len() >= MAX_DIR_ENTRIES {
+                break;
+            }
+        }
+        entries.sort_by(|a, b| {
+            (b.is_dir, a.name.to_lowercase()).cmp(&(a.is_dir, b.name.to_lowercase()))
+        });
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(read)
+}
+
+#[derive(Serialize)]
+pub struct FileContentView {
+    pub path: String,
+    pub content: String,
+    pub truncated: bool,
+    pub is_binary: bool,
+}
+
+/// Read a project file for the read-only preview pane.
+#[tauri::command]
+pub async fn read_workspace_file(
+    _state: State<'_, AppState>,
+    root_path: String,
+    path: String,
+) -> Result<FileContentView, String> {
+    let root = resolve_root(&root_path)?;
+    let target =
+        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(|e| e.to_string())?;
+    if !target.is_file() {
+        return Err(format!("ファイルが見つかりません: {path}"));
+    }
+    let meta = tokio::fs::metadata(&target)
+        .await
+        .map_err(|e| e.to_string())?;
+    if meta.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "ファイルが大きすぎます（{} KB / 上限 1024 KB）",
+            meta.len() / 1024
+        ));
+    }
+    let bytes = tokio::fs::read(&target).await.map_err(|e| e.to_string())?;
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok(FileContentView {
+            path,
+            content,
+            truncated: false,
+            is_binary: false,
+        }),
+        Err(err) => {
+            if looks_binary(err.as_bytes()) {
+                Ok(FileContentView {
+                    path,
+                    content: String::new(),
+                    truncated: false,
+                    is_binary: true,
+                })
+            } else {
+                Err("UTF-8 として読み込めません".to_string())
+            }
+        }
+    }
+}
+
+fn looks_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8_000).any(|b| *b == 0)
+}
+
+#[derive(Serialize)]
+pub struct GitStatusEntry {
+    /// Root-relative path (renames show the new path).
+    pub path: String,
+    /// Single-letter XY status from `git status --porcelain`.
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct GitStatusView {
+    /// False when git is missing or the folder is not a repository.
+    pub available: bool,
+    pub branch: Option<String>,
+    pub entries: Vec<GitStatusEntry>,
+}
+
+async fn run_git(root: &std::path::Path, args: &[&str]) -> Result<std::process::Output, String> {
+    use tokio::process::Command;
+    let mut cmd = Command::new("git");
+    cmd.args(args)
+        .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    tokio::time::timeout(
+        std::time::Duration::from_millis(GIT_TIMEOUT_MS),
+        cmd.output(),
+    )
+    .await
+    .map_err(|_| "git timed out".to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// `git status --porcelain` for the file tree decorations.
+#[tauri::command]
+pub async fn git_status(
+    _state: State<'_, AppState>,
+    root_path: String,
+) -> Result<GitStatusView, String> {
+    let root = resolve_root(&root_path)?;
+    let output = match run_git(&root, &["status", "--porcelain=v1", "-uall"]).await {
+        Ok(output) => output,
+        Err(_) => {
+            return Ok(GitStatusView {
+                available: false,
+                branch: None,
+                entries: Vec::new(),
+            })
+        }
+    };
+    if !output.status.success() {
+        // Not a repository (exit 128) or similar → git UI stays hidden.
+        return Ok(GitStatusView {
+            available: false,
+            branch: None,
+            entries: Vec::new(),
+        });
+    }
+    let branch = run_git(&root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let (xy, rest) = line.split_at(2);
+        let rest = rest.trim_start();
+        let path = if let Some((_old, new)) = rest.split_once(" -> ") {
+            // Rename: prefer the new path for display.
+            new.trim().to_string()
+        } else {
+            rest.to_string()
+        };
+        if path.is_empty() {
+            continue;
+        }
+        entries.push(GitStatusEntry {
+            path,
+            status: xy.trim().to_string(),
+        });
+    }
+    Ok(GitStatusView {
+        available: true,
+        branch,
+        entries,
+    })
+}
+
+#[derive(Serialize)]
+pub struct GitDiffView {
+    pub available: bool,
+    pub scope: String,
+    pub unified_diff: String,
+    pub truncated: bool,
+}
+
+/// Unified diff of the working tree (`unstaged`), the index (`staged`) or a
+/// single file (`scope = "file"` with `path` set → both stages for that file).
+#[tauri::command]
+pub async fn git_diff(
+    _state: State<'_, AppState>,
+    root_path: String,
+    scope: String,
+    path: Option<String>,
+) -> Result<GitDiffView, String> {
+    let root = resolve_root(&root_path)?;
+    let mut args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-color"];
+    let path = path.filter(|p| !p.trim().is_empty());
+    match scope.as_str() {
+        "staged" => args.push("--cached"),
+        "file" => {}
+        // Default: full working tree (unstaged) diff.
+        _ => {}
+    }
+    // Validate the path against traversal before handing it to git.
+    if let Some(p) = &path {
+        mixd_tools::files::FilesTool::safe_join(&root, p).map_err(|e| e.to_string())?;
+        args.push("--");
+        args.push(p);
+    }
+    let output = match run_git(&root, &args).await {
+        Ok(output) => output,
+        Err(_) => {
+            return Ok(GitDiffView {
+                available: false,
+                scope,
+                unified_diff: String::new(),
+                truncated: false,
+            })
+        }
+    };
+    if !output.status.success() {
+        return Ok(GitDiffView {
+            available: false,
+            scope,
+            unified_diff: String::from_utf8_lossy(&output.stderr).to_string(),
+            truncated: false,
+        });
+    }
+    let mut unified = String::from_utf8_lossy(&output.stdout).to_string();
+    let truncated = unified.len() > MAX_DIFF_BYTES;
+    if truncated {
+        unified.truncate(MAX_DIFF_BYTES);
+    }
+    Ok(GitDiffView {
+        available: true,
+        scope,
+        unified_diff: unified,
+        truncated,
+    })
+}

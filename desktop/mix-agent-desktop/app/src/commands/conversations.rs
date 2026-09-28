@@ -1,0 +1,677 @@
+use crate::AppState;
+use chrono::Utc;
+use mixd_core::runs::engine::{HistoryMessage, RunRequest};
+use mixd_core::runs::state::RunId;
+use mixd_providers::{ReasoningControl, ToolSpec};
+use serde::{Deserialize, Serialize};
+use tauri::State;
+use uuid::Uuid;
+
+#[derive(Serialize)]
+pub struct ConversationSummary {
+    pub id: String,
+    pub title: String,
+    pub mode: String,
+    pub model_id: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Latest message excerpt, shown in the thread sidebar.
+    pub preview: Option<String>,
+    pub message_count: i64,
+    #[serde(rename = "project_id")]
+    pub project_id: Option<String>,
+}
+
+#[tauri::command]
+pub async fn list_conversations(
+    state: State<'_, AppState>,
+) -> Result<Vec<ConversationSummary>, String> {
+    let pool = state.storage.pool();
+    let rows = fetch_conversation_summaries(pool).await?;
+    Ok(rows)
+}
+
+/// Query helper kept separate from the command so integration tests can call
+/// it against a temporary `Storage` without a Tauri `State` wrapper.
+pub async fn fetch_conversation_summaries(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+) -> Result<Vec<ConversationSummary>, String> {
+    let rows: Vec<ConversationRow> = sqlx::query_as(
+        "SELECT c.id, json_extract(c.data, '$.title'), json_extract(c.data, '$.mode'), \
+          json_extract(c.data, '$.modelId'), json_extract(c.data, '$.updatedAt'), \
+          (SELECT substr(json_extract(m.data, '$.content'), 1, 140) FROM messages m \
+            WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), \
+          (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id), \
+          json_extract(c.data, '$.projectId') \
+          FROM conversations c ORDER BY json_extract(c.data, '$.updatedAt') DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, title, mode, model_id, updated_at, preview, message_count, project_id)| {
+                ConversationSummary {
+                    id,
+                    title,
+                    mode,
+                    model_id,
+                    updated_at: parse_ts(&updated_at),
+                    preview,
+                    message_count,
+                    project_id,
+                }
+            },
+        )
+        .collect())
+}
+
+type ConversationRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    i64,
+    Option<String>,
+);
+
+type ConversationDispatchRow = (String, String, String, String, String);
+
+fn parse_ts(value: &str) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
+}
+
+#[derive(Deserialize)]
+pub struct ConversationCreate {
+    pub mode: String,
+    pub model_id: String,
+    pub title: Option<String>,
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+async fn project_exists(pool: &sqlx::SqlitePool, id: &str) -> Result<bool, String> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT id FROM projects WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(row.is_some())
+}
+
+#[tauri::command]
+pub async fn create_conversation(
+    state: State<'_, AppState>,
+    input: ConversationCreate,
+) -> Result<ConversationSummary, String> {
+    let pool = state.storage.pool();
+    let project_id = input.project_id.filter(|p| !p.trim().is_empty());
+    if let Some(pid) = &project_id {
+        if !project_exists(pool, pid).await? {
+            return Err("プロジェクトが見つかりません".to_string());
+        }
+    }
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let title = input.title.unwrap_or_else(|| "新しい会話".to_string());
+    let data = serde_json::json!({
+        "title": title,
+        "mode": input.mode,
+        "modelId": input.model_id,
+        "workspaceId": input.workspace_id,
+        "projectId": project_id,
+        "updatedAt": now.to_rfc3339(),
+        "state": "active",
+    });
+    sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES (?, ?, ?)")
+        .bind(&id)
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(data.to_string())
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ConversationSummary {
+        id,
+        title,
+        mode: input.mode,
+        model_id: input.model_id,
+        updated_at: now,
+        preview: None,
+        message_count: 0,
+        project_id,
+    })
+}
+
+/// Attach / detach a conversation to a project after creation.
+#[tauri::command]
+pub async fn set_conversation_project(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let pool = state.storage.pool();
+    let project_id = project_id.filter(|p| !p.trim().is_empty());
+    if let Some(pid) = &project_id {
+        if !project_exists(pool, pid).await? {
+            return Err("プロジェクトが見つかりません".to_string());
+        }
+    }
+    sqlx::query("UPDATE conversations SET data = json_set(data, '$.projectId', ?) WHERE id = ?")
+        .bind(project_id)
+        .bind(&conversation_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Deserialize, Clone, Serialize)]
+pub struct AttachmentInput {
+    pub kind: String,
+    pub mime_type: String,
+    pub data_base64: String,
+    pub filename: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SendMessageInput {
+    pub conversation_id: String,
+    pub content: String,
+    pub model_id: Option<String>,
+    pub mode: Option<String>,
+    pub workspace_id: Option<String>,
+    pub attachments: Vec<AttachmentInput>,
+    pub reasoning: Option<String>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct SendMessageOutput {
+    pub run_id: String,
+}
+
+#[tauri::command]
+pub async fn send_message(
+    state: State<'_, AppState>,
+    input: SendMessageInput,
+) -> Result<SendMessageOutput, String> {
+    dispatch_run(&state, input).await
+}
+
+/// Start a Run for a user turn.
+///
+/// Takes `&AppState` rather than `State` so the scheduler can start background
+/// Runs without going through a Tauri command.
+pub async fn dispatch_run(
+    state: &AppState,
+    input: SendMessageInput,
+) -> Result<SendMessageOutput, String> {
+    let pool = state.storage.pool();
+    let row: Option<ConversationDispatchRow> = sqlx::query_as(
+        "SELECT id, json_extract(data, '$.mode'), json_extract(data, '$.modelId'), \
+          json_extract(data, '$.title'), json_extract(data, '$.updatedAt') \
+          FROM conversations WHERE id = ?",
+    )
+    .bind(&input.conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let (_, stored_mode, stored_model, _, _) =
+        row.ok_or_else(|| "conversation not found".to_string())?;
+
+    // A mode passed by the caller (the composer's mode selector) overrides the
+    // mode stored at conversation creation; without this the selector was
+    // silently ignored for existing conversations.
+    let mode_str = input
+        .mode
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| stored_mode.clone());
+    let mode = mixd_core::Mode::parse(&mode_str).ok_or("invalid mode")?;
+    if mode_str != stored_mode {
+        let _ =
+            sqlx::query("UPDATE conversations SET data = json_set(data, '$.mode', ?) WHERE id = ?")
+                .bind(&mode_str)
+                .bind(&input.conversation_id)
+                .execute(pool)
+                .await;
+    }
+    let model_id = input.model_id.clone().unwrap_or(stored_model);
+    let provider_id = resolve_provider_id(state, &model_id).await?;
+    let workspace_id = input
+        .workspace_id
+        .clone()
+        .and_then(|w| Uuid::parse_str(&w).ok())
+        .unwrap_or_else(Uuid::new_v4);
+
+    let run_id = RunId::new_v4();
+    let now = Utc::now();
+    let budget = serde_json::json!({
+        "stepLimit": mode.default_step_limit(),
+        "toolCallLimit": mode.default_tool_call_limit(),
+        "wallClockMinutes": mode.default_wall_clock_minutes(),
+        "grantsUsed": 0,
+        "maxGrants": 2,
+    });
+    let request_key = format!("conv:{}:{}", input.conversation_id, now.timestamp_millis());
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+         VALUES (?, ?, ?, ?, 'queued', ?)",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(
+        serde_json::json!({
+            "mode": mode.as_str(),
+            "modelId": model_id,
+            "status": "queued",
+            "stepCount": 0,
+            "toolCallCount": 0,
+            "startedAt": now.to_rfc3339(),
+            "updatedAt": now.to_rfc3339(),
+            "summary": "",
+            "budget": budget,
+        })
+        .to_string(),
+    )
+    .bind(&input.conversation_id)
+    .bind(&request_key)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Persist the user turn.
+    let user_data = serde_json::json!({
+        "role": "user",
+        "content": input.content,
+        "modelId": model_id,
+        "runId": run_id.to_string(),
+        "toolCalls": [],
+        "attachments": input.attachments,
+        "kind": "user",
+    });
+    sqlx::query("INSERT INTO messages (id, owner_id, data, conversation_id) VALUES (?, ?, ?, ?)")
+        .bind(Uuid::new_v4().to_string())
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(user_data.to_string())
+        .bind(&input.conversation_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Touch the conversation so it sorts to the top.
+    let _ = sqlx::query(
+        "UPDATE conversations SET data = json_set(data, '$.updatedAt', ?) WHERE id = ?",
+    )
+    .bind(now.to_rfc3339())
+    .bind(&input.conversation_id)
+    .execute(pool)
+    .await;
+
+    let history: Vec<HistoryMessage> = load_history(pool, &input.conversation_id).await?;
+
+    // Project context: instructions / sources / AGENTS.md → system prompt,
+    // and the project folder → tool workspace root.
+    let project = super::projects::load_project_runtime(pool, &input.conversation_id).await?;
+
+    let tools: Vec<ToolSpec> = build_tool_specs(state, mode.as_str()).await;
+    let reasoning = match input.reasoning.as_deref() {
+        Some("low") => Some(ReasoningControl::Low),
+        Some("medium") => Some(ReasoningControl::Medium),
+        Some("high") => Some(ReasoningControl::High),
+        Some("xhigh") => Some(ReasoningControl::Xhigh),
+        _ => None,
+    };
+
+    let request = RunRequest {
+        run_id,
+        conversation_id: Uuid::parse_str(&input.conversation_id).map_err(|e| e.to_string())?,
+        workspace_id,
+        root_path: project.root_path,
+        mode,
+        model_id: model_id.clone(),
+        provider_id,
+        system: project.system,
+        temperature: input.temperature,
+        reasoning,
+        max_tokens: input.max_tokens,
+        tools,
+        history,
+        user_message: input.content,
+        resume_from: None,
+    };
+
+    let engine = state.engine.clone();
+    let pool = pool.clone();
+    let conversation_id = input.conversation_id.clone();
+    tokio::spawn(async move {
+        let result = engine.execute(request).await;
+        match result {
+            Ok(outcome) => {
+                let _ = sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
+                    .bind(outcome.status.as_str())
+                    .bind(run_id.to_string())
+                    .execute(&pool)
+                    .await;
+                // The assistant turn is already in `messages`: the engine writes
+                // the whole transcript, including tool-call turns and results,
+                // because it is the only place that knows the correct
+                // interleaving. Writing the final text again here would duplicate
+                // it and drop the tool history that a later turn needs.
+                let _ = (conversation_id, model_id, outcome.reasoning);
+            }
+            Err(err) => {
+                tracing::error!(?err, %run_id, "run failed");
+                let _ = sqlx::query("UPDATE runs SET status = 'failed' WHERE id = ?")
+                    .bind(run_id.to_string())
+                    .execute(&pool)
+                    .await;
+            }
+        }
+    });
+
+    Ok(SendMessageOutput {
+        run_id: run_id.to_string(),
+    })
+}
+
+async fn resolve_provider_id(state: &AppState, model_id: &str) -> Result<String, String> {
+    // Model ids are stored as `<provider_id>:<model>` when auto-discovered, and
+    // bare model names otherwise. Fall back to the first registered provider.
+    if let Some((prefix, _)) = model_id.split_once(':') {
+        if state.engine.providers.get(prefix).await.is_some() {
+            return Ok(prefix.to_string());
+        }
+    }
+    let handles = state.engine.providers.list().await;
+    handles
+        .first()
+        .map(|h| h.id.clone())
+        .ok_or_else(|| "no provider configured".to_string())
+}
+
+async fn load_history(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    conversation_id: &str,
+) -> Result<Vec<HistoryMessage>, String> {
+    use sqlx::Row;
+    // `toolCalls` has to come back. It used to be selected but hard-coded to an
+    // empty vector, so a reloaded conversation handed the model a `tool` message
+    // whose originating assistant turn carried no `tool_calls`. OpenAI answers
+    // 400 for that ("messages with role 'tool' must be a response to a preceding
+    // message with 'tool_calls'"), so any conversation that had used a tool was
+    // permanently broken from the second message onwards.
+    let rows = sqlx::query(
+        "SELECT data FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 80",
+    )
+    .bind(conversation_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            let raw: String = row.try_get("data").ok()?;
+            let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+            if value.get("kind").and_then(|v| v.as_str()) == Some("activity") {
+                return None;
+            }
+            Some(HistoryMessage {
+                role: value.get("role")?.as_str()?.to_string(),
+                content: value
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                tool_call_id: value
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                name: value
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                tool_calls: value
+                    .get("toolCalls")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
+                is_error: value
+                    .get("isError")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
+async fn build_tool_specs(state: &AppState, mode: &str) -> Vec<ToolSpec> {
+    // Chat mode answers directly; Thinking and Agent may use Tools.
+    if mode == "chat" {
+        return vec![];
+    }
+    state.engine.tool_specs().await
+}
+
+#[tauri::command]
+pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    // `messages`, `runs` and `run_events` reference the conversation; SQLite
+    // does not enforce the foreign keys here, so clean up explicitly.
+    let pool = state.storage.pool();
+    sqlx::query(
+        "DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)",
+    )
+    .bind(&id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM runs WHERE conversation_id = ?")
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM messages WHERE conversation_id = ?")
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM conversations WHERE id = ?")
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_conversation(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("title must not be empty".to_string());
+    }
+    sqlx::query("UPDATE conversations SET data = json_set(data, '$.title', ?) WHERE id = ?")
+        .bind(title)
+        .bind(&id)
+        .execute(state.storage.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// One persisted message of a conversation, in the shape the transcript view
+/// renders. `reasoning` is written into the JSON payload by `dispatch_run` but
+/// is not part of `MessageData`, so the raw JSON is read instead of the typed
+/// record.
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageView {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub reasoning: Option<String>,
+    pub model_id: Option<String>,
+    pub run_id: Option<String>,
+    pub kind: String,
+    pub created_at: String,
+    pub attachments: Vec<MessageAttachmentView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageAttachmentView {
+    pub kind: String,
+    pub mime_type: String,
+    pub filename: Option<String>,
+}
+
+#[tauri::command]
+pub async fn list_messages(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    limit: Option<u32>,
+) -> Result<Vec<MessageView>, String> {
+    fetch_messages(
+        state.storage.pool(),
+        &conversation_id,
+        limit.unwrap_or(1000),
+    )
+    .await
+}
+
+/// Query helper kept separate from the command for integration tests.
+pub async fn fetch_messages(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    conversation_id: &str,
+    limit: u32,
+) -> Result<Vec<MessageView>, String> {
+    let rows: Vec<MessageRow> = sqlx::query_as(
+        "SELECT id, \
+                json_extract(data, '$.role') AS role, \
+                json_extract(data, '$.content') AS content, \
+                json_extract(data, '$.reasoning') AS reasoning, \
+                json_extract(data, '$.modelId') AS model_id, \
+                json_extract(data, '$.runId') AS run_id, \
+                json_extract(data, '$.kind') AS kind, \
+                created_at, \
+                json_extract(data, '$.attachments') AS attachments \
+         FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?",
+    )
+    .bind(conversation_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, role, content, reasoning, model_id, run_id, kind, created_at, attachments)| {
+                MessageView {
+                    id,
+                    role: role.unwrap_or_default(),
+                    content: content.unwrap_or_default(),
+                    reasoning,
+                    model_id,
+                    run_id,
+                    kind: kind.unwrap_or_default(),
+                    created_at: normalize_ts(&created_at),
+                    attachments: parse_attachments(attachments.as_deref()),
+                }
+            },
+        )
+        .collect())
+}
+
+type MessageRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<String>,
+);
+
+fn normalize_ts(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|t| t.with_timezone(&Utc).to_rfc3339())
+        .unwrap_or_else(|_| value.to_string())
+}
+
+fn parse_attachments(raw: Option<&str>) -> Vec<MessageAttachmentView> {
+    let raw = match raw {
+        Some(raw) if !raw.is_empty() => raw,
+        _ => return Vec::new(),
+    };
+    // Reuse the storage record's serde renames (`mimeType`, ...) for parsing.
+    let parsed: Vec<mixd_storage::records::MessageAttachment> =
+        serde_json::from_str(raw).unwrap_or_default();
+    parsed
+        .into_iter()
+        .map(|a| MessageAttachmentView {
+            kind: a.kind,
+            mime_type: a.mime_type,
+            filename: a.filename,
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn export_markdown(
+    state: State<'_, AppState>,
+    id: String,
+    include_tool_calls: bool,
+) -> Result<String, String> {
+    use sqlx::Row;
+    let pool = state.storage.pool();
+    let title: Option<String> =
+        sqlx::query_scalar("SELECT json_extract(data, '$.title') FROM conversations WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    let rows = sqlx::query(
+        "SELECT json_extract(data, '$.role') AS role, json_extract(data, '$.content') AS content \
+         FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# {}\n\n",
+        title.unwrap_or_else(|| "MIX-agent".into())
+    ));
+    for row in rows {
+        let role: String = row
+            .try_get::<Option<String>, _>("role")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let content: String = row
+            .try_get::<Option<String>, _>("content")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        match role.as_str() {
+            "user" => out.push_str(&format!("## User\n\n{}\n\n", content)),
+            "assistant" => out.push_str(&format!("## Assistant\n\n{}\n\n", content)),
+            "tool" if include_tool_calls => {
+                out.push_str(&format!("### Tool\n\n```\n{}\n```\n\n", content))
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}

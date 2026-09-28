@@ -1,0 +1,33 @@
+# Default capability for the main window.
+#
+# WebView → Rust command surface only. We deliberately do NOT enable the `fs`,
+# `shell`, or `http` plugin surfaces here. All operations flow through custom
+# `#[tauri::command]` handlers in `src/commands/*` so the Rust core remains the
+# single authority.
+
+"$schema" = "../gen/schemas/desktop-schema.json"
+
+identifier = "default"
+description = "Default capability for the main MIX-agent Desktop window"
+windows = ["main"]
+
+permissions = [
+  "core:default",
+  "core:window:default",
+  "core:webview:default",
+  "core:event:default",
+  "core:app:default",
+  "core:path:default",
+  "core:resources:default",
+  "core:menu:default",
+  "core:tray:default",
+
+  "store:default",
+  "os:default",
+  "process:default",
+  "notification:default",
+  "dialog:default",
+  "window-state:default",
+  "deep-link:default",
+  "cli:default"
+]

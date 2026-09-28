@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: "uv"
-    directory: "/apps/server"
+    directory: "/docker/MIX-agent/apps/server"
     schedule:
       interval: "weekly"
     groups:
@@ -10,7 +10,7 @@ updates:
           - "playwright"
     open-pull-requests-limit: 3
   - package-ecosystem: "npm"
-    directory: "/apps/web"
+    directory: "/docker/MIX-agent/apps/web"
     schedule:
       interval: "weekly"
     groups:

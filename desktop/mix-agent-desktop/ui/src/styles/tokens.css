@@ -1,0 +1,366 @@
+/* ============================================================================
+   MIX-agent Desktop — design tokens
+   ----------------------------------------------------------------------------
+   Codex-inspired: a neutral grayscale carrying all the structure, plus exactly
+   one brand hue reserved for focus, active state and primary actions. Anything
+   that reads as "status" (success / warning / danger / info) is semantic and
+   deliberately not the brand hue, so a colored element always means something.
+
+   Layering:
+     @theme          → light values, emits both utilities and CSS variables
+     [data-theme]    → dark overrides of the same --color-* variables
+     :root aliases   → legacy var() names, consumed by legacy.css until it dies
+   ========================================================================== */
+
+@import "tailwindcss";
+
+/* Theme is driven by an explicit `data-theme` attribute (see lib/theme.ts),
+   never by the OS preference, so the `dark:` variant keys off the attribute. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  /* ------------------------------------------------------------- palette */
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-inset: #f7f7f8;
+  --color-sidebar: #f4f4f5;
+  --color-hover: rgba(13, 13, 13, 0.05);
+  --color-active: rgba(13, 13, 13, 0.08);
+
+  --color-fg: #0d0d0d;
+  --color-muted: #62666d;
+  --color-faint: #8f949c;
+
+  --color-line: rgba(13, 13, 13, 0.1);
+  --color-line-strong: rgba(13, 13, 13, 0.18);
+
+  --color-brand: #1f5fd0;
+  --color-brand-fg: #ffffff;
+  --color-brand-hover: #1a52b4;
+  --color-brand-soft: rgba(31, 95, 208, 0.09);
+  --color-focus: rgba(31, 95, 208, 0.35);
+
+  --color-success: #15803d;
+  --color-success-soft: rgba(21, 128, 61, 0.1);
+  --color-warning: #b45309;
+  --color-warning-soft: rgba(180, 83, 9, 0.1);
+  --color-danger: #dc2626;
+  --color-danger-soft: rgba(220, 38, 38, 0.08);
+  --color-info: #0e7490;
+  --color-info-soft: rgba(14, 116, 144, 0.1);
+
+  --color-diff-add: #e6ffec;
+  --color-diff-add-fg: #116329;
+  --color-diff-del: #ffebe9;
+  --color-diff-del-fg: #8a1f1f;
+
+  /* ---------------------------------------------------------- typography */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
+    "Noto Sans JP", sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 15px;
+  --text-xs: 12px;
+  --text-xs--line-height: 17px;
+  --text-sm: 13px;
+  --text-sm--line-height: 19px;
+  --text-base: 14px;
+  --text-base--line-height: 21px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 19px;
+  --text-xl--line-height: 27px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 31px;
+
+  /* -------------------------------------------------------------- radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+
+  /* -------------------------------------------------------------- motion */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* ------------------------------------------------------------- shadows */
+  --shadow-xs: 0 1px 2px rgba(13, 13, 13, 0.05);
+  --shadow-sm: 0 1px 3px rgba(13, 13, 13, 0.07);
+  --shadow-md: 0 6px 20px rgba(13, 13, 13, 0.1);
+  --shadow-lg: 0 16px 48px rgba(13, 13, 13, 0.16);
+}
+
+[data-theme="dark"] {
+  --color-bg: #1b1c1f;
+  --color-surface: #1b1c1f;
+  --color-inset: #141517;
+  /* Deliberately darker than --color-bg: in dark mode the panes are separated
+     by luminance, and an inset that merely matched --bg collapses the 3-pane
+     layout into one undifferentiated surface. */
+  --color-sidebar: #101113;
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-active: rgba(255, 255, 255, 0.1);
+
+  --color-fg: #ececee;
+  --color-muted: #a2a6ad;
+  --color-faint: #7a7f87;
+
+  --color-line: rgba(255, 255, 255, 0.1);
+  --color-line-strong: rgba(255, 255, 255, 0.18);
+
+  --color-brand: #6f9bff;
+  --color-brand-fg: #0b1020;
+  --color-brand-hover: #85adff;
+  --color-brand-soft: rgba(111, 155, 255, 0.14);
+  --color-focus: rgba(111, 155, 255, 0.45);
+
+  --color-success: #4ade80;
+  --color-success-soft: rgba(74, 222, 128, 0.12);
+  --color-warning: #fbbf24;
+  --color-warning-soft: rgba(251, 191, 36, 0.12);
+  --color-danger: #f87171;
+  --color-danger-soft: rgba(248, 113, 113, 0.12);
+  --color-info: #67e8f9;
+  --color-info-soft: rgba(103, 232, 249, 0.12);
+
+  --color-diff-add: rgba(46, 160, 67, 0.16);
+  --color-diff-add-fg: #7ee2a8;
+  --color-diff-del: rgba(248, 81, 73, 0.14);
+  --color-diff-del-fg: #ffa198;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.62);
+}
+
+/* Legacy aliases. Every rule still living in legacy.css reads the old names;
+   this block is what keeps it rendering until each rule is migrated. */
+:root {
+  color-scheme: light;
+
+  --bg: var(--color-bg);
+  --bg-inset: var(--color-inset);
+  --bg-sidebar: var(--color-sidebar);
+  --bg-hover: var(--color-hover);
+  --bg-active: var(--color-active);
+  --fg: var(--color-fg);
+  --fg-muted: var(--color-muted);
+  --fg-dim: var(--color-faint);
+  --border: var(--color-line);
+  --border-strong: var(--color-line-strong);
+  --accent: var(--color-fg);
+  --accent-fg: var(--color-bg);
+  --accent-hover: var(--color-active);
+  --composer-bg: var(--color-inset);
+  --link: var(--color-brand);
+  --focus: var(--color-focus);
+  --success: var(--color-success);
+  --success-bg: var(--color-success-soft);
+  --warning: var(--color-warning);
+  --warning-bg: var(--color-warning-soft);
+  --danger: var(--color-danger);
+  --danger-bg: var(--color-danger-soft);
+  --info-bg: var(--color-info-soft);
+  --diff-add: var(--color-diff-add);
+  --diff-add-fg: var(--color-diff-add-fg);
+  --diff-del: var(--color-diff-del);
+  --diff-del-fg: var(--color-diff-del-fg);
+  --shadow-sm: var(--shadow-xs);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --font-ui: var(--font-sans);
+  --titlebar-h: 44px;
+  --sidebar-w: 264px;
+  --right-panel-w: 360px;
+}
+
+/* ------------------------------------------------------------------ base */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-fg);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* A real color, not the translucent focus ring — the old value painted a 40%
+   blue haze over whatever it landed on and left the text color untouched. */
+::selection {
+  background: var(--color-brand-soft);
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-faint);
+  background-clip: content-box;
+}
+
+@keyframes mix-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: mix-spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------- markdown */
+/* react-markdown emits bare elements, so the prose rules have to be
+   descendant selectors rather than utilities in the tree. */
+
+@layer components {
+  .markdown-body {
+    @apply text-sm leading-6;
+  }
+
+  .markdown-body > * + * {
+    @apply mt-3;
+  }
+
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .markdown-body h4 {
+    @apply mt-5 text-fg font-semibold tracking-tight;
+  }
+
+  .markdown-body h1 {
+    @apply text-xl;
+  }
+  .markdown-body h2 {
+    @apply text-lg;
+  }
+  .markdown-body h3 {
+    @apply text-base;
+  }
+  .markdown-body h4 {
+    @apply text-sm;
+  }
+
+  .markdown-body ul {
+    @apply list-disc space-y-1 ps-5 marker:text-faint;
+  }
+
+  .markdown-body ol {
+    @apply list-decimal space-y-1 ps-5 marker:text-faint;
+  }
+
+  .markdown-body li > ul,
+  .markdown-body li > ol {
+    @apply mt-1;
+  }
+
+  .markdown-body strong {
+    @apply font-semibold text-fg;
+  }
+
+  .markdown-body blockquote {
+    @apply border-s-2 border-line ps-3 text-muted;
+  }
+
+  .markdown-body hr {
+    @apply my-4 border-t border-line;
+  }
+
+  .markdown-body table {
+    @apply my-3 w-full border-collapse overflow-hidden text-xs;
+  }
+
+  .markdown-body th,
+  .markdown-body td {
+    @apply border border-line px-2 py-1 text-start;
+  }
+
+  .markdown-body th {
+    @apply bg-inset font-semibold text-fg;
+  }
+
+  .markdown-body :not(pre) > code {
+    @apply rounded-sm bg-inset px-1 py-0.5 font-mono text-xs text-fg;
+  }
+}

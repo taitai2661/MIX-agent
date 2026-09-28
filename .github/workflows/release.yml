@@ -26,8 +26,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: .
-          file: deploy/docker/Dockerfile
+          context: docker/MIX-agent
+          file: docker/MIX-agent/deploy/docker/Dockerfile
           target: ${{ matrix.target }}
           platforms: linux/amd64
           push: true

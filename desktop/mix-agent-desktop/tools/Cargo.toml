@@ -1,0 +1,33 @@
+[package]
+name = "mixd-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MIX-agent Desktop — Tool Registry and executor"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+mixd-storage = { workspace = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "json", "chrono", "uuid"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip"] }
+portable-pty = "0.8"
+url = "2.5"
+ipnetwork = "0.20"
+regex = "1.10"
+ddgs = "0.1"
+base64 = "0.22"
+futures-util = "0.3"
+mixd-browser = { workspace = true }
+ignore = "0.4.30"
+glob = "0.3"

@@ -1,0 +1,7 @@
+# Ignore mix-agent-desktop build artifacts that should never reach the repo.
+mix-agent-desktop/target/
+mix-agent-desktop/node_modules/
+mix-agent-desktop/ui/node_modules/
+mix-agent-desktop/ui/dist/
+mix-agent-desktop/.data/
+mix-agent-desktop/app/.data/

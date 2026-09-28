@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "Apps/MIX-agent/docker-compose.yml"
+OUT = ROOT / "apps/MIX-agent/docker-compose.yml"
 PACKAGE = "ghcr.io/taitai2661/mix-agent"
 TARGETS = {
     "init": "init",

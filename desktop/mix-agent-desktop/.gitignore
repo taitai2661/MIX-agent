@@ -1,0 +1,46 @@
+# Build outputs
+target/
+dist/
+build/
+*.tsbuildinfo
+
+# Cargo
+**/*.rs.bk
+Cargo.lock
+!**/Cargo.lock
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+
+# Tauri generated
+app/gen/
+
+# Bundled Chromium: fetched by scripts/fetch-chromium.mjs at build time.
+# ~370 MB per platform, so it must never be committed.
+app/resources/chromium/
+app/resources/chromium.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test artifacts
+test-results/
+playwright-report/
+coverage/
+
+# Local data (Desktop app stores user data outside the repo)
+data/
+
