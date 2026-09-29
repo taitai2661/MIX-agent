@@ -25,7 +25,13 @@ async fn dispatch<R: Runtime>(app: &AppHandle<R>, url: &str) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<crate::AppState>();
-        match mixd_mcp::hydrate_and_connect(&state.mcp, state.storage.as_ref()).await {
+        match mixd_mcp::hydrate_and_connect(
+            &state.mcp,
+            state.storage.as_ref(),
+            Some(state.secrets.as_ref()),
+        )
+        .await
+        {
             Ok(count) => {
                 let _ = app.emit("mcp_tools_changed", count);
             }

@@ -112,7 +112,7 @@ pub async fn browser_invoke(
             action,
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(BrowserInvokeOutput {
         ok: response.ok,
         payload: response.payload,
@@ -152,10 +152,10 @@ pub async fn browser_reset_profile(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<(), String> {
-    let id = uuid::Uuid::parse_str(&workspace_id).map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::parse_str(&workspace_id).map_err(crate::error::cmd_err)?;
     state
         .browser
         .reset_profile(id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::cmd_err)
 }

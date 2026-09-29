@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 #[tauri::command]
 pub async fn get_run(state: State<'_, AppState>, id: String) -> Result<RunView, String> {
-    let run_id = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let run_id = Uuid::parse_str(&id).map_err(crate::error::cmd_err)?;
     state
         .engine
         .run_state(run_id)
@@ -19,7 +19,7 @@ pub async fn list_runs(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<Vec<RunView>, String> {
-    let conversation_id = Uuid::parse_str(&conversation_id).map_err(|e| e.to_string())?;
+    let conversation_id = Uuid::parse_str(&conversation_id).map_err(crate::error::cmd_err)?;
     Ok(state.engine.list_runs(conversation_id).await)
 }
 
@@ -39,6 +39,9 @@ pub async fn list_run_events(
     state: State<'_, AppState>,
     run_id: String,
 ) -> Result<Vec<RunEventView>, String> {
+    // Buffered token deltas are not in the table yet; a reload that read the
+    // log first would come back with a truncated transcript.
+    state.engine.flush_all_events().await;
     fetch_run_events(state.storage.pool(), &run_id).await
 }
 
@@ -54,7 +57,7 @@ pub async fn fetch_run_events(
     .bind(run_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(|(run_id, sequence, kind, data, created_at)| RunEventView {
@@ -71,7 +74,7 @@ type RunEventRow = (String, i64, String, String, String);
 
 #[tauri::command]
 pub async fn cancel_run(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let run_id = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let run_id = Uuid::parse_str(&id).map_err(crate::error::cmd_err)?;
     state.engine.cancel(run_id).await;
     sqlx::query(
         "UPDATE runs SET status = 'cancelled' \
@@ -80,7 +83,7 @@ pub async fn cancel_run(state: State<'_, AppState>, id: String) -> Result<(), St
     .bind(run_id.to_string())
     .execute(state.storage.pool())
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     state
         .engine
         .emit(
@@ -108,7 +111,7 @@ pub struct UnknownAction {
 
 #[tauri::command]
 pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Result<String, String> {
-    let run_id = Uuid::parse_str(&input.id).map_err(|e| e.to_string())?;
+    let run_id = Uuid::parse_str(&input.id).map_err(crate::error::cmd_err)?;
     let checkpoint_id = input
         .from_checkpoint
         .clone()
@@ -134,7 +137,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
             .bind(run_id.to_string())
             .execute(state.storage.pool())
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::cmd_err)?;
     }
 
     // Load the Run's original request parameters so the loop can restart.
@@ -145,7 +148,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     .bind(run_id.to_string())
     .fetch_optional(state.storage.pool())
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     let (conversation_id, model_id, mode_str) = row.ok_or("run not found")?;
     let mode = mixd_core::Mode::parse(&mode_str).ok_or("invalid mode")?;
     let provider_id = state
@@ -166,7 +169,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
 
     let request = mixd_core::runs::engine::RunRequest {
         run_id,
-        conversation_id: Uuid::parse_str(&conversation_id).map_err(|e| e.to_string())?,
+        conversation_id: Uuid::parse_str(&conversation_id).map_err(crate::error::cmd_err)?,
         workspace_id: Uuid::new_v4(),
         root_path: project.root_path,
         mode,
@@ -186,7 +189,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         .bind(run_id.to_string())
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     state
         .engine
         .emit(
@@ -201,11 +204,14 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     tokio::spawn(async move {
         let result = engine.execute(request).await;
         if let Ok(outcome) = result {
-            let _ = sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
-                .bind(outcome.status.as_str())
-                .bind(run_id.to_string())
-                .execute(&pool)
-                .await;
+            mixd_storage::log_write(
+                sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
+                    .bind(outcome.status.as_str())
+                    .bind(run_id.to_string())
+                    .execute(&pool)
+                    .await,
+                "record resumed run status",
+            );
         }
     });
 
@@ -226,39 +232,29 @@ pub async fn budget_extension(
     state: State<'_, AppState>,
     input: BudgetExtensionInput,
 ) -> Result<(), String> {
-    let run_id = Uuid::parse_str(&input.id).map_err(|e| e.to_string())?;
-    let pool = state.storage.pool();
-    if input.grant {
-        let budget = serde_json::json!({
+    apply_budget_extension(&state.engine, input).await
+}
+
+/// Validate and deliver a budget answer.
+///
+/// The engine only accepts an answer for a Run sitting in
+/// `budget_extension_pending`, so this is where the WebView's request becomes
+/// either a delivered decision or an error string. Split out from the command
+/// so the rejection path can be covered without a Tauri handle.
+pub async fn apply_budget_extension(
+    engine: &mixd_core::runs::engine::RunEngine,
+    input: BudgetExtensionInput,
+) -> Result<(), String> {
+    let run_id = Uuid::parse_str(&input.id).map_err(crate::error::cmd_err)?;
+    let budget = input.grant.then(|| {
+        serde_json::json!({
             "stepLimit": input.step_limit,
             "toolCallLimit": input.tool_call_limit,
             "wallClockMinutes": input.wall_clock_minutes,
-        });
-        sqlx::query(
-            "UPDATE runs \
-             SET data = json_set(data, '$.budgetDecision', json('true'), '$.budget', ?), \
-                 status = 'running' \
-             WHERE id = ? AND status = 'budget_extension_pending'",
-        )
-        .bind(budget.to_string())
-        .bind(run_id.to_string())
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    } else {
-        sqlx::query(
-            "UPDATE runs \
-             SET data = json_set(data, '$.budgetDecision', json('false')), \
-                 status = 'completed' \
-             WHERE id = ? AND status = 'budget_extension_pending'",
-        )
-        .bind(run_id.to_string())
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-    state
-        .engine
+        })
+    });
+    engine.resolve_budget(run_id, input.grant, budget).await?;
+    engine
         .emit(
             run_id,
             "budget_extension_resolved",
@@ -290,7 +286,7 @@ pub async fn list_checkpoints(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<Vec<CheckpointView>, String> {
-    let run_id = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let run_id = Uuid::parse_str(&id).map_err(crate::error::cmd_err)?;
     let rows = state
         .engine
         .checkpoints

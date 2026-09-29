@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { formatDuration, shortId } from "@/lib/format";
 import {
@@ -227,7 +228,12 @@ export function ActivityPanel() {
         {empty && (
           <p className="px-2 py-6 text-center text-xs text-faint">{t("アクティビティはありません")}</p>
         )}
-        {runId && !timeline && <Skeleton className="h-16 w-full" />}
+        {runId && history.isError && (
+          <p role="alert" className="px-2 py-6 text-center text-xs text-danger">
+            {errorMessage(history.error) || t("エラー")}
+          </p>
+        )}
+        {runId && !history.isError && !timeline && <Skeleton className="h-16 w-full" />}
 
         {runId && timeline && timeline.tools.length > 0 && (
           <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">

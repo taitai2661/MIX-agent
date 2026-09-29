@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CornerDownLeft, MessageSquare, Plus, Search, Settings2 } from "lucide-react";
+import {
+  Bot, CornerDownLeft, MessageSquare, Plus, Search, Settings2,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { useUi, type SettingsTab, type View } from "@/lib/ui";
+import { useUi, type SettingsTab, type Surface, type View } from "@/lib/ui";
 
 interface PaletteItem {
   id: string;
@@ -42,17 +44,25 @@ export function CommandPalette() {
   const setView = useUi((s) => s.setView);
   const setConversationId = useUi((s) => s.setConversationId);
   const openSettings = useUi((s) => s.openSettings);
+  const setSurface = useUi((s) => s.setSurface);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
 
   const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.listConversations });
 
   useEffect(() => {
     if (open) {
+      // Remember what had focus so closing hands it back instead of dropping
+      // focus onto <body>.
+      openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setQuery("");
       setSelected(0);
       window.setTimeout(() => inputRef.current?.focus(), 10);
+    } else {
+      openerRef.current?.focus();
+      openerRef.current = null;
     }
   }, [open]);
 
@@ -80,6 +90,13 @@ export function CommandPalette() {
         setView("chat");
       },
     }));
+    const surfaces: PaletteItem[] = (["chat", "desktop-agent"] as Surface[]).map((id) => ({
+      id: `surface:${id}`,
+      label: id === "chat" ? "chat" : "desktop-agent",
+      hint: t("サーフェスを切り替え"),
+      icon: id === "chat" ? <MessageSquare size={14} /> : <Bot size={14} />,
+      run: () => setSurface(id),
+    }));
     return [
       {
         id: "action:new-thread",
@@ -91,11 +108,12 @@ export function CommandPalette() {
           window.dispatchEvent(new CustomEvent("mix:new-thread"));
         },
       },
+      ...surfaces,
       ...views,
       ...settingsTabs,
       ...threads,
     ];
-  }, [conversations.data, openSettings, setConversationId, setView]);
+  }, [conversations.data, openSettings, setConversationId, setView, setSurface]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -125,8 +143,14 @@ export function CommandPalette() {
       }
     } else if (e.key === "Escape") {
       setOpen(false);
+    } else if (e.key === "Tab") {
+      // A modal combobox with nowhere else to go: letting Tab escape would
+      // leave focus behind the backdrop with no way back.
+      e.preventDefault();
     }
   };
+
+  const activeId = `palette-option-${selected}`;
 
   return (
     <div
@@ -142,16 +166,30 @@ export function CommandPalette() {
       >
         <input
           ref={inputRef}
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="palette-listbox"
+          aria-activedescendant={filtered.length > 0 ? activeId : undefined}
+          aria-autocomplete="list"
+          aria-label={t("コマンドを検索…")}
           placeholder={t("コマンドを検索…")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
           className="h-11 shrink-0 border-b border-line bg-transparent px-3 text-sm text-fg outline-none placeholder:text-faint"
         />
-        <div className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1">
+        <div
+          id="palette-listbox"
+          role="listbox"
+          aria-label={t("コマンドパレット")}
+          className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1"
+        >
           {filtered.map((item, i) => (
             <button
               type="button"
+              role="option"
+              id={`palette-option-${i}`}
+              aria-selected={i === selected}
               key={item.id}
               onMouseEnter={() => setSelected(i)}
               onClick={() => {
@@ -172,7 +210,7 @@ export function CommandPalette() {
           ))}
           {filtered.length === 0 && (
             <p className="px-2 py-4 text-center text-xs text-faint">
-              {t("スレッドがありません")}
+              {t("一致する項目がありません")}
             </p>
           )}
         </div>

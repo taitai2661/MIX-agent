@@ -238,9 +238,9 @@ impl Provider for GeminiProvider {
             generation_config,
         };
 
-        let client = reqwest::Client::new();
         let response =
-            transport::send_with_retry(transport::json_post(&client, &url, &body)).await?;
+            transport::send_with_retry(transport::json_post(transport::client(), &url, &body))
+                .await?;
 
         let sse = transport::sse_stream(response);
         let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));

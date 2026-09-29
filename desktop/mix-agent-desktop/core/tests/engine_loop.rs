@@ -1023,3 +1023,318 @@ async fn a_tool_cannot_escape_the_workspace_root() {
     let call = &harness.provider.seen.lock().unwrap().len().to_string();
     assert!(!call.is_empty());
 }
+
+#[tokio::test]
+async fn run_status_is_persisted_for_later_reads() {
+    // `set_run_state` used to build SQL that SQLite rejected and then discard
+    // the error, so `get_run`/`list_runs` always reported `queued` and the
+    // counters stayed at zero.
+    let harness = Harness::new(vec![text_turn("all done")]).await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let request = harness.request().await;
+    let run_id = request.run_id;
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, ?, 'queued')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(harness.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .bind("{}")
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+
+    harness.engine.execute(request).await.expect("run");
+
+    let view = harness
+        .engine
+        .run_state(run_id)
+        .await
+        .expect("run row to read back");
+    assert_eq!(view.status, RunStatus::Completed);
+    assert_eq!(view.step_count, 1, "stepCount must be written");
+    let column: String = sqlx::query_scalar("SELECT status FROM runs WHERE id = ?")
+        .bind(run_id.to_string())
+        .fetch_one(harness.storage.pool())
+        .await
+        .expect("status column");
+    assert_eq!(column, "completed");
+
+    let listed = harness.engine.list_runs(harness.conversation_id).await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].status, RunStatus::Completed);
+}
+
+#[tokio::test]
+async fn a_budget_answer_for_a_run_that_is_not_pending_is_rejected() {
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    let run_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, '{}', 'running')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(harness.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+
+    let err = harness
+        .engine
+        .resolve_budget(run_id, true, None)
+        .await
+        .expect_err("a run that is not pending must not accept an answer");
+    assert!(err.contains("not waiting"), "unexpected error: {err}");
+}
+
+#[tokio::test]
+async fn a_budget_answer_is_delivered_to_the_engine_and_persisted() {
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    let run_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, '{}', 'budget_extension_pending')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(harness.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+
+    harness
+        .engine
+        .resolve_budget(
+            run_id,
+            true,
+            Some(serde_json::json!({ "stepLimit": 42, "toolCallLimit": 42 })),
+        )
+        .await
+        .expect("grant");
+
+    let (status, data): (String, String) =
+        sqlx::query_as("SELECT status, data FROM runs WHERE id = ?")
+            .bind(run_id.to_string())
+            .fetch_one(harness.storage.pool())
+            .await
+            .expect("run row");
+    assert_eq!(status, "running");
+    let data: serde_json::Value = serde_json::from_str(&data).expect("json");
+    assert_eq!(data["budgetDecision"], serde_json::json!(true));
+    assert_eq!(data["budget"]["stepLimit"], serde_json::json!(42));
+
+    // The same answer cannot be applied twice.
+    harness
+        .engine
+        .resolve_budget(run_id, true, None)
+        .await
+        .expect_err("second answer must be rejected");
+}
+
+#[tokio::test]
+async fn a_stream_that_never_finishes_is_a_failure() {
+    // A dropped connection used to look like a normal answer: the fragment was
+    // stored as the reply and the loop carried on as if progress were made.
+    let harness = Harness::new(vec![vec![StreamEvent::TextDelta(
+        "partial answer that never ended".to_string(),
+    )]])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let request = harness.request().await;
+    let run_id = request.run_id;
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, '{}', 'queued')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(harness.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Failed);
+    let view = harness.engine.run_state(run_id).await.expect("run row");
+    assert_eq!(view.status, RunStatus::Failed, "failure must be persisted");
+}
+
+/// Read a Run's persisted event log exactly the way `app/src/run_events.rs`
+/// replays it: ordered by sequence, parsed back into JSON.
+async fn replay_log(
+    storage: &mixd_storage::Storage,
+    run_id: Uuid,
+) -> Vec<(i64, String, serde_json::Value)> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT sequence, kind, data FROM run_events WHERE run_id = ? ORDER BY sequence ASC",
+    )
+    .bind(run_id.to_string())
+    .fetch_all(storage.pool())
+    .await
+    .expect("read run_events");
+    rows.into_iter()
+        .map(|row| {
+            let sequence: i64 = row.get("sequence");
+            let kind: String = row.get("kind");
+            let data: String = row.get("data");
+            (
+                sequence,
+                kind,
+                serde_json::from_str(&data).unwrap_or(serde_json::Value::Null),
+            )
+        })
+        .collect()
+}
+
+fn assert_contiguous(rows: &[(i64, String, serde_json::Value)], label: &str) {
+    for (index, (sequence, ..)) in rows.iter().enumerate() {
+        assert_eq!(
+            *sequence,
+            index as i64 + 1,
+            "{label}: sequences must start at 1 with no gaps or duplicates, got {:?}",
+            rows.iter()
+                .map(|(s, k, _)| (*s, k.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// A reloaded UI rebuilds the transcript from `run_events`, so a streamed turn
+/// has to be reconstructible from the table after the Run is over — this is
+/// the contract `flush_events` exists to keep.
+#[tokio::test]
+async fn a_streamed_turn_can_be_replayed_from_the_database() {
+    let harness = Harness::new(vec![vec![
+        StreamEvent::TextDelta("Hello".to_string()),
+        StreamEvent::TextDelta(", ".to_string()),
+        StreamEvent::TextDelta("world".to_string()),
+        StreamEvent::Finished {
+            finish_reason: "stop".to_string(),
+            usage: None,
+        },
+    ]])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let request = harness.request().await;
+    let run_id = request.run_id;
+    // `run_events.run_id` references `runs(id)`, so the row has to exist
+    // before anything can be logged against it (the shell inserts it when the
+    // message is sent).
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, '{}', 'queued')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(harness.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+
+    // The terminal `status` milestone must have drained the token buffer: no
+    // timer is allowed to be what makes a finished Run durable.
+    assert!(
+        harness.engine.event_buffer.lock().await.is_empty(),
+        "the buffer must be empty once the run ended"
+    );
+
+    let rows = replay_log(&harness.storage, run_id).await;
+    assert_contiguous(&rows, "replay log");
+
+    let text: String = rows
+        .iter()
+        .filter(|(_, kind, _)| kind == "text")
+        .map(|(_, _, data)| data["delta"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        text, "Hello, world",
+        "deltas must reassemble into the answer"
+    );
+    assert!(
+        rows.iter().any(|(_, kind, _)| kind == "status"),
+        "the terminal status has to be in the log too"
+    );
+    assert!(
+        rows.iter().any(|(_, kind, _)| kind == "model_started"),
+        "milestones are written straight through"
+    );
+}
+
+/// Token events are batched rather than written one INSERT at a time, and a
+/// milestone (or an explicit flush) drains what is pending.
+#[tokio::test]
+async fn token_events_are_batched_and_drained_by_a_milestone() {
+    let harness = Harness::new(Vec::new()).await;
+    let run_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, '{}', 'running')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(harness.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+
+    for index in 0..5 {
+        harness
+            .engine
+            .emit(
+                run_id,
+                "text",
+                serde_json::json!({ "delta": format!("tok{index}") }),
+            )
+            .await;
+    }
+    assert_eq!(
+        replay_log(&harness.storage, run_id).await.len(),
+        0,
+        "a token must not cost a database round trip"
+    );
+
+    harness
+        .engine
+        .emit(
+            run_id,
+            "status",
+            serde_json::json!({ "status": "completed" }),
+        )
+        .await;
+    let rows = replay_log(&harness.storage, run_id).await;
+    assert_eq!(rows.len(), 6);
+    assert_contiguous(&rows, "after milestone flush");
+    assert_eq!(
+        rows.last().map(|(_, kind, _)| kind.as_str()),
+        Some("status"),
+        "the buffered deltas must be written before the milestone that follows them"
+    );
+
+    // Explicit draining (used before a replay) must work the same way.
+    for index in 5..7 {
+        harness
+            .engine
+            .emit(
+                run_id,
+                "reasoning",
+                serde_json::json!({ "delta": format!("r{index}") }),
+            )
+            .await;
+    }
+    harness.engine.flush_all_events().await;
+    let rows = replay_log(&harness.storage, run_id).await;
+    assert_eq!(rows.len(), 8);
+    assert_contiguous(&rows, "after explicit flush");
+    assert!(harness.engine.event_buffer.lock().await.is_empty());
+}

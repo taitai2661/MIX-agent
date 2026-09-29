@@ -6,11 +6,14 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { useActiveProject } from "./useActiveProject";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ResizableHandle } from "@/features/shell/ResizableHandle";
+import { usePanelWidth } from "@/features/shell/usePanelWidth";
 
 const TEXT_EXTS = new Set([
   "txt", "md", "rst", "json", "yaml", "yml", "toml", "ini", "cfg", "csv", "tsv",
@@ -70,7 +73,7 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
   );
 
   if (query.isPending) return placeholder(t("読み込み中…"));
-  if (query.isError) return placeholder(String(query.error));
+  if (query.isError) return placeholder(errorMessage(query.error) || t("エラー"));
 
   const entries = (query.data ?? []).filter((entry) => ctx.showHidden || !entry.hidden);
   if (entries.length === 0) return placeholder("（空）");
@@ -155,6 +158,9 @@ export function FileTreePane() {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
+  const { width, setWidth, commitWidth } = usePanelWidth(
+    "mix-agent-file-tree-width", 240, 180, 480,
+  );
 
   const git = useQuery({
     queryKey: ["git_status", root],
@@ -191,10 +197,12 @@ export function FileTreePane() {
   };
 
   return (
-    <aside
-      aria-label={t("ファイルツリー")}
-      className="flex w-60 shrink-0 flex-col overflow-hidden border-e border-line bg-inset"
-    >
+    <>
+      <aside
+        aria-label={t("ファイルツリー")}
+        style={{ width }}
+        className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-inset"
+      >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-2.5">
         <FolderTree size={13} className="shrink-0 text-faint" />
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" title={root ?? undefined}>
@@ -250,6 +258,15 @@ export function FileTreePane() {
       {root && git.isError && (
         <p className="px-3 py-2 text-2xs text-danger">{t("git を利用できません")}</p>
       )}
-    </aside>
+      </aside>
+      <ResizableHandle
+        value={width}
+        min={180}
+        max={480}
+        label={t("ファイルツリーの幅")}
+        onChange={setWidth}
+        onCommit={commitWidth}
+      />
+    </>
   );
 }

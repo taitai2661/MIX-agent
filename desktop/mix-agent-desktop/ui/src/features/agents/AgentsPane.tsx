@@ -34,18 +34,18 @@ export function AgentsPane() {
   const list = agents.data ?? [];
 
   return (
-    <Page title={t("エージェント")} sub="ツールを絞った専用エージェントを定義します。">
+    <Page title={t("エージェント")} sub={t("ツールを絞った専用エージェントを定義します。")}>
       <Card title={`${t("エージェント")} — ${t("作成")}`} icon={<Bot size={13} />}>
-        <Field label="Name">
+        <Field label={t("Name")}>
           <Input
-            placeholder="Agent 名"
+            placeholder={t("Agent 名")}
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
           />
         </Field>
-        <Field label="System instructions">
+        <Field label={t("System instructions")}>
           <Textarea
-            placeholder="System instructions…"
+            placeholder={t("System instructions…")}
             value={draftInstructions}
             onChange={(e) => setDraftInstructions(e.target.value)}
           />
@@ -92,7 +92,7 @@ export function AgentsPane() {
       </Card>
 
       {list.length === 0 ? (
-        <EmptyState icon={<Bot size={22} />} title={t("エージェント")} sub="まだ登録されていません。" />
+        <EmptyState icon={<Bot size={22} />} title={t("エージェント")} sub={t("まだ登録されていません。")} />
       ) : (
         <div className="flex flex-col gap-3">
           {list.map((a: AgentView) => (

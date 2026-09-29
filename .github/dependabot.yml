@@ -18,3 +18,13 @@ updates:
         patterns:
           - "@playwright/test"
     open-pull-requests-limit: 3
+  - package-ecosystem: "cargo"
+    directory: "/desktop/mix-agent-desktop"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+  - package-ecosystem: "npm"
+    directory: "/desktop/mix-agent-desktop"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3

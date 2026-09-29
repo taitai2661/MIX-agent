@@ -51,8 +51,8 @@ async fn load_data(pool: &sqlx::SqlitePool, id: &str) -> Result<Option<ProjectDa
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| e.to_string())?;
-    row.map(|(json,)| serde_json::from_str::<ProjectData>(&json).map_err(|e| e.to_string()))
+            .map_err(crate::error::cmd_err)?;
+    row.map(|(json,)| serde_json::from_str::<ProjectData>(&json).map_err(crate::error::cmd_err))
         .transpose()
 }
 
@@ -64,10 +64,10 @@ pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectView
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     rows.into_iter()
         .map(|(id, json)| {
-            let data: ProjectData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            let data: ProjectData = serde_json::from_str(&json).map_err(crate::error::cmd_err)?;
             Ok(ProjectView {
                 id,
                 name: data.name,
@@ -117,10 +117,10 @@ pub async fn create_project(
     sqlx::query("INSERT INTO projects (id, owner_id, data) VALUES (?, ?, ?)")
         .bind(&id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
-        .bind(serde_json::to_string(&data).map_err(|e| e.to_string())?)
+        .bind(serde_json::to_string(&data).map_err(crate::error::cmd_err)?)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(ProjectView {
         id,
         name: data.name,
@@ -177,11 +177,11 @@ pub async fn update_project(
     validate(&data.name, &data.instructions, &data.sources)?;
     data.updated_at = chrono::Utc::now();
     sqlx::query("UPDATE projects SET data = ? WHERE id = ?")
-        .bind(serde_json::to_string(&data).map_err(|e| e.to_string())?)
+        .bind(serde_json::to_string(&data).map_err(crate::error::cmd_err)?)
         .bind(&id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(ProjectView {
         id,
         name: data.name,
@@ -203,12 +203,12 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
     .bind(&id)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     sqlx::query("DELETE FROM projects WHERE id = ?")
         .bind(&id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(())
 }
 
@@ -242,7 +242,7 @@ pub async fn load_project_runtime(
             .bind(conversation_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(crate::error::cmd_err)?
             .and_then(|(id,)| id);
     let Some(project_id) = project_id.filter(|id| !id.trim().is_empty()) else {
         return Ok(ProjectRuntime::empty());
@@ -252,11 +252,11 @@ pub async fn load_project_runtime(
             .bind(&project_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::cmd_err)?;
     let Some((json,)) = row else {
         return Ok(ProjectRuntime::empty());
     };
-    let data: ProjectData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let data: ProjectData = serde_json::from_str(&json).map_err(crate::error::cmd_err)?;
 
     let root_path = data
         .root_path

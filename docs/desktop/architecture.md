@@ -1,4 +1,4 @@
-# MIX-agent Desktop — Architecture (Phase 0 draft)
+# MIX-agent Desktop — Architecture（Phase 5 完了時点）
 
 ## 目的
 
@@ -134,7 +134,7 @@ macOS 配布時は同梱の `Chromium.app` も署名対象になる。
 cargo tauri signer generate -w ~/.tauri/mix-agent.key \
   -p "MIX-agent Desktop" --force
 
-# 2) 動的更新マニフェストを発行できるConstantサーバー
+# 2) 更新マニフェストを配信できるサーバー
 #    https://v2.tauri.app/plugin/updater/ を参照
 
 # 3) app/tauri.conf.json を編集する
@@ -150,14 +150,14 @@ cargo tauri signer generate -w ~/.tauri/mix-agent.key \
 
 `mixd_storage::backup` が実体を実装している。
 
-- ペイロードは `VACUUM INTO` で取った整合taken SQLite スナップショット
+- ペイロードは `VACUUM INTO` で取った整合性のある SQLite スナップショット
   （稼働中の WAL DB をファイルコピーすると破れたページを取り込むため不可）。
 - `tar` → zlib → AES-256-GCM。鍵は Argon2id でパスワードから導出。
 - コンテナヘッダは `MIXBAK\x01\x00` + salt(16) + nonce(12) + ciphertext。
 - **API key は含めない**。OS Keychain にあり、バックアップに書くと復号鍵が
   ディスクへ平文で出るため。復元後に再入力が必要。
 - Restore は復号を検証したうえで `mix-agent.restored.db` に**ステージング**
-  する。実行中プロセスは SQLite プOOLを開いているため、その場でファイルを
+  する。実行中プロセスは SQLite プールを開いているため、その場でファイルを
   差し替えると破損する危険がある。`Storage::open` が起動時に
   `mix-agent.db.pre-restore` へ退避してから差し替えるので、再起動 1 回で反映される。
 
@@ -189,20 +189,20 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 
 ## 既知の残タスク
 
-- 署名鍵的产生と `latest.json` 発行基盤（auto-update を有効化する前作業）。
+- 署名鍵の生成と `latest.json` 発行基盤（auto-update を有効化する前作業）。
 - Knowledge は lexical 検索のみ。embedding 検索は未実装。
 - Memory の自動生成（Run 後の抽出）は未実装。手動 CRUD + revision のみ。
 - シグナル / PTY ベースの対話 terminal（現在は timeout 付きの実行のみ）。
 
-## ライセンス表記の要確認
+## ライセンス
 
-作業要件は「既存と同じ MIT + NOTICE」だったが、リポジトリの `LICENSE` は
-Apache-2.0 だった。Desktop 側は**既存の Apache-2.0 に合わせている**。
-MIT へ変更する場合はルート `LICENSE` / `NOTICE` と
+**確定: Apache License 2.0**。リポジトリ全体の `LICENSE` が Apache-2.0 であり、
+Desktop 側も `desktop/mix-agent-desktop/LICENSE` と `Cargo.toml` の `license` を
+含めて Apache-2.0 に統一されている（MIT ではない）。
+変更する場合はルート `LICENSE` / `NOTICE` / `desktop/mix-agent-desktop/NOTICE` と
 `desktop/mix-agent-desktop/Cargo.toml` の `license` を同時に書き換えること。
 
 ## 関連ドキュメント
 
 - [`docker/MIX-agent/docs/architecture.md`](../../docker/MIX-agent/docs/architecture.md)（Docker 版アーキテクチャ）
-- [`desktop/mix-agent-desktop/README.md`](../../desktop/mix-agent-desktop/README.md)（Desktop 版セットアップ）
-- [`desktop/README.md`](../../desktop/README.md)（Desktop 版入口）
+- [`desktop/README.md`](../../desktop/README.md)（Desktop 版入口・セットアップ / 開発フェーズ）

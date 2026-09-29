@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, CheckCircle2, History, Search, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { Card, Field, Row, Section } from "@/components/layout";
 import { EmptyState } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
@@ -44,10 +44,10 @@ export function MemoryPane() {
 
   return (
     <Section>
-      <Card title="Memory を追加" icon={<Brain size={13} />}>
+      <Card title={t("Memory を追加")} icon={<Brain size={13} />}>
         <div className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr]">
           <Input
-            placeholder="タイトル"
+            placeholder={t("タイトル")}
             value={draftTitle}
             onChange={(e) => setDraftTitle(e.target.value)}
           />
@@ -66,7 +66,7 @@ export function MemoryPane() {
             <option value="task">Task</option>
           </Select>
         </div>
-        <Textarea placeholder="本文…" value={draftBody} onChange={(e) => setDraftBody(e.target.value)} />
+        <Textarea placeholder={t("本文…")} value={draftBody} onChange={(e) => setDraftBody(e.target.value)} />
         <Row>
           <Button
             variant="primary"
@@ -79,12 +79,12 @@ export function MemoryPane() {
         </Row>
       </Card>
 
-      <Card title="検索">
-        <Field hint="agent は毎回の Run 開始時に Memory を検索し、関連するものをコンテキストへ注入します。">
+      <Card title={t("検索")}>
+        <Field hint={t("agent は毎回の Run 開始時に Memory を検索し、関連するものをコンテキストへ注入します。")}>
           <Row className="gap-1.5">
             <Input
               className="min-w-0 flex-1"
-              placeholder="キーワード (例: rust, deploy, postgres)"
+              placeholder={t("キーワード (例: rust, deploy, postgres)")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -92,13 +92,13 @@ export function MemoryPane() {
               }}
             />
             <Button disabled={!query.trim()} onClick={() => void search()}>
-              <Search size={12} /> 検索
+              <Search size={12} /> {t("検索")}
             </Button>
           </Row>
         </Field>
         {hits && (
           <ul className="m-0 flex list-none flex-col gap-2 p-0 text-xs">
-            {hits.length === 0 && <li className="text-faint">該当なし</li>}
+            {hits.length === 0 && <li className="text-faint">{t("該当なし")}</li>}
             {hits.map((h) => (
               <li key={h.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
                 <Row className="gap-1.5">
@@ -112,9 +112,9 @@ export function MemoryPane() {
         )}
       </Card>
 
-      <h2 className="text-sm font-semibold text-fg">登録済み Memory</h2>
+      <h2 className="text-sm font-semibold text-fg">{t("登録済み Memory")}</h2>
       {(memories.data ?? []).length === 0 ? (
-        <EmptyState icon={<Brain size={22} />} title="まだ Memory がありません。" />
+        <EmptyState icon={<Brain size={22} />} title={t("まだ Memory がありません。")} />
       ) : (
         (memories.data ?? []).map((m: MemoryView) => (
           <Card key={m.id}>
@@ -136,14 +136,14 @@ export function MemoryPane() {
             </Row>
             <p className="m-0 text-sm text-muted">{m.body}</p>
             <Row align="end">
-              <Button size="sm" onClick={() => verify.mutate(m.id)} title="Mark as still valid">
-                <CheckCircle2 size={11} /> verify
+              <Button size="sm" onClick={() => verify.mutate(m.id)} title={t("Mark as still valid")}>
+                <CheckCircle2 size={11} /> {t("verify")}
               </Button>
               <Button
                 size="sm"
                 onClick={() => setQuery(m.title)}
-                title="Search instead of editing"
-                aria-label="Search instead of editing"
+                title={t("Search instead of editing")}
+                aria-label={t("Search instead of editing")}
               >
                 <Search size={11} />
               </Button>
@@ -155,7 +155,7 @@ export function MemoryPane() {
                 size="sm"
                 className="text-danger hover:text-danger"
                 onClick={() => {
-                  if (confirm(`Delete "${m.title}"?`)) remove.mutate(m.id);
+                  if (confirm(tf("Delete \"{title}\"?", { title: m.title }))) remove.mutate(m.id);
                 }}
               >
                 <Trash2 size={11} />
@@ -183,7 +183,7 @@ function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => voi
 
   if (!open) {
     return (
-      <Button size="sm" onClick={() => setOpen(true)} title="Revision history" aria-label="Revision history">
+      <Button size="sm" onClick={() => setOpen(true)} title={t("Revision history")} aria-label={t("Revision history")}>
         <History size={12} />
       </Button>
     );
@@ -191,17 +191,17 @@ function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => voi
   return (
     <div className="flex w-full flex-col gap-1.5 border-t border-line pt-2 text-xs">
       {(revisions.data ?? []).length === 0 && (
-        <span className="text-faint">No revisions yet.</span>
+        <span className="text-faint">{t("No revisions yet.")}</span>
       )}
       {(revisions.data ?? []).map((r: MemoryRevisionView) => (
         <Row key={r.id} align="between">
           <span className="text-muted">{new Date(r.created_at).toLocaleString()}</span>
-          <Button size="sm" onClick={() => restore.mutate(r.id)}>restore</Button>
+          <Button size="sm" onClick={() => restore.mutate(r.id)}>{t("restore")}</Button>
         </Row>
       ))}
       <Row>
         <Button size="sm" onClick={() => setOpen(false)}>
-          <X size={11} /> close
+          <X size={11} /> {t("close")}
         </Button>
       </Row>
     </div>

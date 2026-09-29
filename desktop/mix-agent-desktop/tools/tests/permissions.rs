@@ -176,6 +176,89 @@ async fn expired_prompts_are_not_listed() {
     assert!(executor.list_pending().await.is_empty());
 }
 
+/// An expired prompt used to survive in two places at once: the engine's
+/// `select!` timeout branch only stops *waiting* (it never calls
+/// `resolve_approval`), so the `waiters` channel stayed in the map and the
+/// `approvals` row stayed `pending` forever.
+#[tokio::test]
+async fn an_expired_prompt_is_reclaimed_from_the_map_and_the_database() {
+    let (executor, _dir) = executor().await;
+    let run_id = seed_call(&executor, "call-expired").await;
+    let (_rx, _expires) = executor
+        .request_approval(
+            run_id,
+            "call-expired",
+            TOOL,
+            serde_json::json!({"cmd": "rm -rf"}),
+        )
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+    assert_eq!(executor.open_waiters().await, 1);
+
+    // Simulate the TTL elapsing without anyone answering.
+    executor.pending.lock().await[0].expires_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+
+    assert!(
+        executor.list_pending().await.is_empty(),
+        "an expired prompt must not be offered to the UI"
+    );
+    assert_eq!(
+        executor.open_waiters().await,
+        0,
+        "the wake-up channel must be dropped with the prompt"
+    );
+
+    let status: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id = ?")
+        .bind(&approval_id)
+        .fetch_one(executor.storage.pool())
+        .await
+        .expect("approval row");
+    assert_eq!(status, "expired", "the row must not stay pending");
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM approvals WHERE status = 'pending'")
+            .fetch_one(executor.storage.pool())
+            .await
+            .expect("count");
+    assert_eq!(remaining, 0, "no pending approvals may outlive their TTL");
+
+    // Sweeping twice must be harmless: the row is already closed and the
+    // prompt is gone from memory.
+    executor.sweep_expired().await;
+    assert!(executor.list_pending().await.is_empty());
+    assert_eq!(executor.open_waiters().await, 0);
+}
+
+/// Answering normally must clear all three copies too, so the sweep cannot be
+/// the only path that keeps the structures in step.
+#[tokio::test]
+async fn resolving_a_prompt_clears_the_waiter_and_the_row() {
+    let (executor, _dir) = executor().await;
+    let run_id = seed_call(&executor, "call-resolved").await;
+    let (rx, _expires) = executor
+        .request_approval(run_id, "call-resolved", TOOL, serde_json::json!({}))
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+    assert_eq!(executor.open_waiters().await, 1);
+
+    executor
+        .resolve_approval(&approval_id, TOOL, ApprovalOutcome::Deny)
+        .await
+        .expect("resolve");
+    rx.await.expect("outcome delivered");
+
+    assert!(executor.list_pending().await.is_empty());
+    assert_eq!(executor.open_waiters().await, 0);
+    let status: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id = ?")
+        .bind(&approval_id)
+        .fetch_one(executor.storage.pool())
+        .await
+        .expect("approval row");
+    assert_eq!(status, "denied");
+}
+
 #[tokio::test]
 async fn tool_name_is_recoverable_after_the_prompt_is_gone() {
     let (executor, _dir) = executor().await;

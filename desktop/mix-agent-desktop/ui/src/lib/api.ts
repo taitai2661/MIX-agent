@@ -2,11 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentView, AttachmentPayload, BrowserInvokeOutput, BrowserProfileView, BrowserStatus, CheckpointView,
-  ConversationSummary, DiagnosticsReport, DirEntryView, FileContentView, FileDiffView, GitDiffView,
-  GitStatusView, HealthReport, KnowledgeDocView, KnowledgeSearchHit,
-  McpConnectionView, MemoryRevisionView, MemoryView, MessageView, ModelView, PendingApprovalView,
-  PermissionRuleView, ProjectView, ProviderPresetView, ProviderView, RunEventView, RunView, ScheduleJobView,
-  SendMessageOutput, SettingsView, SkillResourceView, SkillView, ToolView,
+  ConversationSummary, DiagnosticsReport, DirEntryView, DiscoveredModelView, FileContentView, FileDiffView,
+  GitDiffView, GitStatusView, HealthReport, KnowledgeDocView, KnowledgeSearchHit,
+  LocalRuntimeView, LocalScanView, McpConnectionView, MemoryRevisionView, MemoryView, MessageView, ModelView,
+  PendingApprovalView, PermissionRuleView, ProjectView, ProviderPresetView, ProviderView, RunEventView,
+  RunView, ScheduleJobView, SendMessageOutput, SettingsView, SkillResourceView, SkillView, ToolView,
+  UpdateNotice,
 } from "./types";
 
 export const api = {
@@ -23,6 +24,13 @@ export const api = {
     api_key: string | null; enabled: boolean | null;
   }) => invoke<ProviderView>("update_provider", { input }),
   deleteProvider: (id: string) => invoke<void>("delete_provider", { id }),
+  connectProvider: (id: string) => invoke<number>("connect_provider", { input: { id, discover: true } }),
+
+  scanLocalRuntimes: () => invoke<LocalScanView>("scan_local_runtimes"),
+  probeLocalEndpoint: (baseUrl: string) => invoke<LocalRuntimeView>("probe_local_endpoint", { baseUrl }),
+  importLocalRuntime: (input: {
+    slug: string; kind: string; label: string; base_url: string; models: DiscoveredModelView[];
+  }) => invoke<{ provider: ProviderView; models: ModelView[] }>("import_local_runtime", { input }),
 
   listModels: () => invoke<ModelView[]>("list_models", { providerId: null }),
   verifyTools: (modelId: string) => invoke<ModelView>("verify_tools", { modelId }),
@@ -166,9 +174,7 @@ export const api = {
       "restore_backup", { input }),
   relaunchApp: () => invoke<void>("relaunch_app"),
 
-  checkForUpdates: () =>
-    invoke<{ version: string; current_version: string; notes: string; date: string | null } | null>(
-      "check_for_updates"),
+  checkForUpdates: () => invoke<UpdateNotice | null>("check_for_updates"),
   installUpdate: () => invoke<void>("install_update"),
 
   getSettings: () => invoke<SettingsView>("get_settings"),

@@ -45,7 +45,25 @@ pub struct RunEngine {
     pub policy: AgentModePolicy,
     pub events: Arc<broadcast::Sender<RunEvent>>,
     pub sequences: Arc<tokio::sync::Mutex<HashMap<RunId, i64>>>,
+    /// Streamed token events waiting to be written to `run_events` in a batch.
+    ///
+    /// `text` / `reasoning` arrive once per token; writing each one straight
+    /// through made SQLite the bottleneck of every streamed turn (the WebView
+    /// bridge was reporting `Lagged` receivers because of it). The buffer is
+    /// drained on a timer, when it fills up, and — crucially — *before* any
+    /// milestone event is persisted, so a Run that completes, fails or is
+    /// cancelled always has its text on disk first.
+    pub event_buffer: Arc<tokio::sync::Mutex<HashMap<RunId, Vec<RunEvent>>>>,
+    /// Runs that already have a flush timer armed, so a timer is spawned at
+    /// most once per buffering window instead of once per token.
+    flush_scheduled: Arc<tokio::sync::Mutex<std::collections::HashSet<RunId>>>,
     pub active: Arc<tokio::sync::Mutex<HashMap<RunId, RunCancellation>>>,
+    /// Budget-extension answers, delivered in memory by [`RunEngine::resolve_budget`].
+    ///
+    /// The database copy is kept for audit and for a resume across restarts;
+    /// polling it was previously the only channel, which made the answer depend
+    /// on a status transition that had never been persisted.
+    pub budget_decisions: Arc<tokio::sync::Mutex<HashMap<RunId, bool>>>,
 }
 
 /// Cooperative cancellation handle for an in-flight Run.
@@ -122,7 +140,10 @@ impl RunEngine {
             policy: AgentModePolicy::default(),
             events: Arc::new(tx),
             sequences: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            event_buffer: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            flush_scheduled: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
             active: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            budget_decisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -130,29 +151,15 @@ impl RunEngine {
         self.events.subscribe()
     }
 
+    /// Publish an event to live subscribers and to the replay log.
+    ///
+    /// Milestone events (`status`, `tool_*`, `todo_list`, `error`, `budget_*`,
+    /// …) are written straight through. Streamed token events (`text`,
+    /// `reasoning`) are buffered and flushed in batches: they are the ones that
+    /// arrive once per token, and serialising a SQLite INSERT behind each of
+    /// them made the database the bottleneck of a streaming turn.
     pub async fn emit(&self, run_id: RunId, kind: &str, payload: serde_json::Value) {
-        let sequence = {
-            let mut seqs = self.sequences.lock().await;
-            if let std::collections::hash_map::Entry::Vacant(e) = seqs.entry(run_id) {
-                // The counter is in-memory only, but `run_events` has a
-                // UNIQUE(run_id, sequence) index. After a restart or a
-                // `resume_run` (which reuses the run id), starting from zero
-                // would collide with persisted rows and silently drop events.
-                let base = sqlx::query_scalar::<_, i64>(
-                    "SELECT COALESCE(MAX(sequence), 0) FROM run_events WHERE run_id = ?",
-                )
-                .bind(run_id.to_string())
-                .fetch_optional(self.storage.pool())
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(0);
-                e.insert(base);
-            }
-            let entry = seqs.get_mut(&run_id).expect("sequence entry just inserted");
-            *entry += 1;
-            *entry
-        };
+        let sequence = self.next_sequence(run_id).await;
         let evt = RunEvent {
             run_id,
             sequence,
@@ -161,10 +168,177 @@ impl RunEngine {
             created_at: chrono::Utc::now(),
         };
         let _ = self.events.send(evt.clone());
-        let _ = self.persist_event(&evt).await;
+        if STREAM_KINDS.contains(&kind) {
+            self.buffer_event(evt).await;
+            return;
+        }
+        // A Run's terminal state is itself a milestone, so draining the token
+        // buffer here is what guarantees the streamed text is durable the
+        // moment a Run completes, fails or is cancelled — before the row that
+        // says so is written.
+        self.flush_events(run_id).await;
+        if let Err(err) = self.persist_event(&evt).await {
+            tracing::error!(%run_id, sequence, kind, %err, "persisting run event failed");
+        }
+    }
+
+    /// Park a token-stream event until the next batched flush.
+    async fn buffer_event(&self, evt: RunEvent) {
+        let run_id = evt.run_id;
+        let overflow = {
+            let mut buffer = self.event_buffer.lock().await;
+            let slot = buffer.entry(run_id).or_default();
+            slot.push(evt);
+            slot.len() >= EVENT_FLUSH_BATCH
+        };
+        if overflow {
+            self.flush_events(run_id).await;
+            return;
+        }
+        // Arm at most one timer per buffering window. Disarming happens in the
+        // task *before* it drains, so an event buffered in that gap arms a new
+        // timer instead of being left with no flush scheduled behind it.
+        let mut scheduled = self.flush_scheduled.lock().await;
+        if scheduled.insert(run_id) {
+            let engine = self.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(EVENT_FLUSH_INTERVAL).await;
+                engine.flush_scheduled.lock().await.remove(&run_id);
+                engine.flush_events(run_id).await;
+            });
+        }
+    }
+
+    /// Write every buffered event of `run_id` to `run_events`, oldest first.
+    pub async fn flush_events(&self, run_id: RunId) {
+        let batch = {
+            let mut buffer = self.event_buffer.lock().await;
+            buffer.remove(&run_id).unwrap_or_default()
+        };
+        for evt in batch {
+            if let Err(err) = self.persist_event(&evt).await {
+                tracing::error!(
+                    %run_id,
+                    sequence = evt.sequence,
+                    kind = %evt.kind,
+                    %err,
+                    "persisting buffered run event failed"
+                );
+            }
+        }
+    }
+
+    /// Drain every Run's buffer. Used before a replay so reloading a
+    /// conversation can never show a transcript the log has not caught up on.
+    pub async fn flush_all_events(&self) {
+        let all = {
+            let mut buffer = self.event_buffer.lock().await;
+            std::mem::take(&mut *buffer)
+        };
+        for (run_id, batch) in all {
+            for evt in batch {
+                if let Err(err) = self.persist_event(&evt).await {
+                    tracing::error!(
+                        %run_id,
+                        sequence = evt.sequence,
+                        kind = %evt.kind,
+                        %err,
+                        "persisting buffered run event failed"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Reserve the next sequence number for a Run.
+    ///
+    /// The lock only ever covers a counter increment. The database lookup that
+    /// seeds the counter (a Run resumed after a restart has to continue past
+    /// the rows already stored) happens outside it: holding it across the
+    /// SQLite round trip would serialise every TextDelta of a streaming turn
+    /// behind one query, which is exactly the bottleneck this design removes.
+    async fn next_sequence(&self, run_id: RunId) -> i64 {
+        {
+            let mut seqs = self.sequences.lock().await;
+            if let Some(entry) = seqs.get_mut(&run_id) {
+                *entry += 1;
+                return *entry;
+            }
+        }
+        let base = self.persisted_sequence_base(run_id).await;
+        let mut seqs = self.sequences.lock().await;
+        // Another emitter can seed the counter while the query runs. `or_insert`
+        // means only one of them wins, and taking the maximum keeps a *failed*
+        // read (which falls back to 0) from walking the counter backwards into
+        // rows that already exist — that, not concurrency, is the only way a
+        // sequence could collide with `UNIQUE(run_id, sequence)`.
+        let entry = seqs.entry(run_id).or_insert(base);
+        *entry = (*entry).max(base);
+        *entry += 1;
+        *entry
+    }
+
+    /// Highest sequence already stored for a Run, or 0 when there is none.
+    ///
+    /// Retried once because a transient "database is locked" here used to be
+    /// silently treated as "no rows", which would then collide on insert.
+    async fn persisted_sequence_base(&self, run_id: RunId) -> i64 {
+        let mut last: Option<sqlx::Error> = None;
+        for _ in 0..2 {
+            match sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(sequence), 0) FROM run_events WHERE run_id = ?",
+            )
+            .bind(run_id.to_string())
+            .fetch_optional(self.storage.pool())
+            .await
+            {
+                Ok(Some(base)) => return base,
+                Ok(None) => return 0,
+                Err(err) => last = Some(err),
+            }
+        }
+        if let Some(err) = last {
+            tracing::error!(%run_id, %err, "reading the run event high-water mark failed");
+        }
+        0
     }
 
     async fn persist_event(&self, evt: &RunEvent) -> anyhow::Result<()> {
+        if let Err(err) = self.insert_event(evt).await {
+            if !is_unique_violation(&err) {
+                return Err(err);
+            }
+            // Only reachable when the high-water mark read failed and the
+            // counter was seeded too low. `run_events` has
+            // UNIQUE(run_id, sequence) and replay orders by that column, so
+            // the row is renumbered against a fresh read rather than dropped:
+            // dropping it would punch a hole in the transcript. The broadcast
+            // envelope keeps the sequence it was published with, which only
+            // affects gap detection, never replay order.
+            let base = self.persisted_sequence_base(evt.run_id).await;
+            let renumbered = base + 1;
+            {
+                let mut seqs = self.sequences.lock().await;
+                let entry = seqs.entry(evt.run_id).or_insert(renumbered);
+                *entry = (*entry).max(renumbered);
+            }
+            let stored = RunEvent {
+                sequence: renumbered,
+                ..evt.clone()
+            };
+            tracing::warn!(
+                run = %evt.run_id,
+                sequence = evt.sequence,
+                renumbered,
+                "run event sequence collided with a persisted row; renumbering"
+            );
+            self.insert_event(&stored).await
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn insert_event(&self, evt: &RunEvent) -> anyhow::Result<()> {
         sqlx::query(
             "INSERT INTO run_events (id, run_id, sequence, kind, data) VALUES (?, ?, ?, ?, ?)",
         )
@@ -233,24 +407,50 @@ impl RunEngine {
         rows.iter().filter_map(run_view_from_row).collect()
     }
 
+    /// Record a status transition for a Run, both in the denormalised `status`
+    /// column (what the UI lists) and inside the `data` blob (what
+    /// [`run_view_from_row`] reads).
+    ///
+    /// Every value is bound as a parameter: paths and JSON payloads were
+    /// previously interpolated into the SQL text, which SQLite rejected, and
+    /// the resulting error was discarded — so no transition was ever persisted.
     async fn set_run_state(&self, run_id: RunId, status: RunStatus, extra: serde_json::Value) {
-        let mut patches = vec![format!("$.status = '{}'", status.as_str())];
-        patches.push("$.updatedAt = format!('{}')".replace("format!('{}')", &{
-            let now = chrono::Utc::now().to_rfc3339();
-            format!("'{}'", now)
-        }));
+        let mut sql =
+            String::from("UPDATE runs SET data = json_set(data, '$.status', ?, '$.updatedAt', ?");
+        let mut binds: Vec<String> =
+            vec![status.as_str().to_string(), chrono::Utc::now().to_rfc3339()];
         for (k, v) in extra.as_object().into_iter().flatten() {
-            patches.push(format!("$.{} = {}", k, v));
+            sql.push_str(", ?, json(?)");
+            binds.push(format!(
+                "$.\"{}\"",
+                k.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+            binds.push(v.to_string());
         }
-        let patch = patches.join(", ");
-        let _ = sqlx::query(&format!(
-            "UPDATE runs SET data = json_set(data, {}), status = ? WHERE id = ?",
-            patch
-        ))
-        .bind(status.as_str())
-        .bind(run_id.to_string())
-        .execute(self.storage.pool())
-        .await;
+        sql.push_str("), status = ? WHERE id = ?");
+
+        let mut query = sqlx::query(&sql);
+        for b in &binds {
+            query = query.bind(b);
+        }
+        let result = query
+            .bind(status.as_str())
+            .bind(run_id.to_string())
+            .execute(self.storage.pool())
+            .await;
+        match result {
+            Ok(res) if res.rows_affected() == 0 => {
+                tracing::error!(
+                    %run_id,
+                    status = status.as_str(),
+                    "set_run_state matched no row; status was not persisted"
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::error!(%run_id, status = status.as_str(), %err, "set_run_state failed");
+            }
+        }
     }
 
     /// Drop the cached skill and agent catalogues.
@@ -419,6 +619,26 @@ pub struct ProviderHandle {
 /// destructive call before the run concludes anyway.
 const MAX_UNVERIFIED_REPAIR_TURNS: u32 = 2;
 
+/// Event kinds that carry a single token of streamed output. Buffered rather
+/// than written one row at a time — see [`RunEngine::emit`].
+const STREAM_KINDS: &[&str] = &["text", "reasoning"];
+
+/// How long a buffered token event may wait before it is written anyway, so a
+/// Run that stops emitting milestones still becomes durable promptly.
+const EVENT_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Flush as soon as the buffer reaches this many events, so a burst of deltas
+/// cannot grow it without bound while the timer is still pending.
+const EVENT_FLUSH_BATCH: usize = 64;
+
+/// Did the insert fail on `run_events.UNIQUE(run_id, sequence)`?
+fn is_unique_violation(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<sqlx::Error>()
+        .and_then(|e| e.as_database_error())
+        .map(|e| e.message().contains("UNIQUE constraint failed"))
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryMessage {
     pub role: String,
@@ -490,6 +710,10 @@ pub struct RunToolCall {
 impl RunEngine {
     /// The Agent loop. Runs at least one Provider turn; keeps looping while the
     /// model requests Tools and the budget allows it.
+    ///
+    /// `run_id` is the only field worth indexing a log line by, and `self`
+    /// carries the storage handles, so both stay out of the span.
+    #[tracing::instrument(skip_all, fields(run_id = %request.run_id))]
     pub async fn execute(self: &Arc<Self>, request: RunRequest) -> anyhow::Result<RunOutcome> {
         let run_id = request.run_id;
         let provider = self
@@ -1056,18 +1280,76 @@ impl RunEngine {
         // Wait for the UI to answer via `budget_extension`.
         let deadline =
             std::time::Instant::now() + Duration::from_secs(budget.extension_timeout_secs);
-        loop {
+        let granted = loop {
             if let Some(granted) = self.take_budget_decision(run_id).await {
-                return granted;
+                break granted;
             }
             if std::time::Instant::now() >= deadline {
-                return false;
+                break false;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        self.budget_decisions.lock().await.remove(&run_id);
+        granted
+    }
+
+    /// Record the user's answer to a pending budget-extension request.
+    ///
+    /// Returns an error when the Run is not (or no longer) waiting for one, so
+    /// the UI never treats an ignored answer as accepted. `budget` carries the
+    /// raised limits a grant applies; they are persisted so a later resume sees
+    /// the same numbers.
+    pub async fn resolve_budget(
+        &self,
+        run_id: RunId,
+        granted: bool,
+        budget: Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        let mut sql = if granted {
+            String::from(
+                "UPDATE runs \
+                 SET data = json_set(data, '$.budgetDecision', json('true')",
+            )
+        } else {
+            String::from(
+                "UPDATE runs \
+                 SET data = json_set(data, '$.budgetDecision', json('false')",
+            )
+        };
+        let mut binds: Vec<String> = Vec::new();
+        if granted {
+            if let Some(budget) = &budget {
+                sql.push_str(", '$.budget', json(?)");
+                binds.push(budget.to_string());
+            }
+            sql.push_str("), status = 'running'");
+        } else {
+            sql.push_str("), status = 'completed'");
         }
+        sql.push_str(" WHERE id = ? AND status = 'budget_extension_pending'");
+
+        let mut query = sqlx::query(&sql);
+        for b in &binds {
+            query = query.bind(b);
+        }
+        let res = query
+            .bind(run_id.to_string())
+            .execute(self.storage.pool())
+            .await
+            .map_err(|e| e.to_string())?;
+        if res.rows_affected() == 0 {
+            return Err(format!(
+                "run {run_id} is not waiting for a budget extension"
+            ));
+        }
+        self.budget_decisions.lock().await.insert(run_id, granted);
+        Ok(())
     }
 
     async fn take_budget_decision(&self, run_id: RunId) -> Option<bool> {
+        if let Some(granted) = self.budget_decisions.lock().await.get(&run_id).copied() {
+            return Some(granted);
+        }
         let row: Option<(String,)> =
             sqlx::query_as::<_, (String,)>("SELECT data FROM runs WHERE id = ?")
                 .bind(run_id.to_string())
@@ -1081,6 +1363,7 @@ impl RunEngine {
     }
 
     /// Dispatch a single Tool call, honouring the permission policy.
+    #[tracing::instrument(skip_all, fields(run_id = %run_id))]
     async fn dispatch_tool(
         &self,
         run_id: RunId,
@@ -1440,6 +1723,19 @@ impl RunEngine {
                     break;
                 }
             }
+        }
+
+        if error.is_none() && finish_reason.is_none() {
+            // The connection dropped or the server closed the stream early.
+            // Without this the fragment collected so far was stored as a
+            // complete answer, and the run's next turn looked like progress.
+            tracing::warn!(
+                %run_id,
+                provider = provider.id(),
+                text_chars = text.len(),
+                "provider stream ended without a completion signal"
+            );
+            error = Some("the provider stream ended without a completion signal".to_string());
         }
 
         let tool_calls: Vec<AssistantToolCall> = order

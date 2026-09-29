@@ -9,7 +9,8 @@ license text. Third-party dependencies may be distributed under their own
 separate license terms; consult the corresponding dependency metadata before
 redistributing them.
 
-Bundled icon assets include glyphs from GitHub Octicons
+Bundled icon assets (Docker edition) include glyphs from GitHub Octicons
 (https://github.com/primer/octicons), Copyright (c) 2018 GitHub Inc.,
-licensed under the MIT License. See apps/MIX-agent/OCTICONS-LICENSE and
-apps/web/public/OCTICONS-LICENSE for the full license text.
+licensed under the MIT License. See
+docker/MIX-agent/apps/MIX-agent/OCTICONS-LICENSE and
+docker/MIX-agent/apps/web/public/OCTICONS-LICENSE for the full license text.

@@ -10,6 +10,7 @@ pub mod backups;
 pub mod browser;
 pub mod conversations;
 pub mod diagnostics;
+pub mod discovery;
 pub mod fs;
 pub mod health;
 pub mod knowledge;
@@ -25,3 +26,8 @@ pub mod skills;
 pub mod tools;
 pub mod workspace;
 pub mod zip_util;
+
+/// Re-exported so command modules can write `.map_err(crate::error::cmd_err)`
+/// (or the shorter `super::cmd_err`) when handing an `anyhow` chain to the
+/// WebView without losing the context.
+pub use crate::error::cmd_err;

@@ -20,7 +20,7 @@ pub async fn list_agents(state: State<'_, AppState>) -> Result<Vec<AgentView>, S
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(|(id, name, instructions, tool_ids)| AgentView {
@@ -58,7 +58,7 @@ pub async fn create_agent(
         .bind(data.to_string())
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     state.engine.invalidate_catalogues().await;
     Ok(AgentView {
         id,
@@ -75,7 +75,7 @@ pub async fn delete_agent(state: State<'_, AppState>, id: String) -> Result<(), 
         .bind(&id)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     state.engine.invalidate_catalogues().await;
     Ok(())
 }
@@ -103,7 +103,7 @@ pub async fn update_agent(
         .bind(&input.id)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     state.engine.invalidate_catalogues().await;
     Ok(AgentView {
         id: input.id,

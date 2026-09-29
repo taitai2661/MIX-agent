@@ -192,12 +192,51 @@ impl Tool for FilesTool {
         ctx: ToolContext,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
+        // Every branch below is synchronous filesystem work — including the
+        // `search` walk, which can touch thousands of files — so the whole
+        // action is handed to the blocking pool. Doing it inline used to park
+        // the async executor (and with it every in-flight Run) on disk I/O.
+        //
+        // The action and path are captured before the move so a failure can be
+        // reported with the file it was about, not just the tool name.
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let root_path = ctx.root_path;
+        match tokio::task::spawn_blocking(move || FilesTool::invoke_blocking(root_path, args)).await
+        {
+            Ok(outcome) => {
+                if let Err(err) = &outcome {
+                    tracing::warn!(action, path, %err, "file tool failed");
+                }
+                outcome
+            }
+            Err(join_err) => {
+                tracing::error!(action, path, %join_err, "file tool worker panicked");
+                Err(anyhow::anyhow!("file worker failed: {join_err}"))
+            }
+        }
+    }
+}
+
+impl FilesTool {
+    fn invoke_blocking(
+        root_path: Option<String>,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolResult> {
         let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
         let path = args
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("path required"))?;
-        let workspace_root = Self::resolve_context_root(ctx.root_path.as_deref())?;
+        let workspace_root = Self::resolve_context_root(root_path.as_deref())?;
         let resolved = Self::safe_join(&workspace_root, path)?;
         match action {
             "read" => {

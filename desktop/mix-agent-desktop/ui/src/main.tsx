@@ -7,6 +7,7 @@ import {
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
+import { t } from "./lib/i18n";
 import { applyTheme, storedTheme } from "./lib/theme";
 import { Button } from "./components/ui/button";
 import "./styles/tokens.css";
@@ -23,7 +24,17 @@ if (!rootEl) {
 // has to exist above <App /> — without it `useQueryClient()` throws during the
 // first render and React tears the whole tree down, which surfaces as an empty
 // window rather than an error.
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // A command that does not exist (or a provider that is gone) is not
+      // going to start answering on the fourth try; retrying three times only
+      // delayed the error the UI could finally show.
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 interface BoundaryProps {
   children: ReactNode;
@@ -53,7 +64,7 @@ class AppErrorBoundary extends Component<BoundaryProps, BoundaryState> {
     if (!error) return this.props.children;
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-        <h1 className="text-lg font-semibold text-fg">The interface failed to start</h1>
+        <h1 className="text-lg font-semibold text-fg">{t("The interface failed to start")}</h1>
         <p className="max-w-lg text-sm text-danger">{error.message}</p>
         {error.stack && (
           <pre className="max-h-64 max-w-3xl overflow-auto rounded-lg bg-inset p-3 text-start font-mono text-2xs leading-4 text-muted">
@@ -61,7 +72,7 @@ class AppErrorBoundary extends Component<BoundaryProps, BoundaryState> {
           </pre>
         )}
         <Button variant="primary" onClick={() => window.location.reload()}>
-          Reload
+          {t("Reload")}
         </Button>
       </div>
     );

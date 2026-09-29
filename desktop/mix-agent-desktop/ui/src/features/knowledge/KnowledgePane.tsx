@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, FileText, Search, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { Card, DataTable, Row, Section, td, tdStrong } from "@/components/layout";
 import { EmptyState } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
@@ -41,11 +41,11 @@ export function KnowledgePane() {
 
   return (
     <Section>
-      <Card title="取り込む" icon={<Upload size={13} />}>
+      <Card title={t("取り込む")} icon={<Upload size={13} />}>
         <Row className="gap-1.5">
           <Input
             className="min-w-0 flex-1"
-            placeholder="ファイル名 (例: architecture.md)"
+            placeholder={t("ファイル名 (例: architecture.md)")}
             value={filename}
             onChange={(e) => setFilename(e.target.value)}
           />
@@ -58,12 +58,12 @@ export function KnowledgePane() {
               if (typeof picked === "string") fromFile.mutate(picked);
             }}
           >
-            <Upload size={12} /> ファイルから
+            <Upload size={12} /> {t("ファイルから")}
           </Button>
         </Row>
         <Textarea
           rows={6}
-          placeholder="ここに本文を貼り付け…"
+          placeholder={t("ここに本文を貼り付け…")}
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
@@ -73,7 +73,7 @@ export function KnowledgePane() {
             disabled={!text.trim() || paste.isPending}
             onClick={() => paste.mutate()}
           >
-            <FileText size={12} /> 追加
+            <FileText size={12} /> {t("追加する")}
           </Button>
           {(paste.isError || fromFile.isError) && (
             <Badge tone="danger">{String(paste.error ?? fromFile.error)}</Badge>
@@ -85,7 +85,7 @@ export function KnowledgePane() {
         <Row className="gap-1.5">
           <Input
             className="min-w-0 flex-1"
-            placeholder="キーワード"
+            placeholder={t("キーワード")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -93,12 +93,12 @@ export function KnowledgePane() {
             }}
           />
           <Button disabled={!query.trim()} onClick={() => void search()}>
-            <Search size={12} /> 検索
+            <Search size={12} /> {t("検索")}
           </Button>
         </Row>
         {hits && (
           <ul className="m-0 flex list-none flex-col gap-2 p-0 text-xs">
-            {hits.length === 0 && <li className="text-faint">該当なし</li>}
+            {hits.length === 0 && <li className="text-faint">{t("該当なし")}</li>}
             {hits.map((h) => (
               <li key={h.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
                 <Row className="gap-1.5">
@@ -112,12 +112,12 @@ export function KnowledgePane() {
         )}
       </Card>
 
-      <h2 className="text-sm font-semibold text-fg">登録済みドキュメント</h2>
+      <h2 className="text-sm font-semibold text-fg">{t("登録済みドキュメント")}</h2>
       {(docs.data ?? []).length === 0 ? (
-        <EmptyState icon={<BookOpen size={22} />} title="まだドキュメントがありません。" />
+        <EmptyState icon={<BookOpen size={22} />} title={t("まだドキュメントがありません。")} />
       ) : (
         <DataTable
-          columns={["ファイル名", "チャンク", "登録日時", ""]}
+          columns={[t("ファイル名"), t("チャンク"), t("登録日時"), ""]}
           rows={docs.data ?? []}
           rowKey={(d: KnowledgeDocView) => d.doc_id}
         >
@@ -133,7 +133,7 @@ export function KnowledgePane() {
                   className="text-danger hover:text-danger"
                   title={t("削除")}
                   aria-label={t("削除")}
-                  onClick={() => { if (confirm(`Delete "${d.filename}"?`)) remove.mutate(d.doc_id); }}
+                  onClick={() => { if (confirm(tf("Delete \"{name}\"?", { name: d.filename }))) remove.mutate(d.doc_id); }}
                 >
                   <Trash2 size={13} />
                 </Button>

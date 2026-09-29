@@ -202,8 +202,7 @@ impl Provider for OpenAiProvider {
             reasoning_effort: effort,
         };
 
-        let client = reqwest::Client::new();
-        let mut request = transport::json_post(&client, &url, &body);
+        let mut request = transport::json_post(transport::client(), &url, &body);
         if let Some(api_key) = self.api_key.as_deref().filter(|k| !k.is_empty()) {
             request = request.bearer_auth(api_key);
         }

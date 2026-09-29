@@ -118,7 +118,7 @@ export function DiffView({ path, content }: { path: string; content: string }) {
 
       {data.truncated && (
         <Alert tone="warning">
-          {t("差分")}: {shortId(path, 24)} — binary or unreadable old content
+          {t("差分")}: {shortId(path, 24)} — {t("binary or unreadable old content")}
         </Alert>
       )}
 

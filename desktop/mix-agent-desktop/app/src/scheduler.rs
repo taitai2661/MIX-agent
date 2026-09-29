@@ -125,15 +125,18 @@ fn is_due(job: &Job, now: DateTime<Utc>) -> bool {
 
 /// Record the fire time so the same slot is not run twice.
 async fn mark_ran(storage: &Storage, job: &Job, now: DateTime<Utc>) {
-    let _ = sqlx::query(
-        "UPDATE scheduled_jobs \
-         SET data = json_set(data, '$.lastRunAt', ?, '$.lastStatus', 'started') \
-         WHERE id = ?",
-    )
-    .bind(now.to_rfc3339())
-    .bind(&job.id)
-    .execute(storage.pool())
-    .await;
+    mixd_storage::log_write(
+        sqlx::query(
+            "UPDATE scheduled_jobs \
+             SET data = json_set(data, '$.lastRunAt', ?, '$.lastStatus', 'started') \
+             WHERE id = ?",
+        )
+        .bind(now.to_rfc3339())
+        .bind(&job.id)
+        .execute(storage.pool())
+        .await,
+        "mark scheduled job as run",
+    );
 }
 
 /// Create the conversation a job should post into, reusing the configured one.
@@ -157,15 +160,18 @@ async fn target_conversation(state: &AppState, job: &Job) -> Result<String, Stri
         .bind(data.to_string())
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     // Remember it so later runs reuse the same thread.
-    let _ = sqlx::query(
-        "UPDATE scheduled_jobs SET data = json_set(data, '$.conversationId', ?) WHERE id = ?",
-    )
-    .bind(&id)
-    .bind(&job.id)
-    .execute(state.storage.pool())
-    .await;
+    mixd_storage::log_write(
+        sqlx::query(
+            "UPDATE scheduled_jobs SET data = json_set(data, '$.conversationId', ?) WHERE id = ?",
+        )
+        .bind(&id)
+        .bind(&job.id)
+        .execute(state.storage.pool())
+        .await,
+        "record scheduled job conversation",
+    );
     Ok(id)
 }
 
@@ -199,15 +205,18 @@ pub async fn tick(state: &AppState) -> usize {
                     }
                     Err(err) => {
                         tracing::error!(job = %job.name, %err, "scheduled run could not start");
-                        let _ = sqlx::query(
-                            "UPDATE scheduled_jobs \
-                             SET data = json_set(data, '$.lastStatus', 'error', '$.lastError', ?) \
-                             WHERE id = ?",
-                        )
-                        .bind(&err)
-                        .bind(&job.id)
-                        .execute(state.storage.pool())
-                        .await;
+                        mixd_storage::log_write(
+                            sqlx::query(
+                                "UPDATE scheduled_jobs \
+                                 SET data = json_set(data, '$.lastStatus', 'error', '$.lastError', ?) \
+                                 WHERE id = ?",
+                            )
+                            .bind(&err)
+                            .bind(&job.id)
+                            .execute(state.storage.pool())
+                            .await,
+                            "record scheduled job error",
+                        );
                     }
                 }
             }

@@ -5,3 +5,7 @@ mix-agent-desktop/ui/node_modules/
 mix-agent-desktop/ui/dist/
 mix-agent-desktop/.data/
 mix-agent-desktop/app/.data/
+
+# OS
+.DS_Store
+

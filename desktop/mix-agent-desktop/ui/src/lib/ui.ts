@@ -4,6 +4,25 @@ import { applyTheme, storeTheme, type Theme } from "./theme";
 
 export type View = "chat" | "agents" | "projects" | "schedules" | "settings";
 
+/**
+ * Top-level UI surface the user is currently in.
+ * - `chat`          — Simple Q&A experience (chat / thinking only, no workspace chrome)
+ * - `desktop-agent` — Agentic workspace (agent mode, file tree, changes, activity)
+ */
+export type Surface = "chat" | "desktop-agent";
+
+/** Run mode understood by the Rust Run Engine (see `core/src/mode.rs`). */
+export type RunMode = "chat" | "thinking" | "agent";
+
+/** Filter applied to the sidebar thread list. */
+export type ThreadFilter = "all" | Surface;
+
+/** Modes a surface allows the user to pick from in the Composer. */
+export const SURFACE_MODES: Record<Surface, RunMode[]> = {
+  chat: ["chat", "thinking"],
+  "desktop-agent": ["agent"],
+};
+
 /** Tabs inside the Settings pane (see features/settings/SettingsPane.tsx). */
 export type SettingsTab =
   | "appearance" | "general" | "network" | "updates" | "backup"
@@ -34,8 +53,14 @@ interface UiState {
   setRunId: (id: string | null) => void;
   modelId: string;
   setModelId: (model: string) => void;
-  mode: "chat" | "thinking" | "agent";
-  setMode: (mode: "chat" | "thinking" | "agent") => void;
+  mode: RunMode;
+  setMode: (mode: RunMode) => void;
+  /** Top-level UI surface (chat vs. agent). Persisted to localStorage. */
+  surface: Surface;
+  setSurface: (surface: Surface) => void;
+  /** Sidebar thread list filter. Persisted to localStorage. */
+  threadFilter: ThreadFilter;
+  setThreadFilter: (filter: ThreadFilter) => void;
   sidebarOpen: boolean;
   toggleSidebar: () => void;
   fileTreeOpen: boolean;
@@ -69,6 +94,11 @@ const RIGHT_PANEL_KEY = "mix-agent-right-panel";
 const FILE_TREE_KEY = "mix-agent-file-tree-open";
 const ACTIVE_PROJECT_KEY = "mix-agent-active-project";
 const SETTINGS_TAB_KEY = "mix-agent-settings-tab";
+const SURFACE_KEY = "mix-agent-surface";
+const THREAD_FILTER_KEY = "mix-agent-thread-filter";
+
+const SURFACES: Surface[] = ["chat", "desktop-agent"];
+const THREAD_FILTERS: ThreadFilter[] = ["all", "chat", "desktop-agent"];
 
 function readActiveProject(): string | null {
   try {
@@ -119,6 +149,34 @@ function readSettingsTab(): SettingsTab {
   return "appearance";
 }
 
+function readSurface(): Surface {
+  try {
+    const stored = localStorage.getItem(SURFACE_KEY);
+    if (stored && SURFACES.includes(stored as Surface)) return stored as Surface;
+  } catch {
+    // fall through
+  }
+  return "chat";
+}
+
+function readThreadFilter(): ThreadFilter {
+  try {
+    const stored = localStorage.getItem(THREAD_FILTER_KEY);
+    if (stored && THREAD_FILTERS.includes(stored as ThreadFilter)) return stored as ThreadFilter;
+  } catch {
+    // fall through
+  }
+  return "all";
+}
+
+/**
+ * Pick a default `mode` for a surface that the surface actually supports.
+ * Used by `setSurface` to keep `mode` consistent across surfaces.
+ */
+export function defaultModeForSurface(surface: Surface): RunMode {
+  return SURFACE_MODES[surface][0];
+}
+
 export const useUi = create<UiState>((set) => ({
   view: "chat",
   setView: (view) => set({ view }),
@@ -143,7 +201,41 @@ export const useUi = create<UiState>((set) => ({
   modelId: "",
   setModelId: (model) => set({ modelId: model }),
   mode: "chat",
-  setMode: (mode) => set({ mode }),
+  setMode: (mode) => {
+    // Refuse modes that no active surface supports and snap to the surface
+    // default instead. This keeps `mode` always within `SURFACE_MODES[surface]`
+    // so the Composer never offers an unsupported choice.
+    set((state) => {
+      if (SURFACE_MODES[state.surface].includes(mode)) return { mode };
+      return { mode: SURFACE_MODES[state.surface][0] };
+    });
+  },
+  surface: readSurface(),
+  setSurface: (surface) => {
+    try {
+      localStorage.setItem(SURFACE_KEY, surface);
+    } catch {
+      // best-effort
+    }
+    set((state) => {
+      // Snap `mode` into the new surface's allowed set so legacy state from
+      // a different surface can never leak across (e.g. `agent` on the chat
+      // surface, which has no tool budget).
+      const nextMode = SURFACE_MODES[surface].includes(state.mode)
+        ? state.mode
+        : SURFACE_MODES[surface][0];
+      return { surface, mode: nextMode };
+    });
+  },
+  threadFilter: readThreadFilter(),
+  setThreadFilter: (threadFilter) => {
+    try {
+      localStorage.setItem(THREAD_FILTER_KEY, threadFilter);
+    } catch {
+      // best-effort
+    }
+    set({ threadFilter });
+  },
   sidebarOpen: readBoolean(SIDEBAR_KEY, true),
   toggleSidebar: () =>
     set((state) => {

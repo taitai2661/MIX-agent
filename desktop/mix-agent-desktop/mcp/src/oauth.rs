@@ -95,8 +95,9 @@ pub struct AuthCallback {
 }
 
 /// Parse the `mix-agent-desktop://oauth?...` deep link into an [`AuthCallback`].
-pub fn parse_callback(url: &str) -> Result<AuthCallback, String> {
-    let parsed = url::Url::parse(url).map_err(|e| format!("invalid callback url: {}", e))?;
+pub fn parse_callback(url: &str) -> Result<AuthCallback, crate::McpError> {
+    use crate::McpError;
+    let parsed = url::Url::parse(url).map_err(McpError::CallbackUrl)?;
     let mut code = None;
     let mut state = None;
     for (key, value) in parsed.query_pairs() {
@@ -107,8 +108,8 @@ pub fn parse_callback(url: &str) -> Result<AuthCallback, String> {
         }
     }
     Ok(AuthCallback {
-        code: code.ok_or("callback is missing `code`")?,
-        state: state.ok_or("callback is missing `state`")?,
+        code: code.ok_or(McpError::MissingCallbackField("code"))?,
+        state: state.ok_or(McpError::MissingCallbackField("state"))?,
     })
 }
 
@@ -119,7 +120,11 @@ pub async fn exchange_code(
     pkce: &PkcePair,
     redirect_uri: &str,
     code: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, crate::McpError> {
+    use crate::McpError;
+    /// Labelled into every OAuth error message; `token` and `refresh` are the
+    /// only two round trips, so one variant covers both.
+    const PHASE: &str = "token";
     let form = [
         ("grant_type", "authorization_code"),
         ("code", code),
@@ -129,17 +134,22 @@ pub async fn exchange_code(
     ];
     let resp = http
         .post(&endpoints.token_endpoint)
+        .timeout(std::time::Duration::from_secs(30))
         .form(&form)
         .send()
         .await
-        .map_err(|e| format!("token request failed: {}", e))?;
+        .map_err(|e| McpError::OauthRequest(PHASE, e))?;
     let status = resp.status();
     let value: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("token response is not JSON: {}", e))?;
+        .map_err(|e| McpError::OauthBody(PHASE, e))?;
     if !status.is_success() {
-        return Err(format!("token endpoint returned {}: {}", status, value));
+        return Err(McpError::OauthStatus(
+            PHASE,
+            status.to_string(),
+            value.to_string(),
+        ));
     }
     Ok(value)
 }
@@ -149,7 +159,9 @@ pub async fn refresh_token(
     http: &reqwest::Client,
     endpoints: &OAuthEndpoints,
     refresh_token: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, crate::McpError> {
+    use crate::McpError;
+    const PHASE: &str = "refresh";
     let form = [
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
@@ -157,17 +169,22 @@ pub async fn refresh_token(
     ];
     let resp = http
         .post(&endpoints.token_endpoint)
+        .timeout(std::time::Duration::from_secs(30))
         .form(&form)
         .send()
         .await
-        .map_err(|e| format!("refresh request failed: {}", e))?;
+        .map_err(|e| McpError::OauthRequest(PHASE, e))?;
     let status = resp.status();
     let value: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("refresh response is not JSON: {}", e))?;
+        .map_err(|e| McpError::OauthBody(PHASE, e))?;
     if !status.is_success() {
-        return Err(format!("token endpoint returned {}: {}", status, value));
+        return Err(McpError::OauthStatus(
+            PHASE,
+            status.to_string(),
+            value.to_string(),
+        ));
     }
     Ok(value)
 }

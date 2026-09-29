@@ -6,6 +6,7 @@ import {
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { PENDING_APPROVALS_POLL_MS, useSettingsForm } from "@/lib/settings";
 import { useUi, type SettingsTab } from "@/lib/ui";
 import type { SettingsView } from "@/lib/types";
 import { Alert } from "@/components/ui/alert";
@@ -26,16 +27,6 @@ import { KnowledgePane } from "@/features/knowledge/KnowledgePane";
 import { SkillsPane } from "@/features/skills/SkillsPane";
 import { BrowserPane } from "@/features/browser/BrowserPane";
 import { DiagnosticsPane } from "@/features/system/DiagnosticsPane";
-
-const FALLBACK: SettingsView = {
-  default_model_id: null,
-  default_mode: null,
-  egress_allowlist: [],
-  auto_update: true,
-  telemetry_consent: false,
-  language: null,
-  theme: null,
-};
 
 interface SettingsTabEntry {
   id: SettingsTab;
@@ -87,19 +78,21 @@ export function SettingsPane() {
   const activeTab = useUi((s) => s.settingsTab);
   const setSettingsTab = useUi((s) => s.setSettingsTab);
   const queryClient = useQueryClient();
-  const settings = useQuery({ queryKey: ["settings"], queryFn: api.getSettings });
+  const { data, loaded, query: settings } = useSettingsForm();
   const approvals = useQuery({
     queryKey: ["pending_approvals"],
     queryFn: api.listPendingApprovals,
-    refetchInterval: 1500,
+    refetchInterval: PENDING_APPROVALS_POLL_MS,
   });
   const update = useMutation({
     mutationFn: (input: SettingsView) => api.updateSettings(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
-  const data: SettingsView = settings.data ?? FALLBACK;
   const pendingCount = approvals.data?.length ?? 0;
   const showSave = SAVE_TABS.has(activeTab);
+  // Saving before `get_settings` resolves would replace the stored row with
+  // the defaults rendered in the form.
+  const canSave = loaded && !settings.isError && !update.isPending;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -152,7 +145,7 @@ export function SettingsPane() {
             {showSave && (
               <Button
                 variant="primary"
-                disabled={update.isPending}
+                disabled={!canSave}
                 onClick={() => update.mutate(data)}
               >
                 <Save size={12} /> {t("保存")}

@@ -26,7 +26,7 @@ impl From<KnowledgeDoc> for KnowledgeDocView {
 pub async fn list_knowledge(state: State<'_, AppState>) -> Result<Vec<KnowledgeDocView>, String> {
     let docs = KnowledgeService::list(state.storage.as_ref())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(docs.into_iter().map(KnowledgeDocView::from).collect())
 }
 
@@ -43,7 +43,7 @@ pub async fn ingest_knowledge(
 ) -> Result<KnowledgeDocView, String> {
     let doc = KnowledgeService::ingest(state.storage.as_ref(), &input.filename, &input.text)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(KnowledgeDocView::from(doc))
 }
 
@@ -59,14 +59,14 @@ pub async fn import_knowledge_file(
 ) -> Result<KnowledgeDocView, String> {
     let text = tokio::fs::read_to_string(&input.path)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     let filename = std::path::Path::new(&input.path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "document.txt".into());
     let doc = KnowledgeService::ingest(state.storage.as_ref(), &filename, &text)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(KnowledgeDocView::from(doc))
 }
 
@@ -74,7 +74,7 @@ pub async fn import_knowledge_file(
 pub async fn delete_knowledge(state: State<'_, AppState>, doc_id: String) -> Result<usize, String> {
     KnowledgeService::delete_doc(state.storage.as_ref(), &doc_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::cmd_err)
 }
 
 #[derive(serde::Serialize)]
@@ -98,7 +98,7 @@ pub async fn search_knowledge(
         limit.unwrap_or(10),
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(hits
         .into_iter()
         .map(|h| KnowledgeHitView {

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Pause, Play, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Card, Page, Row } from "@/components/layout";
 import { EmptyState } from "@/components/shared";
@@ -38,7 +39,7 @@ export function SchedulesPane() {
       if (!draftCron.trim()) { setPreview(null); setCronError(null); return; }
       api.previewCron(draftCron).then(
         (times) => { setPreview(times); setCronError(null); },
-        (e) => { setPreview(null); setCronError(String(e)); },
+        (e) => { setPreview(null); setCronError(errorMessage(e)); },
       );
     }, 300);
     return () => clearTimeout(handle);

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, KeyRound, Plug, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Card, DataTable, Field, Row, Section, td, tdStrong } from "@/components/layout";
 import { EmptyState } from "@/components/shared";
@@ -55,7 +56,7 @@ export function McpPane() {
       setNotice(`${count} MCP tool(s) available to the agent.`);
       void invalidate();
     },
-    onError: (e) => setNotice(`Connect failed: ${e}`),
+    onError: (e) => setNotice(t("接続に失敗しました") + `: ${errorMessage(e)}`),
   });
 
   // Remote servers can require OAuth; send the user to the consent screen.
@@ -69,7 +70,7 @@ export function McpPane() {
         window.open(out.authorization_url, "_blank");
       }
     },
-    onError: (e) => setNotice(`OAuth failed: ${e}`),
+    onError: (e) => setNotice(t("OAuth に失敗しました") + `: ${errorMessage(e)}`),
   });
 
   const list = connections.data ?? [];
@@ -171,8 +172,8 @@ export function McpPane() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        title="Sign in with OAuth"
-                        aria-label="Sign in with OAuth"
+                        title={t("OAuth でサインイン")}
+                        aria-label={t("OAuth でサインイン")}
                         onClick={() => oauth.mutate(c.id)}
                       >
                         <KeyRound size={13} />

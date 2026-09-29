@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import { AlertTriangle, CircleAlert, Info } from "lucide-react";
+import { AlertTriangle, CircleAlert, CircleCheck, Info } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
@@ -20,7 +20,7 @@ const alertVariants = cva(
 
 const ICONS = {
   info: Info,
-  success: CircleAlert,
+  success: CircleCheck,
   warning: AlertTriangle,
   danger: CircleAlert,
 } as const;

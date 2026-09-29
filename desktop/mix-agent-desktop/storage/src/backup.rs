@@ -189,6 +189,25 @@ pub async fn create(
     destination: impl AsRef<Path>,
     password: &str,
 ) -> anyhow::Result<BackupInfo> {
+    match create_inner(data_dir, destination, password).await {
+        Ok(info) => {
+            tracing::info!(path = %info.path, bytes = info.bytes, "backup written");
+            Ok(info)
+        }
+        Err(err) => {
+            tracing::error!(%err, "creating an encrypted backup failed");
+            Err(err)
+        }
+    }
+}
+
+/// The actual work behind [`create`], split out so the entry point can log the
+/// outcome without rebuilding (and so losing) the error's context chain.
+async fn create_inner(
+    data_dir: impl AsRef<Path>,
+    destination: impl AsRef<Path>,
+    password: &str,
+) -> anyhow::Result<BackupInfo> {
     let data_dir = data_dir.as_ref();
     let destination = destination.as_ref();
     let db_path = data_dir.join("mix-agent.db");
@@ -278,6 +297,24 @@ pub async fn create(
 /// replacing the file underneath it would risk corruption. `Storage::open`
 /// promotes the staged file on the next start.
 pub async fn restore(
+    data_dir: impl AsRef<Path>,
+    source: impl AsRef<Path>,
+    password: &str,
+) -> anyhow::Result<RestoreInfo> {
+    match restore_inner(data_dir, source, password).await {
+        Ok(info) => {
+            tracing::info!(staged = %info.staged_path, "backup restored and staged");
+            Ok(info)
+        }
+        Err(err) => {
+            tracing::error!(%err, "restoring a backup failed");
+            Err(err)
+        }
+    }
+}
+
+/// The actual work behind [`restore`]; see [`create_inner`].
+async fn restore_inner(
     data_dir: impl AsRef<Path>,
     source: impl AsRef<Path>,
     password: &str,

@@ -276,12 +276,12 @@ export function ProjectsPane() {
   }
 
   return (
-    <Page title={t("プロジェクト")} sub="プロジェクト単位の資料と指示を管理します。">
+    <Page title={t("プロジェクト")} sub={t("プロジェクト単位の資料と指示を管理します。")}>
       <Card title={t("作成")} icon={<Folder size={13} />}>
         <Field label={t("名前")}>
           <Input
             maxLength={NAME_MAX}
-            placeholder="Project 名"
+            placeholder={t("Project 名")}
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
             onKeyDown={(e) => {
@@ -302,7 +302,7 @@ export function ProjectsPane() {
       </Card>
 
       {list.length === 0 ? (
-        <EmptyState icon={<Folder size={22} />} title={t("プロジェクト")} sub="まだありません。" />
+        <EmptyState icon={<Folder size={22} />} title={t("プロジェクト")} sub={t("まだありません。")} />
       ) : (
         <div className="flex flex-col gap-3">
           {list.map((p) => (

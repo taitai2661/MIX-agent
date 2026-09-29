@@ -69,7 +69,7 @@ pub async fn list_tools(state: State<'_, AppState>) -> Result<Vec<ToolView>, Str
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(
@@ -121,7 +121,7 @@ pub async fn set_permission_rule(
     .bind(data.to_string())
     .execute(state.storage.pool())
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(())
 }
 
@@ -145,7 +145,7 @@ pub async fn list_permission_rules(
     )
     .fetch_all(state.storage.pool())
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(|(id, tool_id, scope, decision)| PermissionRuleView {

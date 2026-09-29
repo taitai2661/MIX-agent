@@ -3,7 +3,7 @@
 Tauri 2 + Rust + React 19 で再実装されたローカル AI ワークスペース。
 [Docker 版](../docker/MIX-agent/) の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）を踏襲しつつ、**単一ユーザー・OS Keychain 連携**のネイティブアプリとして動作します。
 
-> **重要**: `desktop/` は `docker/` へ一切依存しません。両者は仕様書（[`docs/desktop/architecture.md`](../../docs/desktop/architecture.md) と [`docker/MIX-agent/docs/architecture.md`](../docker/MIX-agent/docs/architecture.md)）のみで結ばれます。
+> **重要**: `desktop/` は `docker/` へ一切依存しません。両者は仕様書（[`docs/desktop/architecture.md`](../docs/desktop/architecture.md) と [`docker/MIX-agent/docs/architecture.md`](../docker/MIX-agent/docs/architecture.md)）のみで結ばれます。
 
 ## 構成
 
@@ -63,9 +63,9 @@ pnpm tauri build
 | `pnpm rust:check` | `cargo check --workspace --all-targets` |
 | `pnpm rust:fmt:check` | `cargo fmt --all -- --check` |
 | `pnpm rust:clippy` | `cargo clippy --workspace --all-targets -- -D warnings` |
-| `pnpm rust:test` | `cargo test --workspace` |
-| `pnpm ui:dev` / `pnpm ui:build` / `pnpm ui:test` | UI サブセット |
-| `pnpm lint` / `pnpm test` / `pnpm check` | 全体チェック |
+| `pnpm rust:test` | `cargo test --workspace --all-targets` |
+| `pnpm ui:dev` / `pnpm ui:build` / `pnpm ui:test` / `pnpm ui:typecheck` | UI サブセット |
+| `pnpm lint` / `pnpm test` / `pnpm check` | 全体チェック（`lint` = rustfmt + clippy + eslint + tsc） |
 
 ## ツール
 
@@ -108,7 +108,7 @@ Agent が実際に使えるツールです。`chat` モードはツールを持�
 
 ### テスト
 
-`cargo test --workspace` 252 件、`pnpm ui:test` 36 件。うち `core/tests/engine_loop.rs` の 23 件は Run Engine のループ・権限ゲート・検証・チェックポイント・transcript 永続化を、スクリプト化された provider に対して検証します。
+`cargo test --workspace`（Rust）と `pnpm ui:test`（UI / vitest）で実行します。件数は実行結果に従ってください（テストは継続的に追加されています）。うち `core/tests/engine_loop.rs` は Run Engine のループ・権限ゲート・検証・チェックポイント・transcript 永続化を、スクリプト化された provider に対して検証します。
 
 ## ライセンス
 

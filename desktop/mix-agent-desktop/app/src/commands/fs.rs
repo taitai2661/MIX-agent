@@ -43,8 +43,9 @@ pub async fn preview_file_diff(
         return Err("path required".to_string());
     }
     let root = mixd_tools::files::FilesTool::resolve_context_root(input.root_path.as_deref())
-        .map_err(|e| e.to_string())?;
-    let target = mixd_tools::files::FilesTool::safe_join(&root, path).map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
+    let target =
+        mixd_tools::files::FilesTool::safe_join(&root, path).map_err(crate::error::cmd_err)?;
 
     let exists = tokio::fs::metadata(&target).await.is_ok();
     let read = if exists {
@@ -141,7 +142,7 @@ fn mime_from_name(name: &str) -> String {
 /// validated; the launcher is the platform's own URL handler.
 #[tauri::command]
 pub async fn open_external(url: String) -> Result<(), String> {
-    let parsed = url::Url::parse(url.trim()).map_err(|e| e.to_string())?;
+    let parsed = url::Url::parse(url.trim()).map_err(crate::error::cmd_err)?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
         return Err("only http(s) URLs can be opened".to_string());
     }

@@ -14,6 +14,10 @@ playwright-report/
 *.tsbuildinfo
 .codex/
 
+# Local agent / tool state (never committed)
+.freebuff/
+.opencode/
+
 # Cargo / Rust
 **/target/
 **/*.rs.bk

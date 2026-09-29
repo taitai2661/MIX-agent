@@ -4,6 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Download, FileCode, Sparkles, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { CodeBlock } from "@/components/CopyButton";
 import { Card, Row, Section } from "@/components/layout";
@@ -38,7 +39,7 @@ export function SkillsPane() {
       source: "paste", payload: paste, path: null, name: null,
     }),
     onSuccess: () => { setPaste(""); setNotice(null); void invalidate(); },
-    onError: (e) => setError(String(e)),
+    onError: (e) => setError(errorMessage(e)),
   });
 
   const importZip = useMutation({
@@ -51,7 +52,7 @@ export function SkillsPane() {
       });
     },
     onSuccess: () => { setNotice(null); void invalidate(); },
-    onError: (e) => setError(String(e)),
+    onError: (e) => setError(errorMessage(e)),
   });
 
   const importDirectory = useMutation({
@@ -59,13 +60,13 @@ export function SkillsPane() {
       source: "directory", payload: null, path, name: null,
     }),
     onSuccess: () => { setDirectory(""); setNotice(null); void invalidate(); },
-    onError: (e) => setError(String(e)),
+    onError: (e) => setError(errorMessage(e)),
   });
 
   const remove = useMutation({
     mutationFn: (name: string) => api.deleteSkill(name),
     onSuccess: () => void invalidate(),
-    onError: (e) => setError(String(e)),
+    onError: (e) => setError(errorMessage(e)),
   });
 
   const exportZip = useMutation({
@@ -79,7 +80,7 @@ export function SkillsPane() {
       await api.saveBase64File(target, b64);
       setNotice(`Exported ${name} to ${target}`);
     },
-    onError: (e) => setError(String(e)),
+    onError: (e) => setError(errorMessage(e)),
   });
 
   const list = skills.data ?? [];
@@ -197,8 +198,8 @@ export function SkillsPane() {
                 </Button>
                 <Button
                   size="sm"
-                  title="Export as .skill.zip"
-                  aria-label="Export as .skill.zip"
+                  title={t("エクスポート")}
+                  aria-label={t("エクスポート")}
                   onClick={() => exportZip.mutate(s.name)}
                 >
                   <Download size={12} />

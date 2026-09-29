@@ -37,6 +37,45 @@ export interface ModelView {
   supports_reasoning: boolean;
 }
 
+export interface DiscoveredModelView {
+  id: string;
+  label: string;
+  context_window: number;
+  parameter_size: string | null;
+  quantization: string | null;
+}
+
+export interface LocalRuntimeView {
+  slug: string;
+  label: string;
+  kind: string;
+  base_url: string;
+  host: string;
+  port: number;
+  listening: boolean;
+  online: boolean;
+  latency_ms: number | null;
+  version: string | null;
+  installed: boolean;
+  install_hint: string | null;
+  launcher: string | null;
+  models: DiscoveredModelView[];
+  error: string | null;
+}
+
+export interface OccupiedPortView {
+  port: number;
+  note: string | null;
+}
+
+export interface LocalScanView {
+  runtimes: LocalRuntimeView[];
+  occupied_ports: OccupiedPortView[];
+  hosts: string[];
+  elapsed_ms: number;
+  any_online: boolean;
+}
+
 export interface ConversationSummary {
   id: string;
   title: string;
@@ -296,4 +335,12 @@ export interface GitDiffView {
   scope: string;
   unified_diff: string;
   truncated: boolean;
+}
+
+/** Payload of the `update_available` event and of `check_for_updates`. */
+export interface UpdateNotice {
+  version: string;
+  current_version: string;
+  notes: string;
+  date: string | null;
 }

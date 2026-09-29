@@ -28,11 +28,11 @@ pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<ProviderVi
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     let mut out = Vec::new();
     for (id, kind, label, base_url, enabled, preset) in rows {
         let key_purpose = format!("provider/{}", id);
-        let has_api_key = state.secrets.get(&key_purpose, "api_key").is_ok();
+        let has_api_key = state.secrets.get(&key_purpose, "api_key").await.is_ok();
         out.push(ProviderView {
             id,
             kind,
@@ -61,43 +61,70 @@ pub async fn create_provider(
     state: State<'_, AppState>,
     input: ProviderCreate,
 ) -> Result<ProviderView, String> {
-    let id = uuid::Uuid::new_v4().to_string();
     let base_url = input.base_url.clone();
+    let view = insert_provider(
+        &state,
+        input.preset_slug,
+        &input.kind,
+        &input.label,
+        input.base_url.as_deref().unwrap_or_default(),
+        input.api_key.as_deref(),
+        input.enabled,
+    )
+    .await?;
+    Ok(ProviderView { base_url, ..view })
+}
+
+/// Write a provider row and, when a key is given, its Keychain entry.
+///
+/// Shared by `create_provider` and the local-runtime import, so an imported
+/// provider lands in the database exactly like a hand-entered one.
+pub async fn insert_provider(
+    state: &AppState,
+    preset_slug: Option<String>,
+    kind: &str,
+    label: &str,
+    base_url: &str,
+    api_key: Option<&str>,
+    enabled: Option<bool>,
+) -> Result<ProviderView, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let base_url = base_url.trim().trim_end_matches('/');
+    let enabled = enabled.unwrap_or(true);
     let data = serde_json::json!({
-        "kind": input.kind,
-        "label": input.label,
-        "baseUrl": base_url,
-        "enabled": input.enabled.unwrap_or(true),
-        "preset": input.preset_slug,
+        "kind": kind,
+        "label": label,
+        "baseUrl": if base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(base_url.to_string()) },
+        "enabled": enabled,
+        "preset": preset_slug,
         "extra": {},
     });
     sqlx::query("INSERT INTO providers (id, owner_id, data) VALUES (?, ?, ?)")
         .bind(&id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
-        .bind(&data)
+        .bind(data.to_string())
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
-    if let Some(key) = input.api_key.as_deref() {
-        if !key.is_empty() {
+        .map_err(crate::error::cmd_err)?;
+    let has_api_key = match api_key {
+        Some(key) if !key.is_empty() => {
             state
                 .secrets
                 .put(&format!("provider/{}", id), "api_key", key.as_bytes())
-                .map_err(|e| e.to_string())?;
+                .await
+                .map_err(crate::error::cmd_err)?;
+            true
         }
-    }
+        _ => false,
+    };
     Ok(ProviderView {
         id,
-        kind: input.kind,
-        label: input.label,
-        base_url,
-        enabled: input.enabled.unwrap_or(true),
-        has_api_key: input
-            .api_key
-            .as_deref()
-            .map(|k| !k.is_empty())
-            .unwrap_or(false),
-        preset: input.preset_slug,
+        kind: kind.to_string(),
+        label: label.to_string(),
+        base_url: (!base_url.is_empty()).then(|| base_url.to_string()),
+        enabled,
+        has_api_key,
+        preset: preset_slug,
     })
 }
 
@@ -120,12 +147,12 @@ pub async fn update_provider(
         .pool()
         .begin()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     let row: Option<(String,)> = sqlx::query_as("SELECT data FROM providers WHERE id = ?")
         .bind(&input.id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     let mut data: serde_json::Value = match row {
         Some((existing,)) => {
             serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({}))
@@ -146,14 +173,15 @@ pub async fn update_provider(
         .bind(&input.id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
-    tx.commit().await.map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
+    tx.commit().await.map_err(crate::error::cmd_err)?;
     if let Some(key) = input.api_key.as_deref() {
         if !key.is_empty() {
             state
                 .secrets
                 .put(&format!("provider/{}", input.id), "api_key", key.as_bytes())
-                .map_err(|e| e.to_string())?;
+                .await
+                .map_err(crate::error::cmd_err)?;
         }
     }
     Ok(ProviderView {
@@ -179,6 +207,7 @@ pub async fn update_provider(
         has_api_key: state
             .secrets
             .get(&format!("provider/{}", input.id), "api_key")
+            .await
             .is_ok(),
         preset: data
             .get("preset")
@@ -193,8 +222,14 @@ pub async fn delete_provider(state: State<'_, AppState>, id: String) -> Result<(
         .bind(&id)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
-    let _ = state.secrets.delete(&format!("provider/{}", id), "api_key");
+        .map_err(crate::error::cmd_err)?;
+    if let Err(err) = state
+        .secrets
+        .delete(&format!("provider/{}", id), "api_key")
+        .await
+    {
+        tracing::error!(provider = %id, %err, "removing the stored API key failed");
+    }
     Ok(())
 }
 
@@ -241,6 +276,7 @@ pub async fn connect_provider(
     input: ConnectInput,
 ) -> Result<usize, String> {
     use mixd_providers::anthropic::ANTHROPIC_VERSION;
+    use mixd_providers::discovery::join_api;
     use mixd_providers::preset::ProviderKind;
 
     /// How a provider expects the model-list call to be authenticated.
@@ -270,25 +306,27 @@ pub async fn connect_provider(
         input_token_limit: Option<u32>,
     }
 
-    let row: Option<(String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT json_extract(data, '$.kind') AS kind, json_extract(data, '$.preset') AS preset, \
-         json_extract(data, '$.baseUrl') AS base_url, json_extract(data, '$.enabled') AS enabled \
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT json_extract(data, '$.kind') AS kind, json_extract(data, '$.baseUrl') AS base_url \
          FROM providers WHERE id = ?",
     )
     .bind(&input.id)
     .fetch_optional(state.storage.pool())
     .await
-    .map_err(|e| e.to_string())?;
-    let (kind, _preset, base_url, _enabled) = row.ok_or("provider not found")?;
+    .map_err(crate::error::cmd_err)?;
+    let (kind, base_url) = row.ok_or("provider not found")?;
     let base_url = base_url.ok_or("provider has no base url")?;
     let api_key = state
         .secrets
         .get_string(&format!("provider/{}", input.id), "api_key")
+        .await
         .ok();
 
     // Model discovery differs per API family: the path *and* the auth header
     // are not interchangeable (Anthropic uses /v1/models + x-api-key, Gemini
     // takes the key as a query parameter, local runtimes need no auth at all).
+    // `join_api` keeps a base URL that already ends in `/v1` from producing
+    // `/v1/v1/models`, which is the form the local presets ship.
     let (url, auth) = match ProviderKind::parse(&kind) {
         Some(ProviderKind::Gemini) => (
             format!(
@@ -299,18 +337,20 @@ pub async fn connect_provider(
             ModelDiscoveryAuth::None,
         ),
         Some(ProviderKind::Anthropic) => (
-            format!("{}/v1/models", base_url.trim_end_matches('/')),
+            join_api(&base_url, "/v1/models"),
             match &api_key {
                 Some(k) => ModelDiscoveryAuth::Anthropic(k.clone()),
                 None => ModelDiscoveryAuth::None,
             },
         ),
-        Some(ProviderKind::Ollama) | Some(ProviderKind::LMStudio) => (
-            format!("{}/v1/models", base_url.trim_end_matches('/')),
-            ModelDiscoveryAuth::None,
-        ),
+        // Ollama and LM Studio both serve the OpenAI list unauthenticated.
+        Some(ProviderKind::Ollama)
+        | Some(ProviderKind::LMStudio)
+        | Some(ProviderKind::Compatible) => {
+            (join_api(&base_url, "/v1/models"), ModelDiscoveryAuth::None)
+        }
         _ => (
-            format!("{}/models", base_url.trim_end_matches('/')),
+            join_api(&base_url, "/models"),
             match &api_key {
                 Some(k) => ModelDiscoveryAuth::Bearer(k.clone()),
                 None => ModelDiscoveryAuth::None,
@@ -318,7 +358,14 @@ pub async fn connect_provider(
         ),
     };
 
-    let client = reqwest::Client::new();
+    // A dead endpoint has to fail fast: without a timeout a model-discovery
+    // click against a stopped local server blocks on the OS connect timeout.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(1500))
+        .timeout(std::time::Duration::from_secs(20))
+        .no_proxy()
+        .build()
+        .map_err(crate::error::cmd_err)?;
     let mut req = client.get(&url);
     match &auth {
         ModelDiscoveryAuth::None => {}
@@ -337,8 +384,8 @@ pub async fn connect_provider(
     if !status.is_success() {
         return Err(format!("model discovery returned {}", status));
     }
-    let value: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    let list: ModelList = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    let value: serde_json::Value = response.json().await.map_err(crate::error::cmd_err)?;
+    let list: ModelList = serde_json::from_value(value).map_err(crate::error::cmd_err)?;
     let entries = if !list.data.is_empty() {
         list.data
     } else {
@@ -348,41 +395,29 @@ pub async fn connect_provider(
         return Err("provider returned no models".into());
     }
 
-    let now = chrono::Utc::now();
-    let mut written = 0usize;
-    for entry in entries {
-        if entry.id.is_empty() {
-            continue;
-        }
-        let model_id = format!("{}:{}", input.id, entry.id);
-        let data = serde_json::json!({
-            "providerId": input.id,
-            "label": entry.name.clone().unwrap_or_else(|| entry.id.clone()),
-            "contextWindow": entry.context_length.or(entry.input_token_limit).unwrap_or(0),
-            "vision": false,
-            "toolCalling": false,
-            "reasoning": false,
-            "auto": true,
-        });
-        sqlx::query(
-            "INSERT INTO models (id, owner_id, data, created_at) VALUES (?, ?, ?, ?) \
-             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-        )
-        .bind(&model_id)
-        .bind(mixd_storage::records::SINGLE_USER_ID)
-        .bind(data.to_string())
-        .bind(now.to_rfc3339())
-        .execute(state.storage.pool())
-        .await
-        .map_err(|e| e.to_string())?;
-        written += 1;
-    }
-    // Touch the provider so its status reflects a successful probe.
+    let discovered: Vec<mixd_providers::discovery::DiscoveredModel> = entries
+        .into_iter()
+        .filter(|entry| !entry.id.is_empty())
+        .map(|entry| mixd_providers::discovery::DiscoveredModel {
+            label: entry.name.clone().unwrap_or_else(|| entry.id.clone()),
+            id: entry.id.clone(),
+            context_window: entry
+                .context_length
+                .or(entry.input_token_limit)
+                .unwrap_or(0),
+            parameter_size: None,
+            quantization: None,
+        })
+        .collect();
+
+    // Stamp the provider so a later listing can tell "never probed" from
+    // "probed and answered".
     let _ =
         sqlx::query("UPDATE providers SET data = json_set(data, '$.status', 'ready') WHERE id = ?")
             .bind(&input.id)
             .execute(state.storage.pool())
             .await;
     let _ = input.discover;
-    Ok(written)
+    let written = super::models::sync_models(&state, &input.id, &discovered).await?;
+    Ok(written.len())
 }

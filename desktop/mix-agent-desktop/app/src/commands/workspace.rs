@@ -38,7 +38,7 @@ fn resolve_root(root_path: &str) -> Result<std::path::PathBuf, String> {
     if !path.is_dir() {
         return Err(format!("フォルダが見つかりません: {trimmed}"));
     }
-    path.canonicalize().map_err(|e| e.to_string())
+    path.canonicalize().map_err(crate::error::cmd_err)
 }
 
 #[derive(Serialize)]
@@ -59,14 +59,14 @@ pub async fn list_dir(
 ) -> Result<Vec<DirEntryView>, String> {
     let root = resolve_root(&root_path)?;
     let target =
-        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(|e| e.to_string())?;
+        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
     if !target.is_dir() {
         return Ok(Vec::new());
     }
     let read = tokio::task::spawn_blocking(move || -> Result<Vec<DirEntryView>, String> {
         let mut entries = Vec::new();
-        for entry in std::fs::read_dir(&target).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(&target).map_err(crate::error::cmd_err)? {
+            let entry = entry.map_err(crate::error::cmd_err)?;
             let meta = match entry.metadata() {
                 Ok(meta) => meta,
                 Err(_) => continue,
@@ -89,7 +89,7 @@ pub async fn list_dir(
         Ok(entries)
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(crate::error::cmd_err)??;
     Ok(read)
 }
 
@@ -110,20 +110,22 @@ pub async fn read_workspace_file(
 ) -> Result<FileContentView, String> {
     let root = resolve_root(&root_path)?;
     let target =
-        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(|e| e.to_string())?;
+        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
     if !target.is_file() {
         return Err(format!("ファイルが見つかりません: {path}"));
     }
     let meta = tokio::fs::metadata(&target)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     if meta.len() > MAX_FILE_BYTES {
         return Err(format!(
             "ファイルが大きすぎます（{} KB / 上限 1024 KB）",
             meta.len() / 1024
         ));
     }
-    let bytes = tokio::fs::read(&target).await.map_err(|e| e.to_string())?;
+    let bytes = tokio::fs::read(&target)
+        .await
+        .map_err(crate::error::cmd_err)?;
     match String::from_utf8(bytes) {
         Ok(content) => Ok(FileContentView {
             path,
@@ -184,7 +186,7 @@ async fn run_git(root: &std::path::Path, args: &[&str]) -> Result<std::process::
     )
     .await
     .map_err(|_| "git timed out".to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::cmd_err)
 }
 
 /// `git status --porcelain` for the file tree decorations.
@@ -275,7 +277,7 @@ pub async fn git_diff(
     }
     // Validate the path against traversal before handing it to git.
     if let Some(p) = &path {
-        mixd_tools::files::FilesTool::safe_join(&root, p).map_err(|e| e.to_string())?;
+        mixd_tools::files::FilesTool::safe_join(&root, p).map_err(crate::error::cmd_err)?;
         args.push("--");
         args.push(p);
     }

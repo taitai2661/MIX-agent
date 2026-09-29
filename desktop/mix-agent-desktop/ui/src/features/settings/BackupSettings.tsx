@@ -2,7 +2,8 @@ import { useState } from "react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Archive, Download, RefreshCw, Upload } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { errorMessage } from "@/lib/errors";
+import { t, tf } from "@/lib/i18n";
 import { Card, Row, Section } from "@/components/layout";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,12 +14,14 @@ export function BackupSettings() {
   const [path, setPath] = useState("");
   const [restorePath, setRestorePath] = useState("");
   const [result, setResult] = useState<string | null>(null);
+  const [needsRestart, setNeedsRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const run = async (kind: "create" | "restore") => {
     setError(null);
     setResult(null);
+    setNeedsRestart(false);
     setBusy(true);
     try {
       if (kind === "create") {
@@ -28,16 +31,27 @@ export function BackupSettings() {
         });
         if (!picked) return;
         const out = await api.createBackup({ destination: picked, password });
-        setResult(`Saved ${out.bytes.toLocaleString()} bytes (${out.tables} tables) to ${out.path}`);
+        setResult(
+          tf("{bytes} バイト（{tables} テーブル）を {path} に保存しました", {
+            bytes: out.bytes.toLocaleString(),
+            tables: out.tables,
+            path: out.path,
+          }),
+        );
       } else {
         const out = await api.restoreBackup({ source: restorePath, password });
         setResult(
-          `Verified ${out.tables} tables from ${new Date(out.created_at).toLocaleString()}. ` +
-            `The app restarts to load the restored data.`,
+          tf("{tables} テーブルを検証しました（{date}）。復元データを読み込むためにアプリを再起動します。", {
+            tables: out.tables,
+            date: new Date(out.created_at).toLocaleString(),
+          }),
         );
+        // Decided by the operation, not by the wording of the message — a
+        // translated string must not be able to hide the restart button.
+        setNeedsRestart(true);
       }
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -45,14 +59,15 @@ export function BackupSettings() {
 
   return (
     <Section>
-      <Card title="Backup / Restore" icon={<Archive size={13} />}>
+      <Card title={t("バックアップ / 復元")} icon={<Archive size={13} />}>
         <p className="m-0 text-2xs text-faint">
-          The whole database is snapshotted, compressed and encrypted (Argon2id + AES-256-GCM).
-          API keys stay in the OS Keychain and are not included.
+          {t(
+            "データベース全体をスナップショットし、圧縮・暗号化します (Argon2id + AES-256-GCM)。API キーは OS キーチェーンに残るため含まれません。",
+          )}
         </p>
         <Input
           type="password"
-          placeholder="Backup password"
+          placeholder={t("バックアップパスワード")}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
@@ -67,7 +82,7 @@ export function BackupSettings() {
             variant="primary"
             disabled={busy || !password}
             onClick={() => void run("create")}
-            title="Create an encrypted backup"
+            title={t("暗号化バックアップを作成")}
           >
             <Download size={12} /> {t("作成")}
           </Button>
@@ -75,24 +90,24 @@ export function BackupSettings() {
         <Row className="gap-1.5">
           <Input
             className="min-w-0 flex-1"
-            placeholder="Existing .mixbak to restore"
+            placeholder={t("復元する既存の .mixbak")}
             value={restorePath}
             onChange={(e) => setRestorePath(e.target.value)}
           />
           <Button
             disabled={busy || !restorePath || !password}
             onClick={() => void run("restore")}
-            title="Verify a backup and reload it on restart"
+            title={t("バックアップを検証し、再起動時に復元")}
           >
-            <Upload size={12} /> Restore
+            <Upload size={12} /> {t("復元")}
           </Button>
         </Row>
         {result && <Alert tone="success">{result}</Alert>}
         {error && <Alert tone="danger">{error}</Alert>}
-        {result?.includes("restarts") && (
+        {needsRestart && (
           <Row>
             <Button disabled={busy} onClick={() => void api.relaunchApp()}>
-              <RefreshCw size={12} /> Restart now
+              <RefreshCw size={12} /> {t("今すぐ再起動")}
             </Button>
           </Row>
         )}

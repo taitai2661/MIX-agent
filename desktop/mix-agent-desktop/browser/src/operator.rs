@@ -78,6 +78,12 @@ impl BrowserOperator {
         profile.ensure().await?;
 
         let (_, executable) = self.resolve_executable();
+        if executable.is_none() {
+            tracing::warn!(
+                workspace = %workspace_id,
+                "no bundled or system Chromium found; the browser tool will fail to start"
+            );
+        }
         let artifact_dir = self
             .app_data
             .join("artifacts")
@@ -115,7 +121,24 @@ impl BrowserOperator {
     }
 
     /// The single entry point the Tool Registry calls.
+    ///
+    /// Logs the failure with the workspace and action it belongs to: the
+    /// Registry only knows the tool name, which is not enough to tell one
+    /// browser call from another when a run goes wrong.
     pub async fn invoke(&self, call: BrowserCall) -> anyhow::Result<BrowserResponse> {
+        let response = self.invoke_call(&call).await;
+        if let Err(err) = &response {
+            tracing::warn!(
+                workspace = %call.workspace_id,
+                action = ?call.action,
+                %err,
+                "browser call failed"
+            );
+        }
+        response
+    }
+
+    async fn invoke_call(&self, call: &BrowserCall) -> anyhow::Result<BrowserResponse> {
         let backend = self.ensure_workspace(call.workspace_id, "default").await?;
         // `navigate` is handled by the backend itself; everything else needs
         // the currently open page.

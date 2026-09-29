@@ -37,6 +37,6 @@ pub async fn decide_approval(
         .executor
         .resolve_approval(&input.id, &tool_name, outcome)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(())
 }

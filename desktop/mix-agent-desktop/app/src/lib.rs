@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod deep_link;
 pub mod diff;
+pub mod error;
 pub mod http;
 pub mod menu;
 pub mod push;
@@ -36,7 +37,7 @@ impl mixd_tools::McpDispatch for McpBridge {
             .host
             .dispatch(qualified_name, arguments)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(anyhow::Error::from)?;
         Ok(mixd_tools::ToolResult {
             ok: !result.is_error,
             content: result.content,
@@ -263,7 +264,7 @@ pub async fn build_app_state(
     // Load persisted MCP connections before the Tool Registry is built so the
     // first Run already sees the connected servers.
     let mcp = Arc::new(McpHost::new());
-    match mixd_mcp::hydrate_and_connect(&mcp, storage.as_ref()).await {
+    match mixd_mcp::hydrate_and_connect(&mcp, storage.as_ref(), Some(secrets.as_ref())).await {
         Ok(count) => tracing::info!(count, "MCP servers connected"),
         Err(err) => {
             tracing::warn!(?err, "MCP hydration failed; continuing without MCP tools");
@@ -339,7 +340,6 @@ async fn register_providers_from_storage(
     storage: &Storage,
     secrets: &SecretStore,
 ) -> anyhow::Result<()> {
-    use mixd_providers::preset::ProviderKind;
     let pool = storage.pool();
     let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.kind') AS kind, json_extract(data, '$.baseUrl') AS base_url, \
@@ -354,28 +354,96 @@ async fn register_providers_from_storage(
         let base_url = base_url.unwrap_or_default();
         let api_key = secrets
             .get_string(&format!("provider/{}", id), "api_key")
+            .await
             .ok();
-        let provider: Arc<dyn Provider> = match ProviderKind::parse(&kind) {
-            Some(ProviderKind::Anthropic) => Arc::new(AnthropicProvider::new(base_url, api_key)),
-            Some(ProviderKind::Gemini) => Arc::new(GeminiProvider::new(base_url, api_key)),
-            Some(ProviderKind::Ollama) => Arc::new(mixd_providers::ollama::ollama(base_url)),
-            Some(ProviderKind::LMStudio) => Arc::new(mixd_providers::lmstudio::lmstudio(base_url)),
-            _ => Arc::new(OpenAiProvider::new(base_url, api_key)),
-        };
-        registry.register(id, provider).await;
+        registry
+            .register(id, build_provider(&kind, base_url, api_key))
+            .await;
     }
     let _ = preset_catalog::PRESETS; // keep the preset table linked
     Ok(())
 }
 
+/// Build the adapter for a stored `kind` string.
+///
+/// Only the three major providers have a distinct wire format; Ollama, LM
+/// Studio, and every other OpenAI-compatible runtime reuse the OpenAI client
+/// with a base URL — and, for the local ones, no key. Shared by boot-time
+/// registration and by provider creation, so a provider imported mid-session
+/// behaves exactly like one that was there at launch.
+pub fn build_provider(kind: &str, base_url: String, api_key: Option<String>) -> Arc<dyn Provider> {
+    use mixd_providers::preset::ProviderKind;
+    match ProviderKind::parse(kind) {
+        Some(ProviderKind::Anthropic) => Arc::new(AnthropicProvider::new(base_url, api_key)),
+        Some(ProviderKind::Gemini) => Arc::new(GeminiProvider::new(base_url, api_key)),
+        Some(ProviderKind::Ollama) => Arc::new(mixd_providers::ollama::ollama(base_url)),
+        Some(ProviderKind::LMStudio) => Arc::new(mixd_providers::lmstudio::lmstudio(base_url)),
+        _ => Arc::new(OpenAiProvider::new(base_url, api_key)),
+    }
+}
+
+/// Bundle identifier from `app/tauri.conf.json`.
+///
+/// Tauri's `PathResolver::app_data_dir` resolves to
+/// `dirs::data_dir().join(identifier)`; tracing needs the same directory before
+/// the `AppHandle` exists, so the value is repeated here (the test at the
+/// bottom of this file keeps it in sync with the config file).
+const APP_IDENTIFIER: &str = "io.github.taitai2661.mix-agent-desktop";
+
+/// Console + rolling file logging.
+///
+/// The file layer writes into the app-data directory with daily rotation, so a
+/// crash that takes the WebView down still leaves a trail behind; the console
+/// layer keeps the exact behaviour `RUST_LOG` users had before. The directory
+/// is resolved through `dirs` rather than `PathResolver` because the
+/// subscriber has to be installed before `tauri::Builder` runs. If the
+/// directory cannot be created we fall back to console-only instead of losing
+/// logging altogether.
+fn init_tracing() {
+    use tracing_subscriber::layer::{Layer, SubscriberExt};
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let console = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_filter(filter.clone());
+
+    let Some(dir) = dirs::data_dir().map(|base| base.join(APP_IDENTIFIER)) else {
+        tracing_subscriber::registry().with(console).init();
+        return;
+    };
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        // No subscriber is installed yet, so `tracing` would swallow this.
+        eprintln!(
+            "tracing: cannot create the log directory {}: {err}; console logging only",
+            dir.display()
+        );
+        tracing_subscriber::registry().with(console).init();
+        return;
+    }
+
+    let (writer, guard) =
+        tracing_appender::non_blocking(tracing_appender::rolling::daily(&dir, "mix-agent.log"));
+    // A `WorkerGuard` must outlive every log record; storing it in a `static`
+    // is what keeps the background writer from shutting down mid-process.
+    static LOG_GUARD: std::sync::OnceLock<tracing_appender::non_blocking::WorkerGuard> =
+        std::sync::OnceLock::new();
+    let _ = LOG_GUARD.set(guard);
+
+    let file = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(writer)
+        .with_filter(filter);
+    tracing_subscriber::registry()
+        .with(console)
+        .with(file)
+        .init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .with_target(false)
-        .init();
+    init_tracing();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -441,6 +509,9 @@ pub fn run() {
             commands::providers::delete_provider,
             commands::providers::provider_presets,
             commands::providers::connect_provider,
+            commands::discovery::scan_local_runtimes,
+            commands::discovery::probe_local_endpoint,
+            commands::discovery::import_local_runtime,
             commands::models::list_models,
             commands::models::verify_tools,
             commands::conversations::list_conversations,
@@ -526,4 +597,22 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running MIX-agent Desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    /// The log directory is derived from the bundle identifier without a Tauri
+    /// handle, so the constant has to stay in sync with the config file by
+    /// hand — this is what catches the drift.
+    #[test]
+    fn app_identifier_matches_the_tauri_config() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+        let raw = std::fs::read_to_string(&path).expect("read tauri.conf.json");
+        let config: serde_json::Value = serde_json::from_str(&raw).expect("parse tauri.conf.json");
+        assert_eq!(
+            config.get("identifier").and_then(|v| v.as_str()),
+            Some(super::APP_IDENTIFIER),
+            "APP_IDENTIFIER drifted from tauri.conf.json"
+        );
+    }
 }

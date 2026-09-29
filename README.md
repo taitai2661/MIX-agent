@@ -29,4 +29,19 @@
 | エディション | 状態 |
 | --- | --- |
 | Docker 版 | v0.2.3 をリリース済み（既存機能） |
-| Desktop 版 | Phase 0 完了（雛形・workspace セットアップ・CI ベース・Tauri バイナリビルド成功） |
+| Desktop 版 | Phase 0〜5 完了。Phase 6（macOS 完成 + Windows α + Linux α）は未着手。フェーズの内訳は [`desktop/README.md`](desktop/README.md) の「開発フェーズ」を参照 |
+
+## アイコンの再生成
+
+アプリ／favicon のアイコンは `scripts/generate-icons.py` が共通の幾何学マークから
+ラスタ画像を生成します（Octicons 等の外部素材は使いません）。
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/requirements.txt
+.venv/bin/python scripts/generate-icons.py
+```
+
+生成先: `docker/MIX-agent/apps/web/public/`（favicon / PWA 用）、
+`docker/MIX-agent/apps/MIX-agent/icon.svg`、
+`desktop/mix-agent-desktop/app/icons/`、`desktop/mix-agent-desktop/ui/public/`。

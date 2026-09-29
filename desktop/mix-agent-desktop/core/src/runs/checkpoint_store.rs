@@ -50,16 +50,19 @@ impl CheckpointStore {
         }
 
         // Trim old snapshots.
-        let _ = sqlx::query(
-            "DELETE FROM run_checkpoints WHERE run_id = ? AND id NOT IN (\
-               SELECT id FROM run_checkpoints WHERE run_id = ? ORDER BY step DESC, created_at DESC LIMIT ?\
-             )",
-        )
-        .bind(run_id.to_string())
-        .bind(run_id.to_string())
-        .bind(self.keep as i64)
-        .execute(storage.pool())
-        .await;
+        mixd_storage::log_write(
+            sqlx::query(
+                "DELETE FROM run_checkpoints WHERE run_id = ? AND id NOT IN (\
+                   SELECT id FROM run_checkpoints WHERE run_id = ? ORDER BY step DESC, created_at DESC LIMIT ?\
+                 )",
+            )
+            .bind(run_id.to_string())
+            .bind(run_id.to_string())
+            .bind(self.keep as i64)
+            .execute(storage.pool())
+            .await,
+            "trim run checkpoints",
+        );
 
         id
     }

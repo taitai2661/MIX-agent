@@ -33,6 +33,9 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Arc<RunEngine>) {
 /// catch up on what it missed.
 pub async fn replay(app: &AppHandle<impl Runtime>, engine: &RunEngine, run_id: &str) {
     use sqlx::Row;
+    // Token deltas are persisted in batches, so a replay that raced the flush
+    // window would silently truncate the transcript the UI just asked for.
+    engine.flush_all_events().await;
     let rows = sqlx::query(
         "SELECT run_id, sequence, kind, data, created_at FROM run_events \
          WHERE run_id = ? ORDER BY sequence ASC",

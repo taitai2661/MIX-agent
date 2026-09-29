@@ -46,7 +46,7 @@ pub async fn fetch_conversation_summaries(
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(
@@ -100,7 +100,7 @@ async fn project_exists(pool: &sqlx::SqlitePool, id: &str) -> Result<bool, Strin
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(row.is_some())
 }
 
@@ -134,7 +134,7 @@ pub async fn create_conversation(
         .bind(data.to_string())
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(ConversationSummary {
         id,
         title,
@@ -166,7 +166,7 @@ pub async fn set_conversation_project(
         .bind(&conversation_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(())
 }
 
@@ -221,7 +221,7 @@ pub async fn dispatch_run(
     .bind(&input.conversation_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     let (_, stored_mode, stored_model, _, _) =
         row.ok_or_else(|| "conversation not found".to_string())?;
 
@@ -284,7 +284,7 @@ pub async fn dispatch_run(
     .bind(&request_key)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
 
     // Persist the user turn.
     let user_data = serde_json::json!({
@@ -303,16 +303,19 @@ pub async fn dispatch_run(
         .bind(&input.conversation_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
 
     // Touch the conversation so it sorts to the top.
-    let _ = sqlx::query(
-        "UPDATE conversations SET data = json_set(data, '$.updatedAt', ?) WHERE id = ?",
-    )
-    .bind(now.to_rfc3339())
-    .bind(&input.conversation_id)
-    .execute(pool)
-    .await;
+    mixd_storage::log_write(
+        sqlx::query(
+            "UPDATE conversations SET data = json_set(data, '$.updatedAt', ?) WHERE id = ?",
+        )
+        .bind(now.to_rfc3339())
+        .bind(&input.conversation_id)
+        .execute(pool)
+        .await,
+        "touch conversation",
+    );
 
     let history: Vec<HistoryMessage> = load_history(pool, &input.conversation_id).await?;
 
@@ -331,7 +334,7 @@ pub async fn dispatch_run(
 
     let request = RunRequest {
         run_id,
-        conversation_id: Uuid::parse_str(&input.conversation_id).map_err(|e| e.to_string())?,
+        conversation_id: Uuid::parse_str(&input.conversation_id).map_err(crate::error::cmd_err)?,
         workspace_id,
         root_path: project.root_path,
         mode,
@@ -354,11 +357,14 @@ pub async fn dispatch_run(
         let result = engine.execute(request).await;
         match result {
             Ok(outcome) => {
-                let _ = sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
-                    .bind(outcome.status.as_str())
-                    .bind(run_id.to_string())
-                    .execute(&pool)
-                    .await;
+                mixd_storage::log_write(
+                    sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
+                        .bind(outcome.status.as_str())
+                        .bind(run_id.to_string())
+                        .execute(&pool)
+                        .await,
+                    "record final run status",
+                );
                 // The assistant turn is already in `messages`: the engine writes
                 // the whole transcript, including tool-call turns and results,
                 // because it is the only place that knows the correct
@@ -368,10 +374,13 @@ pub async fn dispatch_run(
             }
             Err(err) => {
                 tracing::error!(?err, %run_id, "run failed");
-                let _ = sqlx::query("UPDATE runs SET status = 'failed' WHERE id = ?")
-                    .bind(run_id.to_string())
-                    .execute(&pool)
-                    .await;
+                mixd_storage::log_write(
+                    sqlx::query("UPDATE runs SET status = 'failed' WHERE id = ?")
+                        .bind(run_id.to_string())
+                        .execute(&pool)
+                        .await,
+                    "record failed run status",
+                );
             }
         }
     });
@@ -413,7 +422,7 @@ async fn load_history(
     .bind(conversation_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .filter_map(|row| {
@@ -470,22 +479,22 @@ pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> Resu
     .bind(&id)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     sqlx::query("DELETE FROM runs WHERE conversation_id = ?")
         .bind(&id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     sqlx::query("DELETE FROM messages WHERE conversation_id = ?")
         .bind(&id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     sqlx::query("DELETE FROM conversations WHERE id = ?")
         .bind(&id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(())
 }
 
@@ -504,7 +513,7 @@ pub async fn rename_conversation(
         .bind(&id)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(())
 }
 
@@ -568,7 +577,7 @@ pub async fn fetch_messages(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(
@@ -638,7 +647,7 @@ pub async fn export_markdown(
             .bind(&id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::cmd_err)?;
     let rows = sqlx::query(
         "SELECT json_extract(data, '$.role') AS role, json_extract(data, '$.content') AS content \
          FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
@@ -646,7 +655,7 @@ pub async fn export_markdown(
     .bind(&id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
 
     let mut out = String::new();
     out.push_str(&format!(

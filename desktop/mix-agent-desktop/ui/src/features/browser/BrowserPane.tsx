@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import { Card, Field, Row, Section } from "@/components/layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,36 +114,36 @@ export function BrowserPane() {
 
   return (
     <Section>
-      <Card title="Backend" icon={<Globe size={13} />} action={
-        <Button size="sm" onClick={() => void refresh()} title="Refresh status">
-          <RefreshCw size={12} /> Refresh
+      <Card title={t("Backend")} icon={<Globe size={13} />} action={
+        <Button size="sm" onClick={() => void refresh()} title={t("Refresh status")}>
+          <RefreshCw size={12} /> {t("Refresh")}
         </Button>
       }>
         <Row className="gap-1.5">
           <Badge size="sm" className="font-mono">{status?.backend ?? "…"}</Badge>
-          <Badge size="sm">{status?.headless ? "headless" : "headed"}</Badge>
-          <Badge size="sm">{status?.profiles ?? 0} profiles</Badge>
-          <Badge size="sm">{status?.artifacts ?? 0} artifacts</Badge>
+          <Badge size="sm">{status?.headless ? t("headless") : t("headed")}</Badge>
+          <Badge size="sm">{status?.profiles ?? 0} {t("profiles")}</Badge>
+          <Badge size="sm">{status?.artifacts ?? 0} {t("artifacts")}</Badge>
         </Row>
         {status?.executable ? (
           <code className="break-all text-2xs text-faint">{status.executable}</code>
         ) : (
           <p className="m-0 text-2xs text-muted">
-            No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.
+            {t("No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.")}
           </p>
         )}
       </Card>
 
-      <Card title="Workspace profile">
+      <Card title={t("Workspace profile")}>
         <Row className="gap-2">
           <Select
             value={knownProfile ? workspaceId : "new"}
             onChange={(e) => setWorkspaceId(e.target.value === "new" ? crypto.randomUUID() : e.target.value)}
           >
-            {!knownProfile && <option value="new">new profile</option>}
+            {!knownProfile && <option value="new">{t("new profile")}</option>}
             {profiles.map((p) => (
               <option key={p.workspace_id} value={p.workspace_id}>
-                {p.display_name} {p.provisioned ? "" : "(not provisioned)"}
+                {p.display_name} {p.provisioned ? "" : t("(not provisioned)")}
               </option>
             ))}
           </Select>
@@ -150,7 +151,7 @@ export function BrowserPane() {
           <Button
             disabled={busy}
             onClick={async () => {
-              if (!confirm("Delete this profile's cookies, storage and cache?")) return;
+              if (!confirm(t("Delete this profile's cookies, storage and cache?"))) return;
               try {
                 await api.browserResetProfile(workspaceId);
                 setWorkspaceId(crypto.randomUUID());
@@ -160,12 +161,12 @@ export function BrowserPane() {
               }
             }}
           >
-            Reset
+            {t("Reset")}
           </Button>
         </Row>
       </Card>
 
-      <Card title="Action">
+      <Card title={t("Action")}>
         <Row className="gap-1.5">
           {ACTIONS.map((a) => {
             const Icon = a.icon;
@@ -175,15 +176,15 @@ export function BrowserPane() {
                 size="sm"
                 aria-pressed={a.id === action}
                 onClick={() => setAction(a.id)}
-                title={a.hint}
+                title={t(a.hint)}
                 className={cn(a.id === action && "border-brand bg-brand-soft text-brand")}
               >
-                <Icon size={11} /> {a.label}
+                <Icon size={11} /> {t(a.label)}
               </Button>
             );
           })}
         </Row>
-        <p className="m-0 text-xs text-muted">{active.hint}</p>
+        <p className="m-0 text-xs text-muted">{t(active.hint)}</p>
 
         {needs("url") && action === "navigate" && (
           <Field>
@@ -197,7 +198,7 @@ export function BrowserPane() {
         {needs("selector") && (
           <Field>
             <Input
-              placeholder="CSS selector, e.g. #search or body"
+              placeholder={t("CSS selector, e.g. #search or body")}
               value={selector}
               onChange={(e) => setSelector(e.target.value)}
             />
@@ -206,7 +207,7 @@ export function BrowserPane() {
         {needs("text") && (
           <Field>
             <Input
-              placeholder="text to type"
+              placeholder={t("text to type")}
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
@@ -222,7 +223,7 @@ export function BrowserPane() {
             {condition === "url" && (
               <Input
                 className="min-w-0 flex-1"
-                placeholder="wait until URL contains…"
+                placeholder={t("wait until URL contains…")}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
               />
@@ -261,14 +262,14 @@ export function BrowserPane() {
 
         <Row>
           <Button variant="primary" disabled={busy} onClick={() => void run()}>
-            <ChevronRight size={12} /> {busy ? "Running…" : "Run"}
+            <ChevronRight size={12} /> {busy ? t("Running…") : t("Run")}
           </Button>
         </Row>
       </Card>
 
-      <Card title="Activity">
+      <Card title={t("Activity")}>
         {log.length === 0 ? (
-          <p className="m-0 text-xs text-faint">No actions yet.</p>
+          <p className="m-0 text-xs text-faint">{t("No actions yet.")}</p>
         ) : (
           <ul className="m-0 flex list-none flex-col p-0">
             {log.map((e) => (
@@ -276,7 +277,7 @@ export function BrowserPane() {
                 <Row className="gap-2">
                   <Badge size="sm" className="font-mono">{e.action}</Badge>
                   <span className={cn("text-xs", e.ok ? "text-success" : "text-danger")}>
-                    {e.ok ? "ok" : "error"}: {e.summary}
+                    {e.ok ? t("ok") : t("error")}: {e.summary}
                   </span>
                   {e.artifactId && (
                     <Badge size="sm" className="font-mono">
@@ -287,7 +288,7 @@ export function BrowserPane() {
                 {e.detail && (
                   <details>
                     <summary className="mt-1 cursor-pointer list-none text-xs text-muted transition-colors hover:text-fg">
-                      output
+                      {t("output")}
                     </summary>
                     <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs leading-4 text-muted">
                       {e.detail}
@@ -301,21 +302,20 @@ export function BrowserPane() {
       </Card>
 
       {profiles.length > 0 && (
-        <Card title="Known profiles">
+        <Card title={t("Known profiles")}>
           <ul className="m-0 flex list-none flex-col gap-1 p-0 text-xs">
             {profiles.map((p) => (
               <li key={p.workspace_id} className="flex items-center gap-2">
                 <span className="text-muted">{p.display_name}</span>
                 <code className="font-mono text-2xs text-faint">{p.workspace_id.slice(0, 8)}</code>
                 <Badge tone={p.provisioned ? "success" : "neutral"} size="sm">
-                  {p.provisioned ? "ready" : "empty"}
+                  {p.provisioned ? t("ready") : t("empty")}
                 </Badge>
               </li>
             ))}
           </ul>
           <p className="m-0 text-2xs text-muted">
-            Each workspace keeps its own cookies, localStorage and cache, matching the
-            agent&apos;s workspace.
+            {t("Each workspace keeps its own cookies, localStorage and cache, matching the agent's workspace.")}
           </p>
         </Card>
       )}

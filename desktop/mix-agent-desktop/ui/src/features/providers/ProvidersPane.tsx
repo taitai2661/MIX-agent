@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, Trash2 } from "lucide-react";
+import { KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Card, DataTable, Field, Row, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { ErrorBox, EmptyState } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
+import { LocalDiscoveryCard } from "./LocalDiscoveryCard";
 import type { ProviderPresetView, ProviderView } from "@/lib/types";
 
 export function ProvidersPane() {
@@ -41,13 +43,25 @@ export function ProvidersPane() {
       setDraftPreset("");
       setError(null);
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(errorMessage(e)),
   });
 
   const deleteProvider = useMutation({
     mutationFn: (id: string) => api.deleteProvider(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
+  });
+
+  // Pull the provider's model list over the network. This is also the
+  // connection test: it fails loudly when the key, the URL, or the server is
+  // wrong, and it is the only way a newly added provider gets models.
+  const [syncCounts, setSyncCounts] = useState<Record<string, number>>({});
+  const syncProvider = useMutation({
+    mutationFn: (id: string) => api.connectProvider(id),
+    onSuccess: (count, id) => {
+      setSyncCounts((prev) => ({ ...prev, [id]: count }));
       void queryClient.invalidateQueries({ queryKey: ["models"] });
     },
   });
@@ -62,6 +76,7 @@ export function ProvidersPane() {
 
   return (
     <Section>
+      <LocalDiscoveryCard />
       <Card title={t("プロバイダーを追加")} icon={<Plus size={13} />}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Preset">
@@ -115,7 +130,7 @@ export function ProvidersPane() {
         />
       ) : (
         <DataTable
-          columns={["ラベル", "種類", "Base URL", "API Key", "有効", ""]}
+          columns={["ラベル", "種類", "Base URL", "API Key", "有効", "モデル", ""]}
           rows={list}
           rowKey={(p: ProviderView) => p.id}
         >
@@ -134,6 +149,27 @@ export function ProvidersPane() {
                   ? <Badge tone="success" size="sm">✓</Badge>
                   : <Badge size="sm">—</Badge>}
               </td>
+              <td className={td}>
+                {syncCounts[p.id] !== undefined ? (
+                  <Badge tone="success" size="sm">{syncCounts[p.id]}</Badge>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t("モデル一覧を取得")}
+                    aria-label={t("モデル一覧を取得")}
+                    disabled={syncProvider.isPending}
+                    onClick={() => syncProvider.mutate(p.id)}
+                  >
+                    <RefreshCw
+                      size={13}
+                      className={syncProvider.isPending && syncProvider.variables === p.id
+                        ? "animate-spin"
+                        : undefined}
+                    />
+                  </Button>
+                )}
+              </td>
               <td className={`${td} w-12`}>
                 <Button
                   variant="ghost"
@@ -141,7 +177,13 @@ export function ProvidersPane() {
                   className="text-danger hover:text-danger"
                   title={t("削除")}
                   aria-label={t("削除")}
-                  onClick={() => deleteProvider.mutate(p.id)}
+                  onClick={() => {
+                    // Every other destructive action in the app confirms
+                    // first; losing a provider also loses its model list.
+                    if (window.confirm(t("このプロバイダーを削除しますか？"))) {
+                      deleteProvider.mutate(p.id);
+                    }
+                  }}
                 >
                   <Trash2 size={13} />
                 </Button>
@@ -150,6 +192,8 @@ export function ProvidersPane() {
           )}
         </DataTable>
       )}
+      {syncProvider.isError && <ErrorBox error={syncProvider.error} />}
+      {deleteProvider.isError && <ErrorBox error={deleteProvider.error} />}
     </Section>
   );
 }

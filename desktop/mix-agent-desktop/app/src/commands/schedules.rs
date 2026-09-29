@@ -23,7 +23,7 @@ pub async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<ScheduleJobView
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(|(id, name, cron, enabled, last_run_at)| {
@@ -64,7 +64,7 @@ pub struct ScheduleJobCreate {
 /// Validate a cron expression, so a typo is reported at creation time rather
 /// than silently producing a job that never fires.
 fn validate_cron(expr: &str) -> Result<mixd_core::schedule::CronSchedule, String> {
-    mixd_core::schedule::CronSchedule::parse(expr).map_err(|e| e.to_string())
+    mixd_core::schedule::CronSchedule::parse(expr).map_err(crate::error::cmd_err)
 }
 
 #[tauri::command]
@@ -92,7 +92,7 @@ pub async fn create_job(
         .bind(data.to_string())
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     // Surface the first fire time so the user can sanity-check the expression.
     let next = schedule
         .next_after(chrono::Utc::now())
@@ -121,7 +121,7 @@ pub async fn set_job_enabled(
     .bind(&id)
     .execute(state.storage.pool())
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(())
 }
 
@@ -152,6 +152,6 @@ pub async fn delete_job(state: State<'_, AppState>, id: String) -> Result<(), St
         .bind(&id)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(())
 }

@@ -21,6 +21,8 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{timeout, Duration};
 
+use crate::error::McpError;
+
 /// MCP protocol revision this client advertises.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -38,7 +40,6 @@ pub struct ConnectionConfig {
     pub transport: Transport,
     pub command: Option<String>,
     pub args: Vec<String>,
-    pub env: HashMap<String, String>,
     pub url: Option<String>,
     pub headers: HashMap<String, String>,
 }
@@ -78,8 +79,8 @@ impl ConnectionStatus {
     }
 }
 
-/// Result of a JSON-RPC call: either the `result` payload or an error string.
-type RpcResult = Result<Value, String>;
+/// Result of a JSON-RPC call: either the `result` payload or a typed error.
+type RpcResult = Result<Value, McpError>;
 
 /// A live MCP session.
 pub struct Session {
@@ -105,7 +106,7 @@ impl Session {
         }
     }
 
-    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+    async fn request(&self, method: &str, params: Value) -> Result<Value, McpError> {
         let id = {
             let mut next = self.next_id.lock().await;
             let id = *next;
@@ -135,47 +136,41 @@ impl Session {
         match timeout(Duration::from_secs(60), rx.recv()).await {
             Ok(Some(Ok(v))) => Ok(v),
             Ok(Some(Err(e))) => Err(e),
-            Ok(None) => Err(format!("MCP server closed the channel for {}", method)),
+            Ok(None) => Err(McpError::ChannelClosed(method.to_string())),
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                Err(format!("MCP request timed out: {}", method))
+                Err(McpError::Timeout(method.to_string()))
             }
         }
     }
 
     /// Turn a raw JSON-RPC envelope into either a result or an error.
-    fn unwrap_rpc(raw: Value, method: &str) -> Result<Value, String> {
+    fn unwrap_rpc(raw: Value, method: &str) -> Result<Value, McpError> {
         if let Some(err) = raw.get("error") {
-            return Err(err
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown MCP error")
-                .to_string());
+            return Err(McpError::Server(
+                err.get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown MCP error")
+                    .to_string(),
+            ));
         }
         raw.get("result")
             .cloned()
-            .ok_or_else(|| format!("MCP response for {} has no result", method))
+            .ok_or_else(|| McpError::MissingResult(method.to_string()))
     }
 
-    async fn write_stdio(&self, body: &str) -> Result<(), String> {
+    async fn write_stdio(&self, body: &str) -> Result<(), McpError> {
         let mut guard = self.stdin.lock().await;
-        let stdin = guard.as_mut().ok_or("stdio session is not running")?;
-        stdin
-            .write_all(body.as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
-        stdin.flush().await.map_err(|e| e.to_string())
+        let stdin = guard.as_mut().ok_or(McpError::NotConnected)?;
+        stdin.write_all(body.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await.map_err(McpError::Io)
     }
 
     /// POST a JSON-RPC frame and read the reply (JSON body or SSE frame).
-    async fn post_http(&self, body: &str) -> Result<Value, String> {
-        let url = self
-            .config
-            .url
-            .clone()
-            .ok_or("streamable_http needs a url")?;
-        let client = reqwest::Client::new();
+    async fn post_http(&self, body: &str) -> Result<Value, McpError> {
+        let url = self.config.url.clone().ok_or(McpError::MissingUrl)?;
+        let client = mixd_providers::transport::client();
         let mut req = client
             .post(&url)
             .header("content-type", "application/json")
@@ -184,11 +179,11 @@ impl Session {
         for (k, v) in &self.config.headers {
             req = req.header(k, v);
         }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let resp = req.send().await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("HTTP {}: {}", status, text));
+            return Err(McpError::HttpStatus(status.to_string(), text));
         }
         let content_type = resp
             .headers()
@@ -201,7 +196,7 @@ impl Session {
             let mut stream = resp.bytes_stream();
             use futures_util::StreamExt;
             while let Some(chunk) = stream.next().await {
-                let bytes = chunk.map_err(|e| e.to_string())?;
+                let bytes = chunk?;
                 buffer.push_str(&String::from_utf8_lossy(&bytes));
                 while let Some(idx) = buffer.find('\n') {
                     let line: String = buffer.drain(..=idx).collect();
@@ -212,14 +207,20 @@ impl Session {
                     }
                 }
             }
-            Err("SSE stream ended without a JSON-RPC response".into())
+            // The server hung up mid-conversation: worth a line of its own,
+            // because it is indistinguishable from an idle server otherwise.
+            tracing::warn!(
+                connection = %self.config.id,
+                "MCP SSE stream ended without a JSON-RPC response"
+            );
+            Err(McpError::SseEnded)
         } else {
-            resp.json::<Value>().await.map_err(|e| e.to_string())
+            Ok(resp.json::<Value>().await?)
         }
     }
 
     /// Fire-and-forget notification (no `id`, no response expected).
-    async fn notify(&self, method: &str) -> Result<(), String> {
+    async fn notify(&self, method: &str) -> Result<(), McpError> {
         let payload = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -231,24 +232,41 @@ impl Session {
     }
 
     /// Perform the MCP handshake and fetch the tool list.
-    pub async fn connect(&self) -> Result<(), String> {
+    pub async fn connect(&self) -> Result<(), McpError> {
         *self.status.write().await = ConnectionStatus::Connecting;
 
         if self.config.transport == Transport::Stdio {
-            let command = self.config.command.clone().ok_or("stdio needs a command")?;
-            let mut child = Command::new(&command)
+            let command = self
+                .config
+                .command
+                .clone()
+                .ok_or(McpError::MissingCommand)?;
+            let mut child = match Command::new(&command)
                 .args(&self.config.args)
-                .envs(&self.config.env)
                 .kill_on_drop(true)
                 .spawn()
-                .map_err(|e| format!("failed to spawn {}: {}", command, e))?;
-            let stdin = child.stdin.take().ok_or("child has no stdin")?;
-            let stdout = child.stdout.take().ok_or("child has no stdout")?;
+            {
+                Ok(child) => child,
+                Err(err) => {
+                    // The single most common MCP failure (a `command` that is
+                    // not installed) used to be invisible in the log.
+                    tracing::warn!(
+                        connection = %self.config.id,
+                        command = %command,
+                        %err,
+                        "spawning the MCP server failed"
+                    );
+                    return Err(McpError::SpawnFailed(command, err.to_string()));
+                }
+            };
+            let stdin = child.stdin.take().ok_or(McpError::NoStdin)?;
+            let stdout = child.stdout.take().ok_or(McpError::NoStdout)?;
             *self.stdin.lock().await = Some(stdin);
             *self.child.lock().await = Some(child);
 
             // Pump stdout in the background.
             let pending = self.pending.clone();
+            let reader_id = self.config.id.clone();
             tauri_free_spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -267,11 +285,12 @@ impl Session {
                         continue;
                     };
                     let response = if let Some(err) = value.get("error") {
-                        Err(err
-                            .get("message")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("unknown MCP error")
-                            .to_string())
+                        Err(McpError::Server(
+                            err.get("message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("unknown MCP error")
+                                .to_string(),
+                        ))
                     } else {
                         Ok(value.get("result").cloned().unwrap_or(Value::Null))
                     };
@@ -279,6 +298,9 @@ impl Session {
                         let _ = tx.send(response).await;
                     }
                 }
+                // Normal exit, a crash, or a read error all land here, and all
+                // three leave the session unable to answer another request.
+                tracing::warn!(connection = %reader_id, "MCP stdio reader stopped");
             });
         }
 
@@ -295,9 +317,16 @@ impl Session {
 
         let init = match init {
             Ok(v) => v,
-            Err(e) => {
-                *self.status.write().await = ConnectionStatus::Failed { reason: e.clone() };
-                return Err(e);
+            Err(err) => {
+                tracing::warn!(
+                    connection = %self.config.id,
+                    %err,
+                    "MCP initialize handshake failed"
+                );
+                *self.status.write().await = ConnectionStatus::Failed {
+                    reason: err.to_string(),
+                };
+                return Err(err);
             }
         };
         let _ = init;
@@ -305,7 +334,17 @@ impl Session {
         // `notifications/initialized` is a notification: no id, no response.
         let _ = self.notify("notifications/initialized").await;
 
-        let listed = self.request("tools/list", json!({})).await?;
+        let listed = match self.request("tools/list", json!({})).await {
+            Ok(listed) => listed,
+            Err(err) => {
+                tracing::warn!(
+                    connection = %self.config.id,
+                    %err,
+                    "MCP tools/list failed after a successful handshake"
+                );
+                return Err(err);
+            }
+        };
         let tools = listed
             .get("tools")
             .and_then(|t| t.as_array())
@@ -330,12 +369,22 @@ impl Session {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let tool_count = tools.len();
         *self.tools.write().await = tools;
         *self.status.write().await = ConnectionStatus::Ready;
+        tracing::info!(
+            connection = %self.config.id,
+            tools = tool_count,
+            "MCP session connected"
+        );
         Ok(())
     }
 
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolCallResult, String> {
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<ToolCallResult, McpError> {
         let result = self
             .request(
                 "tools/call",
@@ -359,6 +408,7 @@ impl Session {
             }
         }
         *self.status.write().await = ConnectionStatus::Disabled;
+        tracing::info!(connection = %self.config.id, "MCP session shut down");
     }
 
     pub async fn tool_specs(&self) -> Vec<mixd_providers::ToolSpec> {
@@ -446,7 +496,14 @@ impl McpHost {
                     total += session.tools.read().await.len();
                 }
                 Err(reason) => {
-                    *session.status.write().await = ConnectionStatus::Failed { reason };
+                    tracing::warn!(
+                        connection = %session.config.id,
+                        %reason,
+                        "MCP session could not be connected"
+                    );
+                    *session.status.write().await = ConnectionStatus::Failed {
+                        reason: reason.to_string(),
+                    };
                 }
             }
         }
@@ -458,22 +515,22 @@ impl McpHost {
         &self,
         qualified_name: &str,
         arguments: Value,
-    ) -> Result<ToolCallResult, String> {
+    ) -> Result<ToolCallResult, McpError> {
         let mut parts = qualified_name.splitn(3, "__");
         let _ = parts.next();
-        let connection_id = parts.next().ok_or("malformed MCP tool name")?;
-        let tool_name = parts.next().ok_or("malformed MCP tool name")?;
+        let connection_id = parts.next().ok_or(McpError::MalformedToolName)?;
+        let tool_name = parts.next().ok_or(McpError::MalformedToolName)?;
         let session = self
             .get(connection_id)
             .await
-            .ok_or_else(|| format!("MCP connection not found: {}", connection_id))?;
+            .ok_or_else(|| McpError::ConnectionNotFound(connection_id.to_string()))?;
         session.call_tool(tool_name, arguments).await
     }
 
     /// Verify a server is reachable without registering it.
     pub async fn probe(config: &ConnectionConfig) -> anyhow::Result<usize> {
         let session = Arc::new(Session::new(config.clone()));
-        session.connect().await.map_err(|e| anyhow::anyhow!(e))?;
+        session.connect().await.map_err(anyhow::Error::from)?;
         let count = session.tools.read().await.len();
         Ok(count)
     }
@@ -494,6 +551,19 @@ pub fn config_from_json(id: &str, value: &Value) -> anyhow::Result<ConnectionCon
     {
         "streamable_http" => Transport::StreamableHttp,
         _ => Transport::Stdio,
+    };
+    // A remote endpoint has to be an absolute URL. `reqwest` only rejects a
+    // relative or malformed one at request time, so the row used to look
+    // "configured" and fail later with an opaque transport error; parse it now
+    // instead. This is the one case where the parser can return `Err`.
+    let url = match value.get("url").and_then(|v| v.as_str()) {
+        Some(raw) => {
+            if transport == Transport::StreamableHttp {
+                url::Url::parse(raw).map_err(|err| McpError::InvalidUrl(raw.to_string(), err))?;
+            }
+            Some(raw.to_string())
+        }
+        None => None,
     };
     let args = value
         .get("args")
@@ -526,11 +596,7 @@ pub fn config_from_json(id: &str, value: &Value) -> anyhow::Result<ConnectionCon
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         args,
-        env: HashMap::new(),
-        url: value
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+        url,
         headers,
     })
 }

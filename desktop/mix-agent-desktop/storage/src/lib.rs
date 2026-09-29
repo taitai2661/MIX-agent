@@ -7,6 +7,6 @@ pub mod models;
 pub mod records;
 pub mod secrets;
 
-pub use db::Storage;
+pub use db::{log_write, Storage};
 pub use records::*;
 pub use secrets::SecretStore;

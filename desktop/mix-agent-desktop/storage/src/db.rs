@@ -1,13 +1,11 @@
 //! SQLite-backed storage layer.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
-use tokio::sync::Mutex;
 
 pub type DbPool = Pool<Sqlite>;
 
@@ -17,7 +15,6 @@ const SCHEMA: &str = include_str!("migrations/0001_initial.sql");
 pub struct Storage {
     pool: DbPool,
     data_dir: PathBuf,
-    write_lock: Arc<Mutex<()>>,
 }
 
 impl Storage {
@@ -37,23 +34,9 @@ impl Storage {
             .connect_with(opts)
             .await
             .context("opening SQLite database")?;
-        let storage = Self {
-            pool,
-            data_dir,
-            write_lock: Arc::new(Mutex::new(())),
-        };
+        let storage = Self { pool, data_dir };
         storage.run_schema().await?;
         Ok(storage)
-    }
-
-    /// Synchronous helper for callers that don't have a tokio runtime yet.
-    pub fn open_sync(data_dir: impl AsRef<Path>) -> Self {
-        let dir = data_dir.as_ref().to_path_buf();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
-        rt.block_on(async move { Self::open(dir).await.expect("storage open") })
     }
 
     pub fn pool(&self) -> &DbPool {
@@ -61,9 +44,6 @@ impl Storage {
     }
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
-    }
-    pub async fn write_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.write_lock.lock().await
     }
 
     async fn run_schema(&self) -> anyhow::Result<()> {
@@ -80,6 +60,22 @@ impl Storage {
                 .context("applying schema statement")?;
         }
         Ok(())
+    }
+}
+
+/// Report a best-effort write: failures and no-op updates are logged instead
+/// of discarded.
+///
+/// Discarding these results is what hid a SQL syntax error in
+/// `set_run_state`, leaving every run status unpersisted. Callers that need
+/// the failure to be fatal should `?` the result themselves.
+pub fn log_write(result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error>, what: &str) {
+    match result {
+        Ok(res) if res.rows_affected() == 0 => {
+            tracing::warn!(what, "write matched no rows");
+        }
+        Ok(_) => {}
+        Err(err) => tracing::error!(what, %err, "write failed"),
     }
 }
 

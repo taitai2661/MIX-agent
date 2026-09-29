@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { formatBytes, formatDuration, relativeTime, threadGroup } from "./format";
+import { setLanguage } from "./i18n";
+
+// relativeTime() routes through t(); jsdom reports en-US, so pin the display
+// language to keep the Japanese expectations below deterministic.
+beforeAll(() => setLanguage("ja"));
 
 // Local-time construction keeps the tests independent of the machine timezone.
 const NOW = new Date(2026, 0, 15, 12, 0, 0);

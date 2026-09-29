@@ -256,6 +256,45 @@ impl Tool for EditTool {
         ctx: ToolContext,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
+        // Read, anchor matching and the atomic write are all synchronous; the
+        // `write` + `rename` pair at the end must stay together on one thread
+        // so the temp file is never observed half-written, which is exactly
+        // what `spawn_blocking` gives us (a dedicated thread per task).
+        //
+        // Action and path are copied out before the move so a failed edit can
+        // be logged with the file it touched.
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("replace")
+            .to_string();
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let root_path = ctx.root_path;
+        match tokio::task::spawn_blocking(move || EditTool::invoke_blocking(root_path, args)).await
+        {
+            Ok(outcome) => {
+                if let Err(err) = &outcome {
+                    tracing::warn!(action, path, %err, "edit tool failed");
+                }
+                outcome
+            }
+            Err(join_err) => {
+                tracing::error!(action, path, %join_err, "edit tool worker panicked");
+                Err(anyhow::anyhow!("edit worker failed: {join_err}"))
+            }
+        }
+    }
+}
+
+impl EditTool {
+    fn invoke_blocking(
+        root_path: Option<String>,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolResult> {
         let action = args
             .get("action")
             .and_then(|v| v.as_str())
@@ -276,7 +315,7 @@ impl Tool for EditTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let workspace_root = FilesTool::resolve_context_root(ctx.root_path.as_deref())?;
+        let workspace_root = FilesTool::resolve_context_root(root_path.as_deref())?;
         let resolved = FilesTool::safe_join(&workspace_root, &path)?;
         let before = read_existing(&resolved, &action)?;
 

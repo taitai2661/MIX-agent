@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  ArrowDown, Brain, FileText, MessageSquare, ShieldAlert, ShieldCheck, Sparkles,
+  ArrowDown, BookOpen, Brain, FileText, MessageSquare, Search, ShieldAlert, ShieldCheck, Sparkles, Terminal, Wand2,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
 import { t, tf } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
 import type { RunTimeline } from "@/lib/runEvents";
@@ -21,12 +22,16 @@ export function Transcript({
   live,
   liveRunId,
   loading = false,
+  error = null,
 }: {
   messages: MessageView[];
   runs: Map<string, RunView>;
   live: RunTimeline | null;
   liveRunId: string | null;
   loading?: boolean;
+  /** Set when the message history could not be loaded — without it a failed
+   * fetch rendered as "no messages yet", i.e. as an empty conversation. */
+  error?: unknown;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(true);
@@ -51,8 +56,17 @@ export function Transcript({
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[820px] flex-col gap-6 px-6 py-6">
-          {isEmpty && <Welcome />}
+        <div
+          className="mx-auto flex w-full max-w-[820px] flex-col gap-6 px-6 py-6"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-label={t("会話")}
+        >
+          {error != null && (
+            <Alert tone="danger">{errorMessage(error) || t("エラー")}</Alert>
+          )}
+          {isEmpty && !error && <Welcome />}
           {!isEmpty && loading && messages.length === 0 && !showLive && (
             <Skeleton className="h-16 w-full" />
           )}
@@ -82,22 +96,91 @@ export function Transcript({
 
 function Welcome() {
   return (
-    <div className="flex flex-col items-center gap-3 py-16 text-center">
-      <div className="grid size-11 place-items-center rounded-xl border border-line bg-inset text-muted">
-        <Sparkles size={20} />
+    <div className="flex flex-col items-center gap-5 py-12 text-center">
+      <div className="grid size-12 place-items-center rounded-2xl border border-line bg-gradient-to-b from-surface to-inset text-fg shadow-xs">
+        <Sparkles size={22} />
       </div>
-      <h2 className="text-xl font-semibold tracking-tight text-fg">MIX-agent</h2>
-      <p className="max-w-md text-sm text-muted">{t("何でも質問してください。/ でコマンド、⌘K で検索。")}</p>
-      <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-faint">
-        <span><kbd>Enter</kbd> {t("送信")}</span>
-        <span><kbd>Shift</kbd>+<kbd>Enter</kbd> {"newline"}</span>
-        <span><kbd>⌘K</kbd> {t("コマンドパレット")}</span>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-2xl font-semibold tracking-tight text-fg">MIX-agent</h2>
+        <p className="mx-auto max-w-md text-sm text-muted">
+          {t("何でも質問してください。/ でコマンド、⌘K で検索。")}
+        </p>
+      </div>
+      <QuickPrompts />
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-2xs text-faint">
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Enter</kbd>
+          {t("送信")}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">⇧</kbd>
+          +
+          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Enter</kbd>
+          {t("改行")}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">⌘K</kbd>
+          {t("コマンドパレット")}
+        </span>
       </div>
     </div>
   );
 }
 
-function MessageItem({ message, runs }: { message: MessageView; runs: Map<string, RunView> }) {
+interface QuickPrompt {
+  id: string;
+  icon: typeof Wand2;
+  text: string;
+  mode?: "chat" | "thinking" | "agent";
+}
+
+const QUICK_PROMPTS: QuickPrompt[] = [
+  { id: "explain", icon: Wand2, text: "このコードの意図と動作を、日本語で要約して", mode: "thinking" },
+  { id: "refactor", icon: Terminal, text: "リファクタ案を出して。安全策もセットで" },
+  { id: "search", icon: Search, text: "リポジトリ内の TODO を全部集めて" },
+  { id: "docs", icon: BookOpen, text: "このプロジェクトの README 草案を書いて" },
+];
+
+function QuickPrompts() {
+  return (
+    <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+      {QUICK_PROMPTS.map((p) => {
+        const Icon = p.icon;
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("mix:insert-prompt", {
+                detail: { text: p.text, mode: p.mode },
+              }));
+            }}
+            className={cn(
+              "group flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2.5 text-start",
+              "transition-colors duration-100 hover:border-line-strong hover:bg-hover",
+              "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
+            )}
+          >
+            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
+              <Icon size={12} aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{t(p.text)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Memoised: the list renders every message on each token of a stream, and a
+ * message only depends on its own row plus the run it belongs to. */
+const MessageItem = memo(function MessageItem({
+  message,
+  runs,
+}: {
+  message: MessageView;
+  runs: Map<string, RunView>;
+}) {
   const setActivityRunId = useUi((s) => s.setActivityRunId);
   const setRightPanel = useUi((s) => s.setRightPanel);
 
@@ -166,7 +249,7 @@ function MessageItem({ message, runs }: { message: MessageView; runs: Map<string
       </div>
     </div>
   );
-}
+});
 
 function Reasoning({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(streaming);

@@ -58,12 +58,29 @@ impl ChromiumBackend {
         } else {
             builder = builder.with_head();
         }
-        let config = builder.build().map_err(|e| anyhow::anyhow!("{}", e))?;
-        let (browser, handler) = Browser::launch(config)
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to launch Chromium: {}", e))?;
+        let config = match builder.build() {
+            Ok(config) => config,
+            Err(err) => {
+                tracing::error!(%err, "building the Chromium configuration failed");
+                return Err(anyhow::anyhow!("{}", err));
+            }
+        };
+        let (browser, handler) = match Browser::launch(config).await {
+            Ok(launched) => launched,
+            Err(err) => {
+                // Launching is the one Browser failure the app cannot recover
+                // from on its own, so it has to be visible in the log.
+                tracing::error!(
+                    executable = ?self.executable,
+                    %err,
+                    "failed to launch Chromium"
+                );
+                return Err(anyhow::anyhow!("failed to launch Chromium: {}", err));
+            }
+        };
         *self.handler.lock().await = Some(handler);
         *guard = Some(browser);
+        tracing::info!(executable = ?self.executable, "Chromium launched");
         Ok(())
     }
 

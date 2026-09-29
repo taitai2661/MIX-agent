@@ -232,7 +232,7 @@ impl Provider for AnthropicProvider {
             thinking,
         };
 
-        let client = reqwest::Client::new();
+        let client = transport::client();
         let request = client
             .post(&url)
             .header("x-api-key", api_key)

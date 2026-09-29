@@ -18,7 +18,7 @@ impl mixd_tools::McpDispatch for McpBridge {
             .0
             .dispatch(qualified_name, arguments)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(anyhow::Error::from)?;
         Ok(mixd_tools::ToolResult {
             ok: !result.is_error,
             content: result.content,
@@ -53,7 +53,7 @@ pub async fn list_connections(
     let rows = sqlx::query("SELECT id, data FROM mcp_connections ORDER BY created_at DESC")
         .fetch_all(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     let mut out = Vec::new();
     for row in rows {
         let id: String = row.try_get("id").unwrap_or_default();
@@ -116,23 +116,33 @@ pub async fn create_connection(
     input: McpConnectionCreate,
 ) -> Result<McpConnectionView, String> {
     let id = uuid::Uuid::new_v4().to_string();
-    let data = serde_json::json!({
+    // `headers` carries `Authorization` and friends: those values go to the
+    // OS Keychain, and the row only records that they exist.
+    let mut data = serde_json::json!({
         "name": input.name,
         "transport": input.transport,
         "command": input.command,
         "args": input.args,
         "url": input.url,
-        "headers": input.headers,
         "enabled": true,
         "status": "configured",
     });
+    if let Some(headers) = input.headers.filter(|h| !h.is_empty()) {
+        let encoded = serde_json::to_vec(&headers).map_err(crate::error::cmd_err)?;
+        state
+            .secrets
+            .put(&format!("mcp/{}", id), "headers", &encoded)
+            .await
+            .map_err(crate::error::cmd_err)?;
+        data["headersSecured"] = serde_json::json!(true);
+    }
     sqlx::query("INSERT INTO mcp_connections (id, owner_id, data) VALUES (?, ?, ?)")
         .bind(&id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
         .bind(data.to_string())
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(McpConnectionView {
         id: id.clone(),
         name: input.name,
@@ -150,7 +160,14 @@ pub async fn delete_connection(state: State<'_, AppState>, id: String) -> Result
         .bind(&id)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
+    if let Err(err) = state
+        .secrets
+        .delete(&format!("mcp/{}", id), "headers")
+        .await
+    {
+        tracing::error!(connection = %id, %err, "removing stored MCP headers failed");
+    }
     refresh_registry(&state).await;
     Ok(())
 }
@@ -183,9 +200,13 @@ async fn refresh_registry(state: &AppState) {
 /// (Re)connect every configured MCP server and report the total tool count.
 #[tauri::command]
 pub async fn connect(state: State<'_, AppState>) -> Result<usize, String> {
-    let count = mixd_mcp::hydrate_and_connect(&state.mcp, state.storage.as_ref())
-        .await
-        .map_err(|e| e.to_string())?;
+    let count = mixd_mcp::hydrate_and_connect(
+        &state.mcp,
+        state.storage.as_ref(),
+        Some(state.secrets.as_ref()),
+    )
+    .await
+    .map_err(crate::error::cmd_err)?;
     refresh_registry(&state).await;
     Ok(count)
 }
@@ -206,7 +227,7 @@ pub async fn start_oauth(
         .bind(&connection_id)
         .fetch_optional(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     let data: serde_json::Value = row
         .and_then(|(raw,)| serde_json::from_str(&raw).ok())
         .ok_or("connection not found")?;
@@ -215,7 +236,7 @@ pub async fn start_oauth(
         .and_then(|v| v.as_str())
         .ok_or("remote MCP server needs a url")?;
     let origin = url::Url::parse(base)
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::cmd_err)?
         .origin()
         .ascii_serialization();
     let endpoints = mixd_mcp::oauth::OAuthEndpoints {
@@ -251,15 +272,18 @@ pub async fn start_oauth(
         .bind(&pkce.state)
         .execute(state.storage.pool())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     // Store the endpoints so the callback can find the token endpoint again.
-    let _ = sqlx::query(
-        "UPDATE mcp_connections SET data = json_set(data, '$.oauthEndpoints', ?) WHERE id = ?",
-    )
-    .bind(serde_json::to_string(&endpoints).unwrap_or_default())
-    .bind(&connection_id)
-    .execute(state.storage.pool())
-    .await;
+    mixd_storage::log_write(
+        sqlx::query(
+            "UPDATE mcp_connections SET data = json_set(data, '$.oauthEndpoints', ?) WHERE id = ?",
+        )
+        .bind(serde_json::to_string(&endpoints).unwrap_or_default())
+        .bind(&connection_id)
+        .execute(state.storage.pool())
+        .await,
+        "store MCP OAuth endpoints",
+    );
     Ok(OAuthStartOutput {
         authorization_url: request.authorization_url(),
         state: pkce.state,
@@ -277,13 +301,13 @@ pub async fn handle_oauth_callback(state: State<'_, AppState>, url: String) -> R
 /// Shared by the Tauri command and the deep-link listener in `app/src/lib.rs`,
 /// which receives the URL as a bare string with no `State` in scope.
 pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), String> {
-    let callback = mixd_mcp::oauth::parse_callback(url)?;
+    let callback = mixd_mcp::oauth::parse_callback(url).map_err(crate::error::cmd_err)?;
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT id, data FROM mcp_auth_states WHERE state_hash = ?")
             .bind(&callback.state)
             .fetch_optional(state.storage.pool())
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::cmd_err)?;
     let (auth_id, data_raw) = row.ok_or("no pending OAuth flow for this state")?;
     let data: serde_json::Value = serde_json::from_str(&data_raw).unwrap_or_default();
     let connection_id = data
@@ -307,7 +331,7 @@ pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), Stri
             .bind(&connection_id)
             .fetch_optional(state.storage.pool())
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::cmd_err)?;
     let conn_data: serde_json::Value = conn_row
         .and_then(|(raw,)| serde_json::from_str(&raw).ok())
         .ok_or("connection not found")?;
@@ -322,10 +346,11 @@ pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), Stri
         challenge: String::new(),
         state: callback.state.clone(),
     };
-    let http = reqwest::Client::new();
+    let http = mixd_providers::transport::client();
     let tokens =
-        mixd_mcp::oauth::exchange_code(&http, &endpoints, &pkce, &redirect_uri, &callback.code)
-            .await?;
+        mixd_mcp::oauth::exchange_code(http, &endpoints, &pkce, &redirect_uri, &callback.code)
+            .await
+            .map_err(crate::error::cmd_err)?;
     let access = tokens
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -337,20 +362,38 @@ pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), Stri
             "access_token",
             access.as_bytes(),
         )
-        .map_err(|e| e.to_string())?;
+        .await
+        .map_err(crate::error::cmd_err)?;
     if let Some(refresh) = tokens.get("refresh_token").and_then(|v| v.as_str()) {
-        let _ = state.secrets.put(
-            &format!("mcp/{}", connection_id),
-            "refresh_token",
-            refresh.as_bytes(),
-        );
+        if let Err(err) = state
+            .secrets
+            .put(
+                &format!("mcp/{}", connection_id),
+                "refresh_token",
+                refresh.as_bytes(),
+            )
+            .await
+        {
+            // Without the refresh token the access token cannot be renewed and
+            // the connection silently degrades on expiry.
+            tracing::error!(%connection_id, %err, "storing the MCP refresh token failed");
+        }
     }
-    let _ = sqlx::query("DELETE FROM mcp_auth_states WHERE id = ?")
-        .bind(auth_id)
-        .execute(state.storage.pool())
-        .await;
+    mixd_storage::log_write(
+        sqlx::query("DELETE FROM mcp_auth_states WHERE id = ?")
+            .bind(auth_id)
+            .execute(state.storage.pool())
+            .await,
+        "clear MCP OAuth state",
+    );
     // A newly authorised server may expose tools that were not listed before.
-    if let Err(err) = mixd_mcp::hydrate_and_connect(&state.mcp, state.storage.as_ref()).await {
+    if let Err(err) = mixd_mcp::hydrate_and_connect(
+        &state.mcp,
+        state.storage.as_ref(),
+        Some(state.secrets.as_ref()),
+    )
+    .await
+    {
         tracing::warn!(?err, "MCP reconnect after OAuth failed");
     }
     refresh_registry(state).await;

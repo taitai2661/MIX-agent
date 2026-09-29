@@ -65,4 +65,57 @@ describe("Composer", () => {
     );
     expect(screen.getByRole("button", { name: /送信/ })).toBeDisabled();
   });
+
+  it("renders a static mode badge when only one mode is allowed (desktop-agent surface)", () => {
+    render(
+      <Composer
+        mode="agent" setMode={() => {}} allowedModes={["agent"]}
+        models={models} modelId="p:text" setModelId={() => {}}
+        busy={false} onSend={() => {}} onStop={() => {}}
+      />,
+    );
+    // The badge text appears but no trigger button is present.
+    expect(screen.getByText("エージェント")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "モード" })).toBeNull();
+  });
+
+  it("renders the mode dropdown trigger when more than one mode is allowed", () => {
+    render(
+      <Composer
+        mode="chat" setMode={() => {}} allowedModes={["chat", "thinking"]}
+        models={models} modelId="p:text" setModelId={() => {}}
+        busy={false} onSend={() => {}} onStop={() => {}}
+      />,
+    );
+    // Trigger button is a plain <button> with aria-label="モード".
+    expect(screen.getByRole("button", { name: "モード" })).toBeInTheDocument();
+  });
+
+  it("hides the project picker on the chat surface", () => {
+    render(
+      <Composer
+        mode="chat" setMode={() => {}} allowedModes={["chat", "thinking"]}
+        models={models} modelId="p:text" setModelId={() => {}}
+        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: null, sources: [], updated_at: "2026-01-01T00:00:00Z" }]}
+        projectId={null}
+        onProjectChange={() => {}}
+        busy={false} onSend={() => {}} onStop={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "プロジェクトを選択" })).toBeNull();
+  });
+
+  it("shows the project picker on the desktop-agent surface", () => {
+    render(
+      <Composer
+        mode="agent" setMode={() => {}} allowedModes={["agent"]}
+        models={models} modelId="p:text" setModelId={() => {}}
+        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: null, sources: [], updated_at: "2026-01-01T00:00:00Z" }]}
+        projectId="p1"
+        onProjectChange={() => {}}
+        busy={false} onSend={() => {}} onStop={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "プロジェクトを選択" })).toBeInTheDocument();
+  });
 });

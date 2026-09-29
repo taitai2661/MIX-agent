@@ -191,6 +191,26 @@ impl ToolRegistry {
         name: &str,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
+        tracing::debug!(tool = %name, run = %ctx.run_id, "tool dispatch started");
+        let outcome = self.dispatch_inner(ctx, name, args).await;
+        match &outcome {
+            Ok(result) if result.ok => {}
+            Ok(result) => tracing::warn!(
+                tool = %name,
+                error = result.error.as_deref().unwrap_or(""),
+                "tool reported a failure"
+            ),
+            Err(err) => tracing::warn!(tool = %name, %err, "tool dispatch failed"),
+        }
+        outcome
+    }
+
+    async fn dispatch_inner(
+        &self,
+        ctx: ToolContext,
+        name: &str,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolResult> {
         if name == "browser" {
             let Some(operator) = &self.browser else {
                 return Err(anyhow::anyhow!("browser backend is not available"));

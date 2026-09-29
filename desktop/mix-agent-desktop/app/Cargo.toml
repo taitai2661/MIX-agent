@@ -23,6 +23,14 @@ thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Rolling file appender for the log under the app-data directory.
+# NOTE: `tracing-appender` has no `rolling` feature — the rotating writer is
+# compiled unconditionally (its only feature is `parking_lot`), so the version
+# requirement alone is what pulls it in.
+tracing-appender = "0.2.3"
+# Same resolution Tauri's `PathResolver::app_data_dir` uses, needed before the
+# `AppHandle` exists (tracing has to be initialised before the Builder runs).
+dirs = "5"
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true

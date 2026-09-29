@@ -36,4 +36,17 @@ describe("i18n", () => {
     expect(browserLanguage(["de-DE"])).toBe("ja");
     expect(browserLanguage([])).toBe("ja");
   });
+
+  it("translates relativeTime labels", async () => {
+    const { relativeTime } = await import("./format");
+    const now = new Date(2026, 0, 15, 12, 0, 0);
+    const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+    setLanguage("en");
+    expect(relativeTime(ago(0), now)).toBe("Just now");
+    expect(relativeTime(ago(30), now)).toBe("30 min ago");
+    expect(relativeTime(ago(5 * 60), now)).toBe("5h ago");
+    expect(relativeTime(new Date(2026, 0, 12, 12).toISOString(), now)).toBe("3d ago");
+    setLanguage("ja");
+    expect(relativeTime(ago(30), now)).toBe("30分前");
+  });
 });

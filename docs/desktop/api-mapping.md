@@ -1,7 +1,7 @@
-# MIX-agent Desktop — API Mapping (placeholder)
+# MIX-agent Desktop — API Mapping（Phase 5 時点）
 
 Docker 版の `routes.py` URL と Desktop 版の `#[tauri::command]` 名を対応付ける表。
-実装が進むにつれ Phase 1 / Phase 2 / … で追記していく。
+Phase 6 / 7 の実装が進むにつれ追記していく。
 
 ## Health
 

@@ -32,7 +32,7 @@ export function ModelsPane() {
         />
       ) : (
         <DataTable
-          columns={["ラベル", "Provider", "Context", "Vision", "Tools", "Reasoning", ""]}
+          columns={[t("ラベル"), t("Provider"), t("Context"), t("Vision"), t("Tools"), t("Reasoning"), ""]}
           rows={list}
           rowKey={(m: ModelView) => m.id}
         >
@@ -48,7 +48,7 @@ export function ModelsPane() {
                 <td className={td}><YesNo value={m.supports_reasoning} /></td>
                 <td className={`${td} w-24`}>
                   <Button size="sm" onClick={() => void verifyTools(m.id)}>
-                    <Sparkles size={11} /> Verify
+                    <Sparkles size={11} /> {t("Verify")}
                   </Button>
                 </td>
               </>

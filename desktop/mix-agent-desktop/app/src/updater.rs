@@ -42,7 +42,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>) -> Result<Option<UpdateAvaila
     if !is_configured(app) {
         return Ok(None);
     }
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = app.updater().map_err(crate::error::cmd_err)?;
     let _ = &updater;
     let current = env!("CARGO_PKG_VERSION").to_string();
     match updater.check().await {
@@ -57,7 +57,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>) -> Result<Option<UpdateAvaila
             Ok(Some(info))
         }
         Ok(None) => Ok(None),
-        Err(err) => Err(err.to_string()),
+        Err(err) => Err(crate::error::cmd_err(err)),
     }
 }
 
@@ -68,11 +68,11 @@ pub async fn install_and_relaunch<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     if !is_configured(app) {
         return Err("no update endpoint is configured".into());
     }
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = app.updater().map_err(crate::error::cmd_err)?;
     let update = updater
         .check()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::cmd_err)?
         .ok_or_else(|| "no update is available".to_string())?;
     update
         .download_and_install(
@@ -82,7 +82,7 @@ pub async fn install_and_relaunch<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             || {},
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     app.restart();
 }
 

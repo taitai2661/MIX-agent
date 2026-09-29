@@ -1,18 +1,20 @@
 /// Small display formatters shared across panes.
 
+import { t, tf } from "./i18n";
+
 /** "たった今" / "3分前" / "昨日" / "1月2日" style relative label. */
 export function relativeTime(iso: string, now: Date = new Date()): string {
   const then = new Date(iso);
   if (Number.isNaN(then.getTime())) return "";
   const diffMs = now.getTime() - then.getTime();
   const minutes = Math.floor(diffMs / 60_000);
-  if (diffMs < 60_000) return "たった今";
-  if (minutes < 60) return `${minutes}分前`;
+  if (diffMs < 60_000) return t("たった今");
+  if (minutes < 60) return tf("{n}分前", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}時間前`;
+  if (hours < 24) return tf("{n}時間前", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days === 1) return "昨日";
-  if (days < 7) return `${days}日前`;
+  if (days === 1) return t("昨日");
+  if (days < 7) return tf("{n}日前", { n: days });
   return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 

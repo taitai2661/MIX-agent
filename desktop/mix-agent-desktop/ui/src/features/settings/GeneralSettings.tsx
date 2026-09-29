@@ -1,27 +1,11 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Zap } from "lucide-react";
-import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import type { SettingsView } from "@/lib/types";
 import { Card, Field, Section } from "@/components/layout";
 import { Input, Select } from "@/components/ui/input";
-
-const FALLBACK: SettingsView = {
-  default_model_id: null,
-  default_mode: null,
-  egress_allowlist: [],
-  auto_update: true,
-  telemetry_consent: false,
-  language: null,
-  theme: null,
-};
+import { useSettingsForm } from "@/lib/settings";
 
 export function GeneralSettings() {
-  const queryClient = useQueryClient();
-  const settings = useQuery({ queryKey: ["settings"], queryFn: api.getSettings });
-  const data: SettingsView = settings.data ?? FALLBACK;
-  const patch = (next: Partial<SettingsView>) =>
-    queryClient.setQueryData<SettingsView>(["settings"], { ...data, ...next });
+  const { data, patch } = useSettingsForm();
 
   return (
     <Section>
@@ -34,14 +18,14 @@ export function GeneralSettings() {
               onChange={(e) => patch({ default_model_id: e.target.value || null })}
             />
           </Field>
-          <Field label="Mode">
+          <Field label={t("モード")}>
             <Select
               value={data.default_mode ?? "chat"}
               onChange={(e) => patch({ default_mode: e.target.value })}
             >
-              <option value="chat">Chat</option>
-              <option value="thinking">Thinking</option>
-              <option value="agent">Agent</option>
+              <option value="chat">{t("チャット")}</option>
+              <option value="thinking">{t("思考")}</option>
+              <option value="agent">{t("エージェント")}</option>
             </Select>
           </Field>
         </div>

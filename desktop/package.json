@@ -1,15 +1,11 @@
 {
   "name": "desktop",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "license": "Apache-2.0",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "playwright": "^1.63.0"
+    "test": "pnpm --dir mix-agent-desktop test",
+    "lint": "pnpm --dir mix-agent-desktop lint",
+    "check": "pnpm --dir mix-agent-desktop check"
   }
 }

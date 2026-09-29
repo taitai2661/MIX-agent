@@ -29,7 +29,7 @@ pub async fn create_backup(
         &input.password,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(BackupCreated {
         path: info.path,
         bytes: info.bytes,
@@ -64,7 +64,7 @@ pub async fn restore_backup(
     let info =
         mixd_storage::backup::restore(state.storage.data_dir(), &input.source, &input.password)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::cmd_err)?;
     Ok(BackupRestored {
         staged_path: info.staged_path,
         created_at: info.manifest.created_at,

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { useRunEvents } from "@/lib/runStore";
 import { isTerminal } from "@/lib/runEvents";
-import { useUi } from "@/lib/ui";
+import { SURFACE_MODES, useUi } from "@/lib/ui";
 import type { ModelView, RunView } from "@/lib/types";
 import { Composer, type DraftAttachment } from "./Composer";
 import { Transcript } from "./Transcript";
@@ -11,10 +12,18 @@ import { Alert } from "@/components/ui/alert";
 
 export function ChatPane() {
   const [projectError, setProjectError] = useState<string | null>(null);
-  const {
-    conversationId, setConversationId, mode, setMode, modelId, setModelId,
-    activeProjectId, setActiveProjectId,
-  } = useUi();
+  // Per-field selectors: subscribing to the whole store re-rendered the
+  // transcript and composer on every unrelated UI change.
+  const conversationId = useUi((s) => s.conversationId);
+  const setConversationId = useUi((s) => s.setConversationId);
+  const mode = useUi((s) => s.mode);
+  const setMode = useUi((s) => s.setMode);
+  const modelId = useUi((s) => s.modelId);
+  const setModelId = useUi((s) => s.setModelId);
+  const activeProjectId = useUi((s) => s.activeProjectId);
+  const setActiveProjectId = useUi((s) => s.setActiveProjectId);
+  const surface = useUi((s) => s.surface);
+  const allowedModes = SURFACE_MODES[surface];
   const queryClient = useQueryClient();
   const liveRunId = useRunEvents((s) => s.liveRunId);
   const liveConversationId = useRunEvents((s) => s.conversationId);
@@ -55,8 +64,19 @@ export function ChatPane() {
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     } catch (error) {
       setActiveProjectId(activeProjectId);
-      setProjectError(String(error));
+      setProjectError(errorMessage(error));
     }
+  };
+
+  const createProject = async (name: string) => {
+    const created = await api.createProject({
+      name,
+      instructions: "",
+      rootPath: null,
+      sources: [],
+    });
+    void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    return created.id;
   };
 
   useEffect(() => {
@@ -155,16 +175,19 @@ export function ChatPane() {
         live={liveForThisConversation}
         liveRunId={liveForThisConversation ? liveRunId : null}
         loading={messages.isPending}
+        error={messages.isError ? messages.error : null}
       />
       <Composer
         mode={mode}
         setMode={setMode}
+        allowedModes={allowedModes}
         models={models.data ?? ([] as ModelView[])}
         modelId={activeModelId}
         setModelId={setModelId}
         projects={projects.data ?? []}
         projectId={activeProjectId}
         onProjectChange={(projectId) => void selectProject(projectId)}
+        onCreateProject={createProject}
         busy={busy}
         onSend={(content, attachments) => sendMessage.mutate({ content, attachments })}
         onStop={() => liveRunId && cancel.mutate(liveRunId)}
@@ -172,7 +195,7 @@ export function ChatPane() {
       {(sendMessage.isError || projectError) && (
         <div className="mx-auto w-full max-w-[820px] px-6 pb-3">
           <Alert tone="danger">
-            {String(sendMessage.error ?? projectError)}
+            {errorMessage(sendMessage.error ?? projectError)}
           </Alert>
         </div>
       )}

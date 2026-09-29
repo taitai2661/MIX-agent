@@ -17,13 +17,24 @@ use uuid::Uuid;
 /// Tool is treated as denied.
 const APPROVAL_TTL_SECS: i64 = 300;
 
+/// A paused Run's wake-up channel, kept together with the prompt's deadline.
+///
+/// The engine stops waiting when the TTL elapses but never calls
+/// [`ToolExecutor::resolve_approval`] (its `select!` timeout branch only emits
+/// the denial), so without a recorded expiry neither this channel nor the
+/// `pending` row in `approvals` would ever be reclaimed.
+struct Waiter {
+    tx: oneshot::Sender<ApprovalOutcome>,
+    expires_at: chrono::DateTime<Utc>,
+}
+
 #[derive(Clone)]
 pub struct ToolExecutor {
     pub storage: Arc<Storage>,
     pub secrets: Arc<SecretStore>,
     pub pending: Arc<Mutex<Vec<PendingApproval>>>,
     /// Wakes the paused Run when the user answers a prompt.
-    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalOutcome>>>>,
+    waiters: Arc<Mutex<HashMap<String, Waiter>>>,
 }
 impl ToolExecutor {
     pub fn new(storage: Arc<Storage>, secrets: Arc<SecretStore>) -> Self {
@@ -85,6 +96,7 @@ impl ToolExecutor {
             ApprovalOutcome::Deny => PermissionDecision::Deny,
         };
         let remember = matches!(outcome, ApprovalOutcome::Approve { remember: true });
+        let approved = matches!(outcome, ApprovalOutcome::Approve { .. });
         if remember {
             self.remember_rule(tool_id, decision).await?;
         }
@@ -105,8 +117,11 @@ impl ToolExecutor {
             .lock()
             .await
             .retain(|p| p.approval_id != approval_id);
-        if let Some(tx) = self.waiters.lock().await.remove(approval_id) {
-            let _ = tx.send(outcome);
+        // Records the end of the wait as well as its outcome: a prompt that is
+        // opened but never seen closing again is how a leaked waiter shows up.
+        tracing::info!(approval = %approval_id, tool = %tool_id, approved, "approval resolved");
+        if let Some(waiter) = self.waiters.lock().await.remove(approval_id) {
+            let _ = waiter.tx.send(outcome);
         }
         Ok(())
     }
@@ -165,12 +180,84 @@ impl ToolExecutor {
             .map(|s| s.to_string())
     }
 
+    /// How many wake-up channels are still held for unanswered prompts.
+    ///
+    /// A non-zero value after every prompt has been resolved or expired means
+    /// a `waiters` leak: each entry pins an engine task's `rx` and grows the
+    /// map for the lifetime of the process.
+    pub async fn open_waiters(&self) -> usize {
+        self.waiters.lock().await.len()
+    }
+
     /// The prompts the UI should render right now, dropping expired ones.
     pub async fn list_pending(&self) -> Vec<PendingApproval> {
+        // Sweep first so an expired prompt is neither rendered nor left behind
+        // as a `pending` row when nobody polls again.
+        self.sweep_expired().await;
+        self.pending.lock().await.clone()
+    }
+
+    /// Reclaim prompts whose TTL has passed.
+    ///
+    /// Three things are leaked by an unanswered prompt and all three are
+    /// released here: the in-memory entry shown by the UI, the `waiters`
+    /// channel the engine is (or was) parked on, and the `approvals` row, which
+    /// stays `pending` forever because the engine's timeout branch never calls
+    /// [`ToolExecutor::resolve_approval`]. Idempotent and safe to call from
+    /// both the UI poll path and the per-prompt deadline task. Returns the ids
+    /// that were actually closed.
+    pub async fn sweep_expired(&self) -> Vec<String> {
         let now = Utc::now();
-        let mut guard = self.pending.lock().await;
-        guard.retain(|p| p.expires_at > now);
-        guard.clone()
+        let mut expired: Vec<String> = {
+            let mut guard = self.pending.lock().await;
+            let ids = guard
+                .iter()
+                .filter(|p| p.expires_at <= now)
+                .map(|p| p.approval_id.clone())
+                .collect();
+            guard.retain(|p| p.expires_at > now);
+            ids
+        };
+        {
+            let mut waiters = self.waiters.lock().await;
+            // The channel's own deadline is checked as well: a prompt that was
+            // removed from `pending` without being resolved (a cancelled Run,
+            // a UI that dropped it) would otherwise pin this map forever.
+            let ids: Vec<String> = waiters
+                .iter()
+                .filter(|(id, w)| w.expires_at <= now || expired.contains(*id))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &ids {
+                waiters.remove(id);
+            }
+            for id in ids {
+                if !expired.contains(&id) {
+                    expired.push(id);
+                }
+            }
+        }
+        if expired.is_empty() {
+            return expired;
+        }
+        for id in &expired {
+            // `status = 'pending'` keeps a decision made in the same instant
+            // from being overwritten by the automatic expiry.
+            let result = sqlx::query(
+                "UPDATE approvals SET status = 'expired' WHERE id = ?1 AND status = 'pending'",
+            )
+            .bind(id)
+            .execute(self.storage.pool())
+            .await;
+            if let Err(err) = result {
+                tracing::warn!(approval = %id, %err, "closing an expired approval row failed");
+            }
+        }
+        tracing::warn!(
+            count = expired.len(),
+            "approval prompts expired unanswered; waiters and pending rows reclaimed"
+        );
+        expired
     }
 
     /// Pause the Run on a Tool call until the user answers the prompt.
@@ -207,11 +294,50 @@ impl ToolExecutor {
         .await?;
 
         let (tx, rx) = oneshot::channel();
-        self.waiters
-            .lock()
-            .await
-            .insert(approval.approval_id.clone(), tx);
+        self.waiters.lock().await.insert(
+            approval.approval_id.clone(),
+            Waiter {
+                tx,
+                expires_at: approval.expires_at,
+            },
+        );
         self.pending.lock().await.push(approval.clone());
+        // A Run is parked on this prompt now; if nobody answers, the TTL sweep
+        // below is the only thing that will ever move it again.
+        tracing::info!(
+            approval = %approval.approval_id,
+            run = %run_id,
+            tool = %tool_name,
+            expires_in_secs = APPROVAL_TTL_SECS,
+            "run is waiting for a tool approval"
+        );
+
+        // The engine abandons the prompt at the TTL without resolving it, so a
+        // deadline task is what actually closes the row and drops the channel.
+        // Without it a Run that is cancelled or left hanging keeps a `pending`
+        // approvals row and a `waiters` entry for the lifetime of the process.
+        let sweeper = self.clone();
+        let sweep_id = approval.approval_id.clone();
+        let tool = approval.tool_name.clone();
+        let wait = (approval.expires_at - now)
+            .to_std()
+            .unwrap_or(std::time::Duration::ZERO);
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            if sweeper
+                .sweep_expired()
+                .await
+                .iter()
+                .any(|id| id == &sweep_id)
+            {
+                tracing::warn!(
+                    approval = %sweep_id,
+                    tool = %tool,
+                    "approval TTL elapsed before the user answered"
+                );
+            }
+        });
+
         Ok((rx, approval.expires_at))
     }
 

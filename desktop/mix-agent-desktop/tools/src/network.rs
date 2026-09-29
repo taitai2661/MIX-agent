@@ -1,7 +1,6 @@
 //! Network Tool: HTTP fetch with egress policy + optional DuckDuckGo search.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 
 use super::egress::EgressPolicy;
 use super::{Tool, ToolContext, ToolResult};
@@ -10,6 +9,29 @@ use super::{Tool, ToolContext, ToolResult};
 pub struct NetworkTool {
     pub egress: EgressPolicy,
 }
+
+/// Shared client for Tool HTTP calls.
+///
+/// Built once per process instead of per call (a fresh connection pool each
+/// time) and with the redirect policy turned off: reqwest follows up to ten
+/// redirects on its own, and a permitted host can bounce the request straight
+/// at the cloud metadata address before the policy ever sees the target.
+fn http_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("mix-agent-desktop/0.1")
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("reqwest TLS backend")
+    })
+}
+
+/// Redirect hops followed before giving up; matches reqwest's own default.
+const MAX_REDIRECTS: u8 = 10;
 
 impl NetworkTool {
     pub fn new(egress: EgressPolicy) -> Self {
@@ -46,38 +68,80 @@ impl Tool for NetworkTool {
         _ctx: ToolContext,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
-        let url = args
+        let start = args
             .get("url")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("url is required"))?;
-        self.egress.enforce(url)?;
-        let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+            .ok_or_else(|| anyhow::anyhow!("url is required"))?
+            .to_string();
+        let method = args
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET")
+            .parse::<reqwest::Method>()
+            .unwrap_or(reqwest::Method::GET);
         let headers = args
             .get("headers")
             .cloned()
             .unwrap_or(serde_json::json!({}));
         let body = args.get("body").cloned();
-        let client = reqwest::Client::builder()
-            .user_agent("mix-agent-desktop/0.1")
-            .build()?;
-        let mut req = client.request(method.parse().unwrap_or(reqwest::Method::GET), url);
-        if let Some(obj) = headers.as_object() {
-            for (k, v) in obj {
-                if let Some(s) = v.as_str() {
-                    req = req.header(k, s);
+
+        // Every hop is checked: the first URL passed the allowlist, but a 302
+        // from it points wherever the server wants.
+        let client = http_client();
+        let mut url = start.clone();
+        let mut method = method;
+        let mut send_body = true;
+        let mut hop = 0u8;
+        let response = loop {
+            self.egress.enforce_async(&url).await?;
+            let mut req = client.request(method.clone(), &url);
+            if let Some(obj) = headers.as_object() {
+                for (k, v) in obj {
+                    if let Some(s) = v.as_str() {
+                        req = req.header(k, s);
+                    }
                 }
             }
-        }
-        if let Some(body) = body {
-            if body.is_string() {
-                if let Some(s) = body.as_str() {
-                    req = req.body(s.to_string());
+            // 307/308 keep method and payload; the downgrade to GET (303, and
+            // 301/302 for non-GET) drops it, as browsers do.
+            if send_body {
+                if let Some(body) = &body {
+                    if body.is_string() {
+                        if let Some(s) = body.as_str() {
+                            req = req.body(s.to_string());
+                        }
+                    } else {
+                        req = req.json(body);
+                    }
                 }
-            } else {
-                req = req.json(&body);
             }
-        }
-        let response = req.send().await?;
+            let response = req.send().await?;
+            let status = response.status();
+            if !status.is_redirection() {
+                break response;
+            }
+            hop += 1;
+            if hop > MAX_REDIRECTS {
+                anyhow::bail!("too many redirects fetching {}", start);
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| anyhow::anyhow!("redirect without a Location header"))?;
+            url = url::Url::parse(&url)
+                .and_then(|base| base.join(location))
+                .map_err(|e| anyhow::anyhow!("bad redirect target: {}", e))?
+                .to_string();
+            if status == reqwest::StatusCode::SEE_OTHER
+                || ((status == reqwest::StatusCode::MOVED_PERMANENTLY
+                    || status == reqwest::StatusCode::FOUND)
+                    && method != reqwest::Method::GET)
+            {
+                method = reqwest::Method::GET;
+                send_body = false;
+            }
+        };
         let status = response.status().as_u16();
         let text = response.text().await?;
         Ok(ToolResult {
@@ -150,10 +214,4 @@ impl Tool for WebSearchTool {
             error: None,
         })
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpResponse {
-    pub status: u16,
-    pub body: String,
 }

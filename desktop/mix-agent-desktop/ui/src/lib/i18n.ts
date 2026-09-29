@@ -99,6 +99,17 @@ const en: Record<string, string> = {
   "添付ファイルが大きすぎます (上限8MB)": "Attachment is too large (8 MB limit)",
   "画像は送信されません": "Images will not be sent",
   "Enter で送信 · Shift+Enter で改行": "Enter to send · Shift+Enter for newline",
+  "モード": "Mode",
+  "改行": "newline",
+  "文字": "chars",
+  "プロジェクトがありません": "No projects yet",
+  "深い思考": "Think deeper",
+  "クリア": "Clear",
+  "プロジェクト紐付けあり": "Linked to a project",
+  "サイドバーの幅": "Sidebar width",
+  "サイドバーの表示切り替え": "Toggle sidebar",
+  "ファイルツリーの幅": "File tree width",
+  "サイドパネルの幅": "Side panel width",
 
   // Transcript
   "まだメッセージがありません": "No messages yet",
@@ -158,6 +169,18 @@ const en: Record<string, string> = {
   "エラー": "Error",
   "初期設定": "Initial setup",
   "プロバイダーを追加": "Add provider",
+  "ローカル LLM を検出": "Detect local LLMs",
+  "LM Studio や Ollama などのローカル推論サーバーを自動で探します。": "Automatically look for local inference servers such as LM Studio or Ollama.",
+  "この PC で検出できるランタイムはありません。下の手動指定か、上のプリセットから追加してください。": "No runtimes were detected on this machine. Use the manual field below, or add a preset above.",
+  "手動で URL を指定": "Specify a URL manually",
+  "Swagger や任意のポートで起動中のサーバーも指定できます。例: http://192.168.1.10:11434/v1": "Also accepts a server on a custom port or a network address. e.g. http://192.168.1.10:11434/v1",
+  "取り込む": "Import",
+  "取り込み済み": "Imported",
+  "プロバイダーとして追加してモデルを登録": "Register as a provider and add its models",
+  "モデルが 1 つもロードされていません": "No models are loaded",
+  "起動してください": "Start the server",
+  "未起動": "Not running",
+  "モデル一覧を取得": "Fetch model list",
   "未設定": "Not set",
   "保存しました": "Saved",
   "無効": "Disabled",
@@ -192,6 +215,9 @@ const en: Record<string, string> = {
   "紐づく会話": "Linked chats",
   "このプロジェクトで新しいチャット": "New chat in this project",
   "プロジェクトを削除しますか？ 会話は残ります。": "Delete this project? Chats are kept.",
+  "新規プロジェクト": "New project",
+  "プロジェクトを作成": "Create project",
+  "プロジェクト名": "Project name",
   "指示を保存": "Save instructions",
   "名前": "Name",
   "指示": "Instructions",
@@ -216,6 +242,218 @@ const en: Record<string, string> = {
   "ネットワーク": "Network",
   "アップデート": "Updates",
   "バックアップ": "Backup",
+
+  // Surfaces (top-level switcher)
+  "chat": "chat",
+  "desktop-agent": "desktop-agent",
+  "作成、学習、探索": "Create, learn, explore",
+  "ビルド、デバッグ、リリース": "Build, debug, release",
+  "サーフェスを切り替え": "Switch surface",
+  "すべてのスレッド": "All threads",
+  "サーフェスで絞り込み": "Filter by surface",
+
+  // Keys referenced from files owned elsewhere (App.tsx, LocalDiscoveryCard,
+  // ProvidersPane, McpPane, …) — registered here so English never falls back
+  // to the Japanese original.
+  "アクティビティを表示": "Show activity",
+  "サイドパネルを閉じる": "Close side panel",
+  "プロバイダーが未設定です": "No providers configured",
+  "このプロバイダーを削除しますか？": "Delete this provider?",
+  "接続に失敗しました": "Connection failed",
+  "OAuth に失敗しました": "OAuth failed",
+  "検出": "Detect",
+  "テスト": "Test",
+  "MCP": "MCP",
+
+  // relativeTime (lib/format.ts)
+  "たった今": "Just now",
+  "{n}分前": "{n} min ago",
+  "{n}時間前": "{n}h ago",
+  "{n}日前": "{n}d ago",
+
+  // Composer modes (translated at the render site via `t(mode.label)`)
+  "思考": "Thinking",
+  "素早い質疑応答": "Quick replies",
+  "深く考えて回答": "Answer with deeper reasoning",
+  "ツールで自律的に作業": "Work autonomously with tools",
+
+  // Knowledge pane
+  "ファイル名 (例: architecture.md)": "Filename (e.g. architecture.md)",
+  "ファイルから": "From file",
+  "ここに本文を貼り付け…": "Paste text here…",
+  "追加する": "Add",
+  "キーワード": "Keyword",
+  "該当なし": "No matches",
+  "登録済みドキュメント": "Registered documents",
+  "まだドキュメントがありません。": "No documents yet.",
+  "ファイル名": "Filename",
+  "チャンク": "Chunks",
+  "登録日時": "Added at",
+  "Delete \"{name}\"?": "Delete \"{name}\"?",
+
+  // Memory pane
+  "Memory を追加": "Add memory",
+  "タイトル": "Title",
+  "本文…": "Body…",
+  "agent は毎回の Run 開始時に Memory を検索し、関連するものをコンテキストへ注入します。":
+    "The agent searches Memory at the start of every run and injects the relevant entries into context.",
+  "キーワード (例: rust, deploy, postgres)": "Keyword (e.g. rust, deploy, postgres)",
+  "登録済み Memory": "Saved memories",
+  "まだ Memory がありません。": "No memories yet.",
+  "Delete \"{title}\"?": "Delete \"{title}\"?",
+  "Mark as still valid": "Mark as still valid",
+  "Search instead of editing": "Search instead of editing",
+  "Revision history": "Revision history",
+  "No revisions yet.": "No revisions yet.",
+  "restore": "restore",
+  "close": "close",
+  "verify": "verify",
+
+  // Tools pane
+  "まだ登録されていません。": "Nothing registered yet.",
+  "説明": "Description",
+  "既定権限": "Default permission",
+  "権限ルール": "Permission rules",
+  "読み取りは許可、書き込み・削除は承認": "Reads are allowed; writes and deletes ask for approval",
+
+  // Approvals pane
+  "承認待ちのアクションはありません": "No actions are waiting for approval",
+  "チャット内でもインラインで承認できます。": "You can also approve inline from the chat.",
+
+  // Agents pane
+  "ツールを絞った専用エージェントを定義します。":
+    "Define dedicated agents restricted to a subset of tools.",
+  "Agent 名": "Agent name",
+  "Name": "Name",
+  "System instructions": "System instructions",
+  "System instructions…": "System instructions…",
+
+  // Projects pane
+  "Project 名": "Project name",
+  "まだありません。": "Nothing here yet.",
+
+  // Models pane
+  "ラベル": "Label",
+  "Provider": "Provider",
+  "Context": "Context",
+  "Vision": "Vision",
+  "Tools": "Tools",
+  "Reasoning": "Reasoning",
+  "Verify": "Verify",
+
+  // Diff preview
+  "binary or unreadable old content": "binary or unreadable old content",
+
+  // Shared components / error boundary
+  "Copy": "Copy",
+  "The interface failed to start": "The interface failed to start",
+  "Reload": "Reload",
+
+  // Diagnostics pane
+  "Storage": "Storage",
+  "Secrets (Keychain)": "Secrets (Keychain)",
+  "Engine": "Engine",
+  "Counts": "Counts",
+  "OK": "OK",
+  "Fail": "Fail",
+  "Providers": "Providers",
+  "Models": "Models",
+  "Memories": "Memories",
+  "Skills": "Skills",
+  "Active Runs": "Active Runs",
+
+  // Browser pane
+  "Backend": "Backend",
+  "Refresh status": "Refresh status",
+  "Refresh": "Refresh",
+  "headless": "headless",
+  "headed": "headed",
+  "profiles": "profiles",
+  "artifacts": "artifacts",
+  "No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.":
+    "No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.",
+  "Workspace profile": "Workspace profile",
+  "new profile": "new profile",
+  "(not provisioned)": "(not provisioned)",
+  "Delete this profile's cookies, storage and cache?":
+    "Delete this profile's cookies, storage and cache?",
+  "Reset": "Reset",
+  "Action": "Action",
+  "Running…": "Running…",
+  "Run": "Run",
+  "Activity": "Activity",
+  "No actions yet.": "No actions yet.",
+  "ok": "ok",
+  "error": "error",
+  "output": "output",
+  "Known profiles": "Known profiles",
+  "ready": "ready",
+  "empty": "empty",
+  "Each workspace keeps its own cookies, localStorage and cache, matching the agent's workspace.":
+    "Each workspace keeps its own cookies, localStorage and cache, matching the agent's workspace.",
+  "Page info": "Page info",
+  "Title, URL and viewport": "Title, URL and viewport",
+  "Navigate": "Navigate",
+  "Load a URL": "Load a URL",
+  "DOM": "DOM",
+  "innerHTML of a selector (or the body)": "innerHTML of a selector (or the body)",
+  "Click": "Click",
+  "Click a CSS selector": "Click a CSS selector",
+  "Type": "Type",
+  "Type text into a selector": "Type text into a selector",
+  "Scroll": "Scroll",
+  "Scroll by dx/dy": "Scroll by dx/dy",
+  "Wait": "Wait",
+  "Wait for selector, URL or JS": "Wait for selector, URL or JS",
+  "Screenshot": "Screenshot",
+  "Capture the viewport": "Capture the viewport",
+  "Evaluate": "Evaluate",
+  "Run JavaScript": "Run JavaScript",
+  "CSS selector, e.g. #search or body": "CSS selector, e.g. #search or body",
+  "text to type": "text to type",
+  "wait until URL contains…": "wait until URL contains…",
+
+  // Health indicator / update banner
+  "正常": "OK",
+  "接続エラー": "Connection error",
+  "確認中": "Checking…",
+  "ヘルス": "Health",
+  "アップデートがあります": "Update available",
+  "インストールして再起動": "Install & restart",
+
+  // Command palette
+  "一致する項目がありません": "No matching commands",
+
+  // Settings: quick prompts, network, updates, mode select
+  "このコードの意図と動作を、日本語で要約して": "Summarise what this code does and why, in Japanese",
+  "リファクタ案を出して。安全策もセットで": "Suggest a refactor, with the safety net for it",
+  "リポジトリ内の TODO を全部集めて": "Collect every TODO in this repository",
+  "このプロジェクトの README 草案を書いて": "Draft a README for this project",
+  "Egress 許可リスト": "Egress allowlist",
+  "未設定時は Tool がすべての公開ドメインへ到達可能。ワイルドカード (*) と完全一致ドメインを混在可。": "With no list, tools can reach any public domain. Wildcard (*) and exact hosts can be mixed.",
+  "自動更新を有効化": "Enable automatic updates",
+  "匿名の利用統計を共有 (将来)": "Share anonymous usage statistics (coming soon)",
+
+  // Backup / restore, MCP OAuth, skills export, sidebar landmark
+  "サイドバー": "Sidebar",
+  "バックアップ / 復元": "Backup / restore",
+  "データベース全体をスナップショットし、圧縮・暗号化します (Argon2id + AES-256-GCM)。API キーは OS キーチェーンに残るため含まれません。":
+    "The whole database is snapshotted, compressed and encrypted (Argon2id + AES-256-GCM). API keys stay in the OS Keychain and are not included.",
+  "バックアップパスワード": "Backup password",
+  "暗号化バックアップを作成": "Create an encrypted backup",
+  "復元する既存の .mixbak": "Existing .mixbak to restore",
+  "バックアップを検証し、再起動時に復元": "Verify a backup and reload it on restart",
+  "復元": "Restore",
+  "今すぐ再起動": "Restart now",
+  "{bytes} バイト（{tables} テーブル）を {path} に保存しました":
+    "Saved {bytes} bytes ({tables} tables) to {path}",
+  "{tables} テーブルを検証しました（{date}）。復元データを読み込むためにアプリを再起動します。":
+    "Verified {tables} tables from {date}. The app restarts to load the restored data.",
+  "OAuth でサインイン": "Sign in with OAuth",
+
+  // Composer / transcript landmarks
+  "メッセージを入力": "Write a message",
+  "会話": "Conversation",
 };
 
 /** Translate a Japanese UI key into the active display language. */

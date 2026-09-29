@@ -1,0 +1,7 @@
+# Local and CI builds resolve to the same toolchain.
+# CI uses dtolnay/rust-toolchain@stable (.github/workflows/ci.yml); rustup reads
+# this file first, and `channel = "stable"` matches that action, so the two stay
+# in sync. `components` guarantees rustfmt/clippy are present locally too.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

@@ -32,10 +32,10 @@ export function ToolsPane() {
   return (
     <Section>
       {list.length === 0 ? (
-        <EmptyState icon={<Wrench size={22} />} title={t("ツール")} sub="まだ登録されていません。" />
+        <EmptyState icon={<Wrench size={22} />} title={t("ツール")} sub={t("まだ登録されていません。")} />
       ) : (
         <DataTable
-          columns={["ID", "説明", "既定権限", "権限ルール"]}
+          columns={["ID", t("説明"), t("既定権限"), t("権限ルール")]}
           rows={list}
           rowKey={(tool: ToolView) => tool.id}
         >
@@ -56,7 +56,7 @@ export function ToolsPane() {
                   {tool.mixed && (
                     <span
                       className="text-2xs text-faint"
-                      title="読み取りは許可、書き込み・削除は承認"
+                      title={t("読み取りは許可、書き込み・削除は承認")}
                     >
                       read / write
                     </span>

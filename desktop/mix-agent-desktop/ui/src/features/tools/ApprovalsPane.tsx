@@ -28,8 +28,8 @@ export function ApprovalsPane() {
       {items.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck size={22} />}
-          title="承認待ちのアクションはありません"
-          sub="チャット内でもインラインで承認できます。"
+          title={t("承認待ちのアクションはありません")}
+          sub={t("チャット内でもインラインで承認できます。")}
         />
       ) : (
         items.map((p: PendingApprovalView) => (

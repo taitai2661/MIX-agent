@@ -1,6 +1,7 @@
 //! Shared HTTP transport helpers used by the OpenAI-compatible and Ollama
 //! adapters. SSE parsing handles both `data: {...}` and `data: [DONE]` markers.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -9,6 +10,29 @@ use reqwest::{Client, RequestBuilder, Response};
 use serde_json::Value;
 
 use crate::reliability::{self, ProviderErrorKind};
+
+/// The process-wide HTTP client.
+///
+/// Every call site used to build its own `Client`, which rebuilds the
+/// connection pool (a TLS handshake per request) and — at most sites — set no
+/// timeout, so a host that accepted the connection and then went silent blocked
+/// the run *and* its cancellation indefinitely.
+///
+/// `read_timeout` rather than an overall `timeout`: a total timeout would also
+/// cover the body read and kill a long-lived SSE stream, while `read_timeout`
+/// only fires when the peer stops sending mid-stream. Callers that need a hard
+/// deadline (health probes, token exchange) set `.timeout()` on their request.
+pub fn client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(120))
+            .pool_max_idle_per_host(4)
+            .build()
+            .expect("reqwest TLS backend")
+    })
+}
 
 /// Send a request, retrying transient failures.
 ///
@@ -29,11 +53,20 @@ pub async fn send_with_retry(request: RequestBuilder) -> anyhow::Result<Response
             Err(err) => {
                 let kind = ProviderErrorKind::from_transport(&err.to_string());
                 if reliability::should_retry(kind, attempt) {
-                    tokio::time::sleep(reliability::wait_for(attempt, None)).await;
+                    let wait = reliability::wait_for(attempt, None);
+                    tracing::warn!(
+                        attempt,
+                        ?kind,
+                        wait_ms = wait.as_millis() as u64,
+                        %err,
+                        "transient provider transport error, retrying"
+                    );
+                    tokio::time::sleep(wait).await;
                     attempt += 1;
                     request = cloned;
                     continue;
                 }
+                tracing::error!(attempt, ?kind, %err, "provider request failed");
                 return Err(anyhow::anyhow!("provider request failed: {}", err));
             }
         };
@@ -47,11 +80,26 @@ pub async fn send_with_retry(request: RequestBuilder) -> anyhow::Result<Response
         let retry_after = reliability::retry_after_secs(response.headers());
         let body = response.text().await.unwrap_or_default();
         if reliability::should_retry(kind, attempt) {
-            tokio::time::sleep(reliability::wait_for(attempt, retry_after)).await;
+            let wait = reliability::wait_for(attempt, retry_after);
+            tracing::warn!(
+                attempt,
+                status = status.as_u16(),
+                ?kind,
+                wait_ms = wait.as_millis() as u64,
+                "transient provider status, retrying"
+            );
+            tokio::time::sleep(wait).await;
             attempt += 1;
             request = cloned;
             continue;
         }
+        tracing::error!(
+            attempt,
+            status = status.as_u16(),
+            ?kind,
+            body = %truncate(&body),
+            "provider rejected the request"
+        );
         return Err(anyhow::anyhow!(
             "provider HTTP {} after {} attempt(s): {}",
             status,
@@ -74,7 +122,13 @@ fn truncate(body: &str) -> String {
     if body.len() <= MAX {
         return body.to_string();
     }
-    format!("{}…", &body[..MAX])
+    // Slicing at an arbitrary byte panics when it lands inside a multi-byte
+    // character, and an error body in Japanese hits that almost immediately.
+    let mut cut = MAX;
+    while cut > 0 && !body.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}…", &body[..cut])
 }
 
 /// Total time a caller should be willing to wait for a retried request.

@@ -17,10 +17,12 @@
 //! returns through the `mix-agent-desktop://` deep link so no local HTTP
 //! listener is required.
 
+pub mod error;
 pub mod host;
 pub mod oauth;
 pub mod registry;
 
+pub use error::McpError;
 pub use host::{ConnectionConfig, ConnectionStatus, McpHost, McpTool, Transport};
 pub use oauth::{AuthRequest, PkcePair};
 pub use registry::{collect_tool_specs, hydrate_and_connect, load_configs};

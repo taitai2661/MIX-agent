@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { errorMessage } from "@/lib/errors";
 import { Alert } from "./ui/alert";
 
 /** Inline error surface used by panes that keep their own layout. */
@@ -13,7 +14,7 @@ export function ErrorBox({
   action?: string;
   onAction?: () => void;
 }) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
+  const message = errorMessage(error);
   if (!message) return null;
   return (
     <Alert

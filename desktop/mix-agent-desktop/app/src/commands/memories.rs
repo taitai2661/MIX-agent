@@ -42,7 +42,7 @@ impl From<MemoryItem> for MemoryView {
 pub async fn list_memories(state: State<'_, AppState>) -> Result<Vec<MemoryView>, String> {
     let items = MemoryService::list(state.storage.as_ref(), 200)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(items.into_iter().map(MemoryView::from).collect())
 }
 
@@ -72,7 +72,7 @@ pub async fn create_memory(
         },
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::cmd_err)?;
     Ok(MemoryView::from(item))
 }
 
@@ -90,7 +90,7 @@ pub async fn update_memory(
 ) -> Result<MemoryView, String> {
     let item = MemoryService::update(state.storage.as_ref(), &input.id, &input.title, &input.body)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(MemoryView::from(item))
 }
 
@@ -98,7 +98,7 @@ pub async fn update_memory(
 pub async fn delete_memory(state: State<'_, AppState>, id: String) -> Result<(), String> {
     MemoryService::delete(state.storage.as_ref(), &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::cmd_err)
 }
 
 #[derive(Serialize)]
@@ -116,7 +116,7 @@ pub async fn list_memory_revisions(
 ) -> Result<Vec<MemoryRevisionView>, String> {
     let revisions = MemoryService::revisions(state.storage.as_ref(), &memory_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(revisions
         .into_iter()
         .map(|r| MemoryRevisionView {
@@ -136,7 +136,7 @@ pub async fn restore_memory_revision(
 ) -> Result<MemoryView, String> {
     let item = MemoryService::restore(state.storage.as_ref(), &memory_id, &revision_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(MemoryView::from(item))
 }
 
@@ -148,10 +148,10 @@ pub async fn verify_memory(
 ) -> Result<MemoryView, String> {
     MemoryService::verify(state.storage.as_ref(), &id, &verdict)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     let item = MemoryService::get(state.storage.as_ref(), &id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(MemoryView::from(item))
 }
 
@@ -173,7 +173,7 @@ pub async fn search_memories(
 ) -> Result<Vec<MemorySearchHit>, String> {
     let hits = MemoryService::search(state.storage.as_ref(), &query, limit.unwrap_or(20))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::cmd_err)?;
     Ok(hits
         .into_iter()
         .map(|h| MemorySearchHit {

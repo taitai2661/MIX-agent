@@ -9,6 +9,7 @@ use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 
 pub mod anthropic;
+pub mod discovery;
 pub mod gemini;
 pub mod lmstudio;
 pub mod ollama;

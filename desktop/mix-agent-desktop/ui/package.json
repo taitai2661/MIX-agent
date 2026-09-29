@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 5173 --strictPort",
     "test": "vitest run",
-    "lint": "eslint --max-warnings 0 \"src/**/*.{ts,tsx}\""
+    "lint": "eslint --max-warnings 0 \"src/**/*.{ts,tsx}\"",
+    "typecheck": "tsc -b",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",
@@ -24,7 +26,6 @@
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-deep-link": "^2.0.1",
     "@tauri-apps/plugin-dialog": "^2.0.1",
-    "@tauri-apps/plugin-fs": "^2.0.3",
     "@tauri-apps/plugin-http": "^2.0.1",
     "@tauri-apps/plugin-notification": "^2.0.1",
     "@tauri-apps/plugin-os": "^2.0.0",
@@ -39,7 +40,6 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.6.0",
     "remark-breaks": "4.0.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.2.0",
@@ -47,7 +47,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@playwright/test": "^1.51.0",
     "@tailwindcss/vite": "^4.1.7",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

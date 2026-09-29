@@ -9,11 +9,18 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { relativeTime, threadGroup, type ThreadGroup } from "@/lib/format";
-import { useUi, type View } from "@/lib/ui";
+import {
+  SURFACE_MODES, useUi, type Surface, type ThreadFilter, type View,
+} from "@/lib/ui";
 import type { ConversationSummary } from "@/lib/types";
+import { errorMessage } from "@/lib/errors";
+import { useApplySettings, PENDING_APPROVALS_POLL_MS } from "@/lib/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ResizableHandle } from "./ResizableHandle";
+import { useCreateThread } from "./useShellEvents";
+import { usePanelWidth } from "./usePanelWidth";
 
 interface NavEntry {
   id: View;
@@ -64,8 +71,6 @@ export function Sidebar() {
   const setView = useUi((s) => s.setView);
   const conversationId = useUi((s) => s.conversationId);
   const setConversationId = useUi((s) => s.setConversationId);
-  const modelId = useUi((s) => s.modelId);
-  const mode = useUi((s) => s.mode);
   const locale = useUi((s) => s.locale);
   const setLocale = useUi((s) => s.setLocale);
   const theme = useUi((s) => s.theme);
@@ -73,6 +78,12 @@ export function Sidebar() {
   const sidebarOpen = useUi((s) => s.sidebarOpen);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const setActiveProjectId = useUi((s) => s.setActiveProjectId);
+  const threadFilter = useUi((s) => s.threadFilter);
+  const setThreadFilter = useUi((s) => s.setThreadFilter);
+  const { width, setWidth, commitWidth } = usePanelWidth(
+    "mix-agent-sidebar-width", 264, 210, 440,
+  );
+  const applySettings = useApplySettings();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -83,26 +94,12 @@ export function Sidebar() {
   const approvals = useQuery({
     queryKey: ["pending_approvals"],
     queryFn: api.listPendingApprovals,
-    refetchInterval: 4000,
+    refetchInterval: PENDING_APPROVALS_POLL_MS,
   });
 
   const activeProject = projects.data?.find((p) => p.id === activeProjectId) ?? null;
 
-  const createConversation = useMutation({
-    mutationFn: () =>
-      api.createConversation({
-        mode,
-        model_id: modelId,
-        title: null,
-        workspace_id: null,
-        project_id: activeProjectId,
-      }),
-    onSuccess: (created) => {
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      setConversationId(created.id);
-      setView("chat");
-    },
-  });
+  const createConversation = useCreateThread();
 
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
@@ -132,11 +129,33 @@ export function Sidebar() {
     await api.saveTextFile(path, markdown);
   };
 
+  // Counts per surface feed the filter segment's badges. Computed before the
+  // search box filters anything so the counts reflect the full conversation
+  // list within the current project filter.
+  const filterCounts = useMemo(() => {
+    const scoped = (conversations.data ?? []).filter(
+      (c) => !activeProjectId || c.project_id === activeProjectId,
+    );
+    const chat = scoped.filter((c) => SURFACE_MODES.chat.includes(c.mode as never)).length;
+    const desktopAgent = scoped.filter(
+      (c) => SURFACE_MODES["desktop-agent"].includes(c.mode as never),
+    ).length;
+    return {
+      all: scoped.length,
+      chat,
+      "desktop-agent": desktopAgent,
+    } satisfies Record<ThreadFilter, number>;
+  }, [conversations.data, activeProjectId]);
+
   const threads = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const filterSurface: Surface | null = threadFilter === "all" ? null : threadFilter;
+    const allowedModes: ReadonlyArray<string> | null =
+      filterSurface === null ? null : SURFACE_MODES[filterSurface];
     const list = (conversations.data ?? []).filter(
       (c) =>
         (!activeProjectId || c.project_id === activeProjectId)
+        && (allowedModes === null || allowedModes.includes(c.mode))
         && (!q || c.title.toLowerCase().includes(q) || (c.preview ?? "").toLowerCase().includes(q)),
     );
     const groups = new Map<ThreadGroup, ConversationSummary[]>();
@@ -147,7 +166,13 @@ export function Sidebar() {
       groups.set(group, bucket);
     }
     return groups;
-  }, [conversations.data, search, activeProjectId]);
+  }, [conversations.data, search, activeProjectId, threadFilter]);
+
+  const filterOptions: Array<{ id: ThreadFilter; label: string; Icon: typeof MessageSquare }> = [
+    { id: "all", label: t("すべてのスレッド"), Icon: MessageSquare },
+    { id: "chat", label: t("chat"), Icon: MessageSquare },
+    { id: "desktop-agent", label: t("desktop-agent"), Icon: Bot },
+  ];
 
   const pendingCount = approvals.data?.length ?? 0;
   const hasThreads = (conversations.data?.length ?? 0) > 0;
@@ -159,15 +184,17 @@ export function Sidebar() {
   };
 
   return (
-    <aside
-      data-collapsed={!sidebarOpen}
-      aria-label="Sidebar"
-      className={cn(
-        "flex w-(--sidebar-w) shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar",
-        "transition-[margin] duration-150 ease-out",
-        sidebarOpen ? "mr-0" : "-mr-(--sidebar-w)",
-      )}
-    >
+    <>
+      <aside
+        data-collapsed={!sidebarOpen}
+        aria-label={t("サイドバー")}
+        style={{ "--sidebar-w": `${width}px` } as React.CSSProperties}
+        className={cn(
+          "flex w-(--sidebar-w) shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar",
+          "transition-[margin] duration-150 ease-out",
+          sidebarOpen ? "mr-0" : "-mr-(--sidebar-w)",
+        )}
+      >
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
         <Button
           variant="primary"
@@ -189,7 +216,58 @@ export function Sidebar() {
             aria-label={t("スレッドを検索")}
             className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label={t("クリア")}
+              className="shrink-0 text-faint transition-colors hover:text-fg"
+            >
+              <X size={11} />
+            </button>
+          )}
         </label>
+
+        {(filterCounts.all > 0 || filterCounts.chat > 0 || filterCounts["desktop-agent"] > 0) && (
+          <div
+            role="tablist"
+            aria-label={t("サーフェスで絞り込み")}
+            className="flex h-7 items-center gap-0.5 rounded-md border border-line bg-surface p-0.5"
+          >
+            {filterOptions.map((opt) => {
+              const selected = threadFilter === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  data-testid={`thread-filter-${opt.id}`}
+                  onClick={() => setThreadFilter(opt.id)}
+                  className={cn(
+                    "flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded px-1.5",
+                    "text-2xs font-medium transition-colors duration-100",
+                    selected
+                      ? "bg-bg text-fg shadow-xs"
+                      : "text-muted hover:text-fg",
+                  )}
+                  title={opt.label}
+                >
+                  <opt.Icon size={11} className="shrink-0" aria-hidden="true" />
+                  <span className="truncate">{opt.label}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-sm px-1 font-mono text-2xs leading-4",
+                      selected ? "bg-active text-fg" : "text-faint",
+                    )}
+                  >
+                    {filterCounts[opt.id]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {NAV_GROUPS.map((group) => (
           <nav key={group.title} className="flex flex-col gap-0.5">
@@ -270,8 +348,9 @@ export function Sidebar() {
               if (!items?.length) return null;
               return (
                 <section key={group}>
-                  <h2 className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint">
+                  <h2 className="flex items-center gap-1 px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint">
                     {t(GROUP_LABEL[group])}
+                    <span className="font-mono font-normal text-faint/70">{items.length}</span>
                   </h2>
                   <ul className="flex flex-col gap-0.5">
                     {items.map((c) => (
@@ -318,14 +397,31 @@ export function Sidebar() {
                             />
                           ) : (
                             <>
-                              <span className="truncate pr-14 text-sm font-medium text-fg">
-                                {c.title}
+                              <span className="flex min-w-0 items-center gap-1.5 pr-14">
+                                {c.project_id && (
+                                  <span
+                                    className="size-1.5 shrink-0 rounded-full bg-brand"
+                                    aria-hidden="true"
+                                    title={t("プロジェクト紐付けあり")}
+                                  />
+                                )}
+                                <span className="truncate text-sm font-medium text-fg">
+                                  {c.title}
+                                </span>
                               </span>
                               {c.preview && (
                                 <span className="truncate text-xs text-muted">{c.preview}</span>
                               )}
-                              <span className="text-2xs text-faint">
-                                {relativeTime(c.updated_at)} · {c.mode}
+                              <span className="flex items-center gap-1 text-2xs text-faint">
+                                <span>{relativeTime(c.updated_at)}</span>
+                                <span className="text-line">·</span>
+                                <span className="font-mono uppercase">{c.mode}</span>
+                                {c.message_count > 0 && (
+                                  <>
+                                    <span className="text-line">·</span>
+                                    <span className="font-mono">{c.message_count}</span>
+                                  </>
+                                )}
                               </span>
 
                               {/* Revealed on hover/focus only, so the list reads as
@@ -393,12 +489,23 @@ export function Sidebar() {
           </div>
         )}
 
-        {!hasThreads && !conversations.isPending && (
-          <p className="px-2 text-xs leading-5 text-faint">
-            {t("スレッドがありません")}
-            <br />
-            {t("新しい会話を始めましょう")}
-          </p>
+        {conversations.isError && (
+          <div
+            role="alert"
+            className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-3 text-xs text-danger"
+          >
+            {errorMessage(conversations.error) || t("エラー")}
+          </div>
+        )}
+        {!conversations.isError && !hasThreads && !conversations.isPending && (
+          <div className="mt-2 flex flex-col items-start gap-1 rounded-lg border border-dashed border-line px-3 py-3 text-start">
+            <span className="text-xs font-medium text-muted">
+              {t("スレッドがありません")}
+            </span>
+            <span className="text-2xs text-faint leading-4">
+              {t("新しい会話を始めましょう")}
+            </span>
+          </div>
         )}
       </div>
 
@@ -406,7 +513,13 @@ export function Sidebar() {
         <Button
           size="sm"
           variant="ghost"
-          onClick={() => setLocale(locale === "ja" ? "en" : "ja")}
+          onClick={() => {
+            const next = locale === "ja" ? "en" : "ja";
+            setLocale(next);
+            // Persisted immediately: a local-only switch was overwritten by
+            // the stored setting on the next launch.
+            void applySettings({ language: next });
+          }}
           title={t("言語")}
         >
           {locale === "ja" ? "EN" : "JA"}
@@ -414,7 +527,11 @@ export function Sidebar() {
         <Button
           size="sm"
           variant="ghost"
-          onClick={() => setTheme(THEME_NEXT[theme])}
+          onClick={() => {
+            const next = THEME_NEXT[theme];
+            setTheme(next);
+            void applySettings({ theme: next });
+          }}
           title={t("テーマ")}
           aria-label={t("テーマ")}
         >
@@ -423,6 +540,17 @@ export function Sidebar() {
         <span className="flex-1" />
         <span className="text-2xs text-faint">MIX-agent</span>
       </div>
-    </aside>
+      </aside>
+      {sidebarOpen && (
+        <ResizableHandle
+          value={width}
+          min={210}
+          max={440}
+          label={t("サイドバーの幅")}
+          onChange={setWidth}
+          onCommit={commitWidth}
+        />
+      )}
+    </>
   );
 }

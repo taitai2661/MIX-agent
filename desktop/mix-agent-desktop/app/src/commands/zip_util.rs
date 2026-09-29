@@ -83,6 +83,37 @@ struct ZipEntry {
     is_dir: bool,
 }
 
+/// Little-endian readers that fail instead of panicking on a truncated archive.
+///
+/// The previous implementation sliced with `bytes[a..b].try_into().unwrap()`,
+/// which is only safe when `b <= len()`. A crafted or truncated zip could make
+/// `name_len` or the local-header offsets run past the buffer, and with
+/// `panic = "abort"` that took the whole app down.
+fn le_u16(bytes: &[u8], at: usize) -> Result<u16, String> {
+    let end = at
+        .checked_add(2)
+        .ok_or_else(|| "zip offset overflow".to_string())?;
+    match bytes.get(at..end) {
+        Some(b) => Ok(u16::from_le_bytes([b[0], b[1]])),
+        None => Err("truncated zip archive".to_string()),
+    }
+}
+
+fn le_u32(bytes: &[u8], at: usize) -> Result<u32, String> {
+    let end = at
+        .checked_add(4)
+        .ok_or_else(|| "zip offset overflow".to_string())?;
+    match bytes.get(at..end) {
+        Some(b) => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        None => Err("truncated zip archive".to_string()),
+    }
+}
+
+/// Per-entry and per-archive ceilings so a compression bomb cannot exhaust
+/// memory before the entry is rejected.
+const MAX_ENTRY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
+
 fn read_entries(bytes: &[u8]) -> Result<Vec<ZipEntry>, String> {
     // Locate the End Of Central Directory record. It occupies the final 22
     // bytes when there is no archive comment, so its signature starts at
@@ -94,50 +125,57 @@ fn read_entries(bytes: &[u8]) -> Result<Vec<ZipEntry>, String> {
     let eocd_sig: u32 = 0x0605_4b50;
     let eocd = (0..=bytes.len() - EOCD_LEN)
         .rev()
-        .find(|i| u32::from_le_bytes(bytes[*i..*i + 4].try_into().unwrap()) == eocd_sig)
+        .find(|i| le_u32(bytes, *i).is_ok_and(|sig| sig == eocd_sig))
         .ok_or("not a zip archive")?;
-    let total = u16::from_le_bytes(bytes[eocd + 10..eocd + 12].try_into().unwrap()) as usize;
-    let cd_offset = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+    let total = le_u16(bytes, eocd + 10)? as usize;
+    let cd_offset = le_u32(bytes, eocd + 16)? as usize;
 
     let mut out = Vec::new();
+    let mut decoded = 0usize;
     let mut cursor = cd_offset;
     for _ in 0..total {
         if cursor + 46 > bytes.len() {
             break;
         }
-        if u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) != 0x0201_4b50 {
+        if le_u32(bytes, cursor)? != 0x0201_4b50 {
             break;
         }
-        let method = u16::from_le_bytes(bytes[cursor + 10..cursor + 12].try_into().unwrap());
-        let comp_size =
-            u32::from_le_bytes(bytes[cursor + 20..cursor + 24].try_into().unwrap()) as usize;
-        let name_len =
-            u16::from_le_bytes(bytes[cursor + 28..cursor + 30].try_into().unwrap()) as usize;
-        let extra_len =
-            u16::from_le_bytes(bytes[cursor + 30..cursor + 32].try_into().unwrap()) as usize;
-        let comment_len =
-            u16::from_le_bytes(bytes[cursor + 32..cursor + 34].try_into().unwrap()) as usize;
-        let local_offset =
-            u32::from_le_bytes(bytes[cursor + 42..cursor + 46].try_into().unwrap()) as usize;
-        let name = String::from_utf8_lossy(&bytes[cursor + 46..cursor + 46 + name_len]).to_string();
+        let method = le_u16(bytes, cursor + 10)?;
+        let comp_size = le_u32(bytes, cursor + 20)? as usize;
+        let name_len = le_u16(bytes, cursor + 28)? as usize;
+        let extra_len = le_u16(bytes, cursor + 30)? as usize;
+        let comment_len = le_u16(bytes, cursor + 32)? as usize;
+        let local_offset = le_u32(bytes, cursor + 42)? as usize;
+        let name_start = cursor + 46;
+        let name_end = name_start
+            .checked_add(name_len)
+            .ok_or_else(|| "zip offset overflow".to_string())?;
+        if name_end > bytes.len() {
+            return Err("truncated zip central directory".to_string());
+        }
+        let name = String::from_utf8_lossy(&bytes[name_start..name_end]).to_string();
 
         // Read the local header to find the data offset.
         if local_offset + 30 > bytes.len() {
             break;
         }
-        let lh_name_len = u16::from_le_bytes(
-            bytes[local_offset + 26..local_offset + 28]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let lh_extra_len = u16::from_le_bytes(
-            bytes[local_offset + 28..local_offset + 30]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let data_start = local_offset + 30 + lh_name_len + lh_extra_len;
-        let data_end = (data_start + comp_size).min(bytes.len());
+        let lh_name_len = le_u16(bytes, local_offset + 26)? as usize;
+        let lh_extra_len = le_u16(bytes, local_offset + 28)? as usize;
+        let data_start = local_offset
+            .checked_add(30)
+            .and_then(|v| v.checked_add(lh_name_len))
+            .and_then(|v| v.checked_add(lh_extra_len))
+            .ok_or_else(|| "zip offset overflow".to_string())?;
+        let data_end = data_start
+            .checked_add(comp_size)
+            .ok_or_else(|| "zip offset overflow".to_string())?;
+        if data_start > bytes.len() || data_end > bytes.len() {
+            return Err("zip entry data lies outside the archive".to_string());
+        }
         let raw = &bytes[data_start..data_end];
+        if comp_size > MAX_ENTRY_BYTES {
+            return Err("zip entry is too large".to_string());
+        }
         let data = if method == 0 {
             raw.to_vec()
         } else if method == 8 {
@@ -145,6 +183,13 @@ fn read_entries(bytes: &[u8]) -> Result<Vec<ZipEntry>, String> {
         } else {
             return Err(format!("unsupported zip compression method: {}", method));
         };
+        if data.len() > MAX_ENTRY_BYTES {
+            return Err("zip entry is too large".to_string());
+        }
+        decoded = decoded.saturating_add(data.len());
+        if decoded > MAX_ARCHIVE_BYTES {
+            return Err("zip archive expands beyond the size limit".to_string());
+        }
         out.push(ZipEntry {
             is_dir: name.ends_with('/'),
             name,
@@ -249,17 +294,20 @@ fn inflate(data: &[u8]) -> Result<Vec<u8>, String> {
                 reader.align();
                 let len = reader.bits(16)? as usize;
                 let _nlen = reader.bits(16)?;
+                if out.len() + len > MAX_ENTRY_BYTES {
+                    return Err("deflate output exceeds the size limit".into());
+                }
                 for _ in 0..len {
                     out.push(reader.bits(8)? as u8);
                 }
             }
             1 => {
                 let (lit, dist) = fixed_trees();
-                inflate_block(&mut reader, &lit, &dist, &mut out)?;
+                inflate_block(&mut reader, &lit, &dist, &mut out, MAX_ENTRY_BYTES)?;
             }
             2 => {
                 let (lit, dist) = dynamic_trees(&mut reader)?;
-                inflate_block(&mut reader, &lit, &dist, &mut out)?;
+                inflate_block(&mut reader, &lit, &dist, &mut out, MAX_ENTRY_BYTES)?;
             }
             _ => return Err("invalid deflate block type".into()),
         }
@@ -416,6 +464,7 @@ fn inflate_block(
     lit: &Huffman,
     dist: &Huffman,
     out: &mut Vec<u8>,
+    limit: usize,
 ) -> Result<(), String> {
     const LENGTH_BASE: [u16; 29] = [
         3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
@@ -434,6 +483,11 @@ fn inflate_block(
     ];
 
     loop {
+        // Checked once per symbol: a crafted stream can expand by ~1000x, so
+        // waiting until the block ends would already have allocated it.
+        if out.len() > limit {
+            return Err("deflate output exceeds the size limit".into());
+        }
         let sym = lit.decode(reader)?;
         if sym < 256 {
             out.push(sym as u8);
@@ -548,4 +602,44 @@ mod tests {
         assert!(out.status.success(), "python3 zlib failed");
         out.stdout
     }
+
+    #[test]
+    fn a_truncated_archive_is_rejected_without_panicking() {
+        let entries = vec![("SKILL.md".to_string(), b"name: demo\n".to_vec())];
+        let bytes = write_zip(&entries).expect("write");
+        // Every prefix must produce a Result: slicing past the buffer used to
+        // panic, which with `panic = "abort"` killed the process.
+        for cut in 0..bytes.len() {
+            let _ = unzip_skill(&bytes[..cut]);
+        }
+    }
+
+    #[test]
+    fn a_name_length_that_runs_past_the_buffer_is_rejected() {
+        let entries = vec![("SKILL.md".to_string(), b"name: demo\n".to_vec())];
+        let mut bytes = write_zip(&entries).expect("write");
+        // Central directory header: name length lives at offset 28.
+        let eocd = bytes.len() - EOCD_FOR_TEST;
+        let cd = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+        bytes[cd + 28] = 0xff;
+        bytes[cd + 29] = 0xff;
+        assert!(unzip_skill(&bytes).is_err());
+    }
+
+    #[test]
+    fn entry_data_outside_the_archive_is_rejected() {
+        let entries = vec![("SKILL.md".to_string(), b"name: demo\n".to_vec())];
+        let mut bytes = write_zip(&entries).expect("write");
+        let eocd = bytes.len() - EOCD_FOR_TEST;
+        let cd = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+        // Claim a compressed size far beyond the archive.
+        bytes[cd + 20] = 0xff;
+        bytes[cd + 21] = 0xff;
+        bytes[cd + 22] = 0xff;
+        bytes[cd + 23] = 0x00;
+        assert!(unzip_skill(&bytes).is_err());
+    }
+
+    /// End-of-central-directory record length, used when poking at headers.
+    const EOCD_FOR_TEST: usize = 22;
 }
