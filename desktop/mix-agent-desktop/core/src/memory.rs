@@ -161,8 +161,9 @@ impl MemoryService {
 
     pub async fn get(storage: &mixd_storage::Storage, id: &str) -> anyhow::Result<MemoryItem> {
         let row = sqlx::query(
-            "SELECT id, data, role, scope, source_kind, lifecycle_state, confidence, salience, \
-             strength, task_id, created_at, updated_at FROM memories WHERE id = ?",
+            "SELECT id, data, verification, role, scope, source_kind, lifecycle_state, \
+             confidence, salience, strength, task_id, created_at, updated_at \
+             FROM memories WHERE id = ?",
         )
         .bind(id)
         .fetch_one(storage.pool())
@@ -202,11 +203,12 @@ impl MemoryService {
             lifecycle_state: row
                 .try_get("lifecycle_state")
                 .unwrap_or_else(|_| "candidate".into()),
-            verification: data
-                .get("verification")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unverified")
-                .to_string(),
+            // The column, not the JSON blob: `verify` writes the column and
+            // `update` rebuilds the blob from title/content only, so reading the
+            // blob meant a verified Memory stayed `unverified` forever.
+            verification: row
+                .try_get("verification")
+                .unwrap_or_else(|_| "unverified".into()),
             confidence: row.try_get("confidence").unwrap_or(0.7),
             salience: row.try_get("salience").unwrap_or(0.5),
             strength: row.try_get("strength").unwrap_or(0.6),
@@ -221,8 +223,8 @@ impl MemoryService {
         limit: usize,
     ) -> anyhow::Result<Vec<MemoryItem>> {
         let rows = sqlx::query(
-            "SELECT id, data, role, scope, source_kind, lifecycle_state, confidence, salience, \
-             strength, task_id, created_at, updated_at FROM memories \
+            "SELECT id, data, verification, role, scope, source_kind, lifecycle_state, \
+             confidence, salience, strength, task_id, created_at, updated_at FROM memories \
              ORDER BY updated_at DESC LIMIT ?",
         )
         .bind(limit as i64)

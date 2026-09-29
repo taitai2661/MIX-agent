@@ -107,3 +107,68 @@ def test_skill_resource_tool_resolution(signed):
         with pytest.raises(ValueError):
             skill_service.read_resource(db, owner, row.id, "../escape")
         assert skill_service.find(db, owner, "missing-skill") is None
+
+
+def test_create_rejects_a_name_the_rule_rejects(signed):
+    response = signed.post(
+        "/api/v1/skills",
+        json={"name": "My Skill", "description": "does a thing", "content": "body"},
+    )
+    assert response.status_code == 422, response.text
+    assert isinstance(response.json()["detail"], str)
+    assert "name" in response.json()["detail"]
+
+
+def test_create_requires_a_description(signed):
+    response = signed.post(
+        "/api/v1/skills", json={"name": "my-skill", "description": "", "content": "body"}
+    )
+    assert response.status_code == 422
+    assert "description" in response.json()["detail"]
+
+
+def test_create_accepts_a_valid_skill(signed):
+    response = signed.post(
+        "/api/v1/skills",
+        json={"name": "my-skill", "description": "does a thing", "content": "body"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["name"] == "my-skill"
+
+
+def test_a_patch_that_keeps_a_legacy_name_still_works(signed):
+    # A row stored before the rule existed keeps a non-conforming name; the
+    # rule guards what changes, not what is already there.
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        row = skill_service.import_package(
+            db,
+            owner,
+            {"name": "Legacy Skill", "description": "old", "content": "body", "files": {}},
+            source="upload",
+        )
+        db.commit()
+        skill_id = row["id"]
+
+    same_name = signed.patch(
+        f"/api/v1/skills/{skill_id}",
+        json={"name": "Legacy Skill", "description": "old", "content": "body", "enabled": False},
+    )
+    assert same_name.status_code == 200, same_name.text
+    assert same_name.json()["data"]["enabled"] is False
+
+    renamed = signed.patch(
+        f"/api/v1/skills/{skill_id}",
+        json={"name": "Still Not Valid", "description": "old", "content": "body", "enabled": True},
+    )
+    assert renamed.status_code == 422, renamed.text
+
+
+def test_directory_import_reports_a_malformed_skill(signed, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "SKILLS_DIR", tmp_path)
+    bad = tmp_path / "bad-skill"
+    bad.mkdir()
+    bad.joinpath("SKILL.md").write_text("broken", encoding="utf-8")
+    response = signed.post("/api/v1/skills/import/directory")
+    assert response.status_code == 422, response.text
+    assert "bad-skill" in response.json()["detail"]

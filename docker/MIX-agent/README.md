@@ -33,6 +33,16 @@ docker compose up -d --build
 
 ローカルのOllama/LM Studioには、Provider設定でプライベート接続を明示的に許可します。Docker内のlocalhostはホストPCではありません。標準URLでは `host.docker.internal` を使用します。ホスト側サービスの待受設定も確認してください。
 
+### プロジェクトフォルダの接続
+
+作業対象のリポジトリを読み取り専用で `/project` にマウントすると、そのフォルダの `AGENTS.md`（無い場合は `CLAUDE.md`）が各Runの指示に自動で読み込まれ、`.mix/skills` → `.claude/skills` → `.agents/skills` のうち最初に存在したディレクトリの `SKILL.md` がSkillとして提供されます。いずれもDBには保存されず、ファイルを編集すれば次回のRunから反映されます。
+
+```sh
+MIX_PROJECT_DIR=/path/to/your/repo docker compose up -d
+```
+
+`MIX_PROJECT_DIR` を指定しない場合はComposeファイルのあるディレクトリがマウントされます。指示書もスキルも無い場合、何も追加されません。スケジュール実行にはプロジェクト文脈（指示書・資料）を渡していません（対話Runのみ）。
+
 ### 更新とバックアップ
 
 更新前に管理画面から暗号化バックアップを取得し、復元に必要なパスワードを保管してください。

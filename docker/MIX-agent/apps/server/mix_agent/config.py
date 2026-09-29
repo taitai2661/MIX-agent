@@ -10,6 +10,11 @@ KEYS = Path(os.getenv("MIX_KEYS", str(DATA / "keys"))).resolve()
 ARTIFACTS = DATA / "artifacts"
 # Optional host-mounted directory scanned for Agent Skills (``*/SKILL.md``).
 SKILLS_DIR = Path(os.getenv("MIX_SKILLS_DIR", str(DATA / "skills"))).resolve()
+# Read-only mount of the folder the user works on (compose sets the path).
+# AGENTS.md / CLAUDE.md and the project's own skills are read from here; when
+# the directory is absent — no bind mount, or the unit tests — both simply
+# contribute nothing.
+PROJECT_DIR = Path(os.getenv("MIX_PROJECT_MOUNT", "/project"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     if not os.getenv("DB_PASSWORD_FILE"):

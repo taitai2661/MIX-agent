@@ -8,8 +8,13 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 /// Events the backend emits that are worth interrupting for.
-pub const EVT_RUN_FINISHED: &str = "run_finished";
-pub const EVT_APPROVAL_NEEDED: &str = "approval_requested";
+///
+/// The engine publishes exactly one terminal `status` event per run, whose
+/// `data.status` is `completed` / `failed` / `cancelled`. There is no
+/// `run_completed` / `run_failed` kind — matching on those names is why no run
+/// ever produced a notification.
+pub const EVT_STATUS: &str = "status";
+pub const EVT_APPROVAL_REQUESTED: &str = "tool_approval_requested";
 
 /// Ask the OS to show a notification. Failures are logged, never fatal: a
 /// missing notification must not take down a finished run.
@@ -38,8 +43,24 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
         let engine = handle.state::<crate::AppState>().engine.clone();
         let mut receiver = engine.subscribe();
         while let Ok(event) = receiver.recv().await {
-            match event.kind.as_str() {
-                "run_completed" => {
+            if event.kind == EVT_APPROVAL_REQUESTED {
+                let tool = event
+                    .data
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("a tool");
+                notify(
+                    &handle,
+                    "MIX-agent — approval needed",
+                    &format!("Allow the agent to run `{tool}`?"),
+                );
+                continue;
+            }
+            if event.kind != EVT_STATUS {
+                continue;
+            }
+            match event.data.get("status").and_then(|v| v.as_str()) {
+                Some("completed") => {
                     let summary = event
                         .data
                         .get("summary")
@@ -47,25 +68,13 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
                         .unwrap_or("Run finished");
                     notify(&handle, "MIX-agent — run finished", &truncate(summary, 160));
                 }
-                "run_failed" => {
+                Some("failed") => {
                     let err = event
                         .data
                         .get("error")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Run failed");
                     notify(&handle, "MIX-agent — run failed", &truncate(err, 160));
-                }
-                "tool_approval_requested" => {
-                    let tool = event
-                        .data
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("a tool");
-                    notify(
-                        &handle,
-                        "MIX-agent — approval needed",
-                        &format!("Allow the agent to run `{tool}`?"),
-                    );
                 }
                 _ => {}
             }

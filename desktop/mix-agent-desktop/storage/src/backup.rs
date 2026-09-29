@@ -369,7 +369,13 @@ async fn restore_inner(
     }
 
     let staged = data_dir.join("mix-agent.restored.db");
-    tokio::fs::write(&staged, db_blob).await?;
+    // Stage through a sidecar and rename: a crash mid-write used to leave a
+    // truncated `mix-agent.restored.db`, which the next launch then promoted
+    // over the live database.
+    let partial = data_dir.join("mix-agent.restored.db.part");
+    tokio::fs::remove_file(&partial).await.ok();
+    tokio::fs::write(&partial, db_blob).await?;
+    tokio::fs::rename(&partial, &staged).await?;
     Ok(RestoreInfo {
         staged_path: staged.to_string_lossy().to_string(),
         manifest,

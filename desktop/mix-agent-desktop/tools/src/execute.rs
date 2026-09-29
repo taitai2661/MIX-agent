@@ -56,11 +56,18 @@ impl ToolExecutor {
         default: PermissionDecision,
     ) -> PermissionDecision {
         use sqlx::Row;
+        // Two stored rules can legitimately disagree: a prompt's "Always Allow"
+        // and a later Settings edit. Ranking `always` first meant the Settings
+        // change was silently ignored forever (and there was no way to revoke
+        // the always-allow), so the most recently written rule wins, with the
+        // old scope order as the tiebreak for rows that predate `updatedAt`.
         let Ok(rows) = sqlx::query(
             "SELECT data FROM permission_rules \
              WHERE json_extract(data, '$.toolId') = ?1 \
-            ORDER BY CASE json_extract(data, '$.scope') \
-                       WHEN 'always' THEN 0 WHEN 'tool' THEN 1 ELSE 2 END",
+             ORDER BY COALESCE(json_extract(data, '$.updatedAt'), '') DESC, \
+                      CASE json_extract(data, '$.scope') \
+                        WHEN 'always' THEN 0 WHEN 'tool' THEN 1 ELSE 2 END, \
+                      id",
         )
         .bind(tool_id)
         .fetch_all(self.storage.pool())
@@ -141,6 +148,7 @@ impl ToolExecutor {
                 PermissionDecision::Deny => "deny",
             },
             "pattern": null,
+            "updatedAt": Utc::now().to_rfc3339(),
         });
         sqlx::query(
             "INSERT INTO permission_rules (id, owner_id, data) VALUES (?1, ?2, ?3) \

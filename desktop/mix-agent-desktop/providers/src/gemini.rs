@@ -104,6 +104,7 @@ struct GeminiThinkingConfig {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct GeminiChunk {
     #[serde(default)]
     candidates: Vec<GeminiCandidate>,
@@ -115,6 +116,7 @@ struct GeminiChunk {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct GeminiCandidate {
     #[serde(default)]
     content: Option<GeminiContentOwned>,
@@ -123,6 +125,7 @@ struct GeminiCandidate {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct GeminiContentOwned {
     #[serde(default)]
     parts: Vec<GeminiPartOwned>,
@@ -136,13 +139,17 @@ struct GeminiContentOwned {
 struct GeminiPartOwned {
     #[serde(default)]
     text: Option<String>,
+    /// A boolean flag on a part whose text lives in `text`. Deserialising it as
+    /// a string made the whole chunk fail to parse — and the parser drops
+    /// unparseable chunks silently.
     #[serde(default)]
-    thought: Option<String>,
+    thought: Option<bool>,
     #[serde(default)]
     function_call: Option<GeminiFunctionCall>,
 }
 
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct GeminiUsage {
     #[serde(default)]
     prompt_token_count: u64,
@@ -243,19 +250,20 @@ impl Provider for GeminiProvider {
                 .await?;
 
         let sse = transport::sse_stream(response);
-        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
 
         Ok(Box::pin(ge_sse_stream(buffer, sse)))
     }
 }
 
 fn ge_sse_stream(
-    buffer: std::sync::Arc<tokio::sync::Mutex<String>>,
+    buffer: std::sync::Arc<tokio::sync::Mutex<Vec<u8>>>,
     sse: std::pin::Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>>,
 ) -> impl Stream<Item = StreamEvent> + Send + 'static {
     let mut sse = sse;
     async_stream::stream! {
-        let mut emitted_tool_calls: std::collections::HashSet<String> = Default::default();
+        let mut finished_reason: Option<String> = None;
+        let mut usage: Option<Usage> = None;
         while let Some(item) = sse.next().await {
             let bytes = match item {
                 Ok(b) => b,
@@ -273,44 +281,58 @@ fn ge_sse_stream(
                     Ok(c) => c,
                     Err(_) => continue,
                 };
+                if let Some(u) = chunk.usage_metadata {
+                    usage = Some(Usage {
+                        input_tokens: u.prompt_token_count,
+                        // Thinking tokens are neither prompt nor cache tokens;
+                        // they belong in the output count.
+                        output_tokens: u.candidates_token_count + u.thoughts_token_count,
+                        cache_read_tokens: u.cached_content_token_count,
+                        cache_write_tokens: 0,
+                    });
+                }
                 for candidate in chunk.candidates {
                     if let Some(content) = candidate.content {
                         for part in content.parts {
+                            let is_thought = part.thought.unwrap_or(false);
                             if let Some(text) = part.text {
                                 if !text.is_empty() {
-                                    yield StreamEvent::TextDelta(text);
+                                    if is_thought {
+                                        yield StreamEvent::ReasoningDelta(text);
+                                    } else {
+                                        yield StreamEvent::TextDelta(text);
+                                    }
                                 }
                             }
-                            if let Some(thought) = part.thought {
-                                if !thought.is_empty() {
-                                    yield StreamEvent::ReasoningDelta(thought);
-                                }
-                            }
+                            // Repeated identical calls are legitimate; a
+                            // dedup set silently swallowed the second one.
                             if let Some(call) = part.function_call {
-                                let key = format!("{}|{}", call.name, call.args);
-                                if !emitted_tool_calls.contains(&key) {
-                                    emitted_tool_calls.insert(key);
-                                    let id = format!("gemini-{}", uuid::Uuid::new_v4());
-                                    yield StreamEvent::ToolCallStart { id: id.clone(), name: call.name.clone() };
-                                    let args = serde_json::to_string(&call.args).unwrap_or_default();
-                                    yield StreamEvent::ToolCallArgumentDelta { id: id.clone(), delta: args.clone() };
-                                    yield StreamEvent::ToolCallFinish { id, name: call.name, arguments: args };
-                                }
+                                let id = format!("gemini-{}", uuid::Uuid::new_v4());
+                                let args = serde_json::to_string(&call.args).unwrap_or_default();
+                                yield StreamEvent::ToolCallStart { id: id.clone(), name: call.name.clone() };
+                                yield StreamEvent::ToolCallArgumentDelta { id: id.clone(), delta: args.clone() };
+                                yield StreamEvent::ToolCallFinish { id, name: call.name, arguments: args };
                             }
                         }
                     }
                     if let Some(reason) = candidate.finish_reason {
-                        let usage = chunk.usage_metadata.as_ref().map(|u| Usage {
-                            input_tokens: u.prompt_token_count,
-                            output_tokens: u.candidates_token_count,
-                            cache_read_tokens: u.cached_content_token_count,
-                            cache_write_tokens: u.thoughts_token_count,
-                        });
-                        yield StreamEvent::Finished { finish_reason: reason, usage };
-                        return;
+                        if finished_reason.is_none() {
+                            finished_reason = Some(reason);
+                        }
                     }
                 }
+                if finished_reason.is_some() && usage.is_some() {
+                    yield StreamEvent::Finished {
+                        finish_reason: finished_reason.take().unwrap_or_else(|| "stop".into()),
+                        usage,
+                    };
+                    return;
+                }
             }
+        }
+        // The stream can also close before both signals arrive together.
+        if let Some(reason) = finished_reason {
+            yield StreamEvent::Finished { finish_reason: reason, usage };
         }
     }
 }
@@ -459,6 +481,76 @@ mod tests {
     use crate::AssistantToolCall;
     use crate::AssistantToolCallFn;
     use crate::Message;
+
+    fn feed(
+        chunks: &[&str],
+    ) -> std::pin::Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>> {
+        let items = chunks
+            .iter()
+            .map(|c| Ok(Bytes::from(c.as_bytes().to_vec())))
+            .collect::<Vec<_>>();
+        Box::pin(futures_util::stream::iter(items))
+    }
+
+    async fn collect_sse(chunks: &[&str]) -> Vec<StreamEvent> {
+        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
+        ge_sse_stream(buffer, feed(chunks)).collect().await
+    }
+
+    fn finished(events: &[StreamEvent]) -> Vec<(String, Option<Usage>)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::Finished {
+                    finish_reason,
+                    usage,
+                } => Some((finish_reason.clone(), usage.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_camel_case_final_chunk_finishes_and_reports_usage() {
+        let events = collect_sse(&[
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":3}}\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":9,\"thoughtsTokenCount\":3}}\n",
+        ])
+        .await;
+        let done = finished(&events);
+        assert_eq!(done.len(), 1, "camelCase fields must parse: {events:?}");
+        assert_eq!(done[0].0, "STOP");
+        let usage = done[0].1.clone().expect("usage must be reported");
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 12);
+    }
+
+    #[tokio::test]
+    async fn a_boolean_thought_part_is_routed_to_reasoning() {
+        let events = collect_sse(&[ "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"pondering\",\"thought\":true},{\"text\":\"answer\"}]}}]}\n" ]).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ReasoningDelta(t) if t == "pondering")),
+            "thought parts are reasoning: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta(t) if t == "answer")),
+            "non-thought parts are text: {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_identical_tool_calls_are_both_emitted() {
+        let events = collect_sse(&[ "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"files\",\"args\":{\"path\":\"a\"}}},{\"functionCall\":{\"name\":\"files\",\"args\":{\"path\":\"a\"}}}]}}]}\n" ]).await;
+        let calls = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::ToolCallFinish { .. }))
+            .count();
+        assert_eq!(calls, 2, "a deliberate repeat must not be swallowed");
+    }
 
     fn request(messages: Vec<Message>) -> ProviderRequest {
         ProviderRequest {

@@ -443,16 +443,29 @@ async def execute(db, run, tool, args):
             reason="agent forget",
         )
     elif name == "skill_search":
-        result = {"skills": skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))}
+        from mix_agent.skills import discovery
+
+        stored = skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))
+        # The same project skills the prompt advertises, so the model can read
+        # one back after seeing it in the catalogue.
+        seen = {row.get("id") for row in stored}
+        merged = stored + [row for row in discovery.search(args.get("query", "")) if row.get("id") not in seen]
+        result = {"skills": merged}
     elif name == "skill_add":
         result = skills.change(db, run.owner_id, name=args["name"], description=args.get("description", ""), content=args["content"], source_run=run.id)
     elif name == "skill_update":
         result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
     elif name == "skill_resource":
         row = skills.find(db, run.owner_id, args.get("skill", ""))
-        if not row:
-            raise ValueError("Skill was not found")
-        result = skills.read_resource(db, run.owner_id, row.id, args.get("path", ""))
+        if row:
+            result = skills.read_resource(db, run.owner_id, row.id, args.get("path", ""))
+        else:
+            from mix_agent.skills import discovery
+
+            pkg = discovery.find(args.get("skill", ""))
+            if not pkg:
+                raise ValueError("Skill was not found")
+            result = discovery.read_resource(pkg, args.get("path", ""))
     elif name == "update_plan":
         result = {key: args[key] for key in ("steps", "pending", "verification") if key in args}
     elif name == "schedule_list":

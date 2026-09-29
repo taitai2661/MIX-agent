@@ -186,16 +186,32 @@ def parse_archive(raw: bytes) -> list[dict]:
 
 def scan_directory(root: str | Path) -> list[dict]:
     """Load every ``*/SKILL.md`` directly under ``root`` (read-only)."""
+    packages, _failures = scan_directory_report(root)
+    return packages
+
+
+def scan_directory_report(root: str | Path) -> tuple[list[dict], list[dict]]:
+    """Like :func:`scan_directory`, but also report the entries it skipped.
+
+    Silently dropping a malformed ``SKILL.md`` leaves the user staring at an
+    import that reports success while nothing appeared; the failures come back
+    as ``{"path", "reason"}`` so the caller can show them.
+    """
     base = Path(root)
     if not base.is_dir():
-        return []
+        return [], []
     packages = []
+    failures = []
     for skill_md in sorted(base.glob("*/SKILL.md")):
         if skill_md.is_symlink() or not skill_md.is_file():
             continue
         try:
             package = parse_skill_md(skill_md.read_text(encoding="utf-8"))
-        except (OSError, SkillFormatError):
+        except (OSError, SkillFormatError) as exc:
+            failures.append({"path": str(skill_md), "reason": str(exc)})
+            continue
+        except UnicodeDecodeError as exc:
+            failures.append({"path": str(skill_md), "reason": f"SKILL.md is not UTF-8: {exc}"})
             continue
         files: dict[str, dict] = {}
         total = 0
@@ -215,7 +231,7 @@ def scan_directory(root: str | Path) -> list[dict]:
                 continue
         package["files"] = files
         packages.append(package)
-    return packages
+    return packages, failures
 
 
 def bundle_archive(skill: dict) -> bytes:

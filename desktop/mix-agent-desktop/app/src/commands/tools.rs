@@ -111,6 +111,9 @@ pub async fn set_permission_rule(
         "scope": input.scope,
         "decision": input.decision,
         "pattern": input.pattern,
+        // Lets a Settings edit overtake an earlier prompt "Always Allow";
+        // without it the `always` row always outranked this one.
+        "updatedAt": chrono::Utc::now().to_rfc3339(),
     });
     sqlx::query(
         "INSERT INTO permission_rules (id, owner_id, data) VALUES (?, ?, ?) \

@@ -303,7 +303,14 @@ pub async fn git_diff(
     let mut unified = String::from_utf8_lossy(&output.stdout).to_string();
     let truncated = unified.len() > MAX_DIFF_BYTES;
     if truncated {
-        unified.truncate(MAX_DIFF_BYTES);
+        // `String::truncate` panics unless the index is a character boundary;
+        // a diff containing Japanese blows past 512 KB and the release profile
+        // aborts the whole app.
+        let mut cut = MAX_DIFF_BYTES;
+        while cut > 0 && !unified.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        unified.truncate(cut);
     }
     Ok(GitDiffView {
         available: true,

@@ -15,10 +15,19 @@ use crate::AppState;
 #[derive(Deserialize)]
 pub struct DiffInput {
     pub path: String,
+    #[serde(default)]
     pub content: String,
     /// Project root to resolve `path` against; `None` → process CWD.
     #[serde(default)]
     pub root_path: Option<String>,
+    /// For an `edit` call: apply this replacement to the on-disk content.
+    /// `content` is a whole-file proposal and cannot represent an edit, so
+    /// passing the `@@` preview as `content` diffed a five-line snippet against
+    /// the entire file.
+    #[serde(default)]
+    pub old_string: Option<String>,
+    #[serde(default)]
+    pub new_string: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -53,13 +62,32 @@ pub async fn preview_file_diff(
     } else {
         Ok(String::new())
     };
-    let (old, truncated) = match read {
+    let (disk, truncated) = match read {
         Ok(content) => (content, false),
         // Non-UTF-8 (binary) old content: degrade to a whole-file replacement.
         Err(_) => (String::new(), true),
     };
 
-    let result = diff::unified_diff(path, &old, &input.content, 3);
+    let proposed = match (input.old_string.as_deref(), input.new_string.as_deref()) {
+        (Some(old), Some(new)) if !old.is_empty() => match disk.find(old) {
+            Some(pos) => {
+                let mut out =
+                    String::with_capacity(disk.len().saturating_sub(old.len()) + new.len());
+                out.push_str(&disk[..pos]);
+                out.push_str(new);
+                out.push_str(&disk[pos + old.len()..]);
+                out
+            }
+            // The edit already landed (or the anchor drifted): the file on disk
+            // *is* the result, so there is nothing pending to show.
+            None => disk.clone(),
+        },
+        // `append` / `create`: `new_string` is added to what is already there.
+        (_, Some(new)) => format!("{disk}{new}"),
+        _ => input.content.clone(),
+    };
+
+    let result = diff::unified_diff(path, &disk, &proposed, 3);
     Ok(FileDiffView {
         path: path.to_string(),
         unified_diff: result.unified,

@@ -36,8 +36,9 @@ export function MemoryPane() {
   });
 
   const verify = useMutation({
-    mutationFn: (id: string) => api.verifyMemory(id),
+    mutationFn: (id: string) => api.verifyMemory(id, "verified"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
+    onError: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
   });
 
   const search = async () => setHits(await api.searchMemories(query, 20));

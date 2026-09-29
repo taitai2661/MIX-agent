@@ -115,7 +115,10 @@ export const api = {
     invoke<MemoryView>("restore_memory_revision", { memoryId, revisionId }),
   searchMemories: (query: string, limit: number | null) =>
     invoke<MemoryView[]>("search_memories", { query, limit }),
-  verifyMemory: (id: string) => invoke<MemoryView>("verify_memory", { id }),
+  // `verdict` is required by the Rust command; omitting it made Tauri fail to
+  // deserialize the arguments, so the verify action always rejected.
+  verifyMemory: (id: string, verdict: string) =>
+    invoke<MemoryView>("verify_memory", { id, verdict }),
 
   listKnowledge: () => invoke<KnowledgeDocView[]>("list_knowledge"),
   ingestKnowledge: (input: { filename: string; text: string }) =>
@@ -188,8 +191,22 @@ export const api = {
 
   diagnostics: () => invoke<DiagnosticsReport>("collect_diagnostics"),
 
-  previewFileDiff: (path: string, content: string, rootPath?: string | null) =>
-    invoke<FileDiffView>("preview_file_diff", { input: { path, content, root_path: rootPath ?? null } }),
+  previewFileDiff: (
+    path: string,
+    content: string,
+    rootPath?: string | null,
+    oldString?: string,
+    newString?: string,
+  ) =>
+    invoke<FileDiffView>("preview_file_diff", {
+      input: {
+        path,
+        content,
+        root_path: rootPath ?? null,
+        old_string: oldString ?? null,
+        new_string: newString ?? null,
+      },
+    }),
   readAttachment: (path: string) =>
     invoke<AttachmentPayload>("read_attachment", { path }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),

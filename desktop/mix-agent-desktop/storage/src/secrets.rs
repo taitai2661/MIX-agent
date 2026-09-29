@@ -145,12 +145,21 @@ fn master_key() -> anyhow::Result<[u8; 32]> {
     if let Some(key) = CACHED.get() {
         return Ok(*key);
     }
+    // Two first-touch calls can run at once (secret access goes through
+    // `spawn_blocking`), and each would generate its *own* seed. The Keychain
+    // keeps whichever wrote last, so everything sealed under the other one
+    // became permanently undecryptable.
+    static SEED_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SEED_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(key) = CACHED.get() {
+        return Ok(*key);
+    }
     let seed = load_master_seed()?;
     let key = derive_master_key(&seed)?;
-    // Whoever wins the race wins for the process; the seed it was derived
-    // from is the same one, so the value is identical either way.
     let _ = CACHED.set(key);
-    Ok(key)
+    // Whoever wins the cache wins for the process, and their key is the one
+    // derived from the seed the Keychain now holds.
+    Ok(*CACHED.get().expect("master key is cached"))
 }
 
 fn load_master_seed() -> anyhow::Result<String> {

@@ -50,6 +50,7 @@ const en: Record<string, string> = {
   "新規スレッド": "New thread",
   "スレッドを検索": "Search threads",
   "スレッドがありません": "No threads yet",
+  "一致するスレッドがありません": "No threads match your search",
   "新しい会話を始めましょう": "Start a new conversation",
   "今日": "Today",
   "昨日": "Yesterday",

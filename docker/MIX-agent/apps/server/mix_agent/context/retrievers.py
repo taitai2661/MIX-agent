@@ -72,12 +72,23 @@ def search_memories(db, owner: str, query: str, scopes: list, settings: dict, li
 
 
 def search_skills(db, owner: str, query: str, ids: list | None):
+    from mix_agent.skills import discovery
     from mix_agent.skills import service as skill_service
 
+    stored = []
     try:
-        return skill_service.search(db, owner, query, ids) or []
-    except Exception:  # noqa: BLE001 - retrieval failure means no skills, not a failed run
-        return []
+        stored = skill_service.search(db, owner, query, ids) or []
+    except Exception:
+        LOGGER.exception("skill retrieval failed owner=%s", owner)
+    # Project skills come from the mounted folder, not the database, so the
+    # agent's pinned `skill_ids` do not apply to them: a procedure the
+    # repository carries itself is always on offer.
+    try:
+        discovered = discovery.search(query)
+    except Exception:
+        LOGGER.exception("project skill discovery failed")
+        discovered = []
+    return (stored + discovered)[:20]
 
 
 def search_knowledge(db, owner: str, query: str, top_k: int = 5) -> list[dict]:

@@ -1338,3 +1338,55 @@ async fn token_events_are_batched_and_drained_by_a_milestone() {
     assert_contiguous(&rows, "after explicit flush");
     assert!(harness.engine.event_buffer.lock().await.is_empty());
 }
+
+/// A source that reports the root it was asked for, so the test can tell
+/// whether the engine actually scoped the catalogue to the run's folder.
+struct RootEchoSkills;
+
+#[async_trait]
+impl mixd_tools::skill::SkillSource for RootEchoSkills {
+    async fn skills(
+        &self,
+        root: Option<&str>,
+    ) -> anyhow::Result<Vec<mixd_tools::skill::SkillSummary>> {
+        Ok(vec![mixd_tools::skill::SkillSummary {
+            name: "scoped".into(),
+            description: format!("root={}", root.unwrap_or("<none>")),
+            body_markdown: "body".into(),
+            allowed_tools: Vec::new(),
+        }])
+    }
+}
+
+#[tokio::test]
+async fn the_skill_catalogue_reaches_the_system_prompt_scoped_to_the_project() {
+    let harness = Harness::new(vec![text_turn("done")]).await;
+    harness
+        .engine
+        .replace_tools(
+            ToolRegistry::new(EgressPolicy::default()).with_skills(Arc::new(RootEchoSkills)),
+        )
+        .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let root = harness.workspace.to_string_lossy().to_string();
+    harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+
+    let requests = harness.provider.requests();
+    let system: Vec<String> = requests.iter().filter_map(|r| r.system.clone()).collect();
+    assert!(
+        system.iter().any(|s| s.contains("<skills>")),
+        "the skill catalogue must reach the system prompt"
+    );
+    assert!(
+        system.iter().any(|s| s.contains(&format!("root={root}"))),
+        "the catalogue must be built for the run's project root; got {system:?}"
+    );
+    assert!(
+        system.iter().any(|s| s.contains("- scoped:")),
+        "the skill must be listed by name; got {system:?}"
+    );
+}

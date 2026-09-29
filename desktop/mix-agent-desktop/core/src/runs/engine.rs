@@ -24,7 +24,7 @@ use crate::runs::checkpoint_store::CheckpointStore;
 use crate::runs::mode_policy::AgentModePolicy;
 use crate::runs::stagnation::{classify_tool_call, StagnationDetector};
 use crate::runs::state::{RunId, RunStatus, RunView};
-use crate::runs::verification::VerificationLedger;
+use crate::runs::verification::{destructive_reason, VerificationLedger};
 use mixd_providers::{
     AssistantToolCall, AssistantToolCallFn, Message, Provider, ProviderRequest, ReasoningControl,
     StreamEvent, ToolSpec, Usage,
@@ -708,6 +708,17 @@ pub struct RunToolCall {
 }
 
 impl RunEngine {
+    /// Drop the per-run handles once a Run reaches a terminal state.
+    ///
+    /// `active` and `sequences` are keyed by `RunId` and used to be cleared on
+    /// the happy path only, so a cancelled, declined or failed Run left an entry
+    /// behind for the lifetime of the process.
+    async fn release_run(&self, run_id: RunId) {
+        self.active.lock().await.remove(&run_id);
+        self.sequences.lock().await.remove(&run_id);
+        self.flush_scheduled.lock().await.remove(&run_id);
+    }
+
     /// The Agent loop. Runs at least one Provider turn; keeps looping while the
     /// model requests Tools and the budget allows it.
     ///
@@ -816,7 +827,12 @@ impl RunEngine {
         // The skill catalogue belongs in the system prompt, not in the history:
         // it is the same on every turn and the adapters cache it there.
         let mut system = request.system.clone().unwrap_or_default();
-        let skills_prompt = self.tools.read().await.skills_prompt().await;
+        let skills_prompt = self
+            .tools
+            .read()
+            .await
+            .skills_prompt(request.root_path.as_deref())
+            .await;
         if !skills_prompt.trim().is_empty() {
             if !system.trim().is_empty() {
                 system.push_str("\n\n");
@@ -842,6 +858,7 @@ impl RunEngine {
                     serde_json::json!({ "status": "cancelled" }),
                 )
                 .await;
+                self.release_run(run_id).await;
                 return Ok(RunOutcome {
                     status: RunStatus::Cancelled,
                     text: final_text,
@@ -857,7 +874,29 @@ impl RunEngine {
             match budget.check(steps, total_tool_calls).await {
                 BudgetVerdict::Ok => {}
                 BudgetVerdict::Exhausted(reason) => {
-                    let grant = self.await_budget_extension(run_id, reason, &budget).await;
+                    let Some(grant) = self.await_budget_extension(run_id, reason, &budget).await
+                    else {
+                        // Cancelled while waiting: reporting `completed` here
+                        // overwrote the user's cancellation.
+                        self.set_run_state(run_id, RunStatus::Cancelled, serde_json::json!({}))
+                            .await;
+                        self.emit(
+                            run_id,
+                            "status",
+                            serde_json::json!({ "status": "cancelled" }),
+                        )
+                        .await;
+                        self.release_run(run_id).await;
+                        return Ok(RunOutcome {
+                            status: RunStatus::Cancelled,
+                            text: final_text,
+                            reasoning: final_reasoning,
+                            tool_calls: all_tool_calls,
+                            usage: last_usage,
+                            finish_reason: last_finish,
+                            steps,
+                        });
+                    };
                     // A granted extension can still be refused by the grant
                     // allowance, so the two outcomes are distinguished rather
                     // than both reported as "declined".
@@ -879,6 +918,7 @@ impl RunEngine {
                             serde_json::json!({ "status": "completed", "reason": stop_reason }),
                         )
                         .await;
+                        self.release_run(run_id).await;
                         return Ok(RunOutcome {
                             status: RunStatus::Completed,
                             text: final_text,
@@ -992,6 +1032,7 @@ impl RunEngine {
                     serde_json::json!({ "status": "failed", "error": err }),
                 )
                 .await;
+                self.release_run(run_id).await;
                 return Ok(RunOutcome {
                     status: RunStatus::Failed,
                     text: final_text,
@@ -1017,8 +1058,13 @@ impl RunEngine {
                 signals.clear();
                 signals.push(crate::runs::stagnation::TurnSignal::Progress);
             }
+            // `take`, not `clone`: the detector sees each signal exactly once.
+            // Cloning let every turn's signals be re-fed on every later turn, so
+            // the window filled with duplicates after three real failures and
+            // kept firing the repair hint forever.
+            let turn_signals = std::mem::take(&mut signals);
             if self.policy.stagnation_detection {
-                if let Some(report) = stagnation.observe(signals.clone()) {
+                if let Some(report) = stagnation.observe(turn_signals) {
                     self.emit(
                         run_id,
                         "stagnation_detected",
@@ -1053,7 +1099,17 @@ impl RunEngine {
                         )
                         .await;
                         final_text = turn.text.clone();
-                        messages.push(Message::text("assistant", turn.text.clone()));
+                        let final_message = Message::text("assistant", turn.text.clone());
+                        // Persist it: `messages` is in-memory only, and the next
+                        // turn of the conversation is rebuilt from this table.
+                        self.append_message(
+                            request.conversation_id,
+                            run_id,
+                            &request.model_id,
+                            &message_to_history(&final_message),
+                        )
+                        .await;
+                        messages.push(final_message);
                         if !turn.text.is_empty() {
                             self.emit(
                                 run_id,
@@ -1148,10 +1204,19 @@ impl RunEngine {
                 {
                     signals.push(crate::runs::stagnation::TurnSignal::RepeatedRead);
                 }
-                verification.confirm(&call.function.name);
                 let result = self.dispatch_tool(run_id, &request, call).await;
                 all_tool_calls.push(result.clone());
                 let is_error = result.error.is_some();
+                // Only a read that actually succeeded closes the gate. Doing
+                // this before dispatch let a refused or failing read clear it,
+                // and letting `files.write` clear it defeated the gate entirely.
+                if !is_error {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&call.function.arguments).unwrap_or_default();
+                    if destructive_reason(&call.function.name, &args).is_none() {
+                        verification.confirm(&call.function.name);
+                    }
+                }
                 let content = match &result.error {
                     Some(err) => format!("Error: {}", err),
                     None => result
@@ -1233,7 +1298,6 @@ impl RunEngine {
             }),
         )
         .await;
-        self.active.lock().await.remove(&run_id);
         self.emit(
             run_id,
             "status",
@@ -1245,6 +1309,7 @@ impl RunEngine {
             }),
         )
         .await;
+        self.release_run(run_id).await;
 
         Ok(RunOutcome {
             status: RunStatus::Completed,
@@ -1257,8 +1322,25 @@ impl RunEngine {
         })
     }
 
-    /// Ask the user for a budget extension. Returns `true` when granted.
-    async fn await_budget_extension(&self, run_id: RunId, reason: &str, budget: &Budget) -> bool {
+    /// Ask the user for a budget extension. Returns `None` when the Run was
+    /// cancelled while waiting, `Some(granted)` otherwise.
+    async fn await_budget_extension(
+        &self,
+        run_id: RunId,
+        reason: &str,
+        budget: &Budget,
+    ) -> Option<bool> {
+        // An answer is persisted in `runs.data.budgetDecision` and nothing ever
+        // cleared it, so the *second* prompt of a Run — or a resumed one — was
+        // answered instantly with the first prompt's verdict instead of asking.
+        self.budget_decisions.lock().await.remove(&run_id);
+        let _ = sqlx::query(
+            "UPDATE runs SET data = json_remove(data, '$.budgetDecision') \
+             WHERE id = ? AND data IS NOT NULL",
+        )
+        .bind(run_id.to_string())
+        .execute(self.storage.pool())
+        .await;
         self.set_run_state(
             run_id,
             RunStatus::BudgetExtensionPending,
@@ -1280,7 +1362,13 @@ impl RunEngine {
         // Wait for the UI to answer via `budget_extension`.
         let deadline =
             std::time::Instant::now() + Duration::from_secs(budget.extension_timeout_secs);
+        let cancellation = self.cancellation_of(run_id).await;
         let granted = loop {
+            // A cancelled Run must not sit here until the deadline and then be
+            // written out as `completed`.
+            if cancellation.is_cancelled() {
+                break false;
+            }
             if let Some(granted) = self.take_budget_decision(run_id).await {
                 break granted;
             }
@@ -1290,7 +1378,10 @@ impl RunEngine {
             tokio::time::sleep(Duration::from_millis(250)).await;
         };
         self.budget_decisions.lock().await.remove(&run_id);
-        granted
+        if cancellation.is_cancelled() {
+            return None;
+        }
+        Some(granted)
     }
 
     /// Record the user's answer to a pending budget-extension request.
@@ -1471,36 +1562,26 @@ impl RunEngine {
                 biased;
                 _ = cancellation.cancelled_signal() => ApprovalOutcome::Deny,
                 Ok(outcome) = rx => outcome,
-                _ = tokio::time::sleep(ttl) => {
-                    self.emit(
-                        run_id,
-                        "tool_approval_resolved",
-                        serde_json::json!({
-                            "tool_call_id": tool_call_id,
-                            "approval_id": record.approval_id,
-                            "granted": false,
-                        }),
-                    )
-                    .await;
-                    ApprovalOutcome::Deny
-                }
+                _ = tokio::time::sleep(ttl) => ApprovalOutcome::Deny,
             };
             self.set_run_state(run_id, RunStatus::Running, serde_json::json!({}))
                 .await;
 
+            // Every outcome has to retire the card: the reducer only clears
+            // `timeline.approval` on this event, so a denial that emitted
+            // nothing left a live "approve / deny" card on screen for the rest
+            // of the run.
             let granted = matches!(outcome, ApprovalOutcome::Approve { .. });
-            if granted {
-                self.emit(
-                    run_id,
-                    "tool_approval_resolved",
-                    serde_json::json!({
-                        "tool_call_id": tool_call_id,
-                        "approval_id": record.approval_id,
-                        "granted": true,
-                    }),
-                )
-                .await;
-            }
+            self.emit(
+                run_id,
+                "tool_approval_resolved",
+                serde_json::json!({
+                    "tool_call_id": tool_call_id,
+                    "approval_id": record.approval_id,
+                    "granted": granted,
+                }),
+            )
+            .await;
             if !granted {
                 return self.deny_tool(run_id, record, "denied by user").await;
             }
@@ -1666,7 +1747,24 @@ impl RunEngine {
         )
         .await;
 
-        let stream = provider.stream(req).await?;
+        // A connection-level failure (bad key, DNS, refused socket) used to
+        // escape through `?` before any terminal event was emitted, so the row
+        // stayed `running` and the UI spun forever. It is reported exactly like
+        // an in-stream error.
+        let stream = match provider.stream(req).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                tracing::error!(%run_id, provider = provider.id(), %err, "provider stream failed to open");
+                return Ok(TurnResult {
+                    text: String::new(),
+                    reasoning: String::new(),
+                    tool_calls: Vec::new(),
+                    usage: None,
+                    finish_reason: None,
+                    error: Some(err.to_string()),
+                });
+            }
+        };
         let mut s = stream;
         let mut text = String::new();
         let mut reasoning = String::new();

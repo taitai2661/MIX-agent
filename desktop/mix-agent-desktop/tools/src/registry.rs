@@ -92,7 +92,9 @@ impl ToolRegistry {
 
     /// Attach the skill catalogue so the `skill` Tool becomes available.
     pub fn with_skills(mut self, source: Arc<dyn SkillSource>) -> Self {
-        self.skill_tool = Some(Arc::new(SkillTool::new(source)));
+        let tool = Arc::new(SkillTool::new(source));
+        self.tools.insert(tool.id().to_string(), tool.clone());
+        self.skill_tool = Some(tool);
         self
     }
 
@@ -109,9 +111,13 @@ impl ToolRegistry {
     }
 
     /// The skill catalogue rendered for the system prompt, or an empty string.
-    pub async fn skills_prompt(&self) -> String {
+    ///
+    /// `root` scopes the catalogue to one project folder: project skills are
+    /// discovered there, so a catalogue built for another root would list
+    /// skills this run cannot see.
+    pub async fn skills_prompt(&self, root: Option<&str>) -> String {
         match &self.skill_tool {
-            Some(tool) => tool.catalogue_prompt().await,
+            Some(tool) => tool.catalogue_prompt(root).await,
             None => String::new(),
         }
     }
@@ -316,6 +322,7 @@ fn browser_action(args: &serde_json::Value) -> anyhow::Result<mixd_browser::Brow
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::skill::SkillSummary;
 
     #[test]
     fn parses_navigate() {
@@ -354,5 +361,44 @@ mod tests {
     #[test]
     fn rejects_unknown_action() {
         assert!(browser_action(&serde_json::json!({ "action": "teleport" })).is_err());
+    }
+
+    struct OneSkill;
+
+    #[async_trait::async_trait]
+    impl SkillSource for OneSkill {
+        async fn skills(&self, _root: Option<&str>) -> anyhow::Result<Vec<SkillSummary>> {
+            Ok(vec![SkillSummary {
+                name: "expense-report".into(),
+                description: "Build expense reports".into(),
+                body_markdown: "1. Collect receipts".into(),
+                allowed_tools: Vec::new(),
+            }])
+        }
+    }
+
+    fn ctx() -> ToolContext {
+        ToolContext {
+            run_id: uuid::Uuid::new_v4(),
+            workspace_id: uuid::Uuid::new_v4(),
+            root_path: None,
+            approval_token: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_is_registered_and_dispatchable() {
+        let registry = ToolRegistry::new(EgressPolicy::default()).with_skills(Arc::new(OneSkill));
+        assert!(registry.get("skill").is_some(), "skill tool not registered");
+        assert!(
+            registry.specs().iter().any(|s| s.name == "skill"),
+            "skill spec not advertised"
+        );
+        let result = registry
+            .dispatch(ctx(), "skill", serde_json::json!({}))
+            .await
+            .expect("dispatch");
+        assert!(result.ok, "skill dispatch failed: {:?}", result.error);
+        assert_eq!(result.content["skills"][0]["name"], "expense-report");
     }
 }

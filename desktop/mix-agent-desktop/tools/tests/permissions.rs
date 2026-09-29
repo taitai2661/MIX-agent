@@ -100,6 +100,44 @@ async fn stored_rule_overrides_the_default() {
 }
 
 #[tokio::test]
+async fn a_later_settings_edit_beats_an_older_always_allow() {
+    let (executor, _dir) = executor().await;
+    executor
+        .remember_rule(TOOL, PermissionDecision::Allow)
+        .await
+        .expect("always allow");
+    // The user then changes the same tool to `deny` in Settings, which writes a
+    // `global` scoped row. Ranking `always` first made this a no-op, with no
+    // way left to revoke the always-allow.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    sqlx::query(
+        "INSERT INTO permission_rules (id, owner_id, data) VALUES (?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+    )
+    .bind(format!("global:{TOOL}"))
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(
+        serde_json::json!({
+            "toolId": TOOL,
+            "scope": "global",
+            "decision": "deny",
+            "updatedAt": chrono::Utc::now().to_rfc3339(),
+        })
+        .to_string(),
+    )
+    .execute(executor.storage.pool())
+    .await
+    .expect("settings rule");
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Deny,
+        "the newer Settings rule must win over the older always-allow"
+    );
+}
+
+#[tokio::test]
 async fn pending_prompt_blocks_until_answered() {
     let (executor, _dir) = executor().await;
     let run_id = seed_call(&executor, "call-1").await;

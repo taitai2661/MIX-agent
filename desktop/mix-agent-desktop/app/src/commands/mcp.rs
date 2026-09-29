@@ -1,39 +1,7 @@
 use crate::AppState;
-use mixd_mcp::host::{config_from_json, McpHost, Transport};
+use mixd_mcp::host::{config_from_json, Transport};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tauri::State;
-
-/// Wrapper so the AppState's `Arc<McpHost>` satisfies the registry's hook.
-pub struct McpBridge(pub Arc<McpHost>);
-
-#[async_trait_impl::async_trait]
-impl mixd_tools::McpDispatch for McpBridge {
-    async fn dispatch(
-        &self,
-        qualified_name: &str,
-        arguments: serde_json::Value,
-    ) -> anyhow::Result<mixd_tools::ToolResult> {
-        let result = self
-            .0
-            .dispatch(qualified_name, arguments)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(mixd_tools::ToolResult {
-            ok: !result.is_error,
-            content: result.content,
-            error: if result.is_error {
-                Some("MCP tool reported an error".to_string())
-            } else {
-                None
-            },
-        })
-    }
-}
-
-mod async_trait_impl {
-    pub use async_trait::async_trait;
-}
 
 #[derive(Serialize)]
 pub struct McpConnectionView {
@@ -178,11 +146,20 @@ pub async fn delete_connection(state: State<'_, AppState>, id: String) -> Result
 /// what puts them in the list the Provider is shown. Without that second step,
 /// connecting a server changed the tool count in the UI and nothing else — the
 /// model was never told the tools existed.
+///
+/// The registry is rebuilt through [`crate::build_registry`] rather than from
+/// scratch: assembling it here once dropped the `skill` and `agent` tools and
+/// reset the egress allowlist, so every MCP operation quietly uninstalled half
+/// the agent's capabilities until the next launch.
 async fn refresh_registry(state: &AppState) {
-    let egress = mixd_tools::EgressPolicy::default();
-    let mut tools = mixd_tools::ToolRegistry::new(egress)
-        .with_browser(state.browser.clone())
-        .with_mcp(Arc::new(McpBridge(state.mcp.clone())));
+    let egress = crate::load_egress_policy(state.storage.as_ref()).await;
+    let mut tools = crate::build_registry(
+        &state.storage,
+        &state.browser,
+        &state.mcp,
+        &state.agent_runner,
+        egress,
+    );
     tools.set_mcp_specs(
         mixd_mcp::collect_tool_specs(&state.mcp)
             .await

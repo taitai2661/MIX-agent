@@ -35,6 +35,10 @@ struct OpenAiRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a [OpenAiTool]>,
     stream: bool,
+    /// `include_usage` makes the API append a final chunk that carries the
+    /// token counts; without it every count stays at zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<OpenAiStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,6 +47,11 @@ struct OpenAiRequest<'a> {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct OpenAiStreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Serialize)]
@@ -124,8 +133,6 @@ struct OpenAiUsage {
     completion_tokens: u64,
     #[serde(default)]
     prompt_tokens_details: OpenAiUsageDetails,
-    #[serde(default)]
-    completion_tokens_details: OpenAiUsageDetails,
 }
 
 #[derive(Deserialize, Default)]
@@ -196,6 +203,9 @@ impl Provider for OpenAiProvider {
             messages: &messages,
             tools: tools.as_deref(),
             stream: true,
+            stream_options: Some(OpenAiStreamOptions {
+                include_usage: true,
+            }),
             temperature: req.temperature,
             top_p: req.top_p,
             max_tokens: req.max_tokens,
@@ -209,7 +219,7 @@ impl Provider for OpenAiProvider {
         // Retries transient failures; a permanent 400 surfaces immediately.
         let response = transport::send_with_retry(request).await?;
 
-        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
         let sse = transport::sse_stream(response);
 
         Ok(Box::pin(async_stream::stream! {
@@ -218,6 +228,12 @@ impl Provider for OpenAiProvider {
             let mut tool_state: std::collections::HashMap<i64, (String, String, String)> = Default::default();
             #[allow(unused_mut)]
             let mut sse = sse;
+            // `finish_reason` and `usage` arrive in different chunks: the finish
+            // chunk has no usage, and the usage chunk has an empty `choices`
+            // array, so both had to be remembered instead of emitting `Finished`
+            // on the first one.
+            let mut finish_reason: Option<String> = None;
+            let mut usage: Option<Usage> = None;
             while let Some(item) = sse.next().await {
                 let bytes = match item {
                     Ok(b) => b,
@@ -232,8 +248,8 @@ impl Provider for OpenAiProvider {
                 for raw in events {
                     if transport::sse_done(&raw) {
                         yield StreamEvent::Finished {
-                            finish_reason: "stop".to_string(),
-                            usage: None,
+                            finish_reason: finish_reason.take().unwrap_or_else(|| "stop".into()),
+                            usage,
                         };
                         return;
                     }
@@ -244,6 +260,15 @@ impl Provider for OpenAiProvider {
                             continue;
                         }
                     };
+                    if let Some(u) = chunk.usage {
+                        usage = Some(Usage {
+                            input_tokens: u.prompt_tokens,
+                            output_tokens: u.completion_tokens,
+                            cache_read_tokens: u.prompt_tokens_details.cached_tokens,
+                            // The API reports no cache-write count.
+                            cache_write_tokens: 0,
+                        });
+                    }
                     for choice in chunk.choices {
                         if let Some(text) = choice.delta.content {
                             if !text.is_empty() {
@@ -290,24 +315,28 @@ impl Provider for OpenAiProvider {
                             }
                         }
                         if let Some(reason) = choice.finish_reason {
+                            if finish_reason.is_none() {
+                                finish_reason = Some(reason);
+                            }
                             for (_, (id, name, args)) in tool_state.drain() {
                                 if !id.is_empty() {
                                     yield StreamEvent::ToolCallFinish { id, name, arguments: args };
                                 }
                             }
-                            yield StreamEvent::Finished {
-                                finish_reason: reason,
-                                usage: chunk.usage.as_ref().map(|u| Usage {
-                                    input_tokens: u.prompt_tokens,
-                                    output_tokens: u.completion_tokens,
-                                    cache_read_tokens: u.prompt_tokens_details.cached_tokens,
-                                    cache_write_tokens: u.completion_tokens_details.cached_tokens,
-                                }),
-                            };
-                            return;
                         }
                     }
+                    if finish_reason.is_some() && usage.is_some() {
+                        yield StreamEvent::Finished {
+                            finish_reason: finish_reason.take().unwrap_or_else(|| "stop".into()),
+                            usage,
+                        };
+                        return;
+                    }
                 }
+            }
+            // The connection closed without `[DONE]`.
+            if let Some(reason) = finish_reason {
+                yield StreamEvent::Finished { finish_reason: reason, usage };
             }
         }))
     }
@@ -324,7 +353,13 @@ fn is_local_endpoint(base_url: &str) -> bool {
         .next()
         .unwrap_or("");
     let host = host.rsplit('@').next().unwrap_or(host);
-    let host = host.split(':').next().unwrap_or(host);
+    // `http://[::1]:11434` — splitting an IPv6 literal on ':' yields `"["`,
+    // which matched nothing, so a keyless IPv6-loopback Ollama demanded a key.
+    let host = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
     if host == "localhost" || host == "::1" || host == "0.0.0.0" {
         return true;
     }

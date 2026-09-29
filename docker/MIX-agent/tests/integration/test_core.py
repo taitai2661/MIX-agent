@@ -541,18 +541,19 @@ def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
 def test_skill_revision_restore(signed):
     row = signed.post(
         "/api/v1/skills",
-        json={"name": "Release", "description": "verify", "content": "run tests"},
-    ).json()
-    key = row["id"]
+        json={"name": "release", "description": "verify", "content": "run tests"},
+    )
+    assert row.status_code == 200, row.text
+    key = row.json()["id"]
     assert signed.patch(
         "/api/v1/skills/" + key,
-        json={"name": "Release", "description": "verify", "content": "run tests then build", "enabled": True},
+        json={"name": "release", "description": "verify", "content": "run tests then build", "enabled": True},
     ).status_code == 200
     revisions = signed.get("/api/v1/skills/" + key + "/revisions").json()
     assert revisions[0]["data"]["previous"]["content"] == "run tests"
     assert signed.delete("/api/v1/skills/" + key).status_code == 200
     assert signed.post("/api/v1/skills/" + key + "/restore/" + revisions[0]["id"]).status_code == 200
-    assert signed.get("/api/v1/skills?q=Release").json()[0]["data"]["content"] == "run tests"
+    assert signed.get("/api/v1/skills?q=release").json()[0]["data"]["content"] == "run tests"
 
 
 def test_model_override_and_provider_secret(signed):

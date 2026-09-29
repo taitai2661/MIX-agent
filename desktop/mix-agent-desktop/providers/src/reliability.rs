@@ -84,6 +84,31 @@ impl ProviderErrorKind {
             ProviderErrorKind::Other
         }
     }
+
+    /// Classify a real transport error.
+    ///
+    /// `reqwest::Error`'s `Display` prints only its kind and URL — never the
+    /// source chain — so matching on `err.to_string()` classified every
+    /// connection reset and refusal as `Other` and disabled retry entirely.
+    pub fn from_error(err: &(dyn std::error::Error + 'static)) -> Self {
+        let mut current = Some(err);
+        while let Some(e) = current {
+            if let Some(re) = e.downcast_ref::<reqwest::Error>() {
+                if re.is_timeout() || re.is_connect() {
+                    return ProviderErrorKind::Transport;
+                }
+                if let Some(status) = re.status() {
+                    return ProviderErrorKind::from_status(status.as_u16());
+                }
+            }
+            let text = e.to_string();
+            if Self::from_transport(&text) == ProviderErrorKind::Transport {
+                return ProviderErrorKind::Transport;
+            }
+            current = e.source();
+        }
+        ProviderErrorKind::Other
+    }
 }
 
 /// Extract `Retry-After` in seconds, accepting both the delta-seconds and the

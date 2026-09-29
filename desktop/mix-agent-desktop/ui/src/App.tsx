@@ -124,7 +124,7 @@ export function App() {
     <div className="flex h-full min-w-0 flex-col bg-bg">
       <header
         className="app-titlebar relative z-20 flex h-11 shrink-0 items-center gap-2 border-b border-line bg-bg px-3"
-        data-tauri-drag-region
+        data-tauri-drag-region="deep"
       >
         <Button
           variant="ghost"

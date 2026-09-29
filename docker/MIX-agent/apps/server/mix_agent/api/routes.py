@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse,
 from sqlalchemy import Float, case, cast, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
-from mix_agent import config, pricing
+from mix_agent import config, pricing, project_docs
 from mix_agent import todos as conversation_todos
 from mix_agent.api.schemas import (
     AgentInput,
@@ -33,10 +33,7 @@ from mix_agent.api.schemas import (
     MCPInstallInput,
     MCPOAuthStartInput,
     MCPUninstallInput,
-    MemoryEvidenceInput,
     MemoryInput,
-    MemoryRememberInput,
-    MemoryResolveConflictInput,
     MessageInput,
     ModelInput,
     NotificationReadInput,
@@ -1900,6 +1897,11 @@ async def _build_history_payload(db, s, conversation, body, settings_row, agent,
             system_text += "\nProject instructions:\n" + project_data["instructions"]
         for index, source in enumerate(project_data.get("sources", []), 1):
             system_text += f"\nProject source {index}:\n{source}"
+    if not temporary_mode:
+        # AGENTS.md / CLAUDE.md come from the bind-mounted folder rather than
+        # the project record, so they apply even to a conversation with no
+        # project attached — and they carry their own untrusted-data note.
+        system_text += project_docs.render_project_docs_block()
     # Freeze the exact mode instruction with the Run.  This keeps retries and
     # resumed tool turns on the same behavioral contract even if defaults change.
     snapshot["mode_prompt"] = mode_prompt(mode)
@@ -2771,7 +2773,12 @@ async def list_skills(q: str = "", ctx=Depends(context)):
 @router.post("/skills")
 async def add_skill(body: SkillInput, ctx=Depends(context)):
     db, s = ctx
-    result = skills.change(db, s.owner_id, **body.model_dump())
+    try:
+        result = skills.change(db, s.owner_id, **body.model_dump())
+    except ValueError as exc:
+        # A name or description the SKILL.md rule rejects; `detail` as a plain
+        # string is what the WebView renders verbatim.
+        raise HTTPException(422, str(exc)) from exc
     db.commit()
     return {"id": result["id"], "data": {k: v for k, v in result.items() if k != "id"}, "created_at": db.get(Skill, result["id"]).created_at.isoformat()}
 
@@ -2780,7 +2787,10 @@ async def add_skill(body: SkillInput, ctx=Depends(context)):
 async def edit_skill(key: str, body: SkillInput, ctx=Depends(context)):
     db, s = ctx
     own(db, Skill, key, s.owner_id)
-    result = skills.change(db, s.owner_id, skill_id=key, **body.model_dump())
+    try:
+        result = skills.change(db, s.owner_id, skill_id=key, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     db.commit()
     return public(db.get(Skill, result["id"]))
 
@@ -2844,7 +2854,12 @@ async def import_skill_archive(file: UploadFile = File(...), ctx=Depends(context
 @router.post("/skills/import/directory")
 async def import_skill_directory(ctx=Depends(context)):
     db, s = ctx
-    packages = await asyncio.to_thread(skill_package.scan_directory, config.SKILLS_DIR)
+    packages, failures = await asyncio.to_thread(skill_package.scan_directory_report, config.SKILLS_DIR)
+    if failures:
+        # Importing while some entries failed would report success for a
+        # directory the user expects to be fully taken; show the reasons.
+        detail = "; ".join(f"{item['path']}: {item['reason']}" for item in failures[:5])
+        raise HTTPException(422, detail)
     results = [
         skills.import_package(db, s.owner_id, item, source="directory", source_path=str(config.SKILLS_DIR / item["name"]))
         for item in packages

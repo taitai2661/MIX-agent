@@ -1,11 +1,11 @@
 //! Native application menu.
 //!
-//! Builds the platform menu bar. Event ids are routed by the frontend, which
-//! owns the mapping to views and Settings tabs, so the menu and the in-app nav
-//! cannot drift apart.
+//! Builds the platform menu bar and re-emits every activation to the WebView,
+//! where the frontend owns the mapping from ids to views and Settings tabs, so
+//! the menu and the in-app nav cannot drift apart.
 
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 /// Menu event ids, mirrored by the frontend router.
 pub const EVT_NEW_CHAT: &str = "menu://new-chat";
@@ -112,5 +112,26 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &top)?;
 
     app.set_menu(menu)?;
+    forward_activations(app);
     Ok(())
+}
+
+/// Re-emit every application-menu activation to the WebView under its item id.
+///
+/// Tauri delivers menu events to Rust listeners only, so before this the menu
+/// was inert: "Settings…" / ⌘, "New Chat" / ⌘N, "Create Backup…" / ⌘B,
+/// "Diagnostics" / ⌘⇧D and "Check for Updates…" all rendered and claimed their
+/// accelerators, yet neither a click nor the keystroke ever reached the page —
+/// the frontend listens for `menu://…` events that nothing emitted.
+fn forward_activations<R: Runtime>(app: &AppHandle<R>) {
+    app.on_menu_event(|handle, event| {
+        let id: &str = event.id().as_ref();
+        if !id.starts_with("menu://") {
+            // The tray menu's ids belong to `tray::install`.
+            return;
+        }
+        if let Err(err) = handle.emit(id, ()) {
+            tracing::warn!(%err, id, "could not forward a menu activation to the WebView");
+        }
+    });
 }

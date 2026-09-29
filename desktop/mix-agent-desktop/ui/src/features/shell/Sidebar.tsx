@@ -176,6 +176,10 @@ export function Sidebar() {
 
   const pendingCount = approvals.data?.length ?? 0;
   const hasThreads = (conversations.data?.length ?? 0) > 0;
+  // After the project / surface / search filter. The "nothing matched" message
+  // used to be guarded on `conversations.data.length === 0` *inside* the
+  // `hasThreads` block, so it could never render.
+  const filteredThreadCount = [...threads.values()].reduce((n, items) => n + items.length, 0);
   const ThreadIcon = THEME_ICON[theme];
   const openThread = (c: ConversationSummary) => {
     setConversationId(c.id);
@@ -483,8 +487,8 @@ export function Sidebar() {
                 </section>
               );
             })}
-            {(conversations.data?.length ?? 0) === 0 && search && (
-              <p className="px-2 text-xs text-faint">{t("スレッドがありません")}</p>
+            {filteredThreadCount === 0 && (
+              <p className="px-2 text-xs text-faint">{t("一致するスレッドがありません")}</p>
             )}
           </div>
         )}

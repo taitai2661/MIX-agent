@@ -85,11 +85,21 @@ export function DiffLines({ lines }: { lines: DiffLine[] }) {
   );
 }
 
-export function DiffView({ path, content }: { path: string; content: string }) {
+export function DiffView({
+  path,
+  content,
+  oldString,
+  newString,
+}: {
+  path: string;
+  content: string;
+  oldString?: string;
+  newString?: string;
+}) {
   const rootPath = useActiveRoot();
   const diff = useQuery({
-    queryKey: ["file_diff", path, content, rootPath],
-    queryFn: () => api.previewFileDiff(path, content, rootPath),
+    queryKey: ["file_diff", path, content, rootPath, oldString, newString],
+    queryFn: () => api.previewFileDiff(path, content, rootPath, oldString, newString),
     staleTime: 30_000,
   });
 
@@ -152,7 +162,12 @@ export function DiffPanel() {
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <DiffView path={diffTarget.path} content={diffTarget.content} />
+        <DiffView
+          path={diffTarget.path}
+          content={diffTarget.content}
+          oldString={diffTarget.oldString}
+          newString={diffTarget.newString}
+        />
       </div>
     </>
   );

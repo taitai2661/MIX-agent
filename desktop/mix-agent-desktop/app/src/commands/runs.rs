@@ -203,15 +203,35 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     let pool = state.storage.pool().clone();
     tokio::spawn(async move {
         let result = engine.execute(request).await;
-        if let Ok(outcome) = result {
-            mixd_storage::log_write(
-                sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
-                    .bind(outcome.status.as_str())
-                    .bind(run_id.to_string())
-                    .execute(&pool)
-                    .await,
-                "record resumed run status",
-            );
+        // Both arms matter: swallowing `Err` here left the row `running`
+        // forever, and it is also counted as an active run by diagnostics.
+        let status = match &result {
+            Ok(outcome) => outcome.status.as_str().to_string(),
+            Err(err) => {
+                tracing::error!(?err, %run_id, "resumed run failed");
+                "failed".to_string()
+            }
+        };
+        mixd_storage::log_write(
+            sqlx::query("UPDATE runs SET status = ? WHERE id = ?")
+                .bind(&status)
+                .bind(run_id.to_string())
+                .execute(&pool)
+                .await,
+            "record resumed run status",
+        );
+        if let Err(err) = result {
+            let message = err.to_string();
+            engine
+                .emit(run_id, "error", serde_json::json!({ "error": message }))
+                .await;
+            engine
+                .emit(
+                    run_id,
+                    "status",
+                    serde_json::json!({ "status": "failed", "error": message }),
+                )
+                .await;
         }
     });
 

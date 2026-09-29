@@ -14,6 +14,10 @@ windows = ["main"]
 permissions = [
   "core:default",
   "core:window:default",
+  # `core:window:default` does not grant `start_dragging`, which is what the
+  # `data-tauri-drag-region` header invokes. Without it the ACL rejects the
+  # call and the window cannot be moved from the title bar.
+  "core:window:allow-start-dragging",
   "core:webview:default",
   "core:event:default",
   "core:app:default",

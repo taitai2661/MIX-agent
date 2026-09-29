@@ -73,11 +73,37 @@ impl FilesTool {
         let cleaned = path.trim_start_matches('/');
         let root_canon = root.canonicalize()?;
         let candidate = Self::lexical_normalize(&root_canon.join(cleaned));
-        let candidate_canon = candidate.canonicalize().unwrap_or(candidate);
-        if !candidate_canon.starts_with(&root_canon) {
+        // Resolve component by component. Calling `canonicalize` on the whole
+        // path fails whenever the leaf does not exist yet — which is every
+        // `write` / `create` — and the lexical fallback that followed let a
+        // symlinked directory in the middle of the path escape the workspace.
+        let relative = candidate.strip_prefix(&root_canon).unwrap_or(&candidate);
+        let mut resolved = root_canon.clone();
+        for component in relative.components() {
+            let next = resolved.join(component.as_os_str());
+            match std::fs::symlink_metadata(&next) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    // Fail closed: a symlink is exactly the escape route when
+                    // the leaf behind it does not exist yet.
+                    let target = next.canonicalize()?;
+                    if !target.starts_with(&root_canon) {
+                        anyhow::bail!("path escapes workspace: {}", path);
+                    }
+                    resolved = target;
+                }
+                Ok(_) => resolved = next,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    // Nothing below this point exists, so nothing below it can
+                    // be a symlink either; append the rest lexically.
+                    resolved = next;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        if !resolved.starts_with(&root_canon) {
             anyhow::bail!("path escapes workspace: {}", path);
         }
-        Ok(candidate_canon)
+        Ok(resolved)
     }
 }
 
@@ -126,9 +152,12 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
     let limit = args
         .get("limit")
         .and_then(|v| v.as_u64())
-        .map(|n| n.max(1) as usize)
+        // A JSON `u64` reaches this as `usize::MAX`, and `start_line - 1 + limit`
+        // then wrapped around — the slice below panicked with
+        // "slice index starts at … but ends at …".
+        .map(|n| n.clamp(1, 100_000) as usize)
         .unwrap_or(DEFAULT_READ_LINES);
-    let end_line = (start_line - 1 + limit).min(total_lines);
+    let end_line = (start_line - 1).saturating_add(limit).min(total_lines);
     let slice = if total_lines == 0 || start_line > total_lines {
         String::new()
     } else {
@@ -143,6 +172,27 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
         has_more: end_line < total_lines,
         truncated: false,
     })
+}
+
+/// A unique sibling of `target` used as the staging file for an atomic write.
+///
+/// The name embeds the full file name (so `README` and `README.md` do not share
+/// a temp path) plus a pid and a counter (so two concurrent writes to the *same*
+/// target cannot interleave).
+pub(crate) fn temp_sibling(target: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let file_name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    target.with_file_name(format!(
+        ".{}.{}.{}.mix-agent-tmp",
+        file_name,
+        std::process::id(),
+        n
+    ))
 }
 
 #[async_trait]
@@ -252,12 +302,24 @@ impl FilesTool {
                     .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("content required for write"))?;
+                if resolved == workspace_root {
+                    anyhow::bail!("refusing to write over the workspace root");
+                }
                 if let Some(parent) = resolved.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                let tmp = resolved.with_extension("mix-agent-tmp");
-                std::fs::write(&tmp, content)?;
-                std::fs::rename(&tmp, &resolved)?;
+                // A name unique to this target: `with_extension` maps `README`
+                // and `README.md` (and any `a.b` / `a.c` pair) onto the same
+                // temp path, so two overlapping writes corrupted each other.
+                let tmp = temp_sibling(&resolved);
+                if let Err(err) = std::fs::write(&tmp, content) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(err.into());
+                }
+                if let Err(err) = std::fs::rename(&tmp, &resolved) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(err.into());
+                }
                 Ok(ToolResult {
                     ok: true,
                     content: serde_json::json!({ "path": path, "bytes": content.len() }),
@@ -340,6 +402,12 @@ impl FilesTool {
                 })
             }
             "delete" => {
+                // `path` of `""`, `"."` or `"/"` resolves to the root itself,
+                // and an "always allow" rule for `files` means no prompt — a
+                // single call would wipe the whole project.
+                if resolved == workspace_root {
+                    anyhow::bail!("refusing to delete the workspace root");
+                }
                 if resolved.is_dir() {
                     std::fs::remove_dir_all(&resolved)?;
                 } else {
@@ -395,6 +463,30 @@ mod tests {
         std::os::unix::fs::symlink(&outside, &link).unwrap();
         #[cfg(unix)]
         assert!(FilesTool::safe_join(&root, "link").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_join_blocks_escape_through_a_symlinked_directory_with_a_missing_leaf() {
+        // `canonicalize` fails on the leaf because it does not exist yet, which
+        // is every `write` / `create`; the lexical fallback that followed let
+        // this path through.
+        let root = temp_root("join-symlink-missing");
+        let outside =
+            std::env::temp_dir().join(format!("mixd-files-outside-missing-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(
+            FilesTool::safe_join(&root, "link/newfile.txt").is_err(),
+            "a new file behind a symlinked directory must not escape the root"
+        );
+        // A *real* directory under the symlink that points back inside is fine.
+        let inside = root.join("real");
+        std::fs::create_dir_all(&inside).unwrap();
+        let inner_link = root.join("inner");
+        std::os::unix::fs::symlink(&inside, &inner_link).unwrap();
+        assert!(FilesTool::safe_join(&root, "inner/notes.txt").is_ok());
     }
 
     #[test]

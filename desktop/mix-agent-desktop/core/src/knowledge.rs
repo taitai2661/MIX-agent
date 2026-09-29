@@ -171,7 +171,26 @@ pub fn split_into_chunks(text: &str, target: usize) -> Vec<String> {
                 // This single line is longer than a whole chunk.
                 let mut rest = line;
                 while rest.chars().count() > target {
-                    let (head, tail) = rest.split_at(target);
+                    // `target` is a character budget but `split_at` counts
+                    // bytes: slicing a Japanese line at `target` landed in the
+                    // middle of a character and panicked — and the release
+                    // profile is `panic = "abort"`, so it killed the app.
+                    let mut cut = target.min(rest.len());
+                    while cut > 0 && !rest.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    if cut == 0 {
+                        cut = 1;
+                        while cut < rest.len() && !rest.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                    }
+                    if cut == 0 || cut >= rest.len() {
+                        chunks.push(rest.to_string());
+                        rest = "";
+                        break;
+                    }
+                    let (head, tail) = rest.split_at(cut);
                     chunks.push(head.to_string());
                     rest = tail;
                 }
@@ -213,5 +232,25 @@ mod tests {
         for c in &chunks {
             assert!(c.chars().count() <= 100, "chunk too long: {}", c.len());
         }
+    }
+
+    #[test]
+    fn a_multibyte_line_is_split_on_a_character_boundary() {
+        // One long line with no spaces, exactly what Japanese prose looks like.
+        let text = "あ".repeat(500);
+        let chunks = split_into_chunks(&text, 100);
+        assert!(chunks.len() >= 5);
+        assert_eq!(chunks.concat(), text);
+        for c in &chunks {
+            assert!(c.chars().count() <= 100, "chunk too long: {:?}", c);
+        }
+    }
+
+    #[test]
+    fn a_chunk_that_starts_with_a_multibyte_character_is_reassembled() {
+        // Byte index `target` inside the very first character.
+        let text = format!("{}{}", "あ".repeat(3), "b".repeat(50));
+        let chunks = split_into_chunks(&text, 1);
+        assert_eq!(chunks.concat(), text);
     }
 }

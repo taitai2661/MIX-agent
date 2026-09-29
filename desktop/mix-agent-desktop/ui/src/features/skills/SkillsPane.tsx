@@ -38,7 +38,7 @@ export function SkillsPane() {
     mutationFn: () => api.importSkill({
       source: "paste", payload: paste, path: null, name: null,
     }),
-    onSuccess: () => { setPaste(""); setNotice(null); void invalidate(); },
+    onSuccess: () => { setPaste(""); setNotice(null); setError(null); void invalidate(); },
     onError: (e) => setError(errorMessage(e)),
   });
 
@@ -51,7 +51,7 @@ export function SkillsPane() {
         source: "zip", payload: payload.data_base64, path, name: null,
       });
     },
-    onSuccess: () => { setNotice(null); void invalidate(); },
+    onSuccess: () => { setNotice(null); setError(null); void invalidate(); },
     onError: (e) => setError(errorMessage(e)),
   });
 
@@ -59,7 +59,7 @@ export function SkillsPane() {
     mutationFn: (path: string) => api.importSkill({
       source: "directory", payload: null, path, name: null,
     }),
-    onSuccess: () => { setDirectory(""); setNotice(null); void invalidate(); },
+    onSuccess: () => { setDirectory(""); setNotice(null); setError(null); void invalidate(); },
     onError: (e) => setError(errorMessage(e)),
   });
 
@@ -116,7 +116,7 @@ export function SkillsPane() {
             <Textarea
               className="font-mono"
               rows={8}
-              placeholder={"---\nname: my-skill\ndescription: what it does\n---\n\n# Instructions…"}
+              placeholder={"---\nname: my-skill        # lowercase, digits, single hyphens\ndescription: what it does  # required\n---\n\n# Instructions…"}
               value={paste}
               onChange={(e) => setPaste(e.target.value)}
             />

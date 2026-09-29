@@ -1,5 +1,7 @@
 //! Skills: `SKILL.md` catalogue with paste / zip / directory import and export.
 
+pub mod discovery;
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -42,6 +44,10 @@ impl std::error::Error for SkillParseError {}
 /// Accepts YAML frontmatter delimited by `---`, or a plain Markdown body where
 /// the first `# Heading` is the name and the first paragraph is the
 /// description.
+///
+/// Parsing stays permissive and validation happens at [`SkillService::save`]:
+/// stored skills predate the naming rule, and a read path that rejected them
+/// would make an existing catalogue disappear.
 pub fn parse_skill(raw: &str) -> Result<Skill, SkillParseError> {
     let trimmed = raw.trim_start();
     if let Some(rest) = trimmed.strip_prefix("---") {
@@ -73,6 +79,16 @@ pub fn parse_skill(raw: &str) -> Result<Skill, SkillParseError> {
         .ok_or(SkillParseError {
             message: "SKILL.md must start with a `# name` heading".into(),
         })?;
+    // A heading is prose ("My Skill"), never a valid name on its own, so slug
+    // it instead of rejecting the document the user pasted.
+    let name = slug_skill_name(&heading);
+    if name.is_empty() {
+        return Err(SkillParseError {
+            message: format!(
+                "`# {heading}` does not contain any letter or digit, so it cannot be a skill name"
+            ),
+        });
+    }
     let body = trimmed.to_string();
     let description = body
         .lines()
@@ -82,13 +98,93 @@ pub fn parse_skill(raw: &str) -> Result<Skill, SkillParseError> {
         .unwrap_or_default()
         .to_string();
     Ok(Skill {
-        name: heading,
+        name,
         description,
         body_markdown: body,
         allowed_tools: Vec::new(),
         resources: Vec::new(),
         updated_at: Utc::now(),
     })
+}
+
+/// Longest name the catalogue accepts, matching the OpenCode rule.
+pub const SKILL_NAME_MAX: usize = 64;
+
+/// Lowercase, map every run of disallowed characters to a single `-`, and trim
+/// the ends: `My Skill` → `my-skill`, `a--b` → `a-b`.
+pub fn slug_skill_name(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut pending_dash = false;
+    for ch in raw.chars() {
+        let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        if ok {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.push(ch);
+        } else if ch.is_ascii_uppercase() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.is_empty() {
+            pending_dash = true;
+        }
+    }
+    out
+}
+
+/// A name the `skill` tool and the catalogue can rely on:
+/// `^[a-z0-9]+(-[a-z0-9]+)*$`, 1–64 characters.
+pub fn validate_skill_name(name: &str) -> Result<(), SkillParseError> {
+    if name.is_empty() {
+        return Err(SkillParseError {
+            message: "skill name must not be empty".into(),
+        });
+    }
+    if name.chars().count() > SKILL_NAME_MAX {
+        return Err(SkillParseError {
+            message: format!("skill name must be at most {SKILL_NAME_MAX} characters"),
+        });
+    }
+    let mut alphanumeric_run = false;
+    for ch in name.chars() {
+        match ch {
+            'a'..='z' | '0'..='9' => alphanumeric_run = true,
+            '-' if alphanumeric_run => alphanumeric_run = false,
+            _ => {
+                return Err(SkillParseError {
+                    message: format!(
+                        "invalid skill name {name:?}: expected lowercase letters, digits and \
+                         single hyphens, e.g. `my-skill`"
+                    ),
+                })
+            }
+        }
+    }
+    if !alphanumeric_run {
+        return Err(SkillParseError {
+            message: format!("invalid skill name {name:?}: must not end with a hyphen"),
+        });
+    }
+    Ok(())
+}
+
+/// Everything a stored skill has to satisfy. Called on write only.
+pub fn validate_skill(skill: &Skill) -> Result<(), SkillParseError> {
+    validate_skill_name(skill.name.trim())?;
+    if skill.description.trim().is_empty() {
+        return Err(SkillParseError {
+            message: format!(
+                "skill {:?} is missing `description`: the catalogue shows only names and \
+                 descriptions, so an empty one hides what the skill does",
+                skill.name
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Minimal YAML frontmatter reader: `key: value` plus `key: [a, b]` lists.
@@ -183,7 +279,12 @@ impl SkillService {
     }
 
     /// Save (or replace) a skill by name.
+    ///
+    /// The one strict gate: `import_markdown` is the only caller, so paste,
+    /// zip and directory imports are all validated here while reads stay
+    /// permissive about names written before the rule existed.
     pub async fn save(storage: &mixd_storage::Storage, skill: Skill) -> anyhow::Result<Skill> {
+        validate_skill(&skill)?;
         let now = Utc::now();
         let data = serde_json::json!({
             "name": skill.name,
@@ -400,7 +501,7 @@ mod tests {
     #[test]
     fn parses_plain_markdown() {
         let skill = parse_skill("# My Skill\n\nDoes a thing.\n\nMore.").expect("parse");
-        assert_eq!(skill.name, "My Skill");
+        assert_eq!(skill.name, "my-skill");
         assert_eq!(skill.description, "Does a thing.");
     }
 
@@ -408,6 +509,57 @@ mod tests {
     fn missing_name_is_an_error() {
         let raw = "---\ndescription: no name here\n---\nbody";
         assert!(parse_skill(raw).is_err());
+    }
+
+    fn skill_named(name: &str, description: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            body_markdown: "body".into(),
+            allowed_tools: Vec::new(),
+            resources: Vec::new(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn names_follow_the_opencode_rule() {
+        for ok in ["a", "my-skill", "skill2", &"x".repeat(64)] {
+            assert!(validate_skill_name(ok).is_ok(), "{ok:?} should be valid");
+        }
+        for bad in [
+            "",
+            "My Skill",
+            "my--skill",
+            "-my-skill",
+            "my-skill-",
+            "skill_1",
+            "スキル",
+            &"x".repeat(65),
+        ] {
+            assert!(
+                validate_skill_name(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_description_is_required_on_write() {
+        let mut skill = skill_named("my-skill", "   ");
+        assert!(validate_skill(&skill).is_err());
+        skill.description = "does a thing".into();
+        assert!(validate_skill(&skill).is_ok());
+    }
+
+    #[test]
+    fn a_stored_skill_with_an_old_style_name_still_reads() {
+        // Read paths never validate: rows written before the rule must not
+        // vanish from the catalogue.
+        let raw = r#"{"name":"My Skill","description":"legacy","bodyMarkdown":"x","allowedTools":[],"resources":[],"updatedAt":"2026-01-01T00:00:00Z"}"#;
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let skill = SkillService::from_value(&value).expect("legacy row loads");
+        assert_eq!(skill.name, "My Skill");
     }
 
     #[test]

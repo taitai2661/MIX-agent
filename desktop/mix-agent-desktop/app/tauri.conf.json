@@ -22,6 +22,8 @@
         "fullscreen": false,
         "decorations": true,
         "transparent": false,
+        "focus": true,
+        "acceptFirstMouse": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
       }

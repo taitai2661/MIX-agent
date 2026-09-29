@@ -129,8 +129,11 @@ async fn list_messages_limit_is_applied() {
 
     let limited = fetch_messages(pool, "conv-2", 3).await.expect("fetch");
     assert_eq!(limited.len(), 3);
-    assert_eq!(limited[0].content, "0");
-    assert_eq!(limited[2].content, "2");
+    // The *newest* three, returned oldest-first. Keeping the oldest three meant
+    // a long conversation showed the user only its first lines forever.
+    assert_eq!(limited[0].content, "2");
+    assert_eq!(limited[1].content, "3");
+    assert_eq!(limited[2].content, "4");
 }
 
 #[tokio::test]

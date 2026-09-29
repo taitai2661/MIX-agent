@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2, ChevronDown, CircleAlert, ClipboardList, Clock3, FileText, Globe2,
   History, ListChecks, Loader2, Pencil, RotateCcw, Search, ShieldAlert, Terminal, Wrench, X,
@@ -55,14 +55,23 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
       ? new Date(tool.finishedAt).getTime() - new Date(tool.startedAt).getTime()
       : null;
 
-  // `files.write` carries the whole new content; `edit` reports a preview of the
-  // changed region in its result, which is what the diff chip should show.
-  const writeInfo = isFileWrite(tool)
-    ? {
-        path: String((args as Record<string, unknown>).path),
-        content: editPreview(tool) ?? String((args as Record<string, unknown>).content),
-      }
-    : null;
+  // `files.write` carries the whole new content. `edit` does not: its
+  // `result.preview` is a `@@ line N @@` region, and falling back to
+  // `String(args.content)` produced the literal string "undefined" — either way
+  // the diff was nonsense. Hand the anchor and its replacement over instead and
+  // let the backend apply them to the file on disk.
+  const a = (args ?? {}) as Record<string, unknown>;
+  const writeInfo: { path: string; content: string; oldString?: string; newString?: string } | null =
+    isFileWrite(tool)
+      ? tool.name === "edit"
+        ? {
+            path: String(a.path),
+            content: "",
+            oldString: typeof a.old_string === "string" ? a.old_string : "",
+            newString: typeof a.new_string === "string" ? a.new_string : "",
+          }
+        : { path: String(a.path), content: String(a.content) }
+      : null;
 
   return (
     <div className="flex gap-2 px-3 py-2.5">
@@ -126,14 +135,6 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
   );
 }
 
-/** The `preview` an `edit` call returns, when there is one. */
-function editPreview(tool: ToolActivity): string | null {
-  if (tool.name !== "edit" || tool.result == null) return null;
-  const result = tool.result as Record<string, unknown> | null;
-  const preview = result?.preview;
-  return typeof preview === "string" && preview.trim() ? preview : null;
-}
-
 /** The agent's current plan, so the user can see what it thinks it is doing. */
 function TodoList({ items }: { items: TodoItem[] }) {
   const done = items.filter((i) => i.status === "completed").length;
@@ -186,6 +187,9 @@ export function ActivityPanel() {
 
   const runId = activityRunId ?? liveRunId;
   const isLive = runId != null && runId === liveRunId;
+  const startRun = useRunEvents((s) => s.startRun);
+  const activeConversationId = useRunEvents((s) => s.conversationId);
+  const queryClient = useQueryClient();
 
   const history = useQuery({
     queryKey: ["run_events", runId],
@@ -280,7 +284,24 @@ export function ActivityPanel() {
                   </span>
                   <Button
                     size="sm"
-                    onClick={() => void api.resumeRun({ id: runId, from_checkpoint: c.id, unknown_actions: [] })}
+                    onClick={() => {
+                      void api
+                        .resumeRun({ id: runId, from_checkpoint: c.id, unknown_actions: [] })
+                        .then(() => {
+                          // Track the resumed run. Without this every event it
+                          // emitted was dropped (`run_id !== liveRunId`) and the
+                          // history query — `staleTime: Infinity` — was never
+                          // refetched, so the panel froze on the pre-resume
+                          // snapshot.
+                          startRun(runId, activeConversationId);
+                          void queryClient.invalidateQueries({
+                            queryKey: ["run_events", runId],
+                          });
+                          void queryClient.invalidateQueries({
+                            queryKey: ["checkpoints", runId],
+                          });
+                        });
+                    }}
                   >
                     <RotateCcw size={11} /> {t("再開")}
                   </Button>

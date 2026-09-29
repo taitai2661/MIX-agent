@@ -259,8 +259,8 @@ BUILTINS = [
         executor="builtin",
         parallel_safe=True,
     ),
-    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "content"], "ask", "builtin", allowed_modes=("agent",)),
-    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 100}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
+    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 64}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "description", "content"], "ask", "builtin", allowed_modes=("agent",)),
+    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 64}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
     definition("memory_delete", "Delete existing memory with approval", {"id": S}, ["id"], "ask", "builtin"),
     definition(
         "update_plan",

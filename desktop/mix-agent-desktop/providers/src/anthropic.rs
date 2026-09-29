@@ -101,8 +101,8 @@ struct AnthropicEvent {
     delta: AnthropicDelta,
     #[serde(default)]
     message: Option<AnthropicMessageMeta>,
+    /// Top-level `usage` of a `message_delta` / `message_start` event.
     #[serde(default)]
-    #[allow(dead_code)]
     usage: Option<AnthropicUsage>,
 }
 
@@ -127,7 +127,10 @@ struct AnthropicContentBlock {
 
 #[derive(Deserialize, Default)]
 struct AnthropicDelta {
-    #[serde(rename = "type")]
+    // A `message_delta` payload carries `{"stop_reason": …, "stop_sequence": …}`
+    // with no `type` field at all; requiring it made the whole event fail to
+    // deserialize, which is how the completion signal used to be lost.
+    #[serde(default, rename = "type")]
     kind: String,
     #[serde(default)]
     text: Option<String>,
@@ -198,7 +201,7 @@ impl Provider for AnthropicProvider {
                     .collect::<Vec<_>>(),
             )
         };
-        let thinking = match req.reasoning {
+        let mut thinking = match req.reasoning {
             Some(ReasoningControl::Low) => Some(AnthropicThinking {
                 kind: "enabled",
                 budget_tokens: 1024,
@@ -221,12 +224,21 @@ impl Provider for AnthropicProvider {
             }),
             _ => None,
         };
+        let mut max_tokens = req.max_tokens.unwrap_or(4096);
+        if let Some(t) = thinking.as_mut() {
+            // The API rejects `budget_tokens >= max_tokens`, and the default
+            // `max_tokens` of 4096 is exactly the Medium budget.
+            if req.max_tokens.is_none() {
+                max_tokens = t.budget_tokens.saturating_add(4096).min(64_000);
+            }
+            t.budget_tokens = t.budget_tokens.min(max_tokens.saturating_sub(1).max(1));
+        }
         let body = AnthropicRequest {
             model: &req.model,
             messages: &messages,
             system: inlined_system.as_deref(),
             tools: tools.as_deref(),
-            max_tokens: req.max_tokens.unwrap_or(4096),
+            max_tokens,
             stream: true,
             temperature: req.temperature,
             thinking,
@@ -243,19 +255,23 @@ impl Provider for AnthropicProvider {
         let response = transport::send_with_retry(request).await?;
 
         let sse = transport::sse_stream(response);
-        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
 
         Ok(Box::pin(an_sse_stream(buffer, sse)))
     }
 }
 
 fn an_sse_stream(
-    buffer: std::sync::Arc<tokio::sync::Mutex<String>>,
+    buffer: std::sync::Arc<tokio::sync::Mutex<Vec<u8>>>,
     sse: std::pin::Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>>,
 ) -> impl Stream<Item = StreamEvent> + Send + 'static {
     let mut sse = sse;
     async_stream::stream! {
         let mut tool_state: std::collections::HashMap<i64, (String, String, String)> = Default::default();
+        // `message_start` carries the input/cache tokens, `message_delta` the
+        // output tokens and the stop reason; neither alone is a complete Usage.
+        let mut usage: Option<Usage> = None;
+        let mut finished = false;
         while let Some(item) = sse.next().await {
             let bytes = match item {
                 Ok(b) => b,
@@ -325,27 +341,87 @@ fn an_sse_stream(
                             }
                         }
                     }
+                    "message_start" => {
+                        let start = event
+                            .message
+                            .and_then(|m| m.usage)
+                            .or(event.usage);
+                        if let Some(u) = start {
+                            let cached = u.cache_read_input_tokens;
+                            let written = u.cache_creation_input_tokens;
+                            usage = Some(Usage {
+                                input_tokens: u.input_tokens,
+                                output_tokens: 0,
+                                cache_read_tokens: cached,
+                                cache_write_tokens: written,
+                            });
+                        }
+                    }
                     "message_delta" => {
-                        if let Some(meta) = event.message {
-                            if let Some(usage) = meta.usage {
-                                yield StreamEvent::Finished {
-                                    finish_reason: event.delta.stop_reason.unwrap_or_else(|| "stop".into()),
-                                    usage: Some(Usage {
-                                        input_tokens: usage.input_tokens,
-                                        output_tokens: usage.output_tokens,
-                                        cache_read_tokens: usage.cache_read_input_tokens,
-                                        cache_write_tokens: usage.cache_creation_input_tokens,
-                                    }),
-                                };
+                        // Usage lives at the top level of `message_delta`, not
+                        // under `delta` and not under a `message` object.
+                        if let Some(u) = event.usage {
+                            let entry = usage.get_or_insert(Usage {
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cache_read_tokens: 0,
+                                cache_write_tokens: 0,
+                            });
+                            entry.output_tokens = u.output_tokens;
+                            if entry.input_tokens == 0 {
+                                entry.input_tokens = u.input_tokens;
                             }
+                            if entry.cache_read_tokens == 0 {
+                                entry.cache_read_tokens = u.cache_read_input_tokens;
+                            }
+                            if entry.cache_write_tokens == 0 {
+                                entry.cache_write_tokens = u.cache_creation_input_tokens;
+                            }
+                        }
+                        if let Some(meta) = event.message {
+                            if let Some(u) = meta.usage {
+                                let entry = usage.get_or_insert(Usage {
+                                    input_tokens: 0,
+                                    output_tokens: 0,
+                                    cache_read_tokens: 0,
+                                    cache_write_tokens: 0,
+                                });
+                                entry.output_tokens = u.output_tokens;
+                            }
+                        }
+                        if !finished {
+                            finished = true;
+                            yield StreamEvent::Finished {
+                                finish_reason: event
+                                    .delta
+                                    .stop_reason
+                                    .unwrap_or_else(|| "stop".into()),
+                                usage: usage.clone(),
+                            };
                         }
                     }
                     "message_stop" => {
+                        // Safety net: some gateways end the stream without a
+                        // usable `message_delta`, and the engine treats a stream
+                        // that never finishes as a failed run.
+                        if !finished {
+                            yield StreamEvent::Finished {
+                                finish_reason: "stop".into(),
+                                usage: usage.clone(),
+                            };
+                        }
                         return;
                     }
                     _ => {}
                 }
             }
+        }
+        // The connection can also close without `message_stop`.
+        if !finished {
+            yield StreamEvent::Finished {
+                finish_reason: "stop".into(),
+                usage,
+            };
         }
     }
 }
@@ -513,6 +589,67 @@ mod tests {
     use crate::AssistantToolCall;
     use crate::AssistantToolCallFn;
     use crate::Message;
+
+    fn feed(
+        chunks: &[&str],
+    ) -> std::pin::Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>> {
+        let items = chunks
+            .iter()
+            .map(|c| Ok(Bytes::from(c.as_bytes().to_vec())))
+            .collect::<Vec<_>>();
+        Box::pin(futures_util::stream::iter(items))
+    }
+
+    async fn collect_sse(chunks: &[&str]) -> Vec<StreamEvent> {
+        let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
+        an_sse_stream(buffer, feed(chunks)).collect().await
+    }
+
+    fn finished(events: &[StreamEvent]) -> Vec<(String, Option<Usage>)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::Finished {
+                    finish_reason,
+                    usage,
+                } => Some((finish_reason.clone(), usage.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_real_message_delta_finishes_the_stream_with_usage() {
+        let events = collect_sse(&[
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4}}}\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":34}}\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n",
+        ])
+        .await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta(t) if t == "hello")),
+            "the text delta must survive: {events:?}"
+        );
+        let done = finished(&events);
+        assert_eq!(done.len(), 1, "exactly one completion signal: {done:?}");
+        assert_eq!(done[0].0, "end_turn");
+        let usage = done[0].1.clone().expect("usage must be reported");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 34);
+        assert_eq!(usage.cache_read_tokens, 4);
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_ends_without_message_stop_still_finishes() {
+        let events = collect_sse(&[
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n",
+        ])
+        .await;
+        assert_eq!(finished(&events).len(), 1, "the engine needs a Finished");
+    }
 
     fn request(messages: Vec<Message>) -> ProviderRequest {
         ProviderRequest {

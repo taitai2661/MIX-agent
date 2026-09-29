@@ -57,7 +57,10 @@ struct DbSkillSource {
 
 #[async_trait_impl::async_trait]
 impl mixd_tools::skill::SkillSource for DbSkillSource {
-    async fn skills(&self) -> anyhow::Result<Vec<mixd_tools::skill::SkillSummary>> {
+    async fn skills(
+        &self,
+        _root: Option<&str>,
+    ) -> anyhow::Result<Vec<mixd_tools::skill::SkillSummary>> {
         let rows: Vec<String> =
             sqlx::query_scalar("SELECT data FROM skills ORDER BY json_extract(data, '$.name')")
                 .fetch_all(self.storage.pool())
@@ -117,13 +120,13 @@ impl mixd_tools::agent::AgentSource for DbAgentSource {
 /// A direct `Arc<RunEngine>` would be circular: the engine is built *from* the
 /// registry that holds this tool.
 #[derive(Default)]
-struct EngineAgentRunner {
+pub(crate) struct EngineAgentRunner {
     engine: std::sync::OnceLock<std::sync::Weak<RunEngine>>,
     model_id: std::sync::Mutex<String>,
 }
 
 impl EngineAgentRunner {
-    fn attach(&self, engine: &Arc<RunEngine>, model_id: &str) {
+    pub(crate) fn attach(&self, engine: &Arc<RunEngine>, model_id: &str) {
         let _ = self.engine.set(Arc::downgrade(engine));
         *self.model_id.lock().expect("model id lock") = model_id.to_string();
     }
@@ -151,6 +154,14 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
 
         let engine = self.engine()?;
         let model_id = self.model_id.lock().expect("model id lock").clone();
+        // `attach` is given a placeholder, and an empty model id is sent
+        // verbatim by every adapter — a guaranteed 400. The parent run is the
+        // authority: it is the run that invoked this tool.
+        let model_id = if model_id.is_empty() {
+            parent_model(&engine, parent.run_id).await?
+        } else {
+            model_id
+        };
         let specs: Vec<mixd_tools::ToolSpec> = engine
             .tool_specs()
             .await
@@ -203,7 +214,10 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             // keyed to the parent's own run id and never listed on its own.
             conversation_id: parent.run_id,
             workspace_id: parent.workspace_id,
-            root_path: None,
+            // Scoped to the parent's folder. `None` means "process CWD", which
+            // for a Finder-launched app is `/` — the sub-agent would read and
+            // write outside the project.
+            root_path: parent.root_path.clone(),
             mode: mixd_core::mode::Mode::Thinking,
             model_id,
             system: Some(system),
@@ -237,6 +251,22 @@ mod async_trait_impl {
     pub use async_trait::async_trait;
 }
 
+/// The model the parent Run was launched with, so a sub-agent answers with the
+/// same one instead of the empty id `attach` was seeded with.
+async fn parent_model(engine: &RunEngine, run_id: uuid::Uuid) -> anyhow::Result<String> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT json_extract(data, '$.modelId') FROM runs WHERE id = ?")
+            .bind(run_id.to_string())
+            .fetch_optional(engine.storage.pool())
+            .await
+            .map_err(|err| anyhow::anyhow!("reading the parent run's model failed: {err}"))?;
+    let model = row.and_then(|(m,)| m).filter(|m| !m.trim().is_empty());
+    match model {
+        Some(model) => Ok(model),
+        None => anyhow::bail!("cannot start a sub-agent: the parent run has no model configured"),
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub storage: Arc<Storage>,
@@ -244,6 +274,44 @@ pub struct AppState {
     pub engine: Arc<RunEngine>,
     pub browser: Arc<mixd_browser::BrowserOperator>,
     pub mcp: Arc<McpHost>,
+    /// The same runner instance the engine's registry was built with, so a
+    /// rebuild after an MCP change keeps the `agent` tool working.
+    pub(crate) agent_runner: Arc<EngineAgentRunner>,
+}
+
+/// Assemble the Tool Registry from the live parts.
+///
+/// Two places build a registry — startup and every MCP connect/disconnect — and
+/// they have to produce the same tool list. Rebuilding from scratch used to
+/// drop the skill and agent tools (and reset the egress allowlist) because only
+/// the startup path attached them, which made an MCP operation silently strip
+/// the agent of half its capabilities.
+pub(crate) fn build_registry(
+    storage: &Arc<Storage>,
+    browser: &Arc<mixd_browser::BrowserOperator>,
+    mcp: &Arc<McpHost>,
+    agent_runner: &Arc<EngineAgentRunner>,
+    egress: mixd_tools::EgressPolicy,
+) -> mixd_tools::ToolRegistry {
+    mixd_tools::ToolRegistry::new(egress)
+        .with_browser(browser.clone())
+        .with_mcp(Arc::new(McpBridge { host: mcp.clone() }))
+        // Project skills first: a procedure a repository carries itself is
+        // more specific than a stored one with the same name.
+        .with_skills(Arc::new(mixd_tools::skill::CompositeSkillSource::new(
+            vec![
+                Arc::new(mixd_core::skills::discovery::ProjectSkillSource),
+                Arc::new(DbSkillSource {
+                    storage: storage.clone(),
+                }),
+            ],
+        )))
+        .with_agents(
+            Arc::new(DbAgentSource {
+                storage: storage.clone(),
+            }),
+            agent_runner.clone(),
+        )
 }
 
 pub async fn build_app_state(
@@ -280,18 +348,7 @@ pub async fn build_app_state(
     // The agent runner needs the engine, and the engine needs the registry, so
     // the runner is wired in afterwards through a self-reference.
     let agent_runner = Arc::new(EngineAgentRunner::default());
-    let mut tools = mixd_tools::ToolRegistry::new(egress)
-        .with_browser(browser.clone())
-        .with_mcp(Arc::new(McpBridge { host: mcp.clone() }))
-        .with_skills(Arc::new(DbSkillSource {
-            storage: storage.clone(),
-        }))
-        .with_agents(
-            Arc::new(DbAgentSource {
-                storage: storage.clone(),
-            }),
-            agent_runner.clone(),
-        );
+    let mut tools = build_registry(&storage, &browser, &mcp, &agent_runner, egress);
     tools.set_mcp_specs(
         mcp_specs
             .into_iter()
@@ -317,11 +374,12 @@ pub async fn build_app_state(
         engine,
         browser,
         mcp,
+        agent_runner,
     })
 }
 
 /// Read the egress allowlist out of `app_settings`.
-async fn load_egress_policy(storage: &Storage) -> mixd_tools::EgressPolicy {
+pub(crate) async fn load_egress_policy(storage: &Storage) -> mixd_tools::EgressPolicy {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT data FROM app_settings WHERE id = 'singleton'")
             .fetch_optional(storage.pool())

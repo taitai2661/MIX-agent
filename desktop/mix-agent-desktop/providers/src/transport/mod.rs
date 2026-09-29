@@ -51,7 +51,7 @@ pub async fn send_with_retry(request: RequestBuilder) -> anyhow::Result<Response
         let response = match result {
             Ok(response) => response,
             Err(err) => {
-                let kind = ProviderErrorKind::from_transport(&err.to_string());
+                let kind = ProviderErrorKind::from_error(&err);
                 if reliability::should_retry(kind, attempt) {
                     let wait = reliability::wait_for(attempt, None);
                     tracing::warn!(
@@ -148,14 +148,23 @@ pub fn sse_stream(
     )
 }
 
-pub fn parse_sse_lines(buffer: &mut String, chunk: &Bytes) -> Vec<String> {
-    buffer.push_str(std::str::from_utf8(chunk).unwrap_or(""));
+/// Append a network chunk to the SSE buffer and return every complete event.
+///
+/// The buffer is raw bytes on purpose: `bytes_stream()` splits the body at
+/// arbitrary byte boundaries, so a chunk frequently ends in the middle of a
+/// multi-byte character. Decoding each chunk on its own would fail (and used to
+/// drop the whole chunk). Only complete lines — which always end on `b'\n'`,
+/// never inside a character — are decoded.
+pub fn parse_sse_lines(buffer: &mut Vec<u8>, chunk: &Bytes) -> Vec<String> {
+    buffer.extend_from_slice(chunk);
     let mut events = Vec::new();
-    let mut start = 0;
-    while let Some(idx) = buffer[start..].find('\n') {
+    let mut start = 0usize;
+    while let Some(idx) = buffer[start..].iter().position(|&b| b == b'\n') {
         let end = start + idx;
-        let line = buffer[start..end].trim_end_matches('\r').to_string();
+        let raw = &buffer[start..end];
         start = end + 1;
+        let line = String::from_utf8_lossy(raw);
+        let line = line.trim_end_matches('\r');
         if line.is_empty() {
             continue;
         }
@@ -223,7 +232,7 @@ mod tests {
     fn sse_lines_are_extracted_across_chunk_boundaries() {
         // A JSON payload split mid-line is the normal case for SSE; a parser
         // that only looks within one chunk drops events silently.
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         let first = parse_sse_lines(&mut buffer, &Bytes::from_static(b"data: {\"a\""));
         assert!(first.is_empty());
         let second = parse_sse_lines(&mut buffer, &Bytes::from_static(b":1}\ndata: [DONE]\n"));
@@ -231,8 +240,22 @@ mod tests {
     }
 
     #[test]
+    fn a_chunk_split_inside_a_multibyte_character_is_not_dropped() {
+        // "日" is `e6 97 a5`; a network chunk boundary can land between any two
+        // of those bytes. The whole chunk used to be discarded as invalid UTF-8,
+        // and the next chunk then started with orphan continuation bytes.
+        let payload = "data: {\"text\":\"日本語\"}\n".as_bytes();
+        let (head, tail) = payload.split_at(23);
+        let mut buffer = Vec::new();
+        assert!(parse_sse_lines(&mut buffer, &Bytes::copy_from_slice(head)).is_empty());
+        let events = parse_sse_lines(&mut buffer, &Bytes::copy_from_slice(tail));
+        assert_eq!(events, vec!["{\"text\":\"日本語\"}".to_string()]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
     fn blank_lines_and_comments_are_ignored() {
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         let events = parse_sse_lines(
             &mut buffer,
             &Bytes::from_static(b"\n: keepalive\ndata: x\n"),
@@ -242,7 +265,7 @@ mod tests {
 
     #[test]
     fn crlf_line_endings_are_handled() {
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         let events = parse_sse_lines(&mut buffer, &Bytes::from_static(b"data: x\r\n"));
         assert_eq!(events, vec!["x".to_string()]);
     }

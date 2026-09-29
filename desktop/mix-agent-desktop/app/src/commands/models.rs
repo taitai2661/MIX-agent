@@ -44,15 +44,38 @@ pub async fn sync_models(
             "reasoning": false,
             "auto": true,
         });
+        // Only the discovered fields are patched on conflict. Replacing the row
+        // wholesale reset the three capability flags that `verify_tools` wrote,
+        // so re-fetching the model list silently turned off Vision — and Composer
+        // then refused image attachments.
+        let discovered = serde_json::json!({
+            "providerId": provider_id,
+            "label": model.label,
+            "contextWindow": model.context_window,
+            "auto": true,
+        });
         sqlx::query(
-            "INSERT INTO models (id, owner_id, data, created_at) VALUES (?, ?, ?, ?) \
-             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            "INSERT INTO models (id, owner_id, data, created_at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(id) DO UPDATE SET data = json_patch(data, json(?5))",
         )
         .bind(&model_id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
         .bind(data.to_string())
         .bind(&now)
+        .bind(discovered.to_string())
         .execute(state.storage.pool())
+        .await
+        .map_err(crate::error::cmd_err)?;
+        // Read the effective flags back: on a re-sync they are whatever the
+        // stored row already had, not the `false` written above.
+        let (vision, tool_calling, reasoning): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COALESCE(json_extract(data, '$.vision'), 0), \
+                    COALESCE(json_extract(data, '$.toolCalling'), 0), \
+                    COALESCE(json_extract(data, '$.reasoning'), 0) \
+             FROM models WHERE id = ?",
+        )
+        .bind(&model_id)
+        .fetch_one(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
         written.push(ModelView {
@@ -60,9 +83,9 @@ pub async fn sync_models(
             provider_id: provider_id.to_string(),
             label: model.label.clone(),
             context_window: model.context_window,
-            supports_vision: false,
-            supports_tool_calling: false,
-            supports_reasoning: false,
+            supports_vision: vision != 0,
+            supports_tool_calling: tool_calling != 0,
+            supports_reasoning: reasoning != 0,
         });
     }
     Ok(written)

@@ -74,6 +74,11 @@ struct ShellSession {
     /// The working directory the shell is in, tracked by echoing `pwd`.
     cwd: Arc<Mutex<String>>,
     id: String,
+    /// Kill handle for the shell process. The reader thread owns the `Child`
+    /// (it is the one calling `wait`), so the killer is cloned out of it and
+    /// kept here: without it a timed-out command kept running for the rest of
+    /// the session.
+    killer: std::sync::Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
 }
 
 impl ShellSession {
@@ -98,6 +103,7 @@ impl ShellSession {
             std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()),
         );
         let mut child = pair.slave.spawn_command(cmd).ok()?;
+        let killer = child.clone_killer();
         drop(pair.slave);
         let writer = pair.master.take_writer().ok()?;
         let master = pair.master.try_clone_reader().ok()?;
@@ -113,13 +119,16 @@ impl ShellSession {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if let Ok(mut sink) = sink.try_lock() {
-                            sink.extend_from_slice(&buf[..n]);
-                            // Bound the buffer; the tail is what matters.
-                            if sink.len() > MAX_OUTPUT_BYTES * 4 {
-                                let drop_to = sink.len() - MAX_OUTPUT_BYTES * 4;
-                                sink.drain(..drop_to);
-                            }
+                        // A blocking lock, never `try_lock`: the consumer holds
+                        // this mutex while it scans up to 800 KB, and `try_lock`
+                        // dropped every chunk that arrived in that window —
+                        // silently missing output with no truncation marker.
+                        let mut sink = sink.blocking_lock();
+                        sink.extend_from_slice(&buf[..n]);
+                        // Bound the buffer; the tail is what matters.
+                        if sink.len() > MAX_OUTPUT_BYTES * 4 {
+                            let drop_to = sink.len() - MAX_OUTPUT_BYTES * 4;
+                            sink.drain(..drop_to);
                         }
                     }
                 }
@@ -132,7 +141,21 @@ impl ShellSession {
             output,
             cwd: Arc::new(Mutex::new(cwd.to_string())),
             id: id.to_string(),
+            killer: std::sync::Mutex::new(killer),
         }))
+    }
+
+    /// Stop the shell process. Called when the session is evicted so a timed
+    /// out command cannot keep running — or keep writing its exit code into a
+    /// status file a replacement shell now owns.
+    fn kill(&self) {
+        let mut killer = match self.killer.lock() {
+            Ok(k) => k,
+            Err(_) => return,
+        };
+        if let Err(err) = killer.kill() {
+            tracing::debug!(session = %self.id, %err, "shell kill failed");
+        }
     }
 
     async fn cwd(&self) -> String {
@@ -258,11 +281,17 @@ fn truncate_output(text: &str) -> String {
     if text.len() <= MAX_OUTPUT_BYTES {
         return text.to_string();
     }
-    let head = &text[..MAX_OUTPUT_BYTES];
+    // Slicing at a byte offset that lands inside a multi-byte character panics;
+    // a Japanese `cat` over 200 KB hits it routinely, and the release profile
+    // is `panic = "abort"`.
+    let mut cut = MAX_OUTPUT_BYTES;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let head = &text[..cut];
     let kept_lines = head.lines().count();
     format!(
-        "{head}\n… [truncated: {} of {} bytes shown, {kept_lines} lines]",
-        MAX_OUTPUT_BYTES,
+        "{head}\n… [truncated: {cut} of {} bytes shown, {kept_lines} lines]",
         text.len()
     )
 }
@@ -397,8 +426,19 @@ impl TerminalTool {
             match sessions.get(&key) {
                 Some(existing) => Some(existing.clone()),
                 None => {
-                    let spawned =
-                        ShellSession::spawn(&key, &format!("{}-{}", key.len(), stable_hash(&key)));
+                    // A per-session nonce: the id feeds both the sentinel and
+                    // the exit-status file, and a replacement shell for the same
+                    // workspace used to inherit the orphaned one's path, so a
+                    // late `printf > status` overwrote the new command's code.
+                    static SESSION_SEQ: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let session_id = format!(
+                        "{}-{}-{}",
+                        key.len(),
+                        stable_hash(&key),
+                        SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    );
+                    let spawned = ShellSession::spawn(&key, &session_id);
                     if let Some(session) = &spawned {
                         sessions.insert(key.clone(), session.clone());
                     }
@@ -426,6 +466,10 @@ impl TerminalTool {
                 // cached dead session would time out on every later call, so
                 // evict it and let the next call spawn a fresh one.
                 self.sessions.lock().await.remove(&key);
+                // Eviction has to stop the process too: on a timeout the child
+                // is owned by the reader thread, which only ever `wait`s on it,
+                // so the command would otherwise run indefinitely.
+                session.kill();
                 (err, None, Some(fallback_cwd), true)
             }
         }
@@ -522,6 +566,16 @@ mod tests {
     #[test]
     fn output_is_capped_with_a_visible_marker() {
         let big = "x".repeat(MAX_OUTPUT_BYTES * 2);
+        let out = truncate_output(&big);
+        assert!(out.contains("[truncated:"));
+        assert!(out.len() < big.len());
+    }
+
+    #[test]
+    fn truncating_multibyte_output_does_not_panic() {
+        // Byte `MAX_OUTPUT_BYTES` is not a character boundary when the output is
+        // Japanese, and slicing there panicked — the release profile aborts.
+        let big = "あ".repeat(MAX_OUTPUT_BYTES);
         let out = truncate_output(&big);
         assert!(out.contains("[truncated:"));
         assert!(out.len() < big.len());

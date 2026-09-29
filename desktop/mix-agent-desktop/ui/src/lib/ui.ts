@@ -34,8 +34,11 @@ export type RightPanel = "none" | "activity" | "diff" | "changes" | "file";
 export interface DiffTarget {
   /** Workspace-relative path the `files` tool reported. */
   path: string;
-  /** Proposed file content from the tool arguments. */
+  /** Proposed file content from the tool arguments (`files.write`). */
   content: string;
+  /** For `edit`: the anchor and its replacement, applied to the file on disk. */
+  oldString?: string;
+  newString?: string;
   label: string;
 }
 

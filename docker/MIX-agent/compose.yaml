@@ -55,6 +55,10 @@ services:
       MIX_KEYS: /keys
       RUNNER_KEYS: /runner-keys
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+      # Read-only view of one host folder, used for AGENTS.md / CLAUDE.md and
+      # for skills discovered under .mix/skills (then .claude/skills, then
+      # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
+      MIX_PROJECT_MOUNT: /project
       # Source of the model-info catalog: an https address or a directory
       # mounted into this container (see the volumes comment below).
       MIX_MODEL_INFO_URL: "${MIX_MODEL_INFO_URL:-https://taitai2661.github.io/model-info/v1}"
@@ -62,6 +66,7 @@ services:
       - data:/data
       - policy:/data/egress
       - ./skills:/data/skills
+      - ${MIX_PROJECT_DIR:-.}:/project:ro
       - keys:/keys
       - db-secret:/db-secret:ro
       - execution-token:/execution-keys:ro

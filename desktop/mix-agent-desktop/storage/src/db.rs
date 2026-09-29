@@ -106,20 +106,44 @@ fn split_statements(schema: &str) -> Vec<String> {
 /// previous database is kept as `mix-agent.db.pre-restore` so a bad restore is
 /// recoverable by hand.
 async fn promote_staged_restore(data_dir: &Path) -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt;
     let staged = data_dir.join("mix-agent.restored.db");
     if !staged.is_file() {
         return Ok(());
     }
-    // WAL sidecars belong to the old database; leaving them would let SQLite
-    // replay stale pages over the restored file.
-    for sidecar in ["mix-agent.db-wal", "mix-agent.db-shm"] {
-        tokio::fs::remove_file(data_dir.join(sidecar)).await.ok();
+    // Verify before swapping: the staged file is only ever produced by a
+    // successful `restore`, but promoting a truncated or foreign file would
+    // destroy the live database with no way back.
+    let mut magic = [0u8; 16];
+    let read = {
+        let mut file = tokio::fs::File::open(&staged).await?;
+        file.read(&mut magic).await?
+    };
+    if read < 16 || &magic != b"SQLite format 3\0" {
+        anyhow::bail!(
+            "the staged restore at {} is not a valid SQLite file; refusing to replace the live database",
+            staged.display()
+        );
     }
     let live = data_dir.join("mix-agent.db");
     if live.is_file() {
         tokio::fs::copy(&live, data_dir.join("mix-agent.db.pre-restore"))
             .await
             .ok();
+    }
+    // WAL sidecars belong to the old database; leaving them would let SQLite
+    // replay stale pages over the restored file. They are copied next to the
+    // safety copy first, so the uncheckpointed commits they hold are not lost
+    // from it too.
+    for (sidecar, kept) in [
+        ("mix-agent.db-wal", "mix-agent.db.pre-restore-wal"),
+        ("mix-agent.db-shm", "mix-agent.db.pre-restore-shm"),
+    ] {
+        let from = data_dir.join(sidecar);
+        if from.is_file() {
+            tokio::fs::copy(&from, data_dir.join(kept)).await.ok();
+        }
+        tokio::fs::remove_file(&from).await.ok();
     }
     tokio::fs::rename(&staged, &live)
         .await

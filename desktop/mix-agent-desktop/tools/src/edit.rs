@@ -138,6 +138,10 @@ fn loose_replace(content: &str, old: &str, new: &str, replace_all: bool) -> Stri
             out.extend(replacement.iter().map(|line| line.to_string()));
             i += needle.len();
             if !replace_all {
+                // Everything after the anchor still belongs to the file. This
+                // used to `break` without copying it, so a whitespace-tolerant
+                // match silently deleted the rest of the file.
+                out.extend(source[i..].iter().map(|line| line.to_string()));
                 break;
             }
         } else {
@@ -199,13 +203,15 @@ fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "edit".to_string());
-    let tmp = path.with_file_name(format!(".{file_name}.mix-agent-tmp"));
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path)?;
+    let tmp = super::files::temp_sibling(path);
+    if let Err(err) = std::fs::write(&tmp, content) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err.into());
+    }
+    if let Err(err) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err.into());
+    }
     Ok(())
 }
 
@@ -465,6 +471,16 @@ mod tests {
         assert_eq!(count, 1);
         assert!(out.contains("    done();"));
         assert!(!out.contains("run();   \r"));
+    }
+
+    #[test]
+    fn a_whitespace_tolerant_match_keeps_the_rest_of_the_file() {
+        // The anchor only matches after trimming, which is exactly the loose
+        // path; everything after it has to survive.
+        let (out, count) = EditTool::replace("head\nmiddle\nfoot\n", "middle   ", "changed", false)
+            .expect("loose replace");
+        assert_eq!(count, 1);
+        assert_eq!(out, "head\nchanged\nfoot\n");
     }
 
     #[test]

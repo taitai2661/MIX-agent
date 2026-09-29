@@ -31,14 +31,38 @@ def search(db, owner, query="", ids=None):
     return result[:20]
 
 
+def _validate_identity(name, description):
+    """Apply the SKILL.md frontmatter rule to the free-form write paths.
+
+    ``POST /skills``, ``PATCH`` and the ``skill_add`` / ``skill_update`` tools
+    take name and description directly rather than through a ``SKILL.md``, so
+    without this they bypass the rule the import paths enforce.
+    """
+    errors = package.validate_meta({"name": name, "description": description})
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 def change(db, owner, name=None, description=None, content=None, skill_id=None, delete=False, enabled=True, source_run=None):
     if skill_id:
         row = db.get(Skill, skill_id)
         if not row or row.owner_id != owner:
             raise ValueError("Skill not found")
+        # Validate only the fields this call actually changes: a patch that
+        # leaves the name alone (for instance toggling `enabled`) must keep
+        # working for a row stored before the rule existed, while a new name
+        # or description still has to conform.
+        name_changed = name is not None and name != row.data.get("name")
+        description_changed = description is not None and description != row.data.get("description", "")
+        if name_changed or description_changed:
+            _validate_identity(
+                name if name_changed else row.data.get("name"),
+                description if description_changed else row.data.get("description", ""),
+            )
         db.add(SkillRevision(owner_id=owner, data={"skill_id": row.id, "previous": row.data}))
         row.data = {**row.data, **({"name": name} if name is not None else {}), **({"description": description} if description is not None else {}), **({"content": content} if content is not None else {}), "enabled": enabled, "deleted": delete, "source_run": source_run or row.data.get("source_run")}
     else:
+        _validate_identity(name, description or "")
         row = Skill(owner_id=owner, data={"name": name, "description": description or "", "content": content, "enabled": enabled, "deleted": False, "source_run": source_run})
         db.add(row)
     db.flush()

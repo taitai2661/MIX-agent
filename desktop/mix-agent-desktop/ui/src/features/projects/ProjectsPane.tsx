@@ -144,8 +144,8 @@ export function ProjectsPane() {
           </p>
           {selected.rootPath != null && (
             <p className="m-0 text-2xs text-faint">
-              <FileText size={11} className="me-0.5 inline-block align-[-1.5px]" /> AGENTS.md{" "}
-              {t("を検出すると自動で読み込みます")}
+              <FileText size={11} className="me-0.5 inline-block align-[-1.5px]" /> AGENTS.md /{" "}
+              CLAUDE.md {t("を検出すると自動で読み込みます")}
             </p>
           )}
         </Card>

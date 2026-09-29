@@ -286,6 +286,11 @@ pub async fn dispatch_run(
     .await
     .map_err(crate::error::cmd_err)?;
 
+    // Before the user turn is inserted. `load_history` selects every message,
+    // so loading it afterwards included the row just written and the engine
+    // appended the same text again — every turn was sent to the model twice.
+    let history: Vec<HistoryMessage> = load_history(pool, &input.conversation_id).await?;
+
     // Persist the user turn.
     let user_data = serde_json::json!({
         "role": "user",
@@ -316,8 +321,6 @@ pub async fn dispatch_run(
         .await,
         "touch conversation",
     );
-
-    let history: Vec<HistoryMessage> = load_history(pool, &input.conversation_id).await?;
 
     // Project context: instructions / sources / AGENTS.md → system prompt,
     // and the project folder → tool workspace root.
@@ -381,6 +384,20 @@ pub async fn dispatch_run(
                         .await,
                     "record failed run status",
                 );
+                // The engine bailed before emitting anything, so the UI has no
+                // terminal event to key `isTerminal()` on and the spinner would
+                // run until the window is reloaded.
+                let message = err.to_string();
+                engine
+                    .emit(run_id, "error", serde_json::json!({ "error": message }))
+                    .await;
+                engine
+                    .emit(
+                        run_id,
+                        "status",
+                        serde_json::json!({ "status": "failed", "error": message }),
+                    )
+                    .await;
             }
         }
     });
@@ -416,13 +433,19 @@ async fn load_history(
     // 400 for that ("messages with role 'tool' must be a response to a preceding
     // message with 'tool_calls'"), so any conversation that had used a tool was
     // permanently broken from the second message onwards.
+    // The *newest* 80, then reversed. Keeping the oldest 80 meant that past
+    // that point every later turn was built from the head of the conversation
+    // and the model lost all recent context. `rowid` breaks ties so messages
+    // written in the same millisecond keep their order.
     let rows = sqlx::query(
-        "SELECT data FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 80",
+        "SELECT data FROM messages WHERE conversation_id = ? \
+         ORDER BY created_at DESC, rowid DESC LIMIT 80",
     )
     .bind(conversation_id)
     .fetch_all(pool)
     .await
     .map_err(crate::error::cmd_err)?;
+    let rows: Vec<_> = rows.into_iter().rev().collect();
     Ok(rows
         .into_iter()
         .filter_map(|row| {
@@ -571,7 +594,8 @@ pub async fn fetch_messages(
                 json_extract(data, '$.kind') AS kind, \
                 created_at, \
                 json_extract(data, '$.attachments') AS attachments \
-         FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?",
+         FROM messages WHERE conversation_id = ? \
+         ORDER BY created_at DESC, rowid DESC LIMIT ?",
     )
     .bind(conversation_id)
     .bind(limit)
@@ -580,6 +604,9 @@ pub async fn fetch_messages(
     .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
+        // Newest-first fetch, oldest-first render — and past the limit the
+        // visible end of the transcript is the recent one, not message #1.
+        .rev()
         .map(
             |(id, role, content, reasoning, model_id, run_id, kind, created_at, attachments)| {
                 MessageView {
