@@ -667,6 +667,9 @@ pub struct RunRequest {
     /// Absolute folder this run is scoped to (project root). `None` keeps the
     /// legacy behaviour of resolving against the process working directory.
     pub root_path: Option<String>,
+    /// Extra read-only folders the tools may read from (Codex `--add-dir`
+    /// parity for monorepos).
+    pub additional_paths: Vec<String>,
     pub mode: Mode,
     pub model_id: String,
     pub provider_id: String,
@@ -1480,6 +1483,10 @@ impl RunEngine {
         // The fallback is per-*call*, not per tool: `files` is one tool but its
         // read and write actions warrant different answers, and an unknown tool
         // is always treated as sensitive rather than optimistically allowed.
+        let pattern_target = {
+            let registry = self.tools.read().await;
+            registry.pattern_target_for(&tool_name, &arguments)
+        };
         let default_decision = {
             let registry = self.tools.read().await;
             match registry.get(&tool_name) {
@@ -1487,11 +1494,18 @@ impl RunEngine {
                 None => mixd_tools::permission::PermissionDecision::Ask,
             }
         };
+        let permission_ctx = mixd_tools::execute::PermissionContext {
+            workspace_id: Some(request.workspace_id),
+            pattern_target: pattern_target.as_deref(),
+        };
         // A stored rule still wins, so a user can lock a read-only tool down or
-        // silence a prompt for a mutating one.
+        // silence a prompt for a mutating one. Scope and pattern now participate
+        // in the lookup: a workspace-scoped deny beats a global allow, and a
+        // pattern-scoped rule only matches when the tool exposes a matching
+        // target.
         let decision = self
             .executor
-            .resolve_permission(&tool_name, default_decision)
+            .resolve_permission(&tool_name, &permission_ctx, default_decision)
             .await;
         if decision == mixd_tools::permission::PermissionDecision::Deny {
             return self
@@ -1602,6 +1616,7 @@ impl RunEngine {
             run_id,
             workspace_id: request.workspace_id,
             root_path: request.root_path.clone(),
+            additional_paths: request.additional_paths.clone(),
             approval_token,
         };
         let outcome = {

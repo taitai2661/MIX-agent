@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::egress::EgressPolicy;
+use super::egress::{EgressPolicy, ResolvedTarget};
 use super::{Tool, ToolContext, ToolResult};
 
 #[derive(Default)]
@@ -10,24 +10,35 @@ pub struct NetworkTool {
     pub egress: EgressPolicy,
 }
 
-/// Shared client for Tool HTTP calls.
+/// Shared base builder for Tool HTTP calls.
 ///
 /// Built once per process instead of per call (a fresh connection pool each
-/// time) and with the redirect policy turned off: reqwest follows up to ten
+/// time). The redirect policy is turned off so the network Tool can re-evaluate
+/// every hop through the egress policy; without it reqwest follows up to ten
 /// redirects on its own, and a permitted host can bounce the request straight
 /// at the cloud metadata address before the policy ever sees the target.
-fn http_client() -> &'static reqwest::Client {
-    use std::sync::OnceLock;
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent("mix-agent-desktop/0.1")
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("reqwest TLS backend")
-    })
+fn base_client() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .user_agent("mix-agent-desktop/0.1")
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+}
+
+/// Build a `reqwest::Client` whose DNS is pinned to the addresses the egress
+/// policy approved for this URL.
+///
+/// The DNS rebinding class of attack checks the hostname *before* connecting
+/// and then trusts the resolver not to change its mind. Pinning the resolver
+/// to the vetted addresses forces reqwest to dial the IPs we approved, even if
+/// a TTL flip happens between the two lookups.
+fn client_for(target: &ResolvedTarget) -> anyhow::Result<reqwest::Client> {
+    let mut builder = base_client();
+    let addrs: Vec<std::net::SocketAddr> = target.addrs.clone();
+    builder = builder.resolve_to_addrs(&target.host, &addrs);
+    builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("building pinned client failed: {}", e))
 }
 
 /// Redirect hops followed before giving up; matches reqwest's own default.
@@ -63,6 +74,9 @@ impl Tool for NetworkTool {
             "additionalProperties": false
         })
     }
+    fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string())
+    }
     async fn invoke(
         &self,
         _ctx: ToolContext,
@@ -86,15 +100,16 @@ impl Tool for NetworkTool {
         let body = args.get("body").cloned();
 
         // Every hop is checked: the first URL passed the allowlist, but a 302
-        // from it points wherever the server wants.
-        let client = http_client();
+        // from it points wherever the server wants. Each hop gets a fresh
+        // reqwest client pinned to the addresses vetted for that URL.
         let mut url = start.clone();
         let mut method = method;
         let mut send_body = true;
         let mut hop = 0u8;
         let response = loop {
-            self.egress.enforce_async(&url).await?;
-            let mut req = client.request(method.clone(), &url);
+            let target = self.egress.resolve_async(&url).await?;
+            let client = client_for(&target)?;
+            let mut req = client.request(method.clone(), &target.url);
             if let Some(obj) = headers.as_object() {
                 for (k, v) in obj {
                     if let Some(s) = v.as_str() {

@@ -172,6 +172,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         conversation_id: Uuid::parse_str(&conversation_id).map_err(crate::error::cmd_err)?,
         workspace_id: Uuid::new_v4(),
         root_path: project.root_path,
+        additional_paths: project.additional_paths,
         mode,
         model_id,
         provider_id,

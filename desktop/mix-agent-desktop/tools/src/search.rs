@@ -170,6 +170,9 @@ impl Tool for GlobTool {
             "required": ["pattern"]
         })
     }
+    fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+    }
 
     async fn invoke(
         &self,
@@ -183,7 +186,10 @@ impl Tool for GlobTool {
             .to_string();
         let workspace_root = FilesTool::resolve_context_root(ctx.root_path.as_deref())?;
         let sub = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        let start = FilesTool::safe_join(&workspace_root, sub)?;
+        // Reads are allowed in the additional (read-only) roots too, so a
+        // monorepo can grep its sibling packages with an absolute path.
+        let (start, _writable) =
+            FilesTool::resolve_target_in(&workspace_root, &ctx.additional_paths, sub)?;
         let limit = read_max_matches(&args);
         let hidden = args
             .get("include_hidden")
@@ -287,6 +293,9 @@ impl Tool for GrepTool {
             "required": ["pattern"]
         })
     }
+    fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+    }
 
     async fn invoke(
         &self,
@@ -313,7 +322,8 @@ impl Tool for GrepTool {
 
         let workspace_root = FilesTool::resolve_context_root(ctx.root_path.as_deref())?;
         let target = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        let start = FilesTool::safe_join(&workspace_root, target)?;
+        let (start, _writable) =
+            FilesTool::resolve_target_in(&workspace_root, &ctx.additional_paths, target)?;
         let file_glob = args
             .get("glob")
             .and_then(|v| v.as_str())

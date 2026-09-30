@@ -275,6 +275,7 @@ mod tests {
             run_id: uuid::Uuid::new_v4(),
             workspace_id: uuid::Uuid::new_v4(),
             root_path: None,
+            additional_paths: Vec::new(),
             approval_token: None,
         }
     }

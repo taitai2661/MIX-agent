@@ -217,6 +217,13 @@ export interface DiagnosticsReport {
   memory_count: number;
   skill_count: number;
   active_runs: number;
+  /// `true` when the Keychain already holds a DB master key,
+  /// `false` when one will be minted at first use,
+  /// `undefined` when the Keychain refused to answer.
+  db_key_present?: boolean;
+  /// True once the storage layer is encrypted at rest; always false until
+  /// the SQLCipher migration lands.
+  db_encrypted: boolean;
 }
 
 export interface CheckpointView {
@@ -230,6 +237,8 @@ export interface PermissionRuleView {
   tool_id: string;
   scope: string;
   decision: string;
+  pattern: string | null;
+  workspace_id: string | null;
 }
 
 export interface PendingApprovalView {

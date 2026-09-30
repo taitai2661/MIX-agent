@@ -53,6 +53,56 @@ impl FilesTool {
         }
     }
 
+    /// Resolve `path` for a tool call against the run's folders.
+    ///
+    /// * Relative paths resolve inside the writable project root.
+    /// * Absolute paths must land inside the project root (writable) or one
+    ///   of `additional` roots (read-only, Codex `--add-dir` parity); they
+    ///   are rejected otherwise so a stray `/etc/passwd` cannot be read.
+    ///
+    /// Returns the resolved path and whether writes are permitted there.
+    pub fn resolve_target(
+        root_path: Option<&str>,
+        additional: &[String],
+        path: &str,
+    ) -> anyhow::Result<(PathBuf, bool)> {
+        let main = Self::resolve_context_root(root_path)?;
+        Self::resolve_target_in(&main, additional, path)
+    }
+
+    /// [`Self::resolve_target`] with the canonical writable root already in
+    /// hand, so callers that need the root too do not canonicalize twice.
+    pub fn resolve_target_in(
+        main: &Path,
+        additional: &[String],
+        path: &str,
+    ) -> anyhow::Result<(PathBuf, bool)> {
+        if Path::new(path).is_absolute() {
+            // The leaf may not exist yet (a `write` creating it), so resolve
+            // the deepest existing ancestor and re-append the rest.
+            let canon = canonicalize_partial(Path::new(path));
+            if canon.starts_with(main) {
+                return Ok((canon, true));
+            }
+            for extra in additional {
+                let trimmed = extra.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let extra_path = Path::new(trimmed);
+                if !extra_path.is_dir() {
+                    continue;
+                }
+                let extra_canon = extra_path.canonicalize()?;
+                if canon.starts_with(&extra_canon) {
+                    return Ok((canon, false));
+                }
+            }
+            anyhow::bail!("path is outside the workspace: {path}");
+        }
+        Ok((Self::safe_join(main, path)?, true))
+    }
+
     /// Lexically drop `.` / resolve `..` so paths that do not exist yet still
     /// cannot escape the root (`Path::canonicalize` fails on them).
     fn lexical_normalize(path: &Path) -> PathBuf {
@@ -105,6 +155,32 @@ impl FilesTool {
         }
         Ok(resolved)
     }
+}
+
+/// Canonicalize `path`, falling back to canonicalizing the deepest existing
+/// ancestor and re-appending the not-yet-created remainder. Used so a
+/// not-yet-written file's absolute path can still be compared against the
+/// canonical roots (`/var/...` is a symlink to `/private/var/...` on macOS).
+fn canonicalize_partial(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    let mut existing = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) if !existing.exists() => {
+                rest.push(name.to_os_string());
+                existing = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+    let mut base = existing.canonicalize().unwrap_or(existing);
+    for part in rest.into_iter().rev() {
+        base.push(part);
+    }
+    base
 }
 
 /// A line-addressed slice of a file, plus enough metadata for the model to know
@@ -217,6 +293,9 @@ impl Tool for FilesTool {
             "read" | "list" | "search"
         )
     }
+    fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+    }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -260,7 +339,11 @@ impl Tool for FilesTool {
             .unwrap_or("")
             .to_string();
         let root_path = ctx.root_path;
-        match tokio::task::spawn_blocking(move || FilesTool::invoke_blocking(root_path, args)).await
+        let additional = ctx.additional_paths;
+        match tokio::task::spawn_blocking(move || {
+            FilesTool::invoke_blocking(root_path, additional, args)
+        })
+        .await
         {
             Ok(outcome) => {
                 if let Err(err) = &outcome {
@@ -279,6 +362,7 @@ impl Tool for FilesTool {
 impl FilesTool {
     fn invoke_blocking(
         root_path: Option<String>,
+        additional: Vec<String>,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
         let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
@@ -287,7 +371,7 @@ impl FilesTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("path required"))?;
         let workspace_root = Self::resolve_context_root(root_path.as_deref())?;
-        let resolved = Self::safe_join(&workspace_root, path)?;
+        let (resolved, writable) = Self::resolve_target_in(&workspace_root, &additional, path)?;
         match action {
             "read" => {
                 let page = read_page(&resolved, &args, path)?;
@@ -302,6 +386,9 @@ impl FilesTool {
                     .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("content required for write"))?;
+                if !writable {
+                    anyhow::bail!("追加フォルダは読み取り専用です: {path}");
+                }
                 if resolved == workspace_root {
                     anyhow::bail!("refusing to write over the workspace root");
                 }
@@ -405,6 +492,9 @@ impl FilesTool {
                 // `path` of `""`, `"."` or `"/"` resolves to the root itself,
                 // and an "always allow" rule for `files` means no prompt — a
                 // single call would wipe the whole project.
+                if !writable {
+                    anyhow::bail!("追加フォルダは読み取り専用です: {path}");
+                }
                 if resolved == workspace_root {
                     anyhow::bail!("refusing to delete the workspace root");
                 }

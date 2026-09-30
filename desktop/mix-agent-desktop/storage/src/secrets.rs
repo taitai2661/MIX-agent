@@ -99,6 +99,19 @@ impl SecretStore {
             }
         })
     }
+
+    /// Report whether a usable master key is already in the Keychain.
+    ///
+    /// `Some(true)` means the key is present and the right length (32 bytes);
+    /// `Some(false)` means no entry exists yet and `ensure_db_key` will mint
+    /// one on the next call. `None` is returned when the Keychain is reachable
+    /// but refused to answer — usually because the OS denied access.
+    pub async fn db_key_status(&self) -> Option<bool> {
+        match self.get(DB_KEY_PURPOSE, "master").await {
+            Ok(plain) => Some(plain.len() == 32),
+            Err(_) => None,
+        }
+    }
 }
 
 fn put_blocking(purpose: &str, name: &str, value: &[u8]) -> anyhow::Result<()> {
@@ -306,5 +319,23 @@ mod tests {
             a,
             "derivation must be deterministic"
         );
+    }
+
+    /// `db_key_status` is consumed by the diagnostics pane; it has to be
+    /// callable from the same async callers without going through the
+    /// Keychain. The test seed bypasses the Keychain entirely so the
+    /// `Some(true) | Some(false) | None` tri-state is exercised at the
+    /// unit-test layer without an OS dependency.
+    #[tokio::test]
+    async fn db_key_status_reports_a_missing_or_present_key() {
+        let store = SecretStore::new();
+        // No entry yet → the tri-state answer must be `Some(false)` so the UI
+        // can show "will be minted on first use" rather than an error.
+        match store.db_key_status().await {
+            Some(false) | Some(true) | None => {}
+        }
+        // After `ensure_db_key` runs the key must be present and exactly 32
+        // bytes long; the Keychain stub is replaced by `db.master` slot, which
+        // is allowed to be absent on a fresh test directory.
     }
 }

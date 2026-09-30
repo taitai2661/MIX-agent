@@ -13,6 +13,15 @@ pub struct DiagnosticsReport {
     pub memory_count: u32,
     pub skill_count: u32,
     pub active_runs: u32,
+    /// `Some(true)` when the Keychain holds a usable DB master key,
+    /// `Some(false)` when it does not (one will be minted at first use),
+    /// `None` when the Keychain refused to answer.
+    pub db_key_present: Option<bool>,
+    /// True when the database itself is encrypted at rest. Today the storage
+    /// layer runs against a vanilla SQLite, so this is always `false`; the
+    /// field is wired in so the UI can show a single line that will flip to
+    /// `true` once the SQLCipher migration lands.
+    pub db_encrypted: bool,
 }
 
 #[tauri::command]
@@ -65,6 +74,7 @@ pub async fn collect_diagnostics(state: State<'_, AppState>) -> Result<Diagnosti
         .unwrap_or(0);
     let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE status IN ('queued','running','waiting_approval','budget_extension_pending')")
         .fetch_one(pool).await.unwrap_or(0);
+    let db_key_present = state.secrets.db_key_status().await;
     Ok(DiagnosticsReport {
         data_dir,
         db_ok,
@@ -75,5 +85,7 @@ pub async fn collect_diagnostics(state: State<'_, AppState>) -> Result<Diagnosti
         memory_count: memories as u32,
         skill_count: skills as u32,
         active_runs: active as u32,
+        db_key_present,
+        db_encrypted: false,
     })
 }

@@ -340,6 +340,7 @@ pub async fn dispatch_run(
         conversation_id: Uuid::parse_str(&input.conversation_id).map_err(crate::error::cmd_err)?,
         workspace_id,
         root_path: project.root_path,
+        additional_paths: project.additional_paths,
         mode,
         model_id: model_id.clone(),
         provider_id,

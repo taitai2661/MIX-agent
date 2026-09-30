@@ -3,11 +3,20 @@
 
 use mixd_storage::{SecretStore, Storage};
 use mixd_tools::approval::ApprovalOutcome;
-use mixd_tools::execute::ToolExecutor;
+use mixd_tools::execute::{PermissionContext, ToolExecutor};
 use mixd_tools::permission::PermissionDecision;
 use std::env;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// A bare context, with no workspace and no pattern target — the call shape
+/// used by every legacy test. Newer tests construct their own context.
+fn ctx() -> PermissionContext<'static> {
+    PermissionContext {
+        workspace_id: None,
+        pattern_target: None,
+    }
+}
 
 async fn executor() -> (ToolExecutor, std::path::PathBuf) {
     let dir = env::temp_dir().join(format!("mixd-perm-test-{}", Uuid::new_v4()));
@@ -64,13 +73,13 @@ async fn falls_back_to_the_tool_default_when_no_rule_exists() {
     let (executor, _dir) = executor().await;
     assert_eq!(
         executor
-            .resolve_permission(TOOL, PermissionDecision::Ask)
+            .resolve_permission(TOOL, &ctx(), PermissionDecision::Ask)
             .await,
         PermissionDecision::Ask
     );
     assert_eq!(
         executor
-            .resolve_permission(TOOL, PermissionDecision::Allow)
+            .resolve_permission(TOOL, &ctx(), PermissionDecision::Allow)
             .await,
         PermissionDecision::Allow
     );
@@ -85,14 +94,14 @@ async fn stored_rule_overrides_the_default() {
         .expect("write rule");
     assert_eq!(
         executor
-            .resolve_permission(TOOL, PermissionDecision::Allow)
+            .resolve_permission(TOOL, &ctx(), PermissionDecision::Allow)
             .await,
         PermissionDecision::Deny,
         "a deny rule must win over the tool default"
     );
     assert_ne!(
         executor
-            .resolve_permission("web_fetch", PermissionDecision::Ask)
+            .resolve_permission("web_fetch", &ctx(), PermissionDecision::Ask)
             .await,
         PermissionDecision::Deny,
         "rules must not leak across tools"
@@ -130,7 +139,7 @@ async fn a_later_settings_edit_beats_an_older_always_allow() {
     .expect("settings rule");
     assert_eq!(
         executor
-            .resolve_permission(TOOL, PermissionDecision::Ask)
+            .resolve_permission(TOOL, &ctx(), PermissionDecision::Ask)
             .await,
         PermissionDecision::Deny,
         "the newer Settings rule must win over the older always-allow"
@@ -169,7 +178,7 @@ async fn pending_prompt_blocks_until_answered() {
     assert!(executor.list_pending().await.is_empty(), "prompt cleared");
     assert_eq!(
         executor
-            .resolve_permission(TOOL, PermissionDecision::Ask)
+            .resolve_permission(TOOL, &ctx(), PermissionDecision::Ask)
             .await,
         PermissionDecision::Allow,
         "Always Allow must apply to later calls without prompting"
@@ -194,7 +203,7 @@ async fn deny_wakes_the_run_without_creating_a_rule() {
     assert_eq!(rx.await.expect("outcome delivered"), ApprovalOutcome::Deny);
     assert_eq!(
         executor
-            .resolve_permission(TOOL, PermissionDecision::Allow)
+            .resolve_permission(TOOL, &ctx(), PermissionDecision::Allow)
             .await,
         PermissionDecision::Allow,
         "a one-off denial must not change the standing rule"
@@ -316,5 +325,172 @@ async fn tool_name_is_recoverable_after_the_prompt_is_gone() {
             .as_deref(),
         Some("browser_action"),
         "must fall back to the persisted approvals row"
+    );
+}
+
+/// Helpers that insert a single rule row directly, bypassing `remember_rule`,
+/// so we can pin every field (scope, pattern, decision, workspace id) the
+/// tests want to verify.
+async fn write_rule(
+    executor: &ToolExecutor,
+    id: &str,
+    tool_id: &str,
+    scope: &str,
+    decision: &str,
+    pattern: Option<&str>,
+    workspace_id: Option<&str>,
+) {
+    let mut data = serde_json::json!({
+        "toolId": tool_id,
+        "scope": scope,
+        "decision": decision,
+        "pattern": pattern,
+        "updatedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Some(ws) = workspace_id {
+        data["workspaceId"] = serde_json::Value::String(ws.to_string());
+    }
+    sqlx::query(
+        "INSERT INTO permission_rules (id, owner_id, data) VALUES (?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+    )
+    .bind(id)
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(data.to_string())
+    .execute(executor.storage.pool())
+    .await
+    .expect("write rule");
+}
+
+#[tokio::test]
+async fn a_pattern_rule_only_matches_when_the_tool_target_fits() {
+    let (executor, _dir) = executor().await;
+    write_rule(
+        &executor,
+        "global:files:secret",
+        "files",
+        "global",
+        "allow",
+        Some("**/*.secret"),
+        None,
+    )
+    .await;
+
+    let allow_ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some("keys/api.secret"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &allow_ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Allow,
+        "a glob pattern must match its target"
+    );
+
+    let miss_ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some("src/main.rs"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &miss_ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask,
+        "a pattern rule must not widen access to other paths"
+    );
+
+    let no_target_ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: None,
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &no_target_ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask,
+        "a pattern rule with no target exposed by the tool falls back to default"
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_deny_beats_a_global_allow() {
+    let (executor, _dir) = executor().await;
+    let workspace = Uuid::new_v4();
+
+    write_rule(
+        &executor,
+        "global:files",
+        "files",
+        "global",
+        "allow",
+        None,
+        None,
+    )
+    .await;
+    write_rule(
+        &executor,
+        &format!("workspace:files:{workspace}"),
+        "files",
+        "workspace",
+        "deny",
+        None,
+        Some(&workspace.to_string()),
+    )
+    .await;
+
+    let ctx = PermissionContext {
+        workspace_id: Some(workspace),
+        pattern_target: None,
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Deny,
+        "the workspace deny must win over the global allow"
+    );
+
+    let other_workspace_ctx = PermissionContext {
+        workspace_id: Some(Uuid::new_v4()),
+        pattern_target: None,
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &other_workspace_ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Allow,
+        "an unrelated workspace still falls back to the global allow"
+    );
+}
+
+#[tokio::test]
+async fn workspace_rules_do_not_apply_to_calls_without_a_workspace() {
+    let (executor, _dir) = executor().await;
+    let workspace = Uuid::new_v4();
+    write_rule(
+        &executor,
+        &format!("workspace:files:{workspace}"),
+        "files",
+        "workspace",
+        "deny",
+        None,
+        Some(&workspace.to_string()),
+    )
+    .await;
+    // A chat that isn't bound to any workspace must not be denied by a
+    // workspace-scoped row, even if the workspace happens to exist.
+    assert_eq!(
+        executor
+            .resolve_permission(
+                "files",
+                &PermissionContext {
+                    workspace_id: None,
+                    pattern_target: None,
+                },
+                PermissionDecision::Allow,
+            )
+            .await,
+        PermissionDecision::Allow
     );
 }

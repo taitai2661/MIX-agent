@@ -13,6 +13,19 @@ pub struct SettingsView {
     pub language: Option<String>,
     /// UI theme: `"light" | "dark" | "system"`; `None` follows the OS.
     pub theme: Option<String>,
+    /// Default parent folder for auto-generated project workspaces
+    /// (Projectless chats, legacy backfills). `None` →
+    /// `~/Documents/MIX-agent Projects`.
+    #[serde(default)]
+    pub projects_root: Option<String>,
+    /// Codex-compatible `project_doc_max_bytes`: combined byte cap for the
+    /// `AGENTS.md` chain. `None` → 32 KiB.
+    #[serde(default)]
+    pub project_doc_max_bytes: Option<u64>,
+    /// Codex-compatible `project_doc_fallback_filenames`: extra instruction
+    /// filenames consulted after `AGENTS.override.md` / `AGENTS.md`.
+    #[serde(default)]
+    pub project_doc_fallback_filenames: Vec<String>,
 }
 
 #[tauri::command]

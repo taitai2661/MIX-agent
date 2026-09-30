@@ -332,6 +332,11 @@ impl Tool for TerminalTool {
             "required": ["command"]
         })
     }
+    fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
 
     async fn invoke(
         &self,
@@ -549,6 +554,7 @@ mod tests {
             run_id: uuid::Uuid::new_v4(),
             workspace_id: uuid::Uuid::new_v4(),
             root_path: Some(dir.to_string_lossy().to_string()),
+            additional_paths: Vec::new(),
             approval_token: None,
         };
         (context, dir)

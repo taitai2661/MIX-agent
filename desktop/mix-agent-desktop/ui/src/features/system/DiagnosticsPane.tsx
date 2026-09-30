@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity } from "lucide-react";
+import { Activity, Lock } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { Card, Row, Section } from "@/components/layout";
-import { Skeleton } from "@/components/ui/alert";
+import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 
 function Check({ label, ok, children }: { label: string; ok: boolean; children?: React.ReactNode }) {
@@ -38,6 +38,37 @@ export function DiagnosticsPane() {
             <Check label={t("Secrets (Keychain)")} ok={d.secrets_ok} />
             <Check label={t("Engine")} ok={d.engine_ok} />
           </div>
+          <Card title={t("Database Encryption")} icon={<Lock size={13} />}>
+            <Row align="between" className="gap-2">
+              <div className="flex flex-col gap-0.5 text-xs">
+                <span className="text-fg">
+                  {d.db_encrypted
+                    ? t("Encrypted at rest")
+                    : t("Not encrypted (in-memory + Keychain only)")}
+                </span>
+                <span className="text-2xs text-faint">
+                  {d.db_key_present === true
+                    ? t("Master key is present in the OS Keychain")
+                    : d.db_key_present === false
+                      ? t("Master key will be created on first use")
+                      : t("Keychain status unknown")}
+                </span>
+              </div>
+              <Badge
+                tone={d.db_encrypted ? "success" : "warning"}
+                size="sm"
+              >
+                {d.db_encrypted ? t("Encrypted") : t("Pending")}
+              </Badge>
+            </Row>
+            {!d.db_encrypted && (
+              <Alert tone="warning">
+                {t(
+                  "Database at-rest encryption is not enabled in this build. Conversation logs, run history and tool arguments are stored in plaintext; rely on disk-level encryption (FileVault / BitLocker / LUKS) until the SQLCipher migration lands.",
+                )}
+              </Alert>
+            )}
+          </Card>
           <Card title={t("Counts")} icon={<Activity size={13} />}>
             <Row className="gap-1.5">
               <Badge size="sm">{t("Providers")}: {d.provider_count}</Badge>

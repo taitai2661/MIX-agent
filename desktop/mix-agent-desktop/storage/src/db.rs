@@ -36,6 +36,7 @@ impl Storage {
             .context("opening SQLite database")?;
         let storage = Self { pool, data_dir };
         storage.run_schema().await?;
+        crate::migrations::run_data_migrations(storage.pool(), storage.data_dir()).await?;
         Ok(storage)
     }
 

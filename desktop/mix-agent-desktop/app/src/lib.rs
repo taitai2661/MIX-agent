@@ -218,6 +218,7 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             // for a Finder-launched app is `/` — the sub-agent would read and
             // write outside the project.
             root_path: parent.root_path.clone(),
+            additional_paths: parent.additional_paths.clone(),
             mode: mixd_core::mode::Mode::Thinking,
             model_id,
             system: Some(system),

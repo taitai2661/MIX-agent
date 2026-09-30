@@ -18,6 +18,7 @@ tracing.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+dirs = "5"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "json", "chrono", "uuid"] }
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "linux-native"] }
 aes-gcm = "0.10"

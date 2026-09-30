@@ -79,6 +79,19 @@ pub struct SettingsData {
     pub auto_update: bool,
     #[serde(rename = "telemetryConsent", default)]
     pub telemetry_consent: bool,
+    /// Default parent folder used when auto-generating project workspaces
+    /// (Projectless chats, legacy backfills). `None` →
+    /// `~/Documents/MIX-agent Projects`.
+    #[serde(rename = "projectsRoot", default)]
+    pub projects_root: Option<String>,
+    /// Codex-compatible `project_doc_max_bytes`: combined byte cap for the
+    /// `AGENTS.md` chain. `None` → 32 KiB.
+    #[serde(rename = "projectDocMaxBytes", default)]
+    pub project_doc_max_bytes: Option<u64>,
+    /// Codex-compatible `project_doc_fallback_filenames`: extra instruction
+    /// filenames consulted after `AGENTS.override.md` / `AGENTS.md`.
+    #[serde(rename = "projectDocFallbackFilenames", default)]
+    pub project_doc_fallback_filenames: Vec<String>,
 }
 
 pub type SettingsRecord = Record<SettingsData>;
@@ -185,12 +198,21 @@ pub struct ProjectData {
     pub name: String,
     #[serde(rename = "instructions")]
     pub instructions: String,
-    /// Absolute path of the folder this project is rooted at.
-    #[serde(rename = "rootPath", default)]
-    pub root_path: Option<String>,
+    /// Absolute path of the folder this project is rooted at. Required since
+    /// the folder-first refactor; the data migration
+    /// [`crate::migrations`] assigns a generated folder to legacy rows that
+    /// had `null`.
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
+    /// Extra directories the agent may read from but not write to. Parity with
+    /// Codex's `--add-dir` flag for monorepos.
+    #[serde(rename = "additionalPaths", default)]
+    pub additional_paths: Vec<String>,
     /// Pasted reference texts (parity with the Docker edition).
     #[serde(rename = "sources", default)]
     pub sources: Vec<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: DateTime<Utc>,
     #[serde(rename = "updatedAt")]
     pub updated_at: DateTime<Utc>,
 }

@@ -22,6 +22,9 @@ fn full_settings() -> SettingsView {
         telemetry_consent: true,
         language: Some("ja".into()),
         theme: Some("dark".into()),
+        projects_root: Some("/tmp/projects".into()),
+        project_doc_max_bytes: Some(65_536),
+        project_doc_fallback_filenames: vec!["TEAM_GUIDE.md".into()],
     }
 }
 

@@ -256,6 +256,9 @@ impl Tool for EditTool {
             "required": ["path", "new_string"]
         })
     }
+    fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+    }
 
     async fn invoke(
         &self,
@@ -280,7 +283,11 @@ impl Tool for EditTool {
             .unwrap_or("")
             .to_string();
         let root_path = ctx.root_path;
-        match tokio::task::spawn_blocking(move || EditTool::invoke_blocking(root_path, args)).await
+        let additional = ctx.additional_paths;
+        match tokio::task::spawn_blocking(move || {
+            EditTool::invoke_blocking(root_path, additional, args)
+        })
+        .await
         {
             Ok(outcome) => {
                 if let Err(err) = &outcome {
@@ -299,6 +306,7 @@ impl Tool for EditTool {
 impl EditTool {
     fn invoke_blocking(
         root_path: Option<String>,
+        additional: Vec<String>,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
         let action = args
@@ -322,7 +330,13 @@ impl EditTool {
             .unwrap_or(false);
 
         let workspace_root = FilesTool::resolve_context_root(root_path.as_deref())?;
-        let resolved = FilesTool::safe_join(&workspace_root, &path)?;
+        let (resolved, writable) =
+            FilesTool::resolve_target_in(&workspace_root, &additional, &path)?;
+        if !writable {
+            return Ok(failure(&format!(
+                "追加フォルダは読み取り専用です: {path}"
+            )));
+        }
         let before = read_existing(&resolved, &action)?;
 
         let (after, replacements, created) = match action.as_str() {

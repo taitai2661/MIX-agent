@@ -245,6 +245,33 @@ impl ToolRegistry {
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
         tool.invoke(ctx, args).await
     }
+
+    /// The string a `pattern`-scoped rule should match against.
+    ///
+    /// Wraps the tool lookup so callers (the Run Engine in particular) can ask
+    /// for the right target without knowing whether the tool is a builtin,
+    /// `browser`, or an `mcp__<conn>__<tool>` proxy.
+    pub fn pattern_target_for(&self, name: &str, args: &serde_json::Value) -> Option<String> {
+        if name == "browser" {
+            // The browser tool's call surface is a single `action` plus
+            // target fields; we expose the action as the natural pattern
+            // target so a rule like `pattern = "navigate"` matches every
+            // navigation without reaching into the action's specifics.
+            return args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+        }
+        if let Some(rest) = name.strip_prefix("mcp__") {
+            // The connection id is the only stable per-server identifier the
+            // model can target, so use it instead of the inner tool name
+            // (which the model never has to spell).
+            let connection_id = rest.split("__").next().unwrap_or(rest);
+            return Some(connection_id.to_string());
+        }
+        self.get(name)
+            .and_then(|tool| tool.pattern_target(args))
+    }
 }
 
 /// Translate the flat JSON arguments the model produces into a typed action.
@@ -382,6 +409,7 @@ mod tests {
             run_id: uuid::Uuid::new_v4(),
             workspace_id: uuid::Uuid::new_v4(),
             root_path: None,
+            additional_paths: Vec::new(),
             approval_token: None,
         }
     }

@@ -31,6 +31,10 @@ pub struct ToolContext {
     /// Absolute folder the run is scoped to. `None` → process CWD.
     #[serde(default)]
     pub root_path: Option<String>,
+    /// Extra folders the agent may read from but not write to. Parity with
+    /// Codex's `--add-dir` flag for monorepos.
+    #[serde(default)]
+    pub additional_paths: Vec<String>,
     pub approval_token: Option<String>,
 }
 
@@ -84,10 +88,20 @@ pub trait Tool: Send + Sync {
         }
     }
 
+    /// The string a `pattern`-scoped permission rule should be matched against.
+    ///
+    /// Most tools look at a path or URL in their arguments. Tools that have no
+    /// obvious target (e.g. `todo`) return `None`, which means a pattern rule
+    /// cannot match them and the rule falls through to the next bucket.
+    fn pattern_target(&self, _args: &serde_json::Value) -> Option<String> {
+        None
+    }
+
     async fn invoke(&self, ctx: ToolContext, args: serde_json::Value)
         -> anyhow::Result<ToolResult>;
 }
 
 pub use egress::EgressPolicy;
-pub use permission::PermissionDecision;
+pub use execute::PermissionContext;
+pub use permission::{PermissionDecision, PermissionRule, RuleScope};
 pub use registry::{McpDispatch, ToolRegistry};

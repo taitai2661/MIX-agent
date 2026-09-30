@@ -1,12 +1,17 @@
 //! Egress allowlist + private-IP deny for outbound Tool calls.
 //!
-//! Tools should call [`EgressPolicy::enforce_async`] before opening any
+//! Tools should call [`EgressPolicy::resolve_async`] before opening any
 //! outbound HTTP connection. The allowlist is a vector of exact hostnames or
 //! `*.example.com` patterns; when the list is empty the gate is wide-open
 //! (matches the Docker edition's behaviour of "no allowlist set ⇒ allow public
 //! domains, deny private IPs").
+//!
+//! Resolution now returns the validated [`SocketAddr`]s alongside the URL so
+//! callers can pin the actual connection to those addresses. Without the pin
+//! `reqwest` would happily re-resolve the hostname and could land on a
+//! different — possibly private — IP via DNS rebinding.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use anyhow::{anyhow, bail};
 use ipnetwork::IpNetwork;
@@ -24,7 +29,7 @@ impl EgressPolicy {
 
     /// Allowlist and literal-address checks only — no DNS.
     ///
-    /// Use [`enforce_async`] before actually connecting: a hostname is not
+    /// Use [`resolve_async`] before actually connecting: a hostname is not
     /// evidence that the address behind it is public, and `localtest.me` and
     /// friends resolve to loopback on purpose.
     pub fn enforce(&self, url: &str) -> anyhow::Result<()> {
@@ -47,11 +52,15 @@ impl EgressPolicy {
         Ok(())
     }
 
-    /// [`enforce`] plus a check on what the hostname actually resolves to.
+    /// [`enforce`] plus a check on what the hostname actually resolves to, and
+    /// the validated addresses themselves.
     ///
     /// Called for every hop of a redirect chain by the network Tool, because a
     /// permitted host is free to answer with `302 → http://169.254.169.254/`.
-    pub async fn enforce_async(&self, url: &str) -> anyhow::Result<()> {
+    /// The returned `Vec<SocketAddr>` is what callers must pin reqwest to:
+    /// handing them back in `reqwest::ClientBuilder::resolve` keeps the
+    /// connection on the address we vetted.
+    pub async fn resolve_async(&self, url: &str) -> anyhow::Result<ResolvedTarget> {
         self.enforce(url)?;
         let parsed = url::Url::parse(url).map_err(|e| anyhow!("invalid url: {}", e))?;
         let host = bare_host(
@@ -59,14 +68,31 @@ impl EgressPolicy {
                 .host_str()
                 .ok_or_else(|| anyhow!("url is missing a host: {}", url))?,
         );
-        if host.parse::<IpAddr>().is_ok() {
-            // Already vetted by `ensure_public_host`.
-            return Ok(());
-        }
         let port = parsed.port_or_known_default().unwrap_or(443);
-        let addrs = tokio::net::lookup_host((host, port))
+
+        // Literal IP in the URL: no DNS, no rebinding surface, but still
+        // honour the policy.
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if is_private(&ip) {
+                bail!("refusing to connect to private IP {}", ip);
+            }
+            return Ok(ResolvedTarget {
+                url: url.to_string(),
+                host: host.to_string(),
+                addrs: vec![SocketAddr::from((ip, port))],
+            });
+        }
+
+        // Hostname: resolve, vet every address, then hand the surviving list
+        // back so the caller can pin reqwest to them.
+        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
             .await
-            .map_err(|e| anyhow!("cannot resolve {}: {}", host, e))?;
+            .map_err(|e| anyhow!("cannot resolve {}: {}", host, e))?
+            .collect();
+        if addrs.is_empty() {
+            bail!("{} did not resolve to any address", host);
+        }
+        let mut vetted = Vec::with_capacity(addrs.len());
         for addr in addrs {
             if is_private(&addr.ip()) {
                 bail!(
@@ -75,9 +101,29 @@ impl EgressPolicy {
                     addr.ip()
                 );
             }
+            vetted.push(addr);
         }
-        Ok(())
+        Ok(ResolvedTarget {
+            url: url.to_string(),
+            host: host.to_string(),
+            addrs: vetted,
+        })
     }
+
+    /// Backwards-compatible wrapper kept for callers that only need the
+    /// "deny/allow" verdict.
+    pub async fn enforce_async(&self, url: &str) -> anyhow::Result<()> {
+        self.resolve_async(url).await.map(|_| ())
+    }
+}
+
+/// The result of [`EgressPolicy::resolve_async`]: the original URL plus the
+/// `SocketAddr`s the caller must use to connect to it.
+#[derive(Debug, Clone)]
+pub struct ResolvedTarget {
+    pub url: String,
+    pub host: String,
+    pub addrs: Vec<SocketAddr>,
 }
 
 fn ensure_public_host(host: &str) -> anyhow::Result<()> {
@@ -225,5 +271,35 @@ mod tests {
                 "{url} must be allowed"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn resolve_async_returns_pinned_socket_addrs_for_a_literal_ip() {
+        // No DNS needed for a literal IP; the resolved addresses are exactly
+        // the one we asked for, so the network tool can hand them to reqwest
+        // and reqwest will never go back to the resolver.
+        let target = EgressPolicy::default()
+            .resolve_async("https://93.184.216.34/")
+            .await
+            .expect("resolve");
+        assert_eq!(target.host, "93.184.216.34");
+        assert_eq!(target.addrs.len(), 1);
+        assert_eq!(target.addrs[0].ip().to_string(), "93.184.216.34");
+    }
+
+    #[tokio::test]
+    async fn resolve_async_rejects_a_hostname_that_resolves_to_a_private_ip() {
+        // `localtest.me` is a public hostname that resolves to `127.0.0.1`.
+        // Without a DNS check the URL would pass the allowlist, but it would
+        // land on the loopback interface and reach the user's localhost
+        // services.
+        let err = EgressPolicy::default()
+            .resolve_async("http://localtest.me/")
+            .await
+            .expect_err("must refuse");
+        assert!(
+            err.to_string().contains("private"),
+            "expected a private-address rejection, got: {err}"
+        );
     }
 }

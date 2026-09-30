@@ -74,6 +74,7 @@ export const api = {
   listTools: () => invoke<ToolView[]>("list_tools"),
   setPermissionRule: (input: {
     tool_id: string; scope: string; decision: string; pattern: string | null;
+    workspace_id?: string | null;
   }) => invoke<void>("set_permission_rule", { input }),
   listPermissionRules: () => invoke<PermissionRuleView[]>("list_permission_rules"),
   listPendingApprovals: () => invoke<PendingApprovalView[]>("list_pending_approvals"),

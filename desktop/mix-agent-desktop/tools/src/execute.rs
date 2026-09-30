@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::approval::{ApprovalOutcome, PendingApproval};
-use crate::permission::PermissionDecision;
+use crate::permission::{PermissionDecision, PermissionRule, RuleScope};
 use crate::ToolResult;
 use chrono::Utc;
+use glob::Pattern;
 use mixd_storage::{SecretStore, Storage};
 use serde_json::json;
 use tokio::sync::{oneshot, Mutex};
@@ -36,6 +37,102 @@ pub struct ToolExecutor {
     /// Wakes the paused Run when the user answers a prompt.
     waiters: Arc<Mutex<HashMap<String, Waiter>>>,
 }
+
+/// The information [`ToolExecutor::resolve_permission`] needs to evaluate a
+/// stored rule against the call that's about to be made.
+#[derive(Debug, Clone, Default)]
+pub struct PermissionContext<'a> {
+    /// Workspace the run is bound to; `None` means "no workspace" (e.g. an
+    /// ad-hoc chat) and matches only `Global` rules.
+    pub workspace_id: Option<Uuid>,
+    /// The string the tool wants the rule's `pattern` compared against. Most
+    /// tools expose a path or URL; tools that have no useful target should
+    /// leave this `None`.
+    pub pattern_target: Option<&'a str>,
+}
+
+fn parse_rule(data: &serde_json::Value) -> Option<PermissionRule> {
+    let tool_id = data.get("toolId").and_then(|v| v.as_str())?.to_string();
+    let decision = match data.get("decision").and_then(|v| v.as_str()) {
+        Some("allow") => PermissionDecision::Allow,
+        Some("deny") => PermissionDecision::Deny,
+        Some("ask") => PermissionDecision::Ask,
+        _ => return None,
+    };
+    let scope = match data.get("scope").and_then(|v| v.as_str()) {
+        Some(s) => RuleScope::parse(s),
+        None => RuleScope::default(),
+    };
+    let pattern = data
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    let workspace_id = data
+        .get("workspaceId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    let updated_at = data
+        .get("updatedAt")
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.with_timezone(&Utc));
+    Some(PermissionRule {
+        tool_id,
+        scope,
+        decision,
+        pattern,
+        workspace_id,
+        updated_at,
+    })
+}
+
+/// True when `rule` applies to this call.
+///
+/// A rule with no pattern matches any target; a rule with a pattern needs the
+/// target to match the pattern (glob-style). A workspace rule only matches
+/// calls bound to the same workspace id.
+fn rule_matches(rule: &PermissionRule, ctx: &PermissionContext<'_>) -> bool {
+    match rule.scope {
+        RuleScope::Workspace => {
+            let Some(call_workspace) = ctx.workspace_id else {
+                return false;
+            };
+            // Rules with no `workspaceId` (legacy rows or callers that did
+            // not pass one through) are matched against the call's workspace:
+            // it keeps the rule in effect rather than silently widening it
+            // across every workspace.
+            let rule_workspace = rule
+                .workspace_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .unwrap_or(call_workspace);
+            if rule_workspace != call_workspace {
+                return false;
+            }
+        }
+        RuleScope::Global => {}
+    }
+    if let Some(pattern) = &rule.pattern {
+        let Some(target) = ctx.pattern_target else {
+            return false;
+        };
+        if !pattern_matches(pattern, target) {
+            return false;
+        }
+    }
+    true
+}
+
+fn pattern_matches(pattern: &str, target: &str) -> bool {
+    // `glob::Pattern::new` returns Err for things that contain a backslash or
+    // a bracket; a plain substring check keeps those users covered.
+    match Pattern::new(pattern) {
+        Ok(matcher) => matcher.matches(target),
+        Err(_) => target.contains(pattern),
+    }
+}
 impl ToolExecutor {
     pub fn new(storage: Arc<Storage>, secrets: Arc<SecretStore>) -> Self {
         Self {
@@ -48,44 +145,132 @@ impl ToolExecutor {
 
     /// Resolve the effective permission for a Tool.
     ///
-    /// Precedence: the narrowest matching stored rule wins, otherwise the
-    /// Tool's own default applies.
+    /// Precedence (most specific first, ties broken by `updatedAt` desc, then
+    /// by id asc):
+    ///
+    /// 1. `workspace` scope + `pattern`
+    /// 2. `workspace` scope, no pattern
+    /// 3. `global` scope + `pattern`
+    /// 4. `global` scope, no pattern
+    ///
+    /// Within those buckets the caller is `tool_name`, so two rules on the
+    /// same tool compete only when their scope/pattern combination differs.
+    /// `Deny` is treated as the safe default: a Deny at any matched bucket
+    /// short-circuits an Allow at a less specific bucket, so a workspace
+    /// carve-out cannot accidentally widen a global lockdown.
     pub async fn resolve_permission(
         &self,
         tool_id: &str,
+        ctx: &PermissionContext<'_>,
         default: PermissionDecision,
     ) -> PermissionDecision {
+        let rules = match self.load_rules(tool_id).await {
+            Ok(rules) => rules,
+            Err(err) => {
+                tracing::warn!(tool = %tool_id, %err, "loading permission rules failed");
+                return default;
+            }
+        };
+        if rules.is_empty() {
+            return default;
+        }
+
+        let mut allow: Option<&PermissionRule> = None;
+        let mut deny: Option<&PermissionRule> = None;
+        let mut ask: Option<&PermissionRule> = None;
+        // Walk the rules in the order returned by `load_rules` (precedence
+        // bucket asc → updated_at desc → id asc) so the first matching rule in
+        // each decision bucket wins. We still need to keep all three because a
+        // deny at a more specific bucket must beat an allow at a less specific
+        // one, and the order in the cursor reflects specificity.
+        for rule in &rules {
+            if !rule_matches(rule, ctx) {
+                continue;
+            }
+            match rule.decision {
+                PermissionDecision::Deny => {
+                    if deny.is_none() {
+                        deny = Some(rule);
+                    }
+                }
+                PermissionDecision::Allow => {
+                    if allow.is_none() {
+                        allow = Some(rule);
+                    }
+                }
+                PermissionDecision::Ask => {
+                    if ask.is_none() {
+                        ask = Some(rule);
+                    }
+                }
+            }
+        }
+
+        if let Some(rule) = deny {
+            tracing::debug!(
+                tool = %tool_id,
+                scope = rule.scope.as_str(),
+                pattern = rule.pattern.as_deref().unwrap_or(""),
+                "permission denied by stored rule"
+            );
+            return PermissionDecision::Deny;
+        }
+        if let Some(rule) = allow {
+            tracing::debug!(
+                tool = %tool_id,
+                scope = rule.scope.as_str(),
+                pattern = rule.pattern.as_deref().unwrap_or(""),
+                "permission granted by stored rule"
+            );
+            return PermissionDecision::Allow;
+        }
+        if let Some(rule) = ask {
+            tracing::debug!(
+                tool = %tool_id,
+                scope = rule.scope.as_str(),
+                pattern = rule.pattern.as_deref().unwrap_or(""),
+                "permission forced to ask by stored rule"
+            );
+            return PermissionDecision::Ask;
+        }
+        default
+    }
+
+    /// Read the rules for `tool_id` ordered by precedence bucket, then by
+    /// recency. Returned in the same order they would be evaluated.
+    async fn load_rules(&self, tool_id: &str) -> anyhow::Result<Vec<PermissionRule>> {
         use sqlx::Row;
-        // Two stored rules can legitimately disagree: a prompt's "Always Allow"
-        // and a later Settings edit. Ranking `always` first meant the Settings
-        // change was silently ignored forever (and there was no way to revoke
-        // the always-allow), so the most recently written rule wins, with the
-        // old scope order as the tiebreak for rows that predate `updatedAt`.
-        let Ok(rows) = sqlx::query(
+        // The `precedence` column is the bucket index (0..=3) computed in SQL
+        // so the runtime walks the most specific rules first. Within a bucket
+        // the newer rule wins; the id tiebreak keeps older rows whose
+        // `updatedAt` is missing deterministic.
+        let rows = sqlx::query(
             "SELECT data FROM permission_rules \
              WHERE json_extract(data, '$.toolId') = ?1 \
-             ORDER BY COALESCE(json_extract(data, '$.updatedAt'), '') DESC, \
-                      CASE json_extract(data, '$.scope') \
-                        WHEN 'always' THEN 0 WHEN 'tool' THEN 1 ELSE 2 END, \
-                      id",
+             ORDER BY CASE \
+                 WHEN json_extract(data, '$.scope') = 'workspace' \
+                  AND json_extract(data, '$.pattern') IS NOT NULL THEN 0 \
+                 WHEN json_extract(data, '$.scope') = 'workspace' THEN 1 \
+                 WHEN json_extract(data, '$.scope') = 'global' \
+                  AND json_extract(data, '$.pattern') IS NOT NULL THEN 2 \
+                 ELSE 3 \
+             END ASC, \
+             COALESCE(json_extract(data, '$.updatedAt'), '') DESC, \
+             id ASC",
         )
         .bind(tool_id)
         .fetch_all(self.storage.pool())
-        .await
-        else {
-            return default;
-        };
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let raw: String = row.try_get("data").unwrap_or_default();
-            let data: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
-            match data.get("decision").and_then(|v| v.as_str()) {
-                Some("allow") => return PermissionDecision::Allow,
-                Some("deny") => return PermissionDecision::Deny,
-                Some("ask") => return PermissionDecision::Ask,
-                _ => continue,
-            }
+            let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+            let Some(rule) = parse_rule(&parsed) else {
+                continue;
+            };
+            out.push(rule);
         }
-        default
+        Ok(out)
     }
 
     /// Persist the outcome of an approval prompt and wake the paused Run.
@@ -134,6 +319,10 @@ impl ToolExecutor {
     }
 
     /// Write a durable permission rule for a Tool ("Always Allow" / "Never").
+    ///
+    /// `Always Allow` from a prompt is stored as a global rule with no pattern
+    /// — the same behaviour as the previous "always" scope. Workspace-scoped
+    /// rules are written explicitly by [`crate::registry`] consumers.
     pub async fn remember_rule(
         &self,
         tool_id: &str,
@@ -141,7 +330,7 @@ impl ToolExecutor {
     ) -> anyhow::Result<()> {
         let rule = json!({
             "toolId": tool_id,
-            "scope": "always",
+            "scope": "global",
             "decision": match decision {
                 PermissionDecision::Allow => "allow",
                 PermissionDecision::Ask => "ask",
@@ -154,7 +343,7 @@ impl ToolExecutor {
             "INSERT INTO permission_rules (id, owner_id, data) VALUES (?1, ?2, ?3) \
              ON CONFLICT(id) DO UPDATE SET data = excluded.data",
         )
-        .bind(format!("always:{}", tool_id))
+        .bind(format!("global:{}", tool_id))
         .bind(mixd_storage::records::SINGLE_USER_ID)
         .bind(rule.to_string())
         .execute(self.storage.pool())

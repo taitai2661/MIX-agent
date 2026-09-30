@@ -97,7 +97,11 @@ pub struct PermissionRuleInput {
     pub scope: String,
     /// `"allow"` | `"ask"` | `"deny"`
     pub decision: String,
+    #[serde(default)]
     pub pattern: Option<String>,
+    /// Required when `scope == "workspace"`; ignored otherwise.
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 #[tauri::command]
@@ -105,14 +109,36 @@ pub async fn set_permission_rule(
     state: State<'_, AppState>,
     input: PermissionRuleInput,
 ) -> Result<(), String> {
-    let rule_id = format!("{}:{}", input.scope, input.tool_id);
+    let scope = parse_scope(&input.scope)?;
+    let decision = parse_decision(&input.decision)?;
+    let pattern = input
+        .pattern
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_string());
+    if scope == mixd_tools::RuleScope::Workspace && input.workspace_id.is_none() {
+        return Err("workspace_id is required for workspace-scoped rules".into());
+    }
+    let workspace_id = match scope {
+        mixd_tools::RuleScope::Workspace => input.workspace_id.unwrap_or_default(),
+        mixd_tools::RuleScope::Global => String::new(),
+    };
+    let rule_id = format!("{}:{}:{}", scope.as_str(), input.tool_id, workspace_id);
     let data = serde_json::json!({
         "toolId": input.tool_id,
-        "scope": input.scope,
-        "decision": input.decision,
-        "pattern": input.pattern,
-        // Lets a Settings edit overtake an earlier prompt "Always Allow";
-        // without it the `always` row always outranked this one.
+        "scope": scope.as_str(),
+        "decision": match decision {
+            mixd_tools::PermissionDecision::Allow => "allow",
+            mixd_tools::PermissionDecision::Ask => "ask",
+            mixd_tools::PermissionDecision::Deny => "deny",
+        },
+        "pattern": pattern,
+        "workspaceId": if scope == mixd_tools::RuleScope::Workspace {
+            serde_json::Value::String(workspace_id.clone())
+        } else {
+            serde_json::Value::Null
+        },
         "updatedAt": chrono::Utc::now().to_rfc3339(),
     });
     sqlx::query(
@@ -128,22 +154,43 @@ pub async fn set_permission_rule(
     Ok(())
 }
 
+fn parse_scope(value: &str) -> Result<mixd_tools::RuleScope, String> {
+    match value {
+        "global" | "always" => Ok(mixd_tools::RuleScope::Global),
+        "workspace" => Ok(mixd_tools::RuleScope::Workspace),
+        other => Err(format!("unknown permission scope: {other}")),
+    }
+}
+
+fn parse_decision(value: &str) -> Result<mixd_tools::PermissionDecision, String> {
+    match value {
+        "allow" => Ok(mixd_tools::PermissionDecision::Allow),
+        "ask" => Ok(mixd_tools::PermissionDecision::Ask),
+        "deny" => Ok(mixd_tools::PermissionDecision::Deny),
+        other => Err(format!("unknown permission decision: {other}")),
+    }
+}
+
 #[derive(Serialize)]
 pub struct PermissionRuleView {
     pub id: String,
     pub tool_id: String,
     pub scope: String,
     pub decision: String,
+    pub pattern: Option<String>,
+    pub workspace_id: Option<String>,
 }
 
 #[tauri::command]
 pub async fn list_permission_rules(
     state: State<'_, AppState>,
 ) -> Result<Vec<PermissionRuleView>, String> {
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+    let rows: Vec<PermissionRuleRow> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.toolId') AS tool_id, \
                 json_extract(data, '$.scope') AS scope, \
-                json_extract(data, '$.decision') AS decision \
+                json_extract(data, '$.decision') AS decision, \
+                json_extract(data, '$.pattern') AS pattern, \
+                json_extract(data, '$.workspaceId') AS workspace_id \
          FROM permission_rules ORDER BY id",
     )
     .fetch_all(state.storage.pool())
@@ -151,14 +198,27 @@ pub async fn list_permission_rules(
     .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
-        .map(|(id, tool_id, scope, decision)| PermissionRuleView {
-            id,
-            tool_id,
-            scope,
-            decision,
-        })
+        .map(
+            |(id, tool_id, scope, decision, pattern, workspace_id)| PermissionRuleView {
+                id,
+                tool_id,
+                scope,
+                decision,
+                pattern,
+                workspace_id,
+            },
+        )
         .collect())
 }
+
+type PermissionRuleRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 #[derive(Serialize)]
 pub struct PendingApprovalView {

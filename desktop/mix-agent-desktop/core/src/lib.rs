@@ -6,6 +6,7 @@
 //! context summarisation, and budget extension).
 
 pub mod context;
+pub mod instructions;
 pub mod knowledge;
 pub mod memory;
 pub mod mode;
