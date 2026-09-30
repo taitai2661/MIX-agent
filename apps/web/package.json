@@ -24,7 +24,7 @@
     "tailwind-merge": "^3.2.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.0",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.1.7",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
