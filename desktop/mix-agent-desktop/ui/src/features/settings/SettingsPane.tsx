@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Archive, BookOpen, Brain, Globe, Globe2, Layers, Palette, RefreshCw, Save,
   Settings2, ShieldCheck, Sparkles, Terminal, Wrench, Zap,
@@ -6,11 +6,12 @@ import {
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { PENDING_APPROVALS_POLL_MS, useSettingsForm } from "@/lib/settings";
+import { useSettingsForm } from "@/lib/settings";
+import { usePendingApprovals } from "@/lib/queries";
 import { useUi, type SettingsTab } from "@/lib/ui";
 import type { SettingsView } from "@/lib/types";
-import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { ErrorAlert } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { GeneralSettings } from "./GeneralSettings";
@@ -79,11 +80,7 @@ export function SettingsPane() {
   const setSettingsTab = useUi((s) => s.setSettingsTab);
   const queryClient = useQueryClient();
   const { data, loaded, query: settings } = useSettingsForm();
-  const approvals = useQuery({
-    queryKey: ["pending_approvals"],
-    queryFn: api.listPendingApprovals,
-    refetchInterval: PENDING_APPROVALS_POLL_MS,
-  });
+  const approvals = usePendingApprovals();
   const update = useMutation({
     mutationFn: (input: SettingsView) => api.updateSettings(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
@@ -155,7 +152,7 @@ export function SettingsPane() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-6">
-          {showSave && update.isError && <Alert tone="danger">{String(update.error)}</Alert>}
+          {showSave && update.isError && <ErrorAlert error={update.error} />}
 
           {activeTab === "appearance" && <AppearanceSettings />}
           {activeTab === "general" && <GeneralSettings />}

@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Card, Page, Row } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ErrorBadge } from "@/components/shared";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -140,7 +140,7 @@ export function SchedulesPane() {
           >
             <Clock3 size={12} /> 登録
           </Button>
-          {create.isError && <Badge tone="danger">{String(create.error)}</Badge>}
+          {create.isError && <ErrorBadge error={create.error} />}
         </Row>
       </Card>
 

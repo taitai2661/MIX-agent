@@ -941,19 +941,16 @@ async fn the_registry_advertises_the_tool_the_whole_system_depends_on() {
     // Regression guard: the tool that makes this a coding agent rather than a
     // chat client, plus the two that make a codebase navigable.
     let registry = ToolRegistry::new(EgressPolicy::default());
-    let names: Vec<String> = registry.specs().into_iter().map(|s| s.name).collect();
+    let names: Vec<String> = registry.specs().iter().map(|s| s.name.clone()).collect();
     for required in ["edit", "glob", "grep", "files", "terminal", "todo"] {
         assert!(
             names.iter().any(|n| n == required),
             "{required} must be advertised; got {names:?}"
         );
     }
+    let specs = registry.specs();
     // And the edit tool must be able to describe itself usefully.
-    let edit = registry
-        .specs()
-        .into_iter()
-        .find(|s| s.name == "edit")
-        .expect("edit spec");
+    let edit = specs.iter().find(|s| s.name == "edit").expect("edit spec");
     let params = &edit.parameters;
     assert!(params["properties"]["old_string"].is_object());
     assert!(params["properties"]["new_string"].is_object());

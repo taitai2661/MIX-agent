@@ -24,9 +24,9 @@ pub struct ProjectView {
     #[serde(rename = "additionalPaths")]
     pub additional_paths: Vec<String>,
     pub sources: Vec<String>,
-    #[serde(rename = "createdAt")]
+    // Views serialise timestamps snake_case (`ConversationSummary`,
+    // `ScheduleJobView`); the UI reads them the same way.
     pub created_at: chrono::DateTime<chrono::Utc>,
-    #[serde(rename = "updatedAt")]
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -80,6 +80,20 @@ fn validate_paths(root_path: &str, additional_paths: &[String]) -> Result<(), St
     Ok(())
 }
 
+/// The label for a new project: whatever the user typed (trimmed), or — when
+/// the name is omitted or blank — the folder's basename, so creating from the
+/// folder picker alone still yields a sensible name.
+fn project_name(root_path: &str, name: Option<String>) -> String {
+    name.map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| {
+            std::path::Path::new(root_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Project".to_string())
+        })
+}
+
 async fn load_data(pool: &sqlx::SqlitePool, id: &str) -> Result<Option<ProjectData>, String> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT json_extract(data, '$') FROM projects WHERE id = ?")
@@ -129,9 +143,12 @@ pub struct ProjectCreate {
     pub name: Option<String>,
     #[serde(default)]
     pub instructions: String,
-    /// Absolute path of the folder to root the project at. Required.
-    #[serde(rename = "rootPath")]
-    pub root_path: String,
+    /// Absolute path of the folder to root the project at. Required by the
+    /// folder-first contract, but modelled as `Option` so an omitted or `null`
+    /// value (the shape the UI sent before the refactor) is reported by
+    /// [`validate_paths`] as a readable message instead of a serde type error.
+    #[serde(rename = "rootPath", default)]
+    pub root_path: Option<String>,
     #[serde(rename = "additionalPaths", default)]
     pub additional_paths: Vec<String>,
     #[serde(default)]
@@ -143,20 +160,11 @@ pub async fn create_project(
     state: State<'_, AppState>,
     input: ProjectCreate,
 ) -> Result<ProjectView, String> {
-    let root_path = input.root_path.trim().to_string();
+    let root_path = input.root_path.unwrap_or_default().trim().to_string();
     validate_paths(&root_path, &input.additional_paths)?;
     // Folder-first: an omitted name takes the folder's basename so the
     // user can create a project from the picker alone.
-    let name = input
-        .name
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| {
-            std::path::Path::new(&root_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Project".to_string())
-        });
+    let name = project_name(&root_path, input.name);
     validate(&name, &input.instructions, &input.sources)?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
@@ -408,7 +416,11 @@ pub async fn load_project_runtime_with(
 
     // Codex-compatible chain: global file first, then git-root → project
     // folder AGENTS.override.md / AGENTS.md / fallbacks, byte-capped.
-    let fallbacks: Vec<&str> = config.fallback_filenames.iter().map(|s| s.as_str()).collect();
+    let fallbacks: Vec<&str> = config
+        .fallback_filenames
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
     let folder = std::path::Path::new(&data.root_path);
     let chain_root = project_root_marker(folder);
     let chain = load_project_instructions(
@@ -536,21 +548,43 @@ mod tests {
     fn validate_paths_rejects_missing_additional_paths() {
         let root = std::env::temp_dir();
         let extra = std::env::temp_dir().join(format!("missing-{}", uuid::Uuid::new_v4()));
-        let err =
-            validate_paths(root.to_str().unwrap(), &[extra.to_string_lossy().to_string()])
-                .expect_err("missing extra must fail");
+        let err = validate_paths(
+            root.to_str().unwrap(),
+            &[extra.to_string_lossy().to_string()],
+        )
+        .expect_err("missing extra must fail");
         assert!(err.contains("追加フォルダ"));
     }
 
     #[test]
     fn create_defaults_the_name_to_the_folder_basename() {
         // Codex parity: picking the folder is enough to name the project.
-        let root = std::env::temp_dir().join("my-repo");
-        let name = std::path::Path::new(&root)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap();
-        assert_eq!(name, "my-repo");
+        assert_eq!(project_name("/tmp/my-repo", None), "my-repo");
+        assert_eq!(
+            project_name("/tmp/my-repo", Some("   ".to_string())),
+            "my-repo"
+        );
+        assert_eq!(
+            project_name("/tmp/my-repo", Some("  Custom  ".to_string())),
+            "Custom"
+        );
+    }
+
+    #[test]
+    fn create_reports_a_missing_folder_instead_of_a_serde_error() {
+        // The pre-refactor UI sends `rootPath: null`; it must still fail with
+        // the readable validation message, not "invalid type: null".
+        let input: ProjectCreate =
+            serde_json::from_str(r#"{"name":"demo","rootPath":null}"#).expect("deserialize");
+        let root = input.root_path.unwrap_or_default();
+        assert_eq!(
+            validate_paths(&root, &[]).expect_err("null root must fail"),
+            "フォルダを選択してください"
+        );
+
+        // Omitting the key entirely behaves the same way.
+        let input: ProjectCreate = serde_json::from_str(r#"{"name":"demo"}"#).expect("deserialize");
+        assert!(input.root_path.unwrap_or_default().is_empty());
     }
 
     #[test]

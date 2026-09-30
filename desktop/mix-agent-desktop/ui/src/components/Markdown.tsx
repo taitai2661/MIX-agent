@@ -12,6 +12,38 @@ function onLinkClick(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   void api.openExternal(href);
 }
 
+// Hoisted so the props are referentially stable across renders. Rebuilding
+// them here handed react-markdown a fresh plugin array and component map on
+// every render, which made the `memo` below unable to bail out — so a live
+// streaming message re-parsed the whole accumulated markdown ~16×/s.
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const COMPONENTS = {
+  a({ href, children }: { href?: string; children?: ReactNode }) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => href && onLinkClick(e, href)}
+      >
+        {children}
+      </a>
+    );
+  },
+  pre({ children }: { children?: ReactNode }) {
+    // react-markdown hands <pre><code class="language-x">…</code></pre>
+    // Extract the raw text + language so CodeBlock can render a header.
+    const child = Array.isArray(children) ? children[0] : children;
+    if (child && typeof child === "object" && "props" in child) {
+      const props = (child as { props?: { className?: string; children?: ReactNode } }).props;
+      const language = /language-(\w+)/.exec(props?.className ?? "")?.[1] ?? "";
+      const code = toText(props?.children);
+      return <CodeBlock language={language} code={code} />;
+    }
+    return <pre>{children}</pre>;
+  },
+};
+
 /**
  * Markdown renderer for assistant messages.
  *
@@ -22,30 +54,7 @@ function onLinkClick(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
   return (
     <div className="markdown-body">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={{
-          a({ href, children }) {
-            return (
-              <a href={href} target="_blank" rel="noreferrer" onClick={(e) => href && onLinkClick(e, href)}>
-                {children}
-              </a>
-            );
-          },
-          pre({ children }) {
-            // react-markdown hands <pre><code class="language-x">…</code></pre>
-            // Extract the raw text + language so CodeBlock can render a header.
-            const child = Array.isArray(children) ? children[0] : children;
-            if (child && typeof child === "object" && "props" in child) {
-              const props = (child as { props?: { className?: string; children?: ReactNode } }).props;
-              const language = /language-(\w+)/.exec(props?.className ?? "")?.[1] ?? "";
-              const code = toText(props?.children);
-              return <CodeBlock language={language} code={code} />;
-            }
-            return <pre>{children}</pre>;
-          },
-        }}
-      >
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
         {children}
       </ReactMarkdown>
     </div>

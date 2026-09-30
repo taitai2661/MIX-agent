@@ -1,14 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { useRunEvents } from "@/lib/runStore";
-import { isTerminal } from "@/lib/runEvents";
+import { isBusy, isTerminal } from "@/lib/runEvents";
+import {
+  CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useProjects,
+} from "@/lib/queries";
 import { SURFACE_MODES, useUi } from "@/lib/ui";
-import type { ModelView, RunView } from "@/lib/types";
+import type { ModelView, ProjectView, RunView } from "@/lib/types";
 import { Composer, type DraftAttachment } from "./Composer";
 import { Transcript } from "./Transcript";
 import { Alert } from "@/components/ui/alert";
+
+/** Stable empties for the memoized `Composer` props. */
+const EMPTY_MODELS: ModelView[] = [];
+const EMPTY_PROJECTS: ProjectView[] = [];
 
 export function ChatPane() {
   const [projectError, setProjectError] = useState<string | null>(null);
@@ -31,9 +39,9 @@ export function ChatPane() {
   const startRun = useRunEvents((s) => s.startRun);
   const clearLive = useRunEvents((s) => s.clear);
 
-  const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.listConversations });
+  const conversations = useConversations();
   const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.listProjects });
+  const projects = useProjects();
   const messages = useQuery({
     queryKey: ["messages", conversationId],
     queryFn: () => api.listMessages(conversationId!),
@@ -61,7 +69,7 @@ export function ChatPane() {
         project_id: projectId,
       });
       setConversationId(created.id);
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     } catch (error) {
       setActiveProjectId(activeProjectId);
       setProjectError(errorMessage(error));
@@ -69,13 +77,17 @@ export function ChatPane() {
   };
 
   const createProject = async (name: string) => {
+    // Folder-first: every project is rooted at a directory, so pick one before
+    // creating. Cancelling the picker aborts the creation and returns null.
+    const path = await openDialog({ directory: true, multiple: false });
+    if (typeof path !== "string" || !path) return null;
     const created = await api.createProject({
-      name,
+      name: name.trim(),
       instructions: "",
-      rootPath: null,
+      rootPath: path,
       sources: [],
     });
-    void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    void queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
     return created.id;
   };
 
@@ -125,7 +137,7 @@ export function ChatPane() {
     onSuccess: (out) => {
       startRun(out.run_id, activeConversationId);
       void queryClient.invalidateQueries({ queryKey: ["messages", activeConversationId] });
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     },
   });
 
@@ -141,7 +153,7 @@ export function ChatPane() {
     const target = liveConversationId ?? activeConversationId;
     void queryClient.invalidateQueries({ queryKey: ["messages", target] });
     void queryClient.invalidateQueries({ queryKey: ["runs", target] });
-    void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     void queryClient.invalidateQueries({ queryKey: ["diagnostics"] });
     const timer = window.setTimeout(() => clearLive(), 1500);
     return () => window.clearTimeout(timer);
@@ -160,12 +172,23 @@ export function ChatPane() {
       ? liveTimeline
       : null;
 
-  const busy =
-    liveForThisConversation != null &&
-    (liveForThisConversation.status === "running" ||
-      liveForThisConversation.status === "queued" ||
-      liveForThisConversation.status === "waiting_approval" ||
-      liveForThisConversation.status === "budget_extension_pending");
+  const busy = liveForThisConversation != null && isBusy(liveForThisConversation.status);
+
+  // Stable identities for the memoized `Composer`. Inline arrows here meant a
+  // fresh prop on every store flush, so the composer — with its model, mode and
+  // project menus — re-rendered ~16×/second while a run streamed.
+  const onSend = useCallback(
+    (content: string, attachments: DraftAttachment[]) => sendMessage.mutate({ content, attachments }),
+    [sendMessage],
+  );
+  const onStop = useCallback(() => {
+    if (liveRunId) cancel.mutate(liveRunId);
+  }, [liveRunId, cancel]);
+  const onProjectChange = useCallback(
+    (projectId: string | null) => void selectProject(projectId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeProjectId, activeConversationId, activeModelId, mode],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -181,16 +204,16 @@ export function ChatPane() {
         mode={mode}
         setMode={setMode}
         allowedModes={allowedModes}
-        models={models.data ?? ([] as ModelView[])}
+        models={models.data ?? EMPTY_MODELS}
         modelId={activeModelId}
         setModelId={setModelId}
-        projects={projects.data ?? []}
+        projects={projects.data ?? EMPTY_PROJECTS}
         projectId={activeProjectId}
-        onProjectChange={(projectId) => void selectProject(projectId)}
+        onProjectChange={onProjectChange}
         onCreateProject={createProject}
         busy={busy}
-        onSend={(content, attachments) => sendMessage.mutate({ content, attachments })}
-        onStop={() => liveRunId && cancel.mutate(liveRunId)}
+        onSend={onSend}
+        onStop={onStop}
       />
       {(sendMessage.isError || projectError) && (
         <div className="mx-auto w-full max-w-[820px] px-6 pb-3">

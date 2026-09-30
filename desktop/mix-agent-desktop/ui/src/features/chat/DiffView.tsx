@@ -1,14 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { FileDiff, FilePlus2, X } from "lucide-react";
+import { FileDiff, FilePlus2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useUi } from "@/lib/ui";
 import { t } from "@/lib/i18n";
 import { shortId } from "@/lib/format";
-import { useActiveRoot } from "@/features/files/useActiveProject";
+import { useActiveRoot } from "@/lib/queries";
 import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ErrorAlert } from "@/components/shared";
+import { PanelHeader } from "@/components/layout";
 
 interface DiffLine {
   kind: "add" | "del" | "ctx" | "hunk";
@@ -107,7 +108,7 @@ export function DiffView({
     return <Skeleton className="h-32 w-full" />;
   }
   if (diff.isError) {
-    return <Alert tone="danger">{String(diff.error)}</Alert>;
+    return <ErrorAlert error={diff.error} />;
   }
 
   const data = diff.data;
@@ -148,19 +149,11 @@ export function DiffPanel() {
   if (!diffTarget) return null;
   return (
     <>
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3">
-        <FileDiff size={14} className="shrink-0 text-faint" />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{diffTarget.label}</span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title={t("閉じる")}
-          aria-label={t("閉じる")}
-          onClick={() => setRightPanel("activity")}
-        >
-          <X size={13} />
-        </Button>
-      </div>
+      <PanelHeader
+        icon={<FileDiff size={14} />}
+        title={diffTarget.label}
+        onClose={() => setRightPanel("activity")}
+      />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <DiffView
           path={diffTarget.path}

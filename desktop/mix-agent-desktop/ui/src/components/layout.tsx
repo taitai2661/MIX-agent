@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
+import { ArrowLeft, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
+import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 
 /** Scrollable page body for a top-level view (Projects, Agents, Schedules). */
@@ -160,3 +163,54 @@ export function DataTable<T>({
 /** Shared cell padding so callers only supply content. */
 export const td = "px-3 py-1.5 align-middle text-muted";
 export const tdStrong = "px-3 py-1.5 align-middle font-medium text-fg";
+
+/** Header row of a side panel: icon, title, optional trailing controls, close.
+ *
+ * Every right-hand surface retyped this — the height, the border, the back
+ * arrow, and the close button together with its translated label and
+ * `aria-label`. Four copies of the same button is four chances for one of them
+ * to lose its accessible name.
+ */
+export function PanelHeader({
+  icon,
+  title,
+  onClose,
+  onBack,
+  trailing,
+  titleClass = "font-mono text-xs",
+  className,
+}: {
+  icon: ReactNode;
+  title: string;
+  onClose: () => void;
+  onBack?: () => void;
+  /** Controls between the title and the close button (badges, refresh, …). */
+  trailing?: ReactNode;
+  titleClass?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3",
+        className,
+      )}
+    >
+      {onBack ? (
+        <Button variant="ghost" size="icon-sm" title={t("戻る")} aria-label={t("戻る")} onClick={onBack}>
+          <ArrowLeft size={13} />
+        </Button>
+      ) : (
+        <span className="shrink-0 text-faint">{icon}</span>
+      )}
+      <span className={cn("min-w-0 flex-1 truncate text-fg", titleClass)} title={title}>
+        {title}
+      </span>
+      {trailing}
+      <Button variant="ghost" size="icon-sm" title={t("閉じる")} aria-label={t("閉じる")} onClick={onClose}>
+        <X size={13} />
+      </Button>
+    </div>
+  );
+}
+

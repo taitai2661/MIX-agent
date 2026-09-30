@@ -76,8 +76,24 @@ export function createTimeline(runId: string): RunTimeline {
 
 export const TERMINAL_STATUSES = ["completed", "failed", "cancelled", "interrupted"];
 
+/** A Run that is still doing something, including the two states where it is
+ * waiting on the user rather than on the model. */
+export const BUSY_STATUSES = ["queued", "running", "waiting_approval", "budget_extension_pending"];
+
 export function isTerminal(status: string): boolean {
   return TERMINAL_STATUSES.includes(status);
+}
+
+/** Whether a Run is in flight.
+ *
+ * The composer, the transcript spinner and the run actions each used to
+ * decide this with their own list, and they disagreed: the transcript counted
+ * `idle` (which is not a RunStatus at all) and so could hang on "thinking…"
+ * forever, while the composer ignored `waiting_approval` and let the user send
+ * into a run that was blocked on an approval card. One list, one meaning.
+ */
+export function isBusy(status: string): boolean {
+  return BUSY_STATUSES.includes(status);
 }
 
 function record(data: unknown): Record<string, unknown> {

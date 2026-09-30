@@ -90,10 +90,7 @@ async fn agents_md_is_read_from_the_project_folder() {
     let system = runtime.system.expect("system block");
     assert!(system.contains("always run `cargo test`"));
     assert!(system.contains("AGENTS.md"));
-    assert_eq!(
-        runtime.root_path,
-        Some(root.to_string_lossy().to_string())
-    );
+    assert_eq!(runtime.root_path, Some(root.to_string_lossy().to_string()));
     std::fs::remove_dir_all(&root).ok();
 }
 

@@ -6,6 +6,7 @@ import { cn } from "./lib/cn";
 import { useUi, type View } from "./lib/ui";
 import { t } from "./lib/i18n";
 import { normalizeTheme, storedTheme } from "./lib/theme";
+import { useConversations, useProjects } from "./lib/queries";
 
 import { ChatPane } from "./features/chat/ChatPane";
 import { AgentsPane } from "./features/agents/AgentsPane";
@@ -35,7 +36,23 @@ const VIEW_TITLES: Record<View, string> = {
 
 /** The health dot. Colour alone would say nothing to a screen reader, so the
  * state is also carried by `aria-label` and hidden text. */
-function HealthIndicator({ state }: { state: "ok" | "error" | "unknown" }) {
+/** How often the shell asks the backend whether it is still alive. */
+const HEALTH_POLL_MS = 15_000;
+
+function HealthIndicator() {
+  // The poll lives here, not in `App`. Holding it in the shell meant every
+  // 15s tick re-rendered the sidebar, the transcript and the right panel to
+  // repaint one two-pixel dot.
+  const health = useQuery({
+    queryKey: ["health"],
+    queryFn: api.health,
+    refetchInterval: HEALTH_POLL_MS,
+  });
+  const state = health.isError
+    ? "error"
+    : health.data?.status === "ok"
+      ? "ok"
+      : "unknown";
   const label =
     state === "ok" ? t("正常") : state === "error" ? t("接続エラー") : t("確認中");
   return (
@@ -70,7 +87,6 @@ export function App() {
   const setLocale = useUi((s) => s.setLocale);
   const conversationId = useUi((s) => s.conversationId);
   const surface = useUi((s) => s.surface);
-  const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 15000 });
 
   useLayoutEffect(() => {
     document.documentElement.dataset.platform = /Macintosh|Mac OS X/i.test(navigator.userAgent)
@@ -104,21 +120,13 @@ export function App() {
   useAppShortcuts();
 
   const activeProjectId = useUi((s) => s.activeProjectId);
-  const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.listConversations });
-  const projects = useQuery({
-    queryKey: ["projects"], queryFn: api.listProjects, staleTime: 30_000,
-  });
+  const conversations = useConversations();
+  const projects = useProjects();
   const activeProject = projects.data?.find((p) => p.id === activeProjectId) ?? null;
   const threadTitle = useMemo(
     () => conversations.data?.find((c) => c.id === conversationId)?.title,
     [conversations.data, conversationId],
   );
-
-  const healthState: "ok" | "error" | "unknown" = health.isError
-    ? "error"
-    : health.data?.status === "ok"
-      ? "ok"
-      : "unknown";
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-bg">
@@ -148,7 +156,7 @@ export function App() {
           </span>
         )}
         <span className="flex-1" />
-        <HealthIndicator state={healthState} />
+        <HealthIndicator />
         {view === "chat" && surface === "desktop-agent" && (
           <div className="flex items-center gap-0.5 border-s border-line ps-1.5">
             <Button

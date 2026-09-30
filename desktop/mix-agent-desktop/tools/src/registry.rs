@@ -6,7 +6,7 @@
 //! - `mcp__<connection>__<tool>` — handled by the MCP host (`mixd-mcp`).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::agent::{AgentRunner, AgentSource, AgentTool};
 use crate::edit::EditTool;
@@ -48,6 +48,12 @@ pub struct ToolRegistry {
     /// Held typed as well so the caches can be dropped when the user edits a
     /// profile; a `dyn Tool` cannot be downcast back.
     agent_tool: Option<Arc<AgentTool>>,
+    /// The advertised spec list, built on first use.
+    ///
+    /// Materialising it asks every tool to write out its JSON schema, and the
+    /// list is re-read on every run, every sub-agent delegation and every
+    /// diagnostics call — so the schemas were rebuilt from scratch each time.
+    specs_cache: OnceLock<Arc<Vec<crate::ToolSpec>>>,
 }
 
 impl ToolRegistry {
@@ -87,6 +93,7 @@ impl ToolRegistry {
             mcp_specs: Arc::new(Vec::new()),
             skill_tool: None,
             agent_tool: None,
+            specs_cache: OnceLock::new(),
         }
     }
 
@@ -152,6 +159,8 @@ impl ToolRegistry {
     /// `mcp__*` tools are dispatchable but the model is never told they exist.
     pub fn set_mcp_specs(&mut self, specs: Vec<crate::ToolSpec>) {
         self.mcp_specs = Arc::new(specs);
+        // The advertised list just changed, so the memoised one is stale.
+        self.specs_cache.take();
     }
 
     pub fn mcp_specs(&self) -> Vec<crate::ToolSpec> {
@@ -165,7 +174,16 @@ impl ToolRegistry {
     }
 
     /// Tool specs the Run Engine advertises, including Browser and MCP Tools.
-    pub fn specs(&self) -> Vec<crate::ToolSpec> {
+    ///
+    /// The returned `Arc` is shared: callers read it without rebuilding, and a
+    /// run hands the very same list to every one of its provider turns.
+    pub fn specs(&self) -> Arc<Vec<crate::ToolSpec>> {
+        self.specs_cache
+            .get_or_init(|| Arc::new(self.build_specs()))
+            .clone()
+    }
+
+    fn build_specs(&self) -> Vec<crate::ToolSpec> {
         let mut out: Vec<crate::ToolSpec> = self
             .list()
             .iter()
@@ -241,6 +259,7 @@ impl ToolRegistry {
             return mcp.dispatch(name, args).await;
         }
         let tool = self
+            .tools
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
         tool.invoke(ctx, args).await
@@ -269,7 +288,8 @@ impl ToolRegistry {
             let connection_id = rest.split("__").next().unwrap_or(rest);
             return Some(connection_id.to_string());
         }
-        self.get(name)
+        self.tools
+            .get(name)
             .and_then(|tool| tool.pattern_target(args))
     }
 }
@@ -277,33 +297,20 @@ impl ToolRegistry {
 /// Translate the flat JSON arguments the model produces into a typed action.
 fn browser_action(args: &serde_json::Value) -> anyhow::Result<mixd_browser::BrowserAction> {
     use mixd_browser::BrowserAction as A;
-    let action = args
-        .get("action")
-        .and_then(|v| v.as_str())
+    let action = crate::args::str_arg(args, "action")
         .ok_or_else(|| anyhow::anyhow!("browser action is required"))?;
-    let text = |key: &str| {
-        args.get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
+    let text = |key: &str| crate::args::str_or(args, key, "").to_string();
     let number = |key: &str| args.get(key).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     let condition = || -> anyhow::Result<mixd_browser::WaitCondition> {
-        Ok(
-            match args
-                .get("condition")
-                .and_then(|v| v.as_str())
-                .unwrap_or("selector")
-            {
-                "url" => mixd_browser::WaitCondition::Url { url: text("url") },
-                "function" => mixd_browser::WaitCondition::Function {
-                    script: text("script"),
-                },
-                _ => mixd_browser::WaitCondition::Selector {
-                    selector: text("selector"),
-                },
+        Ok(match crate::args::str_or(args, "condition", "selector") {
+            "url" => mixd_browser::WaitCondition::Url { url: text("url") },
+            "function" => mixd_browser::WaitCondition::Function {
+                script: text("script"),
             },
-        )
+            _ => mixd_browser::WaitCondition::Selector {
+                selector: text("selector"),
+            },
+        })
     };
     Ok(match action {
         "navigate" => A::Navigate { url: text("url") },

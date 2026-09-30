@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUp, Bot, Brain, Check, ChevronDown, ChevronLeft, Eye, Folder, Loader2,
   MessageSquare, Mic, Paperclip, Plus, Square, Wrench, X,
@@ -23,6 +23,10 @@ export interface DraftAttachment {
   filename: string;
 }
 
+/** Stable default, so the memo below is not defeated by a fresh `[]` on every
+ * render of the parent. */
+const EMPTY_PROJECTS: ProjectView[] = [];
+
 interface ModeMeta {
   id: "chat" | "thinking" | "agent";
   label: string;
@@ -38,14 +42,14 @@ const ALL_MODES: ModeMeta[] = [
 
 const MAX_ATTACHMENTS = 8;
 
-export function Composer({
+export const Composer = memo(function Composer({
   mode,
   setMode,
   allowedModes,
   models,
   modelId,
   setModelId,
-  projects = [],
+  projects = EMPTY_PROJECTS,
   projectId = null,
   onProjectChange,
   onCreateProject,
@@ -229,7 +233,10 @@ export function Composer({
     setProjectCreating(true);
     setProjectCreateError(null);
     try {
-      await onCreateProject(name);
+      const created = await onCreateProject(name);
+      // `null` means the user backed out (cancelled the folder picker):
+      // keep the form open so the draft name is not thrown away.
+      if (!created) return;
       setProjectDraftName("");
       setProjectCreateError(null);
       setProjectMenuMode("list");
@@ -690,4 +697,4 @@ export function Composer({
       </div>
     </div>
   );
-}
+});

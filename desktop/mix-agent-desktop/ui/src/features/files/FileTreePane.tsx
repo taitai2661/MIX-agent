@@ -2,14 +2,15 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown, ChevronRight, Eye, EyeOff, File, FileText, Folder, FolderOpen,
-  FolderTree, RefreshCw, X,
+  FolderTree, RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
-import { useActiveProject } from "./useActiveProject";
+import { useActiveProject, gitStatusKey, useGitStatus } from "@/lib/queries";
+import { PanelHeader } from "@/components/layout";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle } from "@/features/shell/ResizableHandle";
@@ -162,12 +163,7 @@ export function FileTreePane() {
     "mix-agent-file-tree-width", 240, 180, 480,
   );
 
-  const git = useQuery({
-    queryKey: ["git_status", root],
-    queryFn: () => api.gitStatus(root!),
-    enabled: !!root,
-    refetchInterval: 15_000,
-  });
+  const git = useGitStatus(root);
 
   const gitMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -193,7 +189,7 @@ export function FileTreePane() {
   const refresh = () => {
     if (!root) return;
     void queryClient.invalidateQueries({ queryKey: ["dir", root] });
-    void queryClient.invalidateQueries({ queryKey: ["git_status", root] });
+    void queryClient.invalidateQueries({ queryKey: gitStatusKey(root ?? "") });
   };
 
   return (
@@ -203,44 +199,40 @@ export function FileTreePane() {
         style={{ width }}
         className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-inset"
       >
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-2.5">
-        <FolderTree size={13} className="shrink-0 text-faint" />
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" title={root ?? undefined}>
-          {project ? project.name : t("プロジェクト")}
-        </span>
-        {git.data?.available && git.data.branch && (
-          <Badge tone="neutral" size="sm" className="shrink-0 font-mono">
-            {git.data.branch}
-          </Badge>
-        )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title={showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")}
-          aria-label={showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")}
-          onClick={() => setShowHidden((v) => !v)}
-        >
-          {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title={t("更新")}
-          aria-label={t("更新")}
-          onClick={refresh}
-        >
-          <RefreshCw size={12} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title={t("閉じる")}
-          aria-label={t("閉じる")}
-          onClick={toggleFileTree}
-        >
-          <X size={12} />
-        </Button>
-      </div>
+      <PanelHeader
+        className="px-2.5"
+        icon={<FolderTree size={13} />}
+        title={project ? project.name : t("プロジェクト")}
+        titleClass="text-xs font-semibold"
+        onClose={toggleFileTree}
+        trailing={
+          <>
+            {git.data?.available && git.data.branch && (
+              <Badge tone="neutral" size="sm" className="shrink-0 font-mono">
+                {git.data.branch}
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")}
+              aria-label={showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")}
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t("更新")}
+              aria-label={t("更新")}
+              onClick={refresh}
+            >
+              <RefreshCw size={12} />
+            </Button>
+          </>
+        }
+      />
 
       {root ? (
         <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">

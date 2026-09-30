@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   Bot, Clock3, Download, Folder, MessageSquare, Monitor, Moon,
@@ -14,7 +14,10 @@ import {
 } from "@/lib/ui";
 import type { ConversationSummary } from "@/lib/types";
 import { errorMessage } from "@/lib/errors";
-import { useApplySettings, PENDING_APPROVALS_POLL_MS } from "@/lib/settings";
+import {
+  CONVERSATIONS_QUERY_KEY, useConversations, usePendingApprovals, useProjects,
+} from "@/lib/queries";
+import { useApplySettings } from "@/lib/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,13 +92,9 @@ export function Sidebar() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
-  const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.listConversations });
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.listProjects });
-  const approvals = useQuery({
-    queryKey: ["pending_approvals"],
-    queryFn: api.listPendingApprovals,
-    refetchInterval: PENDING_APPROVALS_POLL_MS,
-  });
+  const conversations = useConversations();
+  const projects = useProjects();
+  const approvals = usePendingApprovals();
 
   const activeProject = projects.data?.find((p) => p.id === activeProjectId) ?? null;
 
@@ -106,14 +105,14 @@ export function Sidebar() {
       api.renameConversation(id, title),
     onSuccess: () => {
       setRenaming(null);
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     },
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteConversation(id),
     onSuccess: (_data, id) => {
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
       if (conversationId === id) setConversationId(null);
     },
   });

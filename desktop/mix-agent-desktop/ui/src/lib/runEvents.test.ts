@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyRunEvent, createTimeline, describeToolCall, isFileWrite, isTerminal, reduceRunEvents,
+  applyRunEvent, createTimeline, describeToolCall, isBusy, isFileWrite, isTerminal,
+  reduceRunEvents, TERMINAL_STATUSES,
 } from "./runEvents";
 import type { RunEventPayload } from "./api";
 
@@ -217,8 +218,24 @@ describe("isTerminal", () => {
   });
 });
 
-describe("isFileWrite", () => {
-  it("detects files write with path and content", () => {
+describe("isBusy", () => {
+  it("counts a run waiting on the user as still in flight", () => {
+    expect(isBusy("running")).toBe(true);
+    expect(isBusy("queued")).toBe(true);
+    // A run blocked on an approval card is not finished: retiring the live
+    // block here is what used to strand the card on screen.
+    expect(isBusy("waiting_approval")).toBe(true);
+    expect(isBusy("budget_extension_pending")).toBe(true);
+  });
+
+  it("is false once the run has ended", () => {
+    for (const status of TERMINAL_STATUSES) expect(isBusy(status)).toBe(false);
+    // `idle` was in the transcript's private list; it is not a RunStatus.
+    expect(isBusy("idle")).toBe(false);
+  });
+});
+
+describe("isFileWrite", () => {  it("detects files write with path and content", () => {
     expect(isFileWrite({
       id: "1", name: "files", arguments: { action: "write", path: "a.txt", content: "x" }, status: "done",
     })).toBe(true);

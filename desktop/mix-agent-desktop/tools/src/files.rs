@@ -294,7 +294,9 @@ impl Tool for FilesTool {
         )
     }
     fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+        args.get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({

@@ -46,12 +46,16 @@ async fn a_legacy_project_without_root_gets_a_generated_folder() {
     drop(storage);
 
     let storage = Storage::open(&dir).await.expect("reopen");
-    let row: (String,) =
-        sqlx::query_as("SELECT json_extract(data, '$.rootPath') FROM projects WHERE id = 'legacy-1'")
-            .fetch_one(storage.pool())
-            .await
-            .expect("read rootPath");
-    assert!(!row.0.is_empty(), "rootPath must be assigned by the migration");
+    let row: (String,) = sqlx::query_as(
+        "SELECT json_extract(data, '$.rootPath') FROM projects WHERE id = 'legacy-1'",
+    )
+    .fetch_one(storage.pool())
+    .await
+    .expect("read rootPath");
+    assert!(
+        !row.0.is_empty(),
+        "rootPath must be assigned by the migration"
+    );
     assert!(
         std::path::Path::new(&row.0).is_dir(),
         "the generated folder must exist: {}",
@@ -66,11 +70,12 @@ async fn a_legacy_project_without_root_gets_a_generated_folder() {
     // Re-running must not move or duplicate the folder.
     drop(storage);
     let storage = Storage::open(&dir).await.expect("second reopen");
-    let again: (String,) =
-        sqlx::query_as("SELECT json_extract(data, '$.rootPath') FROM projects WHERE id = 'legacy-1'")
-            .fetch_one(storage.pool())
-            .await
-            .expect("read rootPath");
+    let again: (String,) = sqlx::query_as(
+        "SELECT json_extract(data, '$.rootPath') FROM projects WHERE id = 'legacy-1'",
+    )
+    .fetch_one(storage.pool())
+    .await
+    .expect("read rootPath");
     assert_eq!(again.0, row.0, "the assignment must be stable");
 
     env::remove_var("MIXD_PROJECTS_ROOT");

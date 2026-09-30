@@ -6,6 +6,7 @@ import {
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { CONVERSATIONS_QUERY_KEY } from "@/lib/queries";
 import { useUi, type SettingsTab, type Surface, type View } from "@/lib/ui";
 
 interface PaletteItem {
@@ -50,7 +51,14 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
-  const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.listConversations });
+  // Only fetched while the palette is open: it is mounted permanently, and as
+  // a fifth observer of this key it made a `list_conversations` call on every
+  // app start for a list the user had not asked to see.
+  const conversations = useQuery({
+    queryKey: CONVERSATIONS_QUERY_KEY,
+    queryFn: api.listConversations,
+    enabled: open,
+  });
 
   useEffect(() => {
     if (open) {

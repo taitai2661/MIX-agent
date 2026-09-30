@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileDiff, FileText, GitBranch, X } from "lucide-react";
+import { FileDiff, FileText, GitBranch } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { DiffLines, parseUnifiedDiff } from "@/features/chat/DiffView";
-import { useActiveRoot } from "./useActiveProject";
+import { useActiveRoot, useGitStatus } from "@/lib/queries";
+import { PanelHeader } from "@/components/layout";
 import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ErrorAlert } from "@/components/shared";
 
 type Scope = "unstaged" | "staged";
 
@@ -61,36 +61,6 @@ function GitDiffBody({ unified }: { unified: string }) {
   );
 }
 
-function PanelHeader({
-  icon,
-  title,
-  onClose,
-  onBack,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  onClose: () => void;
-  onBack?: () => void;
-}) {
-  return (
-    <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3">
-      {onBack ? (
-        <Button variant="ghost" size="icon-sm" title={t("戻る")} aria-label={t("戻る")} onClick={onBack}>
-          <ArrowLeft size={13} />
-        </Button>
-      ) : (
-        <span className="shrink-0 text-faint">{icon}</span>
-      )}
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={title}>
-        {title}
-      </span>
-      <Button variant="ghost" size="icon-sm" title={t("閉じる")} aria-label={t("閉じる")} onClick={onClose}>
-        <X size={13} />
-      </Button>
-    </div>
-  );
-}
-
 const panelBody = "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3";
 
 /** Right-panel list of git changes with a per-file diff drill-down. */
@@ -101,12 +71,7 @@ export function ChangesPanel() {
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
   const [scope, setScope] = useState<Scope>("unstaged");
 
-  const status = useQuery({
-    queryKey: ["git_status", root],
-    queryFn: () => api.gitStatus(root!),
-    enabled: !!root,
-    refetchInterval: 15_000,
-  });
+  const status = useGitStatus(root);
 
   const diff = useQuery({
     queryKey: ["git_diff", root, scope, gitDiffPath],
@@ -141,7 +106,7 @@ export function ChangesPanel() {
           {diff.isPending ? (
             <Skeleton className="h-40 w-full" />
           ) : diff.isError ? (
-            <Alert tone="danger">{String(diff.error)}</Alert>
+            <ErrorAlert error={diff.error} />
           ) : !diff.data?.available ? (
             <Alert tone="danger">{diff.data?.unified_diff || t("git を利用できません")}</Alert>
           ) : diff.data.unified_diff.trim() ? (
@@ -265,7 +230,7 @@ export function FilePreviewPanel() {
         </div>
       ) : file.isError ? (
         <div className={panelBody}>
-          <Alert tone="danger">{String(file.error)}</Alert>
+          <ErrorAlert error={file.error} />
         </div>
       ) : file.data.is_binary ? (
         <div className={panelBody}>

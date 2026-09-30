@@ -150,14 +150,10 @@ impl Tool for TodoTool {
             .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow::anyhow!("todos must be an array"))?;
         if entries.len() > MAX_ITEMS {
-            return Ok(ToolResult {
-                ok: false,
-                content: serde_json::json!({}),
-                error: Some(format!(
-                    "at most {MAX_ITEMS} items are allowed, got {}",
-                    entries.len()
-                )),
-            });
+            return Ok(ToolResult::fail(format!(
+                "at most {MAX_ITEMS} items are allowed, got {}",
+                entries.len()
+            )));
         }
 
         let mut next_id = self.store.next_id.lock().await;
@@ -219,15 +215,11 @@ impl Tool for TodoTool {
             .iter()
             .filter(|i| i.status != TodoStatus::Completed)
             .count();
-        Ok(ToolResult {
-            ok: true,
-            content: serde_json::json!({
-                "todos": normalised,
-                "remaining": remaining,
-                "in_progress_cap": MAX_ACTIVE_ITEMS,
-            }),
-            error: None,
-        })
+        Ok(ToolResult::ok(serde_json::json!({
+            "todos": normalised,
+            "remaining": remaining,
+            "in_progress_cap": MAX_ACTIVE_ITEMS,
+        })))
     }
 }
 

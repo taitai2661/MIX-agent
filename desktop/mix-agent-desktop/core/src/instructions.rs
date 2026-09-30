@@ -62,7 +62,8 @@ pub fn load_project_instructions(
     let levels = chain_levels(project_root, cwd_in_project);
     let mut parts: Vec<String> = Vec::new();
     for dir in levels {
-        let Some((name, content)) = read_first_existing(&dir, &PRIMARY_FILENAMES, fallback_filenames)
+        let Some((name, content)) =
+            read_first_existing(&dir, &PRIMARY_FILENAMES, fallback_filenames)
         else {
             continue;
         };
@@ -130,13 +131,15 @@ fn chain_levels(project_root: &Path, cwd_in_project: Option<&Path>) -> Vec<PathB
 /// Read the first existing, non-empty file among the candidates and the
 /// fallback list. Returns the file's name and contents; `None` if nothing
 /// matches.
-fn read_first_existing(dir: &Path, primary: &[&str], fallback: &[&str]) -> Option<(String, String)> {
+fn read_first_existing(
+    dir: &Path,
+    primary: &[&str],
+    fallback: &[&str],
+) -> Option<(String, String)> {
     for name in primary.iter().chain(fallback.iter()) {
         let path = dir.join(name);
         match std::fs::read_to_string(&path) {
-            Ok(content) if !content.trim().is_empty() => {
-                return Some((name.to_string(), content))
-            }
+            Ok(content) if !content.trim().is_empty() => return Some((name.to_string(), content)),
             Ok(_) => continue,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
@@ -211,11 +214,14 @@ mod tests {
     fn chain_merges_root_to_leaf() {
         let root = temp_root("chain");
         write(&root, "AGENTS.md", "root-level rules");
-        write(&root.join("services/payments"), "AGENTS.md", "payments rules");
+        write(
+            &root.join("services/payments"),
+            "AGENTS.md",
+            "payments rules",
+        );
 
         let cwd = root.join("services/payments");
-        let out =
-            load_project_instructions(Some(&root.join("home")), &root, Some(&cwd), &[], 4096);
+        let out = load_project_instructions(Some(&root.join("home")), &root, Some(&cwd), &[], 4096);
         let root_pos = out.project_chain.find("root-level rules").unwrap();
         let leaf_pos = out.project_chain.find("payments rules").unwrap();
         assert!(root_pos < leaf_pos, "root must precede leaf");
@@ -227,8 +233,7 @@ mod tests {
         let root = temp_root("outside");
         write(&root, "AGENTS.md", "root rules");
         let cwd = std::env::temp_dir();
-        let out =
-            load_project_instructions(Some(&root.join("home")), &root, Some(&cwd), &[], 4096);
+        let out = load_project_instructions(Some(&root.join("home")), &root, Some(&cwd), &[], 4096);
         assert_eq!(out.project_chain.matches("root rules").count(), 1);
         std::fs::remove_dir_all(&root).ok();
     }
@@ -305,10 +310,7 @@ mod tests {
         let nested = root.join("leaf");
         std::fs::create_dir_all(&nested).unwrap();
         // No marker anywhere above: the start directory is its own root.
-        assert_eq!(
-            project_root_marker(&nested),
-            nested.canonicalize().unwrap()
-        );
+        assert_eq!(project_root_marker(&nested), nested.canonicalize().unwrap());
 
         std::fs::write(root.join(".git"), "gitdir: /elsewhere").unwrap();
         assert_eq!(project_root_marker(&nested), root.canonicalize().unwrap());

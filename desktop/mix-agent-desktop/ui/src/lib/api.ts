@@ -143,12 +143,15 @@ export const api = {
     invoke<SkillResourceView>("read_skill_resource", { name, path }),
 
   listProjects: () => invoke<ProjectView[]>("list_projects"),
+  // Folder-first: `rootPath` must be an existing directory, `name` may be
+  // omitted and then defaults to the folder's basename.
   createProject: (input: {
-    name: string; instructions: string; rootPath?: string | null; sources?: string[];
+    name?: string; instructions?: string; rootPath: string;
+    additionalPaths?: string[]; sources?: string[];
   }) => invoke<ProjectView>("create_project", { input }),
   updateProject: (id: string, input: {
-    name?: string; instructions?: string; rootPath?: string | null;
-    sources?: string[]; clearRootPath?: boolean;
+    name?: string; instructions?: string; rootPath?: string;
+    additionalPaths?: string[]; sources?: string[];
   }) => invoke<ProjectView>("update_project", { id, input }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
 

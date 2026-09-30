@@ -28,7 +28,7 @@
 
 | エディション | 状態 |
 | --- | --- |
-| Docker 版 | v0.2.3 をリリース済み（既存機能） |
+| Docker 版 | v0.3.5 をリリース済み（既存機能） |
 | Desktop 版 | Phase 0〜5 完了。Phase 6（macOS 完成 + Windows α + Linux α）は未着手。フェーズの内訳は [`desktop/README.md`](desktop/README.md) の「開発フェーズ」を参照 |
 
 ## アイコンの再生成

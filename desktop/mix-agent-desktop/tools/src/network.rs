@@ -75,7 +75,7 @@ impl Tool for NetworkTool {
         })
     }
     fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string())
+        crate::args::pattern_arg(args, "url")
     }
     async fn invoke(
         &self,
@@ -223,10 +223,6 @@ impl Tool for WebSearchTool {
             .take(max as usize)
             .map(|r| serde_json::json!({ "title": r.title, "url": r.href, "snippet": r.body }))
             .collect::<Vec<_>>();
-        Ok(ToolResult {
-            ok: true,
-            content: serde_json::json!(results),
-            error: None,
-        })
+        Ok(ToolResult::ok(serde_json::json!(results)))
     }
 }

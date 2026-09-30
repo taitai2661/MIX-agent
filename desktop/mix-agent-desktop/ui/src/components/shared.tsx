@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { errorMessage } from "@/lib/errors";
 import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
 
 /** Inline error surface used by panes that keep their own layout. */
 export function ErrorBox({
@@ -44,4 +45,23 @@ export function EmptyState({ icon, title, sub }: { icon?: ReactNode; title: stri
       {sub && <span className="max-w-sm text-xs text-muted">{sub}</span>}
     </div>
   );
+}
+
+/** Compact inline error, for a form row that already owns its layout.
+ *
+ * A Tauri `invoke` rejects with the bare `String` the command returned, so
+ * `String(err)` renders `[object Object]` for anything that is not already a
+ * string. Every caller here used to do exactly that, which is how a
+ * failed provider creation once showed up as an empty badge. */
+export function ErrorBadge({ error }: { error: unknown }) {
+  const message = errorMessage(error);
+  if (!message) return null;
+  return <Badge tone="danger">{message}</Badge>;
+}
+
+/** Block error surface for a failed read, mirroring [`ErrorBox`]. */
+export function ErrorAlert({ error }: { error: unknown }) {
+  const message = errorMessage(error);
+  if (!message) return null;
+  return <Alert tone="danger">{message}</Alert>;
 }

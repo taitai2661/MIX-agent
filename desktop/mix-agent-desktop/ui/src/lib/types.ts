@@ -185,8 +185,12 @@ export interface ProjectView {
   id: string;
   name: string;
   instructions: string;
-  rootPath: string | null;
+  /** Absolute folder the project is rooted at — every project has one. */
+  rootPath: string;
+  /** Read-only extra folders the agent may read from (Codex `--add-dir`). */
+  additionalPaths: string[];
   sources: string[];
+  created_at: string;
   updated_at: string;
 }
 

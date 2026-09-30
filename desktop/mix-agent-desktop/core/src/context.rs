@@ -172,8 +172,13 @@ fn safe_split(messages: &[crate::providers_bridge::Message]) -> usize {
 /// summary covers the history being removed rather than re-summarising the tail
 /// that is kept verbatim. When it returns `None` the engine keeps the original
 /// history so no context is silently lost.
+///
+/// The history is taken by value and handed back unchanged whenever nothing was
+/// compressed: the agent loop rebuilds the outgoing request every step, and
+/// copying the whole conversation just to find out it is still needed was the
+/// single largest per-step cost in the loop.
 pub async fn compress<F, Fut>(
-    messages: &[crate::providers_bridge::Message],
+    mut messages: Vec<crate::providers_bridge::Message>,
     mut summary: TieredSummary,
     summarize: F,
 ) -> CompressionOutcome
@@ -181,9 +186,9 @@ where
     F: FnOnce(Vec<crate::providers_bridge::Message>) -> Fut,
     Fut: std::future::Future<Output = Option<String>>,
 {
-    if estimate_chars(messages) < COMPRESS_THRESHOLD_CHARS {
+    if estimate_chars(&messages) < COMPRESS_THRESHOLD_CHARS {
         return CompressionOutcome {
-            messages: messages.to_vec(),
+            messages,
             summary,
             skipped: true,
         };
@@ -191,15 +196,15 @@ where
 
     // Keep the last third of turns verbatim, without ever orphaning a Tool
     // result or splitting an assistant tool_call from its results.
-    let split = safe_split(messages);
-    let older = messages[..split].to_vec();
-    if older.is_empty() {
+    let split = safe_split(&messages);
+    if split == 0 {
         return CompressionOutcome {
-            messages: messages.to_vec(),
+            messages,
             summary,
             skipped: true,
         };
     }
+    let older = messages[..split].to_vec();
 
     match summarize(older).await {
         Some(text) if !text.trim().is_empty() => {
@@ -218,7 +223,8 @@ where
                     is_error: false,
                 });
             }
-            rebuilt.extend_from_slice(&messages[split..]);
+            // `split_off` moves the retained tail instead of copying it.
+            rebuilt.extend(messages.split_off(split));
             CompressionOutcome {
                 messages: rebuilt,
                 summary,
@@ -227,7 +233,7 @@ where
         }
         // Summariser failed: keep everything rather than dropping context.
         _ => CompressionOutcome {
-            messages: messages.to_vec(),
+            messages,
             summary,
             skipped: true,
         },
@@ -255,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn compress_skips_short_prompts() {
         let messages = vec![msg("user", "hello"), msg("assistant", "hi")];
-        let out = compress(&messages, TieredSummary::new(), |_| async { None }).await;
+        let out = compress(messages, TieredSummary::new(), |_| async { None }).await;
         assert!(out.skipped);
         assert_eq!(out.messages.len(), 2);
     }
@@ -268,7 +274,7 @@ mod tests {
             messages.push(msg("assistant", &format!("turn {}", i)));
         }
         messages.push(msg("tool", "signed tool result"));
-        let out = compress(&messages, TieredSummary::new(), |_| async {
+        let out = compress(messages, TieredSummary::new(), |_| async {
             Some("earlier turns summarised".to_string())
         })
         .await;
@@ -286,7 +292,7 @@ mod tests {
             messages.push(msg("assistant", &format!("turn {}", i)));
         }
         let before = messages.len();
-        let out = compress(&messages, TieredSummary::new(), |_| async { None }).await;
+        let out = compress(messages, TieredSummary::new(), |_| async { None }).await;
         assert!(out.skipped);
         assert_eq!(out.messages.len(), before);
     }
@@ -314,7 +320,7 @@ mod tests {
             "the naive split starts on this orphan"
         );
 
-        let out = compress(&messages, TieredSummary::new(), |_| async {
+        let out = compress(messages, TieredSummary::new(), |_| async {
             Some("summary".to_string())
         })
         .await;
@@ -357,7 +363,7 @@ mod tests {
 
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = seen.clone();
-        let out = compress(&messages, TieredSummary::new(), move |older| {
+        let out = compress(messages.clone(), TieredSummary::new(), move |older| {
             let sink = sink.clone();
             async move {
                 *sink.lock().expect("lock") = older.iter().map(|m| m.content.clone()).collect();

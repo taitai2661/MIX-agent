@@ -4,7 +4,7 @@ import { Brain, CheckCircle2, History, Search, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
 import { Card, Field, Row, Section } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ErrorBadge } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -76,7 +76,7 @@ export function MemoryPane() {
           >
             <Brain size={12} /> {t("作成")}
           </Button>
-          {create.isError && <Badge tone="danger">{String(create.error)}</Badge>}
+          {create.isError && <ErrorBadge error={create.error} />}
         </Row>
       </Card>
 

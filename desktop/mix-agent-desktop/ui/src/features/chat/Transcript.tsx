@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
-import type { RunTimeline } from "@/lib/runEvents";
+import { isBusy, type RunTimeline } from "@/lib/runEvents";
 import type { MessageView, RunView } from "@/lib/types";
 import { useUi } from "@/lib/ui";
 import { Alert, Skeleton } from "@/components/ui/alert";
@@ -274,7 +274,9 @@ function Reasoning({ text, streaming = false }: { text: string; streaming?: bool
 }
 
 function LiveBlock({ live }: { live: RunTimeline }) {
-  const busy = live.status === "running" || live.status === "queued" || live.status === "idle";
+  // Waiting on an approval is still "in flight": the spinner has to stay, and
+  // the transcript must not be retired while a card is waiting for an answer.
+  const busy = isBusy(live.status);
   return (
     <div className="flex flex-col gap-1.5">
       {live.stagnation && (

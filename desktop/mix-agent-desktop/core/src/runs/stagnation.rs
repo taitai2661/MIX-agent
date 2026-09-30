@@ -16,8 +16,6 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers_bridge::AssistantToolCall;
-
 /// How many recent signals each rule judges.
 pub const WINDOW: usize = 12;
 
@@ -161,11 +159,15 @@ impl Default for StagnationDetector {
 /// every `files` call into `RepeatedRead`. Both halves were wrong: writes were
 /// counted as reads, and nothing ever produced a failure signal, so the branch
 /// that matters most — repeated failure — could not fire.
-pub fn classify_tool_call(call: &AssistantToolCall, is_error: bool) -> TurnSignal {
+///
+/// The call's arguments arrive decoded because the engine decodes them once per
+/// call and hands the same object to dispatch and to the verification ledger;
+/// re-decoding the wire string in each helper was four redundant parses a call.
+pub fn classify_tool_call(name: &str, args: &serde_json::Value, is_error: bool) -> TurnSignal {
     if is_error {
         return TurnSignal::ToolFailure;
     }
-    if is_mutating(call) {
+    if is_mutating(name, args) {
         TurnSignal::Mutation
     } else {
         TurnSignal::ToolCall
@@ -174,10 +176,8 @@ pub fn classify_tool_call(call: &AssistantToolCall, is_error: bool) -> TurnSigna
 
 /// True when a call changes state, so it counts as progress rather than as one
 /// more step in a loop.
-pub fn is_mutating(call: &AssistantToolCall) -> bool {
-    let args: serde_json::Value =
-        serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
-    match call.function.name.as_str() {
+pub fn is_mutating(name: &str, args: &serde_json::Value) -> bool {
+    match name {
         "files" => matches!(
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "write" | "delete"
@@ -193,10 +193,8 @@ pub fn is_mutating(call: &AssistantToolCall) -> bool {
 }
 
 /// True when a call only reads, so a repeat of it is a read-loop candidate.
-pub fn is_read_only(call: &AssistantToolCall) -> bool {
-    let args: serde_json::Value =
-        serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
-    match call.function.name.as_str() {
+pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
+    match name {
         "files" => matches!(
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "read" | "list"
@@ -208,14 +206,12 @@ pub fn is_read_only(call: &AssistantToolCall) -> bool {
 
 /// A stable identity for a read, so two reads of the same file compare equal and
 /// two reads of different files do not.
-pub fn read_key(call: &AssistantToolCall) -> String {
-    let args: serde_json::Value =
-        serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
+pub fn read_key(name: &str, args: &serde_json::Value) -> String {
     let path = args
         .get("path")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    match call.function.name.as_str() {
+    match name {
         "files" => {
             let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
             format!(
@@ -239,6 +235,7 @@ pub fn read_key(call: &AssistantToolCall) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers_bridge::AssistantToolCall;
 
     fn call(name: &str, args: serde_json::Value) -> AssistantToolCall {
         AssistantToolCall {
@@ -251,39 +248,62 @@ mod tests {
         }
     }
 
+    /// Mirror the engine: it decodes a call's arguments once and shares the
+    /// decoded object with every reader, so the tests decode here too instead
+    /// of letting each helper re-parse the wire string.
+    fn decoded(call: &AssistantToolCall) -> serde_json::Value {
+        serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null)
+    }
+
+    fn classify(call: &AssistantToolCall, is_error: bool) -> TurnSignal {
+        classify_tool_call(&call.function.name, &decoded(call), is_error)
+    }
+
+    fn read_only(call: &AssistantToolCall) -> bool {
+        is_read_only(&call.function.name, &decoded(call))
+    }
+
+    fn mutating(call: &AssistantToolCall) -> bool {
+        is_mutating(&call.function.name, &decoded(call))
+    }
+
+    fn key(call: &AssistantToolCall) -> String {
+        read_key(&call.function.name, &decoded(call))
+    }
+
     #[test]
     fn a_failed_call_is_a_failure_signal() {
         let c = call("edit", serde_json::json!({"path": "a.rs"}));
-        assert_eq!(classify_tool_call(&c, true), TurnSignal::ToolFailure);
+        assert_eq!(classify(&c, true), TurnSignal::ToolFailure);
     }
 
     #[test]
     fn a_successful_read_is_a_plain_tool_call() {
         let c = call("grep", serde_json::json!({"pattern": "fn main"}));
-        assert_eq!(classify_tool_call(&c, false), TurnSignal::ToolCall);
+        assert_eq!(classify(&c, false), TurnSignal::ToolCall);
     }
 
     #[test]
     fn only_read_actions_count_as_read_only() {
-        assert!(is_read_only(&call(
+        assert!(read_only(&call(
             "files",
             serde_json::json!({"action": "read", "path": "a.rs"})
         )));
-        assert!(is_read_only(&call(
+        assert!(read_only(&call(
             "files",
             serde_json::json!({"action": "list", "path": "."})
         )));
         // This is the regression the old classifier had: a write was counted as
         // a read, so a healthy refactor tripped the read-loop branch.
-        assert!(!is_read_only(&call(
+        assert!(!read_only(&call(
             "files",
             serde_json::json!({"action": "write", "path": "a.rs"})
         )));
-        assert!(!is_read_only(&call(
+        assert!(!read_only(&call(
             "edit",
             serde_json::json!({"path": "a.rs", "old_string": "x"})
         )));
-        assert!(is_read_only(&call(
+        assert!(read_only(&call(
             "glob",
             serde_json::json!({"pattern": "**/*.rs"})
         )));
@@ -303,8 +323,8 @@ mod tests {
             "files",
             serde_json::json!({"action": "read", "path": "a.rs", "offset": 1}),
         );
-        assert_ne!(read_key(&a), read_key(&b));
-        assert_ne!(read_key(&a), read_key(&c));
+        assert_ne!(key(&a), key(&b));
+        assert_ne!(key(&a), key(&c));
     }
 
     #[test]
@@ -320,10 +340,10 @@ mod tests {
         let c = call("edit", serde_json::json!({"path": "a.rs"}));
         // Nothing fires before the window is half full of failures.
         for _ in 0..(WINDOW / 2 - 1) {
-            assert!(d.observe([classify_tool_call(&c, true)]).is_none());
+            assert!(d.observe([classify(&c, true)]).is_none());
         }
         let report = d
-            .observe([classify_tool_call(&c, true)])
+            .observe([classify(&c, true)])
             .expect("should fire at half a window of failures");
         assert_eq!(report.kind, StagnationKind::RepeatedFailure);
     }
@@ -332,7 +352,7 @@ mod tests {
     fn a_mutating_call_is_progress_not_a_stall() {
         let edit = call("edit", serde_json::json!({"path": "a.rs"}));
         assert_eq!(
-            classify_tool_call(&edit, false),
+            classify(&edit, false),
             TurnSignal::Mutation,
             "an edit changes state, so it is progress"
         );
@@ -340,12 +360,12 @@ mod tests {
             "files",
             serde_json::json!({"action": "write", "path": "a.rs"}),
         );
-        assert_eq!(classify_tool_call(&write, false), TurnSignal::Mutation);
+        assert_eq!(classify(&write, false), TurnSignal::Mutation);
         let read = call(
             "files",
             serde_json::json!({"action": "read", "path": "a.rs"}),
         );
-        assert_eq!(classify_tool_call(&read, false), TurnSignal::ToolCall);
+        assert_eq!(classify(&read, false), TurnSignal::ToolCall);
     }
 
     #[test]
@@ -353,7 +373,7 @@ mod tests {
         // Assuming an unfamiliar tool is read-only would let its loop read as
         // healthy work.
         let call = call("mcp__server__do_thing", serde_json::json!({}));
-        assert!(is_mutating(&call));
+        assert!(mutating(&call));
     }
 
     #[test]
@@ -397,7 +417,7 @@ mod tests {
         let write = call("edit", serde_json::json!({"path": "a.rs"}));
         let mut fired = false;
         for _ in 0..(WINDOW * 3) {
-            if d.observe([classify_tool_call(&write, false)]).is_some() {
+            if d.observe([classify(&write, false)]).is_some() {
                 fired = true;
             }
         }
@@ -409,7 +429,7 @@ mod tests {
         let mut d = StagnationDetector::new();
         let c = call("edit", serde_json::json!({"path": "a.rs"}));
         for _ in 0..(MIN_SIGNALS - 1) {
-            assert!(d.observe([classify_tool_call(&c, true)]).is_none());
+            assert!(d.observe([classify(&c, true)]).is_none());
         }
     }
 
@@ -451,7 +471,7 @@ mod tests {
             let signals = [
                 TurnSignal::Progress,
                 TurnSignal::ToolCall,
-                classify_tool_call(&c, true),
+                classify(&c, true),
             ];
             if d.observe(signals).is_some() {
                 fired = true;
@@ -466,7 +486,7 @@ mod tests {
         let c = call("edit", serde_json::json!({"path": "a.rs"}));
         let mut fired = false;
         for _ in 0..(WINDOW * 3) {
-            if d.observe([TurnSignal::ToolCall, classify_tool_call(&c, true)])
+            if d.observe([TurnSignal::ToolCall, classify(&c, true)])
                 .is_some()
             {
                 fired = true;

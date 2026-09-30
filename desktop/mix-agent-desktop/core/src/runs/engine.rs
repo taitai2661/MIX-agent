@@ -167,7 +167,14 @@ impl RunEngine {
             data: payload,
             created_at: chrono::Utc::now(),
         };
-        let _ = self.events.send(evt.clone());
+        // Cloning the event is the only cost of publishing it, and it is pure
+        // waste when nothing is listening — scheduled and resumed runs have no
+        // subscriber at all. A receiver attached later cannot see a message
+        // published before it subscribed, so skipping the send is not a
+        // behavioural change.
+        if self.events.receiver_count() > 0 {
+            let _ = self.events.send(evt.clone());
+        }
         if STREAM_KINDS.contains(&kind) {
             self.buffer_event(evt).await;
             return;
@@ -215,17 +222,7 @@ impl RunEngine {
             let mut buffer = self.event_buffer.lock().await;
             buffer.remove(&run_id).unwrap_or_default()
         };
-        for evt in batch {
-            if let Err(err) = self.persist_event(&evt).await {
-                tracing::error!(
-                    %run_id,
-                    sequence = evt.sequence,
-                    kind = %evt.kind,
-                    %err,
-                    "persisting buffered run event failed"
-                );
-            }
-        }
+        self.persist_batch(run_id, &batch).await;
     }
 
     /// Drain every Run's buffer. Used before a replay so reloading a
@@ -236,17 +233,7 @@ impl RunEngine {
             std::mem::take(&mut *buffer)
         };
         for (run_id, batch) in all {
-            for evt in batch {
-                if let Err(err) = self.persist_event(&evt).await {
-                    tracing::error!(
-                        %run_id,
-                        sequence = evt.sequence,
-                        kind = %evt.kind,
-                        %err,
-                        "persisting buffered run event failed"
-                    );
-                }
-            }
+            self.persist_batch(run_id, &batch).await;
         }
     }
 
@@ -338,6 +325,62 @@ impl RunEngine {
         }
     }
 
+    /// Persist a drained buffer with one statement rather than one round trip
+    /// per event.
+    ///
+    /// Token deltas arrive in bursts of up to `EVENT_FLUSH_BATCH`, so writing
+    /// them one at a time made SQLite the pacing item of a streaming turn. A
+    /// multi-row `INSERT` is atomic: when it is rejected it has written
+    /// nothing, so the per-row path — which renumbers on a sequence collision —
+    /// can be retried without risking duplicates.
+    async fn persist_batch(&self, run_id: RunId, batch: &[RunEvent]) {
+        if batch.is_empty() {
+            return;
+        }
+        if let Err(err) = self.insert_events(batch).await {
+            tracing::warn!(
+                %run_id,
+                %err,
+                "batched run event insert failed; falling back to row by row"
+            );
+            for evt in batch {
+                if let Err(err) = self.persist_event(evt).await {
+                    tracing::error!(
+                        %run_id,
+                        sequence = evt.sequence,
+                        kind = %evt.kind,
+                        %err,
+                        "persisting buffered run event failed"
+                    );
+                }
+            }
+        }
+    }
+
+    async fn insert_events(&self, batch: &[RunEvent]) -> anyhow::Result<()> {
+        for chunk in batch.chunks(EVENT_FLUSH_BATCH) {
+            let mut sql =
+                String::from("INSERT INTO run_events (id, run_id, sequence, kind, data) VALUES ");
+            let mut separator = "";
+            for _ in chunk {
+                sql.push_str(separator);
+                sql.push_str("(?, ?, ?, ?, ?)");
+                separator = ", ";
+            }
+            let mut statement = sqlx::query(&sql);
+            for evt in chunk {
+                statement = statement
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(evt.run_id.to_string())
+                    .bind(evt.sequence)
+                    .bind(&evt.kind)
+                    .bind(evt.data.to_string());
+            }
+            statement.execute(self.storage.pool()).await?;
+        }
+        Ok(())
+    }
+
     async fn insert_event(&self, evt: &RunEvent) -> anyhow::Result<()> {
         sqlx::query(
             "INSERT INTO run_events (id, run_id, sequence, kind, data) VALUES (?, ?, ?, ?, ?)",
@@ -367,11 +410,11 @@ impl RunEngine {
             .read()
             .await
             .specs()
-            .into_iter()
+            .iter()
             .map(|s| mixd_providers::ToolSpec {
-                name: s.name,
-                description: s.description,
-                parameters: s.parameters,
+                name: s.name.clone(),
+                description: s.description.clone(),
+                parameters: s.parameters.clone(),
             })
             .collect()
     }
@@ -722,6 +765,27 @@ impl RunEngine {
         self.flush_scheduled.lock().await.remove(&run_id);
     }
 
+    /// Record a Run's terminal state and return its outcome.
+    ///
+    /// Every exit path of the agent loop ends here. The four things a finished
+    /// Run has to do — persist the status, emit it (which also drains the
+    /// token buffer) and drop the per-run handles — used to be spelled out five
+    /// separate times, and a path that skipped `release_run` left its `active`
+    /// entry behind for the lifetime of the process.
+    async fn finish_run(
+        &self,
+        run_id: RunId,
+        status: RunStatus,
+        state: serde_json::Value,
+        payload: serde_json::Value,
+        outcome: RunOutcome,
+    ) -> anyhow::Result<RunOutcome> {
+        self.set_run_state(run_id, status, state).await;
+        self.emit(run_id, "status", payload).await;
+        self.release_run(run_id).await;
+        Ok(RunOutcome { status, ..outcome })
+    }
+
     /// The Agent loop. Runs at least one Provider turn; keeps looping while the
     /// model requests Tools and the budget allows it.
     ///
@@ -853,24 +917,23 @@ impl RunEngine {
 
         loop {
             if cancellation.is_cancelled() {
-                self.set_run_state(run_id, RunStatus::Cancelled, serde_json::json!({}))
+                return self
+                    .finish_run(
+                        run_id,
+                        RunStatus::Cancelled,
+                        serde_json::json!({}),
+                        serde_json::json!({ "status": "cancelled" }),
+                        RunOutcome {
+                            status: RunStatus::Cancelled,
+                            text: final_text,
+                            reasoning: final_reasoning,
+                            tool_calls: all_tool_calls,
+                            usage: last_usage,
+                            finish_reason: last_finish,
+                            steps,
+                        },
+                    )
                     .await;
-                self.emit(
-                    run_id,
-                    "status",
-                    serde_json::json!({ "status": "cancelled" }),
-                )
-                .await;
-                self.release_run(run_id).await;
-                return Ok(RunOutcome {
-                    status: RunStatus::Cancelled,
-                    text: final_text,
-                    reasoning: final_reasoning,
-                    tool_calls: all_tool_calls,
-                    usage: last_usage,
-                    finish_reason: last_finish,
-                    steps,
-                });
             }
 
             // Budget gate before each Provider turn.
@@ -881,24 +944,23 @@ impl RunEngine {
                     else {
                         // Cancelled while waiting: reporting `completed` here
                         // overwrote the user's cancellation.
-                        self.set_run_state(run_id, RunStatus::Cancelled, serde_json::json!({}))
+                        return self
+                            .finish_run(
+                                run_id,
+                                RunStatus::Cancelled,
+                                serde_json::json!({}),
+                                serde_json::json!({ "status": "cancelled" }),
+                                RunOutcome {
+                                    status: RunStatus::Cancelled,
+                                    text: final_text,
+                                    reasoning: final_reasoning,
+                                    tool_calls: all_tool_calls,
+                                    usage: last_usage,
+                                    finish_reason: last_finish,
+                                    steps,
+                                },
+                            )
                             .await;
-                        self.emit(
-                            run_id,
-                            "status",
-                            serde_json::json!({ "status": "cancelled" }),
-                        )
-                        .await;
-                        self.release_run(run_id).await;
-                        return Ok(RunOutcome {
-                            status: RunStatus::Cancelled,
-                            text: final_text,
-                            reasoning: final_reasoning,
-                            tool_calls: all_tool_calls,
-                            usage: last_usage,
-                            finish_reason: last_finish,
-                            steps,
-                        });
                     };
                     // A granted extension can still be refused by the grant
                     // allowance, so the two outcomes are distinguished rather
@@ -913,24 +975,23 @@ impl RunEngine {
                         self.set_run_state(run_id, RunStatus::Running, serde_json::json!({}))
                             .await;
                     } else {
-                        self.set_run_state(run_id, RunStatus::Completed, serde_json::json!({}))
+                        return self
+                            .finish_run(
+                                run_id,
+                                RunStatus::Completed,
+                                serde_json::json!({}),
+                                serde_json::json!({ "status": "completed", "reason": stop_reason }),
+                                RunOutcome {
+                                    status: RunStatus::Completed,
+                                    text: final_text,
+                                    reasoning: final_reasoning,
+                                    tool_calls: all_tool_calls,
+                                    usage: last_usage,
+                                    finish_reason: last_finish,
+                                    steps,
+                                },
+                            )
                             .await;
-                        self.emit(
-                            run_id,
-                            "status",
-                            serde_json::json!({ "status": "completed", "reason": stop_reason }),
-                        )
-                        .await;
-                        self.release_run(run_id).await;
-                        return Ok(RunOutcome {
-                            status: RunStatus::Completed,
-                            text: final_text,
-                            reasoning: final_reasoning,
-                            tool_calls: all_tool_calls,
-                            usage: last_usage,
-                            finish_reason: last_finish,
-                            steps,
-                        });
                     }
                 }
             }
@@ -941,28 +1002,72 @@ impl RunEngine {
             // plus the agent's own checklist — is prepended so both survive the
             // folding of older turns. Without the checklist an agent loses track
             // of a five-step refactor as soon as the context compresses.
-            if self.policy.context_tiered_summary {
-                let head = render_head(&task_state, &self.tools.read().await.todos).await;
-                let current = if head.trim().is_empty() {
-                    messages.clone()
+            //
+            // The head and the checklist are read under one shared guard, and
+            // only once per step: rendering the block twice meant formatting
+            // the whole checklist two times and taking the registry lock three
+            // times on every pass through the loop. Deriving both from one
+            // snapshot is what keeps the plan the model is acting on identical
+            // to the plan the UI shows.
+            let (head, checklist) = {
+                let tools = self.tools.read().await;
+                let head = if self.policy.context_tiered_summary {
+                    render_head(&task_state, &tools.todos).await
                 } else {
-                    let mut v = vec![Message::text("system", head)];
-                    v.extend(messages.iter().cloned());
-                    v
+                    String::new()
                 };
-                let owned = current.clone();
+                (head, tools.todos.snapshot().await)
+            };
+            // Surface the checklist to the UI, not just to the model: a plan the
+            // user cannot see is a plan they cannot correct.
+            if checklist != last_todos {
+                let payload = serde_json::json!({
+                    "todos": checklist
+                        .iter()
+                        .map(|item| serde_json::json!({
+                            "id": item.id,
+                            "content": item.content,
+                            "status": item.status,
+                        }))
+                        .collect::<Vec<_>>(),
+                });
+                last_todos = checklist;
+                self.emit(run_id, "todo_list", payload).await;
+            }
+
+            // One history list for the rest of the step: the compression pass
+            // and the request below both work on it, and the Provider takes it
+            // over afterwards. This used to be two separate clones of the whole
+            // conversation per step, plus a third inside `compress`.
+            let mut current = if head.trim().is_empty() {
+                messages.clone()
+            } else {
+                let mut v = Vec::with_capacity(messages.len() + 1);
+                v.push(Message::text("system", head));
+                v.extend(messages.iter().cloned());
+                v
+            };
+
+            if self.policy.context_tiered_summary {
+                let source_messages = current.len();
                 let model = request.model_id.clone();
                 let provider_handle = provider.clone();
                 // The summariser is handed exactly the slice being dropped, so
-                // the summary never duplicates the tail kept verbatim.
-                let outcome =
-                    crate::context::compress(&current, summary.clone(), |older| async move {
+                // the summary never duplicates the tail kept verbatim. The
+                // history and the summary are moved in and handed straight
+                // back, so an ordinary (uncompressed) step allocates nothing.
+                let outcome = crate::context::compress(
+                    std::mem::take(&mut current),
+                    std::mem::take(&mut summary),
+                    |older| async move {
                         summarize_turns(provider_handle.as_ref(), &model, &older).await
-                    })
-                    .await;
+                    },
+                )
+                .await;
+                current = outcome.messages;
+                summary = outcome.summary;
                 if !outcome.skipped {
-                    summary = outcome.summary.clone();
-                    messages = strip_head(outcome.messages);
+                    messages = strip_head(&current);
                     self.emit(
                         run_id,
                         "context_summary",
@@ -971,80 +1076,37 @@ impl RunEngine {
                             "activeChars": summary.char_count(),
                             "archiveRows": summary.archive.len(),
                             "messages": messages.len(),
-                            "sourceMessages": owned.len(),
+                            "sourceMessages": source_messages,
                         }),
                     )
                     .await;
                 }
             }
 
-            // The head block is stripped again by `strip_head` after compression,
-            // so it has to be re-attached here even when compression was skipped;
-            // otherwise the goal and the checklist vanish after step one.
-            // Surface the checklist to the UI, not just to the model: a plan the
-            // user cannot see is a plan they cannot correct.
-            let checklist = self.tools.read().await.todos.snapshot().await;
-            if checklist != last_todos {
-                last_todos = checklist.clone();
-                self.emit(
-                    run_id,
-                    "todo_list",
-                    serde_json::json!({
-                        "todos": checklist
-                            .iter()
-                            .map(|item| serde_json::json!({
-                                "id": item.id,
-                                "content": item.content,
-                                "status": item.status,
-                            }))
-                            .collect::<Vec<_>>(),
-                    }),
-                )
-                .await;
-            }
-
-            let head = if self.policy.context_tiered_summary {
-                render_head(&task_state, &self.tools.read().await.todos).await
-            } else {
-                String::new()
-            };
-            let outgoing = if head.trim().is_empty() {
-                messages.clone()
-            } else {
-                let mut v = vec![Message::text("system", head)];
-                v.extend(messages.iter().cloned());
-                v
-            };
-
             let turn = self
-                .run_turn(run_id, provider.as_ref(), &request, &outgoing, &system)
+                .run_turn(run_id, provider.as_ref(), &request, current, &system)
                 .await?;
 
             if let Some(err) = turn.error {
                 self.emit(run_id, "error", serde_json::json!({ "error": err }))
                     .await;
-                self.set_run_state(
-                    run_id,
-                    RunStatus::Failed,
-                    serde_json::json!({ "error": err }),
-                )
-                .await;
-                self.emit(
-                    run_id,
-                    "status",
-                    serde_json::json!({ "status": "failed", "error": err }),
-                )
-                .await;
-                self.release_run(run_id).await;
-                return Ok(RunOutcome {
-                    status: RunStatus::Failed,
-                    text: final_text,
-                    reasoning: final_reasoning,
-                    tool_calls: all_tool_calls,
-                    usage: last_usage,
-                    finish_reason: last_finish,
-                    steps,
-                });
+                return self
+                    .finish_run(
+                        run_id,
+                        RunStatus::Failed,
+                        serde_json::json!({ "error": err }),
+                        serde_json::json!({ "status": "failed", "error": err }),
+                        RunOutcome {
+                            status: RunStatus::Failed,
+                            text: final_text,
+                            reasoning: final_reasoning,
+                            tool_calls: all_tool_calls,
+                            usage: last_usage,
+                            finish_reason: last_finish,
+                            steps,
+                        },
+                    )
+                    .await;
             }
 
             last_usage = turn.usage.clone();
@@ -1199,26 +1261,35 @@ impl RunEngine {
                 .await;
             }
 
+            // The argument blob is decoded once per call. Dispatch, the
+            // stagnation detector and the verification ledger all read the very
+            // same object, and each used to decode it again from the wire
+            // string — six JSON parses per call, on every call of every step.
+            let call_args: Vec<serde_json::Value> = turn
+                .tool_calls
+                .iter()
+                .map(|c| {
+                    serde_json::from_str(&c.function.arguments).unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
+
             let mut tool_messages: Vec<Message> = Vec::new();
-            for call in &turn.tool_calls {
+            for (call, args) in turn.tool_calls.iter().zip(call_args.iter()) {
                 total_tool_calls += 1;
-                if crate::runs::stagnation::is_read_only(call)
-                    && stagnation.note_read(crate::runs::stagnation::read_key(call))
+                if crate::runs::stagnation::is_read_only(&call.function.name, args)
+                    && stagnation
+                        .note_read(crate::runs::stagnation::read_key(&call.function.name, args))
                 {
                     signals.push(crate::runs::stagnation::TurnSignal::RepeatedRead);
                 }
-                let result = self.dispatch_tool(run_id, &request, call).await;
+                let result = self.dispatch_tool(run_id, &request, call, args).await;
                 all_tool_calls.push(result.clone());
                 let is_error = result.error.is_some();
                 // Only a read that actually succeeded closes the gate. Doing
                 // this before dispatch let a refused or failing read clear it,
                 // and letting `files.write` clear it defeated the gate entirely.
-                if !is_error {
-                    let args: serde_json::Value =
-                        serde_json::from_str(&call.function.arguments).unwrap_or_default();
-                    if destructive_reason(&call.function.name, &args).is_none() {
-                        verification.confirm(&call.function.name);
-                    }
+                if !is_error && destructive_reason(&call.function.name, args).is_none() {
+                    verification.confirm(&call.function.name);
                 }
                 let content = match &result.error {
                     Some(err) => format!("Error: {}", err),
@@ -1231,7 +1302,7 @@ impl RunEngine {
                 // The failure flag is what the adapters turn into their own error
                 // channel and what the stagnation detector reads, so it has to be
                 // set here rather than inferred from the message text later.
-                signals.push(classify_tool_call(call, is_error));
+                signals.push(classify_tool_call(&call.function.name, args, is_error));
                 tool_messages.push(Message::tool_result(call, content, is_error));
             }
             for message in &tool_messages {
@@ -1248,11 +1319,9 @@ impl RunEngine {
             // Strict verification: note the destructive calls in this turn so
             // the concluding turn above knows they need a confirming read.
             if self.policy.strict_verification {
-                for call in &turn.tool_calls {
+                for (call, args) in turn.tool_calls.iter().zip(call_args.iter()) {
                     let name = call.function.name.as_str();
-                    let args: serde_json::Value =
-                        serde_json::from_str(&call.function.arguments).unwrap_or_default();
-                    if verification.requires_confirmation(name, &args) {
+                    if verification.requires_confirmation(name, args) {
                         self.emit(
                             run_id,
                             "destructive_tool_called",
@@ -1292,37 +1361,30 @@ impl RunEngine {
             }
         }
 
-        self.set_run_state(
+        self.finish_run(
             run_id,
             RunStatus::Completed,
             serde_json::json!({
                 "stepCount": steps,
                 "toolCallCount": total_tool_calls,
             }),
-        )
-        .await;
-        self.emit(
-            run_id,
-            "status",
             serde_json::json!({
                 "status": "completed",
                 "steps": steps,
                 "tool_calls": total_tool_calls,
                 "usage": last_usage,
             }),
+            RunOutcome {
+                status: RunStatus::Completed,
+                text: final_text,
+                reasoning: final_reasoning,
+                tool_calls: all_tool_calls,
+                usage: last_usage,
+                finish_reason: last_finish,
+                steps,
+            },
         )
-        .await;
-        self.release_run(run_id).await;
-
-        Ok(RunOutcome {
-            status: RunStatus::Completed,
-            text: final_text,
-            reasoning: final_reasoning,
-            tool_calls: all_tool_calls,
-            usage: last_usage,
-            finish_reason: last_finish,
-            steps,
-        })
+        .await
     }
 
     /// Ask the user for a budget extension. Returns `None` when the Run was
@@ -1463,9 +1525,13 @@ impl RunEngine {
         run_id: RunId,
         request: &RunRequest,
         call: &AssistantToolCall,
+        args: &serde_json::Value,
     ) -> RunToolCall {
-        let arguments: serde_json::Value =
-            serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
+        // The wire string is decoded once by the caller — the stagnation
+        // detector and the verification ledger read the very same object — so
+        // this takes the decoded form and copies it into the record it has to
+        // persist.
+        let arguments = args.clone();
         let tool_name = call.function.name.clone();
         let tool_call_id = call.id.clone();
 
@@ -1478,21 +1544,22 @@ impl RunEngine {
             approval_id: None,
         };
 
+        // One read of the registry for the whole call, taken as a snapshot
+        // rather than a guard. The gate used to take the lock twice here and a
+        // third time across the tool execution itself, so a thirty-second
+        // `terminal` call held the read lock that an MCP reconnect's write lock
+        // is queued behind for the entire command.
+        let registry = self.tools.read().await.clone();
+
         // Permission gate: a stored rule may allow, deny, or prompt.
         //
         // The fallback is per-*call*, not per tool: `files` is one tool but its
         // read and write actions warrant different answers, and an unknown tool
         // is always treated as sensitive rather than optimistically allowed.
-        let pattern_target = {
-            let registry = self.tools.read().await;
-            registry.pattern_target_for(&tool_name, &arguments)
-        };
-        let default_decision = {
-            let registry = self.tools.read().await;
-            match registry.get(&tool_name) {
-                Some(tool) => tool.decision_for(&arguments),
-                None => mixd_tools::permission::PermissionDecision::Ask,
-            }
+        let pattern_target = registry.pattern_target_for(&tool_name, &arguments);
+        let default_decision = match registry.get(&tool_name) {
+            Some(tool) => tool.decision_for(&arguments),
+            None => mixd_tools::permission::PermissionDecision::Ask,
         };
         let permission_ctx = mixd_tools::execute::PermissionContext {
             workspace_id: Some(request.workspace_id),
@@ -1619,10 +1686,7 @@ impl RunEngine {
             additional_paths: request.additional_paths.clone(),
             approval_token,
         };
-        let outcome = {
-            let registry = self.tools.read().await;
-            registry.dispatch(ctx, &tool_name, arguments.clone()).await
-        };
+        let outcome = registry.dispatch(ctx, &tool_name, arguments.clone()).await;
 
         match outcome {
             Ok(result) => {
@@ -1731,17 +1795,20 @@ impl RunEngine {
     }
 
     /// One Provider turn: stream and accumulate text / reasoning / Tool calls.
+    ///
+    /// Takes the outgoing history by value so the loop does not have to copy
+    /// the conversation a second time to hand it over.
     async fn run_turn(
         &self,
         run_id: RunId,
         provider: &dyn Provider,
         request: &RunRequest,
-        messages: &[Message],
+        messages: Vec<Message>,
         system: &str,
     ) -> anyhow::Result<TurnResult> {
         let req = ProviderRequest {
             model: request.model_id.clone(),
-            messages: messages.to_vec(),
+            messages,
             system: if system.trim().is_empty() {
                 None
             } else {
@@ -1901,10 +1968,11 @@ struct TurnResult {
 }
 
 /// Remove a leading `system` head block injected by the compression step.
-fn strip_head(messages: Vec<Message>) -> Vec<Message> {
+fn strip_head(messages: &[Message]) -> Vec<Message> {
     messages
-        .into_iter()
+        .iter()
         .skip_while(|m| m.role == "system" && m.content.starts_with("<task_state>"))
+        .cloned()
         .collect()
 }
 

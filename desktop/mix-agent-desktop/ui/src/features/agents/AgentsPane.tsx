@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { Card, Field, Page, Row } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ErrorBadge } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -87,7 +87,7 @@ export function AgentsPane() {
           >
             <Bot size={12} /> {t("作成")}
           </Button>
-          {create.isError && <Badge tone="danger">{String(create.error)}</Badge>}
+          {create.isError && <ErrorBadge error={create.error} />}
         </Row>
       </Card>
 

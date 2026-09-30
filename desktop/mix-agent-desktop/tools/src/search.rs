@@ -171,7 +171,9 @@ impl Tool for GlobTool {
         })
     }
     fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+        args.get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     async fn invoke(
@@ -294,7 +296,9 @@ impl Tool for GrepTool {
         })
     }
     fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+        args.get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     async fn invoke(

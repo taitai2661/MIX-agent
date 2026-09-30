@@ -36,38 +36,18 @@ impl Tool for UserPlanTool {
         _ctx: ToolContext,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
-        let title = args
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Plan")
-            .to_string();
-        let steps: Vec<String> = args
-            .get("steps")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let risk = args
-            .get("risk")
-            .and_then(|v| v.as_str())
-            .unwrap_or("low")
-            .to_string();
+        let title = crate::args::str_or(&args, "title", "Plan").to_string();
+        let steps = crate::args::str_vec(&args, "steps");
+        let risk = crate::args::str_or(&args, "risk", "low").to_string();
         let approval_id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        Ok(ToolResult {
-            ok: true,
-            content: serde_json::json!({
-                "kind": "user_plan",
-                "approval_id": approval_id,
-                "title": title,
-                "steps": steps,
-                "risk": risk,
-                "expires_at": (now + Duration::hours(1)).to_rfc3339(),
-            }),
-            error: None,
-        })
+        Ok(ToolResult::ok(serde_json::json!({
+            "kind": "user_plan",
+            "approval_id": approval_id,
+            "title": title,
+            "steps": steps,
+            "risk": risk,
+            "expires_at": (now + Duration::hours(1)).to_rfc3339(),
+        })))
     }
 }

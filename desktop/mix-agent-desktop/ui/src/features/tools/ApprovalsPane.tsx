@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, ShieldX } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
+import { PENDING_APPROVALS_QUERY_KEY, usePendingApprovals } from "@/lib/queries";
 import { Card, Row, Section } from "@/components/layout";
 import { EmptyState } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
@@ -11,15 +12,11 @@ import type { PendingApprovalView } from "@/lib/types";
 
 export function ApprovalsPane() {
   const queryClient = useQueryClient();
-  const pending = useQuery({
-    queryKey: ["pending_approvals"],
-    queryFn: api.listPendingApprovals,
-    refetchInterval: 1500,
-  });
+  const pending = usePendingApprovals();
   const decide = useMutation({
     mutationFn: (input: { id: string; grant: boolean; remember: boolean }) =>
       api.decideApproval(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pending_approvals"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY }),
   });
 
   const items = pending.data ?? [];

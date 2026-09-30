@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -14,6 +14,15 @@ export function CopyButton({
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  // Cleared on unmount: a copy button that unmounts inside the 1.2s window
+  // used to call setState on a component that is no longer mounted.
+  const reset = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (reset.current !== null) window.clearTimeout(reset.current);
+    },
+    [],
+  );
   const onCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(value);
@@ -21,7 +30,8 @@ export function CopyButton({
       // Clipboard may be unavailable; the visual feedback still resets.
     }
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
+    if (reset.current !== null) window.clearTimeout(reset.current);
+    reset.current = window.setTimeout(() => setCopied(false), 1200);
   }, [value]);
 
   return (

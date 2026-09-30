@@ -257,7 +257,9 @@ impl Tool for EditTool {
         })
     }
     fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+        args.get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     async fn invoke(
@@ -333,9 +335,7 @@ impl EditTool {
         let (resolved, writable) =
             FilesTool::resolve_target_in(&workspace_root, &additional, &path)?;
         if !writable {
-            return Ok(failure(&format!(
-                "追加フォルダは読み取り専用です: {path}"
-            )));
+            return Ok(failure(&format!("追加フォルダは読み取り専用です: {path}")));
         }
         let before = read_existing(&resolved, &action)?;
 

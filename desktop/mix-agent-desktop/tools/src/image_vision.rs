@@ -50,14 +50,10 @@ impl Tool for ImageVisionTool {
         if decoded.len() > MAX_BYTES {
             anyhow::bail!("image exceeds 20 MiB limit");
         }
-        Ok(ToolResult {
-            ok: true,
-            content: serde_json::json!({
-                "mime_type": mime,
-                "bytes": decoded.len(),
-                "preview": format!("data:{};base64,{}", mime, &data[..data.len().min(64)]),
-            }),
-            error: None,
-        })
+        Ok(ToolResult::ok(serde_json::json!({
+            "mime_type": mime,
+            "bytes": decoded.len(),
+            "preview": format!("data:{};base64,{}", mime, &data[..data.len().min(64)]),
+        })))
     }
 }

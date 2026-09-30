@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2, ChevronDown, CircleAlert, ClipboardList, Clock3, FileText, Globe2,
-  History, ListChecks, Loader2, Pencil, RotateCcw, Search, ShieldAlert, Terminal, Wrench, X,
+  History, ListChecks, Loader2, Pencil, RotateCcw, Search, ShieldAlert, Terminal, Wrench,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -12,6 +13,7 @@ import {
   describeToolCall, isFileWrite, reduceRunEvents, type TodoItem, type ToolActivity,
 } from "@/lib/runEvents";
 import { useRunEvents } from "@/lib/runStore";
+import { PanelHeader } from "@/components/layout";
 import { useUi } from "@/lib/ui";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,12 +75,16 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
         : { path: String(a.path), content: String(a.content) }
       : null;
 
+  // One call for both the tooltip and the body: it formats every argument of
+  // the call, and it was being run twice per row on every render.
+  const description = describeToolCall(tool);
+
   return (
     <div className="flex gap-2 px-3 py-2.5">
       <Icon size={14} className="mt-0.5 shrink-0 text-faint" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-mono text-xs font-medium text-fg" title={describeToolCall(tool)}>
+          <span className="truncate font-mono text-xs font-medium text-fg" title={description}>
             {tool.name}
           </span>
           <Badge tone={status.tone} size="sm" className="shrink-0">
@@ -86,7 +92,7 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
             {status.label}
           </Badge>
         </div>
-        <span className="break-all text-2xs text-muted">{describeToolCall(tool)}</span>
+        <span className="break-all text-2xs text-muted">{description}</span>
         {elapsed != null && (
           <span className="text-2xs text-faint">{formatDuration(elapsed)}</span>
         )}
@@ -205,28 +211,29 @@ export function ActivityPanel() {
     staleTime: Infinity,
   });
 
-  const timeline = isLive ? liveTimeline : history.data ? reduceRunEvents(runId!, history.data) : null;
+  // Replaying the persisted log is O(events), and this component also
+  // subscribes to the live stream — so doing it in the render body meant that
+  // viewing one run while another streamed re-folded the whole history on
+  // every 60ms flush.
+  const replayed = useMemo(
+    () => (history.data ? reduceRunEvents(runId!, history.data) : null),
+    [history.data, runId],
+  );
+  const timeline = isLive ? liveTimeline : replayed;
   const empty = !runId || (timeline && timeline.tools.length === 0);
 
   return (
     <>
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3 text-sm font-medium text-fg">
-        <Wrench size={14} className="shrink-0 text-faint" />
-        <span className="min-w-0 flex-1 truncate">{t("このRunのアクティビティ")}</span>
-        {runId && <Badge size="sm">{shortId(runId)}</Badge>}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title={t("閉じる")}
-          aria-label={t("閉じる")}
-          onClick={() => {
-            setActivityRunId(null);
-            setRightPanel("none");
-          }}
-        >
-          <X size={13} />
-        </Button>
-      </div>
+      <PanelHeader
+        icon={<Wrench size={14} />}
+        title={t("このRunのアクティビティ")}
+        titleClass="text-sm font-medium"
+        trailing={runId ? <Badge size="sm">{shortId(runId)}</Badge> : null}
+        onClose={() => {
+          setActivityRunId(null);
+          setRightPanel("none");
+        }}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         {empty && (

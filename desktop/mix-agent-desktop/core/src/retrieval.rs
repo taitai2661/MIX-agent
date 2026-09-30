@@ -68,27 +68,77 @@ impl RetrievedBlock {
     }
 }
 
-/// Score a candidate against the query with a cheap token-overlap heuristic.
-/// This is intentionally simple and deterministic; a vector index lands later.
-fn score(query: &str, haystack: &str) -> f64 {
-    let q: Vec<String> = query
-        .to_lowercase()
-        .split_whitespace()
-        .filter(|t| t.len() > 1)
-        .map(|t| t.to_string())
-        .collect();
-    if q.is_empty() {
-        return 0.0;
+/// The query, tokenised once.
+///
+/// Scoring walks every row of both tables, and the token list depends only on
+/// the query, so it is split, lowercased and allocated a single time instead of
+/// once per row scanned.
+struct QueryTerms(Vec<String>);
+
+impl QueryTerms {
+    fn new(query: &str) -> Self {
+        Self(
+            query
+                .to_lowercase()
+                .split_whitespace()
+                .filter(|t| t.len() > 1)
+                .map(|t| t.to_string())
+                .collect(),
+        )
     }
-    let h = haystack.to_lowercase();
-    let hits = q.iter().filter(|t| h.contains(t.as_str())).count();
-    hits as f64 / q.len() as f64
+
+    /// The fraction of the query terms present in `lowered`.
+    fn hits(&self, lowered: &str) -> f64 {
+        if self.0.is_empty() {
+            return 0.0;
+        }
+        let found = self
+            .0
+            .iter()
+            .filter(|t| lowered.contains(t.as_str()))
+            .count();
+        found as f64 / self.0.len() as f64
+    }
+
+    /// Score against a single haystack with a cheap token-overlap heuristic.
+    /// This is intentionally simple and deterministic; a vector index lands
+    /// later.
+    fn score(&self, haystack: &str) -> f64 {
+        self.hits(&haystack.to_lowercase())
+    }
+
+    /// Score against two fields without concatenating them per row.
+    ///
+    /// Query terms come from `split_whitespace`, so none of them contains a
+    /// space; a term can therefore never straddle the join, and this is exactly
+    /// what scoring `"title content"` produced — minus one `String` the size of
+    /// a Memory item for every row scanned.
+    fn score_parts(&self, a: &str, b: &str) -> f64 {
+        if self.0.is_empty() {
+            return 0.0;
+        }
+        let (a, b) = (a.to_lowercase(), b.to_lowercase());
+        let found = self
+            .0
+            .iter()
+            .filter(|t| a.contains(t.as_str()) || b.contains(t.as_str()))
+            .count();
+        found as f64 / self.0.len() as f64
+    }
 }
 
 /// Retrieve Memory items relevant to `query`.
 pub async fn retrieve_memories(
     storage: &Storage,
     query: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<MemoryHit>> {
+    retrieve_memories_with(storage, &QueryTerms::new(query), limit).await
+}
+
+async fn retrieve_memories_with(
+    storage: &Storage,
+    terms: &QueryTerms,
     limit: usize,
 ) -> anyhow::Result<Vec<MemoryHit>> {
     use sqlx::Row;
@@ -108,7 +158,7 @@ pub async fn retrieve_memories(
                 .and_then(|raw| serde_json::from_str(&raw).ok())?;
             let title = data.get("title")?.as_str()?.to_string();
             let content = data.get("content")?.as_str()?.to_string();
-            let relevance = score(query, &format!("{} {}", title, content));
+            let relevance = terms.score_parts(&title, &content);
             let salience: f64 = row.try_get("salience").unwrap_or(0.5);
             let strength: f64 = row.try_get("strength").unwrap_or(0.6);
             let confidence: f64 = row.try_get("confidence").unwrap_or(0.7);
@@ -146,6 +196,14 @@ pub async fn retrieve_knowledge(
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<KnowledgeHit>> {
+    retrieve_knowledge_with(storage, &QueryTerms::new(query), limit).await
+}
+
+async fn retrieve_knowledge_with(
+    storage: &Storage,
+    terms: &QueryTerms,
+    limit: usize,
+) -> anyhow::Result<Vec<KnowledgeHit>> {
     use sqlx::Row;
     let rows = sqlx::query("SELECT id, data, created_at FROM knowledge")
         .fetch_all(storage.pool())
@@ -165,7 +223,7 @@ pub async fn retrieve_knowledge(
                 .and_then(|v| v.as_str())
                 .unwrap_or("document")
                 .to_string();
-            let s = score(query, &text);
+            let s = terms.score(&text);
             if s <= 0.0 {
                 return None;
             }
@@ -192,10 +250,18 @@ pub async fn retrieve_knowledge(
 }
 
 /// Convenience: retrieve both Memory and Knowledge in one call.
+///
+/// The two lookups are independent tables, so they run concurrently rather than
+/// one after the other.
 pub async fn retrieve_all(storage: &Storage, query: &str) -> anyhow::Result<RetrievedBlock> {
+    let terms = QueryTerms::new(query);
+    let (memories, knowledge) = tokio::try_join!(
+        retrieve_memories_with(storage, &terms, DEFAULT_MEMORY_LIMIT),
+        retrieve_knowledge_with(storage, &terms, DEFAULT_KNOWLEDGE_LIMIT),
+    )?;
     Ok(RetrievedBlock {
-        memories: retrieve_memories(storage, query, DEFAULT_MEMORY_LIMIT).await?,
-        knowledge: retrieve_knowledge(storage, query, DEFAULT_KNOWLEDGE_LIMIT).await?,
+        memories,
+        knowledge,
     })
 }
 
@@ -205,9 +271,30 @@ mod tests {
 
     #[test]
     fn score_is_normalised() {
-        assert_eq!(score("alpha beta", "alpha beta gamma"), 1.0);
-        assert_eq!(score("alpha beta", "gamma delta"), 0.0);
-        assert_eq!(score("", "anything"), 0.0);
+        let terms = QueryTerms::new("alpha beta");
+        assert_eq!(terms.score("alpha beta gamma"), 1.0);
+        assert_eq!(terms.score("gamma delta"), 0.0);
+        assert_eq!(QueryTerms::new("").score("anything"), 0.0);
+    }
+
+    /// Scoring two fields must be indistinguishable from scoring their
+    /// concatenation: a term is whitespace-split, so it can never straddle the
+    /// join the concatenation would insert.
+    #[test]
+    fn score_parts_matches_the_concatenated_haystack() {
+        let terms = QueryTerms::new("prefer rust");
+        for (a, b) in [
+            ("Prefers Rust", "over Go"),
+            ("prefers go", ""),
+            ("", "I prefer rust a lot"),
+        ] {
+            let joined = format!("{a} {b}");
+            assert_eq!(
+                terms.score_parts(a, b),
+                terms.score(&joined),
+                "mismatch for ({a:?}, {b:?})"
+            );
+        }
     }
 
     #[test]

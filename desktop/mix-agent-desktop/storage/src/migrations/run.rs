@@ -59,10 +59,7 @@ pub async fn run_data_migrations(pool: &SqlitePool, data_dir: &Path) -> anyhow::
 /// whose `rootPath` is null, empty, or pointing at a path that no longer
 /// exists on disk. The latter is conservative: a user who re-attaches an
 /// unplugged drive should not silently get a new folder.
-async fn backfill_missing_project_roots(
-    pool: &SqlitePool,
-    data_dir: &Path,
-) -> anyhow::Result<()> {
+async fn backfill_missing_project_roots(pool: &SqlitePool, data_dir: &Path) -> anyhow::Result<()> {
     let projects_root = default_projects_root(data_dir);
     tokio::fs::create_dir_all(&projects_root).await?;
 
@@ -83,15 +80,14 @@ async fn backfill_missing_project_roots(
     );
 
     for (id, raw) in rows {
-        let legacy: LegacyProjectRow = serde_json::from_str(&raw).unwrap_or_else(|_| {
-            LegacyProjectRow {
+        let legacy: LegacyProjectRow =
+            serde_json::from_str(&raw).unwrap_or_else(|_| LegacyProjectRow {
                 name: "Untitled".to_string(),
                 additional_paths: Vec::new(),
                 sources: Vec::new(),
                 created_at: None,
                 updated_at: None,
-            }
-        });
+            });
 
         let target = unique_folder(&projects_root, &legacy.name).await?;
         tokio::fs::create_dir_all(&target).await?;
@@ -175,8 +171,12 @@ mod tests {
     async fn unique_folder_picks_first_available() {
         let parent = std::env::temp_dir().join(format!("mixd-unique-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&parent).await.unwrap();
-        tokio::fs::create_dir_all(parent.join("alpha")).await.unwrap();
-        tokio::fs::create_dir_all(parent.join("alpha-2")).await.unwrap();
+        tokio::fs::create_dir_all(parent.join("alpha"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(parent.join("alpha-2"))
+            .await
+            .unwrap();
 
         let picked = unique_folder(&parent, "alpha").await.unwrap();
         assert_eq!(picked, parent.join("alpha-3"));

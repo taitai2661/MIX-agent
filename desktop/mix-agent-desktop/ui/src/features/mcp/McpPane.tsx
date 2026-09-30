@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Card, DataTable, Field, Row, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ErrorBadge } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
@@ -114,7 +114,7 @@ export function McpPane() {
           >
             <Plus size={12} /> {t("作成")}
           </Button>
-          {create.isError && <Badge tone="danger">{String(create.error)}</Badge>}
+          {create.isError && <ErrorBadge error={create.error} />}
         </Row>
       </Card>
 

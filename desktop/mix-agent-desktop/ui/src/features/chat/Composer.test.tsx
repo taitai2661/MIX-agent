@@ -96,7 +96,7 @@ describe("Composer", () => {
       <Composer
         mode="chat" setMode={() => {}} allowedModes={["chat", "thinking"]}
         models={models} modelId="p:text" setModelId={() => {}}
-        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: null, sources: [], updated_at: "2026-01-01T00:00:00Z" }]}
+        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: "/tmp/demo", additionalPaths: [], sources: [], created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }]}
         projectId={null}
         onProjectChange={() => {}}
         busy={false} onSend={() => {}} onStop={() => {}}
@@ -110,7 +110,7 @@ describe("Composer", () => {
       <Composer
         mode="agent" setMode={() => {}} allowedModes={["agent"]}
         models={models} modelId="p:text" setModelId={() => {}}
-        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: null, sources: [], updated_at: "2026-01-01T00:00:00Z" }]}
+        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: "/tmp/demo", additionalPaths: [], sources: [], created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }]}
         projectId="p1"
         onProjectChange={() => {}}
         busy={false} onSend={() => {}} onStop={() => {}}

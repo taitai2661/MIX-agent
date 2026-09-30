@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   ChevronLeft, FileText, Folder, FolderOpen, MessageSquare, Plus, Trash2,
@@ -7,12 +7,13 @@ import {
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
+import { CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useProjects } from "@/lib/queries";
 import { useUi } from "@/lib/ui";
 import { Card, Field, Page, Row } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
-import { Badge } from "@/components/ui/badge";
+import { EmptyState, ErrorBadge } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { ProjectView } from "@/lib/types";
 
 const NAME_MAX = 100;
@@ -28,11 +29,12 @@ export function ProjectsPane() {
   const mode = useUi((s) => s.mode);
   const modelId = useUi((s) => s.modelId);
 
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.listProjects });
-  const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.listConversations });
+  const projects = useProjects();
+  const conversations = useConversations();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [draftRoot, setDraftRoot] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [instructionsDraft, setInstructionsDraft] = useState<string | null>(null);
   const [sourceDraft, setSourceDraft] = useState("");
@@ -44,16 +46,23 @@ export function ProjectsPane() {
     : [];
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["projects"] });
-    void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    void queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
   };
 
   const create = useMutation({
     mutationFn: () =>
-      api.createProject({ name: draftName.trim(), instructions: "", rootPath: null, sources: [] }),
+      api.createProject({
+        name: draftName.trim(),
+        instructions: "",
+        // Folder-first: the backend rejects a project without a directory.
+        rootPath: draftRoot!,
+        sources: [],
+      }),
     onSuccess: (created) => {
       invalidate();
       setDraftName("");
+      setDraftRoot(null);
       setActiveProjectId(created.id);
       setSelectedId(created.id);
       setNameDraft(created.name);
@@ -83,6 +92,11 @@ export function ProjectsPane() {
     }
   };
 
+  const pickDraftFolder = async () => {
+    const path = await openDialog({ directory: true, multiple: false });
+    if (typeof path === "string" && path) setDraftRoot(path);
+  };
+
   const newChatInProject = async () => {
     if (!selected) return;
     const created = await api.createConversation({
@@ -106,7 +120,7 @@ export function ProjectsPane() {
     return (
       <Page
         title={selected.name}
-        sub={selected.rootPath ?? t("プロジェクト単位の資料と指示を管理します。")}
+        sub={selected.rootPath}
         actions={
           <Button size="sm" onClick={() => setSelectedId(null)}>
             <ChevronLeft size={13} /> {t("戻る")}
@@ -128,26 +142,19 @@ export function ProjectsPane() {
         <Card title={t("フォルダ")} icon={<FolderOpen size={13} />}>
           <Row>
             <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
-              {selected.rootPath ?? t("未設定")}
+              {selected.rootPath}
             </code>
             <Button size="sm" onClick={() => void pickFolder()}>
               {t("フォルダを選択")}
             </Button>
-            {selected.rootPath && (
-              <Button size="sm" onClick={() => update.mutate({ clearRootPath: true })}>
-                {t("解除")}
-              </Button>
-            )}
           </Row>
           <p className="m-0 text-2xs text-faint">
             {t("このフォルダがエージェントの作業ディレクトリになります")}
           </p>
-          {selected.rootPath != null && (
-            <p className="m-0 text-2xs text-faint">
-              <FileText size={11} className="me-0.5 inline-block align-[-1.5px]" /> AGENTS.md /{" "}
-              CLAUDE.md {t("を検出すると自動で読み込みます")}
-            </p>
-          )}
+          <p className="m-0 text-2xs text-faint">
+            <FileText size={11} className="me-0.5 inline-block align-[-1.5px]" /> AGENTS.md /{" "}
+            CLAUDE.md {t("を検出すると自動で読み込みます")}
+          </p>
         </Card>
 
         <Card title={t("指示")}>
@@ -268,8 +275,8 @@ export function ProjectsPane() {
           >
             <Trash2 size={12} /> {t("削除")}
           </Button>
-          {update.isError && <Badge tone="danger">{String(update.error)}</Badge>}
-          {create.isError && <Badge tone="danger">{String(create.error)}</Badge>}
+          {update.isError && <ErrorBadge error={update.error} />}
+          {create.isError && <ErrorBadge error={create.error} />}
         </Row>
       </Page>
     );
@@ -278,26 +285,42 @@ export function ProjectsPane() {
   return (
     <Page title={t("プロジェクト")} sub={t("プロジェクト単位の資料と指示を管理します。")}>
       <Card title={t("作成")} icon={<Folder size={13} />}>
-        <Field label={t("名前")}>
+        {/* Not wrapped in `Field`: its `<label>` would swallow the picker
+            button's accessible name. */}
+        <div className="flex flex-col gap-1.5">
+          <Label>{t("フォルダ")}</Label>
+          <Row>
+            <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
+              {draftRoot ?? t("未設定")}
+            </code>
+            <Button size="sm" onClick={() => void pickDraftFolder()}>
+              {t("フォルダを選択")}
+            </Button>
+          </Row>
+          <span className="text-2xs text-faint">
+            {t("このフォルダがエージェントの作業ディレクトリになります")}
+          </span>
+        </div>
+        <Field label={t("名前")} hint={t("未入力の場合はフォルダ名が使われます")}>
           <Input
             maxLength={NAME_MAX}
             placeholder={t("Project 名")}
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && draftName.trim()) create.mutate();
+              if (e.key === "Enter" && draftRoot) create.mutate();
             }}
           />
         </Field>
         <Row>
           <Button
             variant="primary"
-            disabled={!draftName.trim() || create.isPending}
+            disabled={!draftRoot || create.isPending}
             onClick={() => create.mutate()}
           >
             <Folder size={12} /> {t("作成")}
           </Button>
-          {create.isError && <Badge tone="danger">{String(create.error)}</Badge>}
+          {create.isError && <ErrorBadge error={create.error} />}
         </Row>
       </Card>
 

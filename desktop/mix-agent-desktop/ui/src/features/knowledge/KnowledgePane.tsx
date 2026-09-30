@@ -5,7 +5,7 @@ import { BookOpen, FileText, Search, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
 import { Card, DataTable, Row, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ErrorBadge } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -76,7 +76,7 @@ export function KnowledgePane() {
             <FileText size={12} /> {t("追加する")}
           </Button>
           {(paste.isError || fromFile.isError) && (
-            <Badge tone="danger">{String(paste.error ?? fromFile.error)}</Badge>
+            <ErrorBadge error={paste.error ?? fromFile.error} />
           )}
         </Row>
       </Card>
