@@ -65,7 +65,10 @@ services:
     volumes:
       - data:/data
       - policy:/data/egress
-      - ./skills:/data/skills
+      # Agent Skills are scanned from /data/skills, inside the data volume. To
+      # author SKILL.md on the host instead, set MIX_SKILLS_DIR and add your own
+      # mount here; bind-mounting the checkout would let imports write skills
+      # into the source tree.
       - ${MIX_PROJECT_DIR:-.}:/project:ro
       - keys:/keys
       - db-secret:/db-secret:ro

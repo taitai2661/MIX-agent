@@ -39,5 +39,6 @@ pub use interface::{
 };
 pub use operator::{BrowserBackend, BrowserOperator};
 pub use profile::{
-    default_profile_root, find_bundled_chromium, find_system_chromium, BrowserProfile,
+    default_profile_root, find_bundled_chromium, find_system_chromium, resolve_resource_dir,
+    BrowserProfile,
 };

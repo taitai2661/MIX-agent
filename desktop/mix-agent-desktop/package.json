@@ -17,6 +17,8 @@
     "rust:fmt:check": "cargo fmt --all -- --check",
     "rust:clippy": "cargo clippy --workspace --all-targets -- -D warnings",
     "rust:test": "cargo test --workspace --all-targets",
+    "rust:clean": "cargo clean --profile dev",
+    "rust:clean:all": "cargo clean",
     "lint": "pnpm run rust:fmt:check && pnpm run rust:clippy && pnpm run ui:lint && pnpm run ui:typecheck",
     "test": "pnpm run rust:test && pnpm run ui:test",
     "check": "pnpm run rust:check && pnpm run ui:build"

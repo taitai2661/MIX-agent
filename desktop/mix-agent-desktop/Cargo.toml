@@ -38,6 +38,15 @@ mixd-browser = { path = "browser" }
 mixd-mcp = { path = "mcp" }
 mixd-storage = { path = "storage" }
 
+# 既定の debug = true は完全 debuginfo を生成し、1つの .o が約800KB に達して
+# target/ が数十GB に膨張する。line-tables-only は行番号を残すため anyhow/thiserror
+# の ? チェーンや panic の backtrace はそのまま読める。
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = 0
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

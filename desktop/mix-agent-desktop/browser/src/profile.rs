@@ -87,6 +87,36 @@ pub fn find_bundled_chromium(
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// Pick the resource root to hand to [`find_bundled_chromium`].
+///
+/// In a packaged app Tauri's `resource_dir()` is authoritative and must win.
+/// Under `cargo build` / `tauri dev` it resolves to `target/debug`, where
+/// `tauri-build` has mirrored `resources/chromium` — but that mirror is not
+/// faithful: `tauri-utils` tests directories with `is_dir()`, which follows
+/// symlinks, so the four symlinked directories inside the macOS framework
+/// (`Versions/Current`, `Helpers`, `Libraries`, `Resources`) are skipped, while
+/// the one symlinked framework binary is dereferenced into a real ~247 MB file.
+/// The result is a ~596 MB tree that is both larger than the source and missing
+/// the layout Chromium needs.
+///
+/// In debug builds the pristine payload under `app/resources` is preferred
+/// whenever it is present. `manifest_resources` is passed in rather than
+/// derived here so this crate stays free of compile-time path assumptions, and
+/// so the release path stays a plain `resource_dir()` lookup.
+pub fn resolve_resource_dir(
+    tauri_resource_dir: Option<&std::path::Path>,
+    manifest_resources: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    if cfg!(debug_assertions) {
+        if let Some(dir) = manifest_resources {
+            if dir.is_dir() {
+                return Some(dir.to_path_buf());
+            }
+        }
+    }
+    tauri_resource_dir.map(std::path::Path::to_path_buf)
+}
+
 /// System Chromium fallback when no bundled build is present.
 pub fn find_system_chromium() -> Option<std::path::PathBuf> {
     let names: &[&str] = if cfg!(target_os = "macos") {
@@ -165,5 +195,69 @@ mod tests {
             "resolver and fetch script disagree on the layout"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("mixd-res-{}", tag))
+    }
+
+    /// A debug build must ignore the `target/debug` mirror that `tauri-build`
+    /// produces, because that mirror loses the macOS framework symlinks.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn debug_prefers_manifest_resources_over_tauri_mirror() {
+        let root = scratch_dir("prefer");
+        let mirror = root.join("target-mirror");
+        let manifest = root.join("manifest");
+        std::fs::create_dir_all(&mirror).expect("mkdir mirror");
+        std::fs::create_dir_all(&manifest).expect("mkdir manifest");
+
+        assert_eq!(
+            resolve_resource_dir(Some(&mirror), Some(&manifest)),
+            Some(manifest),
+            "debug builds must prefer the pristine app/resources tree"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `MIX_SKIP_CHROMIUM=1` leaves `app/resources` absent; the Tauri lookup is
+    /// then the only source and must still be honoured.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn missing_manifest_resources_falls_back_to_tauri_dir() {
+        let root = scratch_dir("fallback");
+        let mirror = root.join("target-mirror");
+        std::fs::create_dir_all(&mirror).expect("mkdir mirror");
+        let absent = root.join("does-not-exist");
+
+        assert_eq!(
+            resolve_resource_dir(Some(&mirror), Some(&absent)),
+            Some(mirror),
+            "a skipped download must not disable the Tauri resource dir"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Neither root available: the operator must report "no bundled browser"
+    /// so it can fall back to the system install.
+    #[test]
+    fn no_roots_yields_none() {
+        assert_eq!(resolve_resource_dir(None, None), None);
+    }
+
+    /// Release builds must never prefer the source tree — the packaged app only
+    /// ships what Tauri placed next to the executable.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn release_always_uses_tauri_resource_dir() {
+        let root = scratch_dir("release");
+        let manifest = root.join("manifest");
+        std::fs::create_dir_all(&manifest).expect("mkdir manifest");
+        assert_eq!(
+            resolve_resource_dir(None, Some(&manifest)),
+            None,
+            "release must not read the source tree"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

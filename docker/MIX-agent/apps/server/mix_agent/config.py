@@ -8,7 +8,8 @@ from urllib.parse import urlsplit
 DATA = Path(os.getenv("MIX_DATA", ".data")).resolve()
 KEYS = Path(os.getenv("MIX_KEYS", str(DATA / "keys"))).resolve()
 ARTIFACTS = DATA / "artifacts"
-# Optional host-mounted directory scanned for Agent Skills (``*/SKILL.md``).
+# Directory scanned for Agent Skills (``*/SKILL.md``). Inside the data volume
+# by default; point MIX_SKILLS_DIR at a host folder to author them there.
 SKILLS_DIR = Path(os.getenv("MIX_SKILLS_DIR", str(DATA / "skills"))).resolve()
 # Read-only mount of the folder the user works on (compose sets the path).
 # AGENTS.md / CLAUDE.md and the project's own skills are read from here; when

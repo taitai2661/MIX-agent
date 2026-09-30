@@ -540,7 +540,17 @@ pub fn run() {
             let secrets = std::sync::Arc::new(mixd_storage::SecretStore::new());
             // Tauri's resolved resource dir is where the bundled Chromium was
             // unpacked; guessing it from app_data breaks on installed builds.
-            let resource_dir = app.path().resource_dir().ok();
+            // Under cargo/tauri dev that dir is `target/debug`, whose Chromium
+            // mirror has lost the macOS framework symlinks, so debug builds read
+            // the pristine payload next to this crate instead. `env!` is
+            // resolved at compile time and cfg-gated out of release builds, so
+            // no local path is baked into a shipped binary.
+            let manifest_resources =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+            let resource_dir = mixd_browser::resolve_resource_dir(
+                app.path().resource_dir().ok().as_deref(),
+                Some(manifest_resources.as_path()),
+            );
             let state = tauri::async_runtime::block_on(build_app_state(
                 storage,
                 secrets,

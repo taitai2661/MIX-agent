@@ -86,7 +86,7 @@ Knowledgeはテキストのチャンク検索を提供します。外部資料�
 
 ### Agent Skills
 
-`name`と`description`を必須とする`SKILL.md`（YAML frontmatter + Markdown）を取り込めます。Skills画面で本文を貼り付けるか、`.zip`をアップロードするか、ホストの`./skills/<name>/SKILL.md`に置いて「サーバーディレクトリから取込」を実行します。各Skillは`SKILL.md`または`.zip`として書き出せます。`scripts`・`references`・`assets`の同梱ファイルは保存され、AIは`skill_resource` Toolで読み取りますが、スクリプトは実行しません。`allowed-tools`は表示のみで、権限の自動許可は行いません。
+`name`と`description`を必須とする`SKILL.md`（YAML frontmatter + Markdown）を取り込めます。Skills画面で本文を貼り付けるか、`.zip`をアップロードするか、データボリュームの`/data/skills/<name>/SKILL.md`に置いて「サーバーディレクトリから取込」を実行します（`MIX_SKILLS_DIR`で別の置き場所に変更できます）。各Skillは`SKILL.md`または`.zip`として書き出せます。`scripts`・`references`・`assets`の同梱ファイルは保存され、AIは`skill_resource` Toolで読み取りますが、スクリプトは実行しません。`allowed-tools`は表示のみで、権限の自動許可は行いません。
 
 プロジェクトの資料は現時点では貼り付けたテキストを各Runに渡します。プロジェクトに既存会話を移す場合は「会話を管理」から選択できます。プロジェクトを削除しても会話は残ります。調査モードには有効なWeb検索またはBrowser ToolとTool Calling対応モデルが必要です。出典の正確さは利用者が確認してください。
 
