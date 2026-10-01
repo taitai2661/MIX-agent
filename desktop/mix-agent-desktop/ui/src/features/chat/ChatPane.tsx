@@ -92,7 +92,16 @@ export function ChatPane() {
   };
 
   useEffect(() => {
-    if (!modelId && models.data?.[0]) setModelId(models.data[0].id);
+    // Adopt the first model when none is chosen, and *replace* one that has
+    // disappeared from the list — typically because its provider was deleted.
+    // Left in place it would keep being sent with every new message, producing a
+    // run against a model id no provider can serve. `models.data` is undefined
+    // while loading, which is not the same as "the list is empty", so the reset
+    // waits for the query to settle.
+    if (models.data === undefined) return;
+    if (!modelId || !models.data.some((m) => m.id === modelId)) {
+      if (models.data[0]) setModelId(models.data[0].id);
+    }
   }, [modelId, models.data, setModelId]);
 
   useEffect(() => {

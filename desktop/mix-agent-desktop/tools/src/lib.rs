@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod agent;
 pub mod approval;
+pub mod args;
 pub mod edit;
 pub mod egress;
 pub mod execute;
@@ -43,6 +44,24 @@ pub struct ToolResult {
     pub ok: bool,
     pub content: serde_json::Value,
     pub error: Option<String>,
+}
+
+impl ToolResult {
+    pub fn ok(content: serde_json::Value) -> Self {
+        Self {
+            ok: true,
+            content,
+            error: None,
+        }
+    }
+
+    pub fn fail(message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            content: serde_json::json!({}),
+            error: Some(message.into()),
+        }
+    }
 }
 
 /// Tool spec handed to a Provider when the model is offered the tool list.

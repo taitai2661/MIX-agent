@@ -172,6 +172,9 @@ pub async fn import_local_runtime(
     if base_url.is_empty() {
         return Err("Base URL が空です".into());
     }
+    // `insert_provider` writes the row *and* puts the adapter in the live
+    // registry, which is what makes the models synced below usable on the very
+    // next message instead of after a restart.
     let provider = crate::commands::providers::insert_provider(
         &state,
         Some(input.slug),
@@ -182,16 +185,6 @@ pub async fn import_local_runtime(
         Some(true),
     )
     .await?;
-
-    // The Run Engine resolves a model id's `provider:` prefix against the live
-    // registry, so a provider that is not registered here yields models that
-    // cannot be used until the app restarts.
-    let adapter = crate::build_provider(&input.kind, base_url, None);
-    state
-        .engine
-        .providers
-        .register(provider.id.clone(), adapter)
-        .await;
 
     let models = crate::commands::models::sync_models(&state, &provider.id, &input.models).await?;
     Ok(ImportView { provider, models })

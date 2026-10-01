@@ -410,17 +410,17 @@ pub async fn dispatch_run(
 
 async fn resolve_provider_id(state: &AppState, model_id: &str) -> Result<String, String> {
     // Model ids are stored as `<provider_id>:<model>` when auto-discovered, and
-    // bare model names otherwise. Fall back to the first registered provider.
-    if let Some((prefix, _)) = model_id.split_once(':') {
-        if state.engine.providers.get(prefix).await.is_some() {
-            return Ok(prefix.to_string());
-        }
-    }
-    let handles = state.engine.providers.list().await;
-    handles
-        .first()
-        .map(|h| h.id.clone())
-        .ok_or_else(|| "no provider configured".to_string())
+    // bare model names otherwise. The shared resolver owns both the prefix
+    // lookup and the lazy re-hydration of an adapter the registry is missing;
+    // see `crate::resolve_provider_for_model`.
+    crate::resolve_provider_for_model(
+        &state.engine.providers,
+        state.storage.as_ref(),
+        state.secrets.as_ref(),
+        model_id,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 async fn load_history(

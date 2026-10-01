@@ -151,14 +151,21 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     .map_err(crate::error::cmd_err)?;
     let (conversation_id, model_id, mode_str) = row.ok_or("run not found")?;
     let mode = mixd_core::Mode::parse(&mode_str).ok_or("invalid mode")?;
-    let provider_id = state
-        .engine
-        .providers
-        .list()
-        .await
-        .first()
-        .map(|h| h.id.clone())
-        .unwrap_or_default();
+    // Resolved from the run's own `modelId`, which is `<provider_id>:<model>`.
+    // This used to be `providers.list().first().unwrap_or_default()`, i.e. an
+    // empty string whenever the registry was empty: the request was built with
+    // `provider_id: ""` and only failed later inside the Engine, after the row
+    // had already been flipped to `running`. A run whose provider was deleted
+    // meanwhile also silently resumed on whichever provider sorted first by
+    // label.
+    let provider_id = crate::resolve_provider_for_model(
+        &state.engine.providers,
+        state.storage.as_ref(),
+        state.secrets.as_ref(),
+        &model_id,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
     let tools: Vec<mixd_providers::ToolSpec> = state.engine.tool_specs().await;
 
     // Re-apply the project context so a resumed run keeps its folder scope and

@@ -87,6 +87,13 @@ export const Composer = memo(function Composer({
   const speechRef = useRef<{ stop: () => void; abort: () => void } | null>(null);
 
   const selectedModel = models.find((m) => m.id === modelId);
+  // The selected model is gone from the list — its provider was deleted, or the
+  // models failed to load while an id was already set. Sending would queue a run
+  // against a model id no provider can serve, and the failure only surfaces
+  // after the run starts, so it is blocked here instead. The `models.length > 0`
+  // guard keeps an empty list from reading as "stale" on first load, which would
+  // hide the real state (nothing is configured yet).
+  const staleModel = !!modelId && models.length > 0 && !selectedModel;
   // Narrow the master mode list down to what the active surface allows. When
   // the surface only allows one mode we hide the dropdown entirely below.
   const MODES = allowedModes && allowedModes.length > 0
@@ -103,6 +110,7 @@ export const Composer = memo(function Composer({
     draft.trim().length > 0
     && !busy
     && !!modelId
+    && !staleModel
     && (!hasImage || !selectedModel || selectedModel.supports_vision);
 
   useEffect(() => {
@@ -686,7 +694,19 @@ export const Composer = memo(function Composer({
               {t("モデル未設定")}
             </span>
           )}
+          {staleModel && (
+            <span className="inline-flex items-center gap-1 text-danger">
+              <Wrench size={11} />
+              {t("選択したモデルが利用できません")}
+            </span>
+          )}
         </div>
+
+        {staleModel && (
+          <Alert tone="danger">
+            {t("選択したモデルのプロバイダーが削除されています。モデルを再選択してください。")}
+          </Alert>
+        )}
 
         {visionWarning && (
           <Alert tone="warning">

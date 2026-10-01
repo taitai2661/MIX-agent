@@ -117,6 +117,19 @@ pub async fn insert_provider(
         }
         _ => false,
     };
+    // The Run Engine only knows about adapters in the live registry, so a
+    // provider that is merely in the table is unusable until the next launch.
+    // Registering here is what makes "add a provider, fetch its models, send a
+    // message" work in one sitting instead of after a restart.
+    crate::register_adapter(
+        &state.engine.providers,
+        state.secrets.as_ref(),
+        &id,
+        kind,
+        base_url,
+        enabled,
+    )
+    .await;
     Ok(ProviderView {
         id,
         kind: kind.to_string(),
@@ -184,26 +197,44 @@ pub async fn update_provider(
                 .map_err(crate::error::cmd_err)?;
         }
     }
+    let kind = data
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let base_url = data
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let enabled = data
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    // The adapter in the registry captured the old base URL and the old key at
+    // construction time, so an edit here used to reach the database but not the
+    // running engine: a corrected key kept failing with 401 until a restart.
+    // Re-registering also covers `enabled`, where the adapter has to disappear
+    // rather than merely be flagged.
+    crate::register_adapter(
+        &state.engine.providers,
+        state.secrets.as_ref(),
+        &input.id,
+        &kind,
+        &base_url,
+        enabled,
+    )
+    .await;
     Ok(ProviderView {
         id: input.id.clone(),
-        kind: data
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
+        kind,
         label: data
             .get("label")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
-        base_url: data
-            .get("baseUrl")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        enabled: data
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
+        base_url: (!base_url.is_empty()).then_some(base_url),
+        enabled,
         has_api_key: state
             .secrets
             .get(&format!("provider/{}", input.id), "api_key")
@@ -218,11 +249,28 @@ pub async fn update_provider(
 
 #[tauri::command]
 pub async fn delete_provider(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    sqlx::query("DELETE FROM providers WHERE id = ?")
-        .bind(&id)
-        .execute(state.storage.pool())
+    let mut tx = state
+        .storage
+        .pool()
+        .begin()
         .await
         .map_err(crate::error::cmd_err)?;
+    // Same transaction on purpose: a provider row without its models (or the
+    // other way round) is exactly the orphaned state this deletes.
+    super::models::delete_models_for_provider(&mut *tx, &id)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    sqlx::query("DELETE FROM providers WHERE id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    tx.commit().await.map_err(crate::error::cmd_err)?;
+    // Without this the adapter stayed reachable for the rest of the session:
+    // `resolve_provider_id` matched the model's `provider:` prefix against the
+    // registry, not against the table, so a deleted provider kept accepting
+    // turns and failing them at the network layer.
+    state.engine.providers.unregister(&id).await;
     if let Err(err) = state
         .secrets
         .delete(&format!("provider/{}", id), "api_key")
@@ -306,15 +354,17 @@ pub async fn connect_provider(
         input_token_limit: Option<u32>,
     }
 
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT json_extract(data, '$.kind') AS kind, json_extract(data, '$.baseUrl') AS base_url \
+    let row: Option<(String, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT json_extract(data, '$.kind') AS kind, json_extract(data, '$.baseUrl') AS base_url, \
+         json_extract(data, '$.enabled') AS enabled \
          FROM providers WHERE id = ?",
     )
     .bind(&input.id)
     .fetch_optional(state.storage.pool())
     .await
     .map_err(crate::error::cmd_err)?;
-    let (kind, base_url) = row.ok_or("provider not found")?;
+    let (kind, base_url, enabled) = row.ok_or("provider not found")?;
+    let enabled = enabled.unwrap_or(1) != 0;
     let base_url = base_url.ok_or("provider has no base url")?;
     let api_key = state
         .secrets
@@ -419,5 +469,18 @@ pub async fn connect_provider(
             .await;
     let _ = input.discover;
     let written = super::models::sync_models(&state, &input.id, &discovered).await?;
+    // Fetching a model list is the moment the user decides this provider is
+    // ready, and it is also the first point at which the base URL is known to
+    // be reachable. Registering here means the models just written are usable
+    // on the next message, whether or not the provider predates this session.
+    crate::register_adapter(
+        &state.engine.providers,
+        state.secrets.as_ref(),
+        &input.id,
+        &kind,
+        &base_url,
+        enabled,
+    )
+    .await;
     Ok(written.len())
 }

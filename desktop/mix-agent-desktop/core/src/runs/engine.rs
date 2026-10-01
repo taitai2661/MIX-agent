@@ -726,6 +726,36 @@ pub struct RunRequest {
     pub resume_from: Option<CheckpointSnapshot>,
 }
 
+impl RunRequest {
+    /// The model name as the Provider API expects it. See
+    /// [`wire_model_for`].
+    pub fn wire_model(&self) -> &str {
+        wire_model_for(&self.model_id, &self.provider_id)
+    }
+}
+
+/// Strip a stored `<provider_id>:<model>` id down to the bare `<model>`.
+///
+/// `model_id` is stored — and handed to the Engine — as `<provider_id>:<model>`,
+/// because the same short model name (`gpt-4o`) can exist under two different
+/// providers. That prefix is an internal identity, not part of the model name:
+/// OpenAI, Anthropic and Gemini all forward the string verbatim, so sending it
+/// unchanged makes every request fail with "model not found".
+///
+/// Only an *exact* `<provider_id>:` prefix is removed, and only when what
+/// follows it starts at a `:`. A bare id (`gpt-4o`), an id whose provider no
+/// longer matches, and a local-runtime tag that contains its own colon
+/// (`llama3.1:8b`) all pass through untouched.
+pub fn wire_model_for<'a>(model_id: &'a str, provider_id: &str) -> &'a str {
+    if provider_id.is_empty() {
+        return model_id;
+    }
+    match model_id.strip_prefix(provider_id) {
+        Some(rest) => rest.strip_prefix(':').unwrap_or(model_id),
+        None => model_id,
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointSnapshot {
     pub step_index: u32,
@@ -1050,7 +1080,9 @@ impl RunEngine {
 
             if self.policy.context_tiered_summary {
                 let source_messages = current.len();
-                let model = request.model_id.clone();
+                // The summariser opens its own Provider turn, so it needs the
+                // bare model name for the same reason `run_turn` does.
+                let model = request.wire_model().to_string();
                 let provider_handle = provider.clone();
                 // The summariser is handed exactly the slice being dropped, so
                 // the summary never duplicates the tail kept verbatim. The
@@ -1807,7 +1839,7 @@ impl RunEngine {
         system: &str,
     ) -> anyhow::Result<TurnResult> {
         let req = ProviderRequest {
-            model: request.model_id.clone(),
+            model: request.wire_model().to_string(),
             messages,
             system: if system.trim().is_empty() {
                 None
@@ -2060,5 +2092,57 @@ fn message_to_history(m: &Message) -> HistoryMessage {
         name: m.name.clone(),
         tool_calls: m.tool_calls.clone(),
         is_error: m.is_error,
+    }
+}
+
+#[cfg(test)]
+mod wire_model_tests {
+    use super::wire_model_for as wire_model;
+
+    #[test]
+    fn drops_the_provider_prefix_a_discovered_model_id_carries() {
+        assert_eq!(wire_model("p1:gpt-4o", "p1"), "gpt-4o");
+        assert_eq!(
+            wire_model(
+                "4f234c67-eeee-4457-8140:deepseek-ai/deepseek-v4.1",
+                "4f234c67-eeee-4457-8140"
+            ),
+            "deepseek-ai/deepseek-v4.1"
+        );
+    }
+
+    /// A local-runtime tag carries its own colon, and providers key on the tag.
+    /// Splitting off anything but the exact `<provider_id>:` prefix keeps it
+    /// whole.
+    #[test]
+    fn keeps_a_model_name_that_contains_its_own_colon() {
+        assert_eq!(wire_model("p1:llama3.1:8b", "p1"), "llama3.1:8b");
+        assert_eq!(
+            wire_model("p1:qwen2.5-coder:0.5b-instruct-q4_K_M", "p1"),
+            "qwen2.5-coder:0.5b-instruct-q4_K_M"
+        );
+    }
+
+    #[test]
+    fn passes_through_an_id_that_carries_no_prefix() {
+        assert_eq!(wire_model("gpt-4o", "p1"), "gpt-4o");
+        assert_eq!(wire_model("llama3.1:8b", "p1"), "llama3.1:8b");
+    }
+
+    /// The prefix has to match in full. A provider id that is only a prefix of
+    /// the model id (`a` against `abc:model`) must not be cut at all, or the
+    /// adapter would be handed `bc:model`.
+    #[test]
+    fn does_not_cut_a_partial_provider_id_match() {
+        assert_eq!(wire_model("abc:model", "a"), "abc:model");
+        assert_eq!(wire_model("ab:model", "abc"), "ab:model");
+    }
+
+    /// A blank provider id used to be handed straight through by the resume
+    /// path (`unwrap_or_default()`); it must not strip a leading colon.
+    #[test]
+    fn is_a_no_op_without_a_provider_id() {
+        assert_eq!(wire_model(":leading", ""), ":leading");
+        assert_eq!(wire_model("gpt-4o", ""), "gpt-4o");
     }
 }

@@ -122,12 +122,21 @@ impl mixd_tools::agent::AgentSource for DbAgentSource {
 #[derive(Default)]
 pub(crate) struct EngineAgentRunner {
     engine: std::sync::OnceLock<std::sync::Weak<RunEngine>>,
+    /// Needed to re-hydrate a provider adapter that is not in the registry
+    /// yet. Same back-pointer situation as the engine itself.
+    secrets: std::sync::OnceLock<Arc<SecretStore>>,
     model_id: std::sync::Mutex<String>,
 }
 
 impl EngineAgentRunner {
-    pub(crate) fn attach(&self, engine: &Arc<RunEngine>, model_id: &str) {
+    pub(crate) fn attach(
+        &self,
+        engine: &Arc<RunEngine>,
+        secrets: &Arc<SecretStore>,
+        model_id: &str,
+    ) {
         let _ = self.engine.set(Arc::downgrade(engine));
+        let _ = self.secrets.set(secrets.clone());
         *self.model_id.lock().expect("model id lock") = model_id.to_string();
     }
 
@@ -138,6 +147,12 @@ impl EngineAgentRunner {
             .ok_or_else(|| {
                 anyhow::anyhow!("agent delegation is unavailable before startup completes")
             })
+    }
+
+    fn secrets(&self) -> anyhow::Result<&Arc<SecretStore>> {
+        self.secrets.get().ok_or_else(|| {
+            anyhow::anyhow!("agent delegation is unavailable before startup completes")
+        })
     }
 }
 
@@ -199,14 +214,18 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             profile.name, profile.instructions
         );
         // Reuse the parent's provider so a sub-agent cannot silently fail for
-        // lack of a resolvable model.
-        let provider_id = engine
-            .providers
-            .list()
-            .await
-            .first()
-            .map(|h| h.id.clone())
-            .ok_or_else(|| anyhow::anyhow!("no provider is configured"))?;
+        // lack of a resolvable model — and so it cannot silently answer through
+        // a *different* one, which is what `list().first()` did: the registry
+        // sorts by label while the model list sorts by insertion time, so the
+        // two could disagree and the sub-agent would answer a different model
+        // than the conversation it belongs to.
+        let provider_id = resolve_provider_for_model(
+            &engine.providers,
+            engine.storage.as_ref(),
+            self.secrets()?.as_ref(),
+            &model_id,
+        )
+        .await?;
         let request = RunRequest {
             run_id: sub_run_id,
             provider_id,
@@ -367,8 +386,14 @@ pub async fn build_app_state(
         tools,
     ));
     // Close the cycle now that the engine exists.
-    agent_runner.attach(&engine, "");
+    agent_runner.attach(&engine, &secrets, "");
     register_providers_from_storage(&engine.providers, &storage, &secrets).await?;
+    // Models whose provider row is gone — deleted from the Providers pane, or
+    // left behind by a version that never cascaded the delete. They are not
+    // just cosmetic: `list_models` offered them, so the Composer let you pick a
+    // model no provider could serve. Dropped once at launch so an existing
+    // installation cleans itself up.
+    prune_orphan_models(storage.as_ref()).await;
     Ok(AppState {
         storage,
         secrets,
@@ -394,6 +419,39 @@ pub(crate) async fn load_egress_policy(storage: &Storage) -> mixd_tools::EgressP
     mixd_tools::EgressPolicy::from_allowlist(allowlist)
 }
 
+/// Delete every `models` row whose provider no longer exists.
+///
+/// A `models` row is only reachable through `data.$.providerId`, and
+/// `delete_provider` used to remove the provider row without touching them, so
+/// deleting a provider left its whole model list in the table — selectable in
+/// the Composer, and guaranteed to fail at request time. The same predicate
+/// backs `list_models`, so the rows stay invisible either way; this pass exists
+/// to reclaim them on an installation that already accumulated some.
+///
+/// Best-effort: a failure here must not stop the app from starting.
+async fn prune_orphan_models(storage: &Storage) {
+    // `COALESCE` is what makes a row with no `providerId` (never possible via
+    // `sync_models`, but possible in a hand-edited or restored database) count
+    // as an orphan — bare `NULL NOT IN (…)` evaluates to NULL and deletes
+    // nothing.
+    let result = sqlx::query(
+        "DELETE FROM models \
+         WHERE COALESCE(json_extract(data, '$.providerId'), '') NOT IN (SELECT id FROM providers)",
+    )
+    .execute(storage.pool())
+    .await;
+    match result {
+        Ok(res) if res.rows_affected() > 0 => {
+            tracing::info!(
+                rows = res.rows_affected(),
+                "dropped models with no provider"
+            )
+        }
+        Ok(_) => {}
+        Err(err) => tracing::error!(%err, "pruning orphaned models failed"),
+    }
+}
+
 async fn register_providers_from_storage(
     registry: &ProviderRegistry,
     storage: &Storage,
@@ -410,17 +468,122 @@ async fn register_providers_from_storage(
         if enabled == 0 {
             continue;
         }
-        let base_url = base_url.unwrap_or_default();
-        let api_key = secrets
-            .get_string(&format!("provider/{}", id), "api_key")
-            .await
-            .ok();
-        registry
-            .register(id, build_provider(&kind, base_url, api_key))
-            .await;
+        register_adapter(
+            registry,
+            secrets,
+            &id,
+            &kind,
+            &base_url.unwrap_or_default(),
+            true,
+        )
+        .await;
     }
     let _ = preset_catalog::PRESETS; // keep the preset table linked
     Ok(())
+}
+
+/// Put a stored provider into — or take it out of — the live `ProviderRegistry`.
+///
+/// The registry is what the Run Engine resolves a model's `provider:` prefix
+/// against, and it is the *only* thing `execute` consults
+/// (`runs::engine`: `providers.get(&request.provider_id)`). Boot hydration is
+/// not enough on its own: a provider the user adds, edits, disables or fetches
+/// models for during the session used to stay absent from the registry until
+/// the next launch, which surfaced as `no provider configured` on the very
+/// message they had just enabled a model for.
+///
+/// A disabled provider is removed rather than registered, so it cannot be
+/// reached through any model id either.
+pub async fn register_adapter(
+    registry: &ProviderRegistry,
+    secrets: &SecretStore,
+    id: &str,
+    kind: &str,
+    base_url: &str,
+    enabled: bool,
+) {
+    if !enabled {
+        registry.unregister(id).await;
+        return;
+    }
+    let api_key = secrets
+        .get_string(&format!("provider/{id}"), "api_key")
+        .await
+        .ok();
+    registry
+        .register(
+            id.to_string(),
+            build_provider(kind, base_url.to_string(), api_key),
+        )
+        .await;
+}
+
+/// The provider that will actually serve `model_id`.
+///
+/// Model ids are stored as `<provider_id>:<model>`, so the prefix names the
+/// provider exactly. When the registry does not have it — a provider added
+/// before a fix shipped, one whose adapter was built from stale credentials,
+/// or one that was disabled and re-enabled — the row is read back from storage
+/// and the adapter is built on the spot. Without that step the only way out was
+/// "no provider configured" plus a restart, which is what made a correctly
+/// configured provider look broken.
+///
+/// Falls back to the first registered provider for an id that carries no
+/// resolvable prefix (a bare model name, or a conversation whose provider was
+/// deleted). The registry is sorted by label there, so this is a degraded mode
+/// rather than the intended path — the error text below says so.
+pub async fn resolve_provider_for_model(
+    registry: &ProviderRegistry,
+    storage: &Storage,
+    secrets: &SecretStore,
+    model_id: &str,
+) -> anyhow::Result<String> {
+    if let Some((prefix, _)) = model_id.split_once(':') {
+        if registry.get(prefix).await.is_some() {
+            return Ok(prefix.to_string());
+        }
+        if let Some((kind, base_url, enabled)) = provider_row(storage, prefix).await? {
+            if enabled {
+                register_adapter(registry, secrets, prefix, &kind, &base_url, true).await;
+                return Ok(prefix.to_string());
+            }
+        }
+    }
+    registry
+        .list()
+        .await
+        .first()
+        .map(|h| h.id.clone())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "プロバイダーが未設定です。設定 → プロバイダー から追加してください。 \
+                 (no provider configured for model: {model_id})"
+            )
+        })
+}
+
+/// `(kind, base_url, enabled)` for one stored provider, `None` when the id is
+/// unknown.
+async fn provider_row(
+    storage: &Storage,
+    id: &str,
+) -> anyhow::Result<Option<(String, String, bool)>> {
+    let row: Option<(Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT json_extract(data, '$.kind'), json_extract(data, '$.baseUrl'), \
+         json_extract(data, '$.enabled') FROM providers WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(storage.pool())
+    .await?;
+    Ok(row.map(|(kind, base_url, enabled)| {
+        (
+            kind.unwrap_or_default(),
+            base_url.unwrap_or_default(),
+            // `enabled` is absent from rows written before the field existed;
+            // those were all enabled.
+            enabled.unwrap_or(1) != 0,
+        )
+    }))
 }
 
 /// Build the adapter for a stored `kind` string.

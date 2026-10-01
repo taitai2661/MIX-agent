@@ -91,6 +91,30 @@ pub async fn sync_models(
     Ok(written)
 }
 
+/// Drop every model that belongs to `provider_id`.
+///
+/// Part of the provider deletion, in the same transaction as the provider row
+/// itself. A model is only reachable through `data.$.providerId` — SQLite
+/// enforces no foreign key between the two tables — so without this the rows
+/// outlived their provider and kept showing up in the Composer. The predicate
+/// matches the one `list_models` filters on, so a row cannot be hidden by one
+/// query and deleted by the other.
+///
+/// Generic over the executor so it can join a caller's transaction.
+pub async fn delete_models_for_provider<'e, E>(
+    executor: E,
+    provider_id: &str,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query("DELETE FROM models WHERE json_extract(data, '$.providerId') = ?")
+        .bind(provider_id)
+        .execute(executor)
+        .await
+        .map(|_| ())
+}
+
 /// `(id, provider_id, label, context_window, vision, tool_calling, reasoning, auto)`
 ///
 /// `context_window` must be `i64`: `json_extract` returns JSON numbers as
@@ -98,18 +122,27 @@ pub async fn sync_models(
 /// fail and the UI ends up rendering the empty state on a populated table.
 type ModelRow = (String, String, String, i64, i64, i64, i64, i64);
 
-#[tauri::command]
-pub async fn list_models(
-    state: State<'_, AppState>,
-    _provider_id: Option<String>,
-) -> Result<Vec<ModelView>, String> {
-    let pool = state.storage.pool();
+/// Every model whose provider still exists, newest first.
+///
+/// Taken as a pool so it is reachable from a test as well as from the Tauri
+/// command, matching how the other read paths in this crate are factored.
+///
+/// Models of a provider that no longer exists are filtered out here rather than
+/// only at delete time: a row can also be left behind by an older version that
+/// did not cascade, and the Composer would then happily offer a model that
+/// cannot be served. `COALESCE` keeps a row with no `providerId` from making
+/// `query_as` fail on a NULL — that failure takes the whole list down, not just
+/// the one row, and an unrecognised row should cost one row.
+pub async fn fetch_models(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<Vec<ModelView>, String> {
     let rows: Vec<ModelRow> = sqlx::query_as(
-        "SELECT id, json_extract(data, '$.providerId') AS provider_id, json_extract(data, '$.label') AS label, \
+        "SELECT id, COALESCE(json_extract(data, '$.providerId'), '') AS provider_id, \
+         COALESCE(json_extract(data, '$.label'), '') AS label, \
          json_extract(data, '$.contextWindow') AS context_window, json_extract(data, '$.vision') AS vision, \
          json_extract(data, '$.toolCalling') AS tool_calling, json_extract(data, '$.reasoning') AS reasoning, \
          json_extract(data, '$.auto') AS auto \
-         FROM models ORDER BY created_at DESC",
+         FROM models \
+         WHERE COALESCE(json_extract(data, '$.providerId'), '') IN (SELECT id FROM providers) \
+         ORDER BY created_at DESC",
     )
     .fetch_all(pool)
     .await
@@ -130,6 +163,14 @@ pub async fn list_models(
             },
         )
         .collect())
+}
+
+#[tauri::command]
+pub async fn list_models(
+    state: State<'_, AppState>,
+    _provider_id: Option<String>,
+) -> Result<Vec<ModelView>, String> {
+    fetch_models(state.storage.pool()).await
 }
 
 #[tauri::command]

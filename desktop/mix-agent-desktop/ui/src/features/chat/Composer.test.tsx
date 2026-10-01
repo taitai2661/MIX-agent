@@ -66,6 +66,39 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: /送信/ })).toBeDisabled();
   });
 
+  // The selected model is gone because its provider was deleted. Sending would
+  // queue a run against a model id nothing can serve, so the composer blocks it
+  // and says why instead of letting the run fail downstream.
+  it("blocks sending when the selected model is no longer in the list", async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="chat" setMode={() => {}} models={models} modelId="p:deleted" setModelId={() => {}}
+        busy={false} onSend={onSend} onStop={() => {}}
+      />,
+    );
+    await user.type(screen.getByPlaceholderText("MIX-agent に話しかける…"), "hello{Enter}");
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /送信/ })).toBeDisabled();
+    expect(
+      screen.getByText("選択したモデルのプロバイダーが削除されています。モデルを再選択してください。"),
+    ).toBeInTheDocument();
+  });
+
+  // An empty list is "nothing is configured yet", not "the selection went
+  // stale" — the two states need different copy, and the fresh-load state must
+  // not claim a provider was deleted.
+  it("does not report a stale model while the list is still empty", () => {
+    render(
+      <Composer
+        mode="chat" setMode={() => {}} models={[]} modelId="p:deleted" setModelId={() => {}}
+        busy={false} onSend={() => {}} onStop={() => {}}
+      />,
+    );
+    expect(screen.queryByText("選択したモデルが利用できません")).toBeNull();
+  });
+
   it("renders a static mode badge when only one mode is allowed (desktop-agent surface)", () => {
     render(
       <Composer

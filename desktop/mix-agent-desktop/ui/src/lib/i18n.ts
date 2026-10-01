@@ -95,6 +95,8 @@ const en: Record<string, string> = {
   "音声入力": "Voice input",
   "モデルが未設定です。先にプロバイダーを追加してください。": "No model configured. Add a provider first.",
   "モデル未設定": "No model selected",
+  "選択したモデルが利用できません": "Selected model is unavailable",
+  "選択したモデルのプロバイダーが削除されています。モデルを再選択してください。": "The provider for the selected model has been deleted. Please pick another model.",
   "画像を添付するにはVision対応モデルを選択してください": "Select a vision-capable model to attach images",
   "このモデルは画像入力に対応していません": "This model does not support image input",
   "添付ファイルが大きすぎます (上限8MB)": "Attachment is too large (8 MB limit)",
