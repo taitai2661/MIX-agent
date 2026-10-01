@@ -1,5 +1,4 @@
 import { Monitor, Moon, Palette, Sun, Zap } from "lucide-react";
-import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import type { Theme } from "@/lib/theme";
@@ -30,12 +29,11 @@ export function AppearanceSettings() {
               <Button
                 key={value}
                 size="sm"
-                aria-pressed={active}
+                selected={active}
                 onClick={() => {
                   setTheme(value);
                   void apply({ theme: value });
                 }}
-                className={cn(active && "border-brand bg-brand-soft text-brand")}
               >
                 <Icon size={13} /> {t(label)}
               </Button>
@@ -52,12 +50,11 @@ export function AppearanceSettings() {
               <Button
                 key={language}
                 size="sm"
-                aria-pressed={active}
+                selected={active}
                 onClick={() => {
                   setLocale(language);
                   void apply({ language });
                 }}
-                className={cn(active && "border-brand bg-brand-soft text-brand")}
               >
                 {language === "ja" ? "日本語" : "English"}
               </Button>

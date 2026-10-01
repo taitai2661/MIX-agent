@@ -53,7 +53,7 @@ export function CodeBlock({ language, code }: { language: string; code: string }
   return (
     <div className="my-2.5 overflow-hidden rounded-lg border border-line bg-inset">
       <div className="flex items-center justify-between border-b border-line px-3 py-1">
-        <span className="font-mono text-2xs text-faint">{language || "text"}</span>
+        <span className="font-mono text-xs text-faint">{language || "text"}</span>
         <CopyButton value={code} label={t("Copy")} />
       </div>
       <pre className="overflow-x-auto px-3 py-2.5">

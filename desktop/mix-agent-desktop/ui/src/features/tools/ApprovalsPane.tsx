@@ -5,7 +5,7 @@ import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { PENDING_APPROVALS_QUERY_KEY, usePendingApprovals } from "@/lib/queries";
 import { Card, Row, Section } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ListSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { PendingApprovalView } from "@/lib/types";
@@ -22,7 +22,9 @@ export function ApprovalsPane() {
   const items = pending.data ?? [];
   return (
     <Section>
-      {items.length === 0 ? (
+      {pending.isPending ? (
+        <ListSkeleton />
+      ) : items.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck size={22} />}
           title={t("承認待ちのアクションはありません")}
@@ -35,7 +37,7 @@ export function ApprovalsPane() {
               <strong className="font-mono text-sm text-fg">{p.tool_name}</strong>
               <Badge tone="warning" size="sm">{relativeTime(p.created_at)}</Badge>
             </div>
-            <pre className="m-0 max-h-44 overflow-auto rounded-md bg-inset p-2 font-mono text-2xs leading-4 text-muted">
+            <pre className="m-0 max-h-44 overflow-auto rounded-md bg-inset p-2 font-mono text-xs leading-4 text-muted">
               {JSON.stringify(p.arguments, null, 2).slice(0, 1200)}
             </pre>
             <Row align="end">

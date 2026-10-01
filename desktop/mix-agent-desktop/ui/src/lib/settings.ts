@@ -21,6 +21,10 @@ export const DEFAULT_SETTINGS: SettingsView = {
   telemetry_consent: false,
   language: null,
   theme: null,
+  projects_root: null,
+  project_doc_max_bytes: null,
+  project_doc_fallback_filenames: [],
+  onboarding_completed: null,
 };
 
 /** Shared access to the settings draft: one query, one cache entry, and a
@@ -35,7 +39,9 @@ export function useSettingsForm() {
     if (!loaded) return;
     queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, { ...data, ...next });
   };
-  return { data, loaded, patch, query };
+  // Settled, not loaded: a failed `get_settings` leaves `loaded` false forever,
+  // and a caller gating on it would hang rather than fall back to defaults.
+  return { data, loaded, settled: !query.isPending, patch, query };
 }
 
 /** Persist a change immediately instead of waiting for the header Save button.

@@ -4,10 +4,12 @@ import { Brain, CheckCircle2, History, Search, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
 import { Card, Field, Row, Section } from "@/components/layout";
-import { EmptyState, ErrorBadge } from "@/components/shared";
+import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
 import { Input, Select, Textarea } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import type { MemoryRevisionView, MemoryView } from "@/lib/types";
 
 export function MemoryPane() {
@@ -19,6 +21,9 @@ export function MemoryPane() {
   const [draftScope, setDraftScope] = useState("user");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<MemoryView[] | null>(null);
+  const [searchError, setSearchError] = useState<unknown>(null);
+  const [searching, setSearching] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   const create = useMutation({
     mutationFn: () => api.createMemory({
@@ -41,7 +46,21 @@ export function MemoryPane() {
     onError: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
   });
 
-  const search = async () => setHits(await api.searchMemories(query, 20));
+  // A rejected search used to throw out of this handler into an unhandled
+  // rejection: the list simply stayed empty with nothing to say why, while the
+  // ingest mutations beside it did surface their errors.
+  const search = async () => {
+    setSearchError(null);
+    setSearching(true);
+    try {
+      setHits(await api.searchMemories(query, 20));
+    } catch (error) {
+      setHits(null);
+      setSearchError(error);
+    } finally {
+      setSearching(false);
+    }
+  };
 
   return (
     <Section>
@@ -92,14 +111,17 @@ export function MemoryPane() {
                 if (e.key === "Enter" && query.trim()) void search();
               }}
             />
-            <Button disabled={!query.trim()} onClick={() => void search()}>
-              <Search size={12} /> {t("検索")}
+            <Button disabled={!query.trim() || searching} onClick={() => void search()}>
+              {searching ? <Spinner size={12} /> : <Search size={12} />} {t("検索")}
             </Button>
           </Row>
         </Field>
+        {searchError != null && <ErrorBox error={searchError} />}
         {hits && (
-          <ul className="m-0 flex list-none flex-col gap-2 p-0 text-xs">
-            {hits.length === 0 && <li className="text-faint">{t("該当なし")}</li>}
+          <ul className="flex flex-col gap-2 text-xs">
+            {hits.length === 0 && (
+              <li className="text-faint">{t("該当なし")}</li>
+            )}
             {hits.map((h) => (
               <li key={h.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
                 <Row className="gap-1.5">
@@ -114,7 +136,9 @@ export function MemoryPane() {
       </Card>
 
       <h2 className="text-sm font-semibold text-fg">{t("登録済み Memory")}</h2>
-      {(memories.data ?? []).length === 0 ? (
+      {memories.isPending ? (
+        <ListSkeleton />
+      ) : (memories.data ?? []).length === 0 ? (
         <EmptyState icon={<Brain size={22} />} title={t("まだ Memory がありません。")} />
       ) : (
         (memories.data ?? []).map((m: MemoryView) => (
@@ -131,7 +155,7 @@ export function MemoryPane() {
                   {m.lifecycle_state}
                 </Badge>
                 {m.verification === "verified" && (
-                  <Badge tone="success" size="sm">verified</Badge>
+                  <Badge tone="success" size="sm">{t("検証済み")}</Badge>
                 )}
               </Row>
             </Row>
@@ -154,9 +178,18 @@ export function MemoryPane() {
               />
               <Button
                 size="sm"
-                className="text-danger hover:text-danger"
-                onClick={() => {
-                  if (confirm(tf("Delete \"{title}\"?", { title: m.title }))) remove.mutate(m.id);
+                variant="ghost-danger"
+                title={t("削除")}
+                aria-label={t("削除")}
+                onClick={async () => {
+                  if (await confirm({
+                    title: t("Memory を削除しますか？"),
+                    description: m.title,
+                    confirmLabel: t("削除"),
+                    tone: "danger",
+                  })) {
+                    remove.mutate(m.id);
+                  }
                 }}
               >
                 <Trash2 size={11} />
@@ -165,11 +198,13 @@ export function MemoryPane() {
           </Card>
         ))
       )}
+      {dialog}
     </Section>
   );
 }
 
 function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => void }) {
+  const { confirm, dialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const revisions = useQuery({
     queryKey: ["memory_revisions", id],
@@ -184,26 +219,55 @@ function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => voi
 
   if (!open) {
     return (
-      <Button size="sm" onClick={() => setOpen(true)} title={t("Revision history")} aria-label={t("Revision history")}>
+      <Button
+        size="sm"
+        onClick={() => setOpen(true)}
+        title={t("Revision history")}
+        aria-label={t("Revision history")}
+      >
         <History size={12} />
       </Button>
     );
   }
   return (
     <div className="flex w-full flex-col gap-1.5 border-t border-line pt-2 text-xs">
-      {(revisions.data ?? []).length === 0 && (
+      {revisions.isPending && (
+        <span className="inline-flex items-center gap-1.5 text-faint">
+          <Spinner size={11} /> {t("読み込み中…")}
+        </span>
+      )}
+      {!revisions.isPending && (revisions.data ?? []).length === 0 && (
         <span className="text-faint">{t("No revisions yet.")}</span>
       )}
       {(revisions.data ?? []).map((r: MemoryRevisionView) => (
         <Row key={r.id} align="between">
           <span className="text-muted">{new Date(r.created_at).toLocaleString()}</span>
-          <Button size="sm" onClick={() => restore.mutate(r.id)}>{t("restore")}</Button>
+          <Button
+            size="sm"
+            onClick={async () => {
+              // Overwrites the current body with no undo, so it confirms like any
+              // other destructive action rather than firing on one click.
+              if (await confirm({
+                title: t("この版に戻しますか？"),
+                description: tf("{at} の内容で上書きされます。", {
+                  at: new Date(r.created_at).toLocaleString(),
+                }),
+                confirmLabel: t("restore"),
+                tone: "danger",
+              })) {
+                restore.mutate(r.id);
+              }
+            }}
+          >
+            {t("restore")}
+          </Button>
         </Row>
       ))}
       <Row>
         <Button size="sm" onClick={() => setOpen(false)}>
           <X size={11} /> {t("close")}
         </Button>
+        {dialog}
       </Row>
     </div>
   );

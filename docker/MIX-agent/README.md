@@ -70,7 +70,7 @@ ZimaOSストアのアーカイブを掲載します。コンテナイメージ�
 
 - Chat / Thinking / Agent、SSEストリーミング、会話履歴、添付
 - プロジェクト（専用の指示・資料テキスト・会話の整理）と、Agentを使う調査モード（Web調査と出典つきレポート）
-- 50種類のProviderプリセット（OpenAI、Anthropic、Gemini、主要互換API、国内・ローカル実行系）と、OpenAI互換／Anthropic／Gemini用カスタム接続
+- 52種類のProviderプリセット（OpenAI、Anthropic、Gemini、主要互換API、国内・ローカル実行系）と、OpenAI互換／Anthropic／Gemini用カスタム接続
 - 共通Tool Registry、Always Allow / Ask / Deny、永続化した承認
 - Web / Files / Terminal / Browser / Memory、ユーザー向けPlan
 - stdio / Streamable HTTP MCP、Filesystem導入テンプレート

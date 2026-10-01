@@ -1,7 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowUp, Bot, Brain, Check, ChevronDown, ChevronLeft, Eye, Folder, Loader2,
-  MessageSquare, Mic, Paperclip, Plus, Square, Wrench, X,
+  AlertTriangle, ArrowUp, Bot, Brain, Check, Eye, Folder, MessageSquare, Mic, Paperclip, Plus, Square, Wrench, X,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/api";
@@ -11,10 +10,12 @@ import type { ModelView, ProjectView } from "@/lib/types";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuTriggerButton,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/layout";
+import { Spinner } from "@/components/ui/spinner";
 
 export interface DraftAttachment {
   kind: string;
@@ -53,6 +54,8 @@ export const Composer = memo(function Composer({
   projectId = null,
   onProjectChange,
   onCreateProject,
+  modelsPending = false,
+  projectsPending = false,
   busy,
   onSend,
   onStop,
@@ -68,6 +71,11 @@ export const Composer = memo(function Composer({
   projectId?: string | null;
   onProjectChange?: (id: string | null) => void;
   onCreateProject?: (name: string) => Promise<string | null>;
+  /** While true the model/project lists are "not known yet", not "empty". The
+   *  menus used to say "No model configured — add a provider first" on every
+   *  open that happened before the query settled. */
+  modelsPending?: boolean;
+  projectsPending?: boolean;
   busy: boolean;
   onSend: (content: string, attachments: DraftAttachment[]) => void;
   onStop: () => void;
@@ -113,11 +121,16 @@ export const Composer = memo(function Composer({
     && !staleModel
     && (!hasImage || !selectedModel || selectedModel.supports_vision);
 
+  // Grow the textarea with its content, bounded by the `max-h-56` class.
+  // Written as a `field-sizing` opt-out rather than a pixel write: setting
+  // `style.height` fought the `min-h-16`/`max-h-56` classes, which is how the
+  // box ended up taller than its cap on long drafts.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const next = Math.min(el.scrollHeight, 224);
+    el.style.height = `${next}px`;
   }, [draft]);
 
   useEffect(() => () => speechRef.current?.abort(), []);
@@ -287,12 +300,12 @@ export const Composer = memo(function Composer({
 
   return (
     <div className="border-t border-line bg-bg px-6 pb-4 pt-3">
-      <div className="mx-auto flex w-full max-w-[820px] flex-col gap-2">
+      <div className="mx-auto flex w-full max-w-content flex-col gap-2">
         <div
           className={cn(
             "flex flex-col rounded-xl border border-line bg-surface shadow-xs",
             "transition-colors duration-150 ease-out",
-            "focus-within:border-brand focus-within:shadow-sm",
+            "focus-within:border-brand",
           )}
         >
           {attachments.length > 0 && (
@@ -301,7 +314,7 @@ export const Composer = memo(function Composer({
                 <span
                   key={`${a.filename}-${i}`}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md border border-line bg-inset py-0.5 pl-1.5 pr-1 text-xs text-muted",
+                    "inline-flex items-center gap-1.5 rounded-md border border-line bg-inset py-0.5 ps-1.5 pe-1 text-xs text-muted",
                     "transition-colors hover:border-line-strong",
                   )}
                 >
@@ -316,12 +329,12 @@ export const Composer = memo(function Composer({
                   )}
                   <span className="max-w-40 truncate">{a.filename}</span>
                   {a.mime_type.startsWith("image/") && visionWarning && (
-                    <span
-                      className="inline-flex items-center text-warning"
-                      title={t("このモデルは画像入力に対応していません")}
-                    >
-                      <AlertTriangle size={12} aria-label={t("このモデルは画像入力に対応していません")} />
-                    </span>
+                    <AlertTriangle
+                      size={12}
+                      role="img"
+                      aria-label={t("このモデルは画像入力に対応していません")}
+                      className="text-warning"
+                    />
                   )}
                   <Button
                     variant="ghost"
@@ -333,7 +346,7 @@ export const Composer = memo(function Composer({
                   </Button>
                 </span>
               ))}
-              <span className="inline-flex items-center gap-1 self-center text-2xs text-faint">
+              <span className="self-center text-xs text-faint">
                 {attachments.length} / {MAX_ATTACHMENTS}
               </span>
             </div>
@@ -352,10 +365,7 @@ export const Composer = memo(function Composer({
                 submit();
               }
             }}
-            className={cn(
-              "max-h-56 min-h-16 w-full resize-none bg-transparent px-3 py-2.5",
-              "text-sm leading-6 text-fg outline-none placeholder:text-faint",
-            )}
+            className="max-h-56 min-h-16 w-full resize-none bg-transparent px-3 py-2.5 text-sm leading-6 text-fg placeholder:text-faint outline-none"
           />
 
           <div className="flex items-center gap-1 px-2 pb-2">
@@ -368,29 +378,20 @@ export const Composer = memo(function Composer({
               aria-label={t("画像を添付")}
             >
               {attaching
-                ? <Loader2 size={17} className="spin" />
+                ? <Spinner size={17} />
                 : <Paperclip size={17} strokeWidth={1.8} />}
             </Button>
 
             {MODES.length > 1 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
+                  <DropdownMenuTriggerButton
                     aria-label={t("モード")}
                     title={t(activeMode.label)}
-                    className={cn(
-                      "inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5",
-                      "text-xs font-medium text-fg",
-                      "transition-colors duration-100 hover:bg-hover",
-                      "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-                      "data-[state=open]:border-line-strong",
-                    )}
                   >
                     <activeMode.Icon size={13} className="shrink-0 text-muted" aria-hidden="true" />
-                    <span>{t(activeMode.label)}</span>
-                    <ChevronDown size={11} className="text-muted" aria-hidden="true" />
-                  </button>
+                    <span className="truncate">{t(activeMode.label)}</span>
+                  </DropdownMenuTriggerButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuLabel>{t("モード")}</DropdownMenuLabel>
@@ -398,30 +399,26 @@ export const Composer = memo(function Composer({
                     <DropdownMenuItem
                       key={m.id}
                       onSelect={() => setMode(m.id)}
-                      className="flex-col items-start gap-0 py-1.5"
+                      description={t(m.hint)}
                     >
-                      <span className="flex w-full items-center gap-2">
-                        <m.Icon size={13} className="shrink-0 text-muted" aria-hidden="true" />
-                        <span className="font-medium">{t(m.label)}</span>
-                        {m.id === mode && (
-                          <Check size={13} className="ml-auto text-brand" aria-hidden="true" />
-                        )}
-                      </span>
-                      <span className="ps-5 text-2xs text-faint">{t(m.hint)}</span>
+                      <m.Icon size={13} className="shrink-0 text-muted" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate font-medium">{t(m.label)}</span>
+                      {m.id === mode && (
+                        <Check size={13} className="ms-auto shrink-0 text-brand" aria-hidden="true" />
+                      )}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              // Single-mode surface (e.g. Codex → "agent"): render a static
-              // badge so the toolbar still announces what mode is active.
+              // Single-mode surface (e.g. desktop-agent → "agent"): render a
+              // static badge so the toolbar still announces what mode is active.
               <span
-                aria-label={t("モード")}
                 title={t(activeMode.label)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-fg"
+                className="inline-flex h-control items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-fg"
               >
                 <activeMode.Icon size={13} className="shrink-0 text-muted" aria-hidden="true" />
-                <span>{t(activeMode.label)}</span>
+                {t(activeMode.label)}
               </span>
             )}
 
@@ -429,31 +426,25 @@ export const Composer = memo(function Composer({
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
+                <DropdownMenuTriggerButton
                   aria-label={t("モデル")}
-                  title={selectedModel?.label ?? (models.length === 0 ? t("モデル未設定") : "")}
-                  className={cn(
-                    "inline-flex h-8 max-w-56 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5",
-                    "text-xs font-medium text-fg",
-                    "transition-colors duration-100 hover:bg-hover",
-                    "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-                    "data-[state=open]:border-line-strong",
-                  )}
+                  title={selectedModel?.label ?? (models.length === 0 && !modelsPending ? t("モデル未設定") : "")}
                 >
                   <span className="min-w-0 flex-1 truncate text-start">
-                    {selectedModel?.label ?? (models.length === 0 ? t("モデル未設定") : t("モデル"))}
+                    {selectedModel?.label
+                      ?? (modelsPending ? t("読み込み中…") : models.length === 0 ? t("モデル未設定") : t("モデル"))}
                   </span>
                   {selectedModel?.supports_vision && (
-                    <Eye size={11} className="shrink-0 text-faint" aria-label="vision" />
+                    <Eye size={11} className="shrink-0 text-faint" aria-hidden="true" />
                   )}
-                  <ChevronDown size={11} className="shrink-0 text-muted" aria-hidden="true" />
-                </button>
+                </DropdownMenuTriggerButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-64">
                 <DropdownMenuLabel>{t("モデル")}</DropdownMenuLabel>
-                {models.length === 0 && (
-                  <div className="px-2 py-1.5 text-2xs text-faint">
+                {modelsPending ? (
+                  <div className="px-2 py-1.5 text-xs text-faint">{t("読み込み中…")}</div>
+                ) : models.length === 0 && (
+                  <div className="px-2 py-1.5 text-xs text-faint">
                     {t("モデルが未設定です。先にプロバイダーを追加してください。")}
                   </div>
                 )}
@@ -461,20 +452,19 @@ export const Composer = memo(function Composer({
                   <DropdownMenuItem
                     key={m.id}
                     onSelect={() => setModelId(m.id)}
-                    className="flex-col items-start gap-0 py-1.5"
+                    description={
+                      <span className="flex items-center gap-1.5">
+                        {m.supports_vision && <span>vision</span>}
+                        {m.supports_tool_calling && <span>tools</span>}
+                        {m.supports_reasoning && <span>reasoning</span>}
+                        <span className="font-mono">{m.id}</span>
+                      </span>
+                    }
                   >
-                    <span className="flex w-full items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate font-medium">{m.label}</span>
-                      {m.id === modelId && (
-                        <Check size={13} className="shrink-0 text-brand" aria-hidden="true" />
-                      )}
-                    </span>
-                    <span className="flex items-center gap-1.5 ps-0 text-2xs text-faint">
-                      {m.supports_vision && <span>vision</span>}
-                      {m.supports_tool_calling && <span>tools</span>}
-                      {m.supports_reasoning && <span>reasoning</span>}
-                      <span className="font-mono">{m.id}</span>
-                    </span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{m.label}</span>
+                    {m.id === modelId && (
+                      <Check size={13} className="ms-auto shrink-0 text-brand" aria-hidden="true" />
+                    )}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -483,25 +473,16 @@ export const Composer = memo(function Composer({
             {showProjectPicker && (
             <DropdownMenu open={projectMenuOpen} onOpenChange={resetProjectMenu}>
               <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
+                <DropdownMenuTriggerButton
                   aria-label={t("プロジェクトを選択")}
                   title={activeProject?.name ?? t("プロジェクトなし")}
-                  className={cn(
-                    "inline-flex h-8 max-w-48 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5",
-                    "text-xs font-medium text-fg",
-                    "transition-colors duration-100 hover:bg-hover",
-                    "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-                    "data-[state=open]:border-line-strong",
-                    !activeProject && "text-faint",
-                  )}
+                  className={cn("max-w-48", !activeProject && !projectsPending && "text-faint")}
                 >
                   <Folder size={13} className="shrink-0 text-muted" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate text-start">
                     {activeProject?.name ?? t("プロジェクトなし")}
                   </span>
-                  <ChevronDown size={11} className="shrink-0 text-muted" aria-hidden="true" />
-                </button>
+                </DropdownMenuTriggerButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
@@ -522,8 +503,12 @@ export const Composer = memo(function Composer({
                       {!projectId && <Check size={13} className="text-brand" aria-hidden="true" />}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    {projects.length === 0 && (
-                      <div className="px-2 py-1.5 text-2xs text-faint">
+                    {projectsPending ? (
+                      <div className="px-2 py-1.5 text-xs text-faint">
+                        {t("読み込み中…")}
+                      </div>
+                    ) : projects.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-faint">
                         {t("プロジェクトがありません")}
                       </div>
                     )}
@@ -554,18 +539,7 @@ export const Composer = memo(function Composer({
                   </>
                 ) : (
                   <>
-                    <DropdownMenuLabel className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={cancelNewProject}
-                        className="inline-flex size-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
-                        aria-label={t("戻る")}
-                        title={t("戻る")}
-                      >
-                        <ChevronLeft className="size-3" aria-hidden="true" />
-                      </button>
-                      {t("プロジェクトを作成")}
-                    </DropdownMenuLabel>
+                    <DropdownMenuLabel>{t("プロジェクトを作成")}</DropdownMenuLabel>
                     <div className="px-1.5 pb-1.5">
                       <form
                         onSubmit={(e) => {
@@ -591,7 +565,7 @@ export const Composer = memo(function Composer({
                           aria-label={t("プロジェクト名")}
                         />
                         {projectCreateError && (
-                          <div className="px-1 text-2xs text-danger">
+                          <div className="px-1 text-xs text-danger">
                             {projectCreateError}
                           </div>
                         )}
@@ -612,7 +586,7 @@ export const Composer = memo(function Composer({
                             disabled={!projectDraftName.trim() || projectCreating}
                           >
                             {projectCreating
-                              ? <Loader2 size={12} className="spin" aria-hidden="true" />
+                              ? <Spinner size={12} />
                               : <Plus size={12} aria-hidden="true" />}
                             {t("作成")}
                           </Button>
@@ -632,15 +606,13 @@ export const Composer = memo(function Composer({
               disabled={typeof window !== "undefined" && !("SpeechRecognition" in window || "webkitSpeechRecognition" in window)}
               title={t("音声入力")}
               aria-label={t("音声入力")}
-              aria-pressed={listening}
-              className={cn(listening && "relative text-danger")}
+              className={cn(listening && "relative")}
             >
-              <Mic size={17} strokeWidth={1.8} className={listening ? "spin" : undefined} />
+              <Mic size={17} strokeWidth={1.8} />
               {listening && (
                 <span
                   aria-hidden="true"
-                  className="absolute inset-0 -m-1 rounded-full border border-current opacity-60"
-                  style={{ animation: "mix-pulse 1.2s ease-out infinite" }}
+                  className="pointer-events-none absolute inset-0 rounded-full border border-current opacity-60 animate-mix-pulse"
                 />
               )}
             </Button>
@@ -672,14 +644,14 @@ export const Composer = memo(function Composer({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 px-1 text-2xs text-faint">
+        <div className="flex items-center gap-3 px-1 text-xs text-faint">
           <span className="inline-flex items-center gap-1">
-            <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Enter</kbd>
+            <Kbd>Enter</Kbd>
             <span>{t("送信")}</span>
             <span className="mx-1 text-line">·</span>
-            <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Shift</kbd>
+            <Kbd>⇧</Kbd>
             <span>+</span>
-            <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Enter</kbd>
+            <Kbd>Enter</Kbd>
             <span>{t("改行")}</span>
           </span>
           <span className="flex-1" />

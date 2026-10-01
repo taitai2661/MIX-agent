@@ -1,8 +1,8 @@
 # MIX-agent
 
-個人・LAN/VPN 内向けのセルフホスト AI ワークスペース。
+個人・LAN/VPN内向けのセルフホスト AI ワークスペース。
 
-このリポジトリは 2 つのエディションを **兄弟関係** で配布しています。Desktop 版は Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）を踏襲しつつ、Tauri 2 + Rust で再実装されています。`docker/` と `desktop/` の間にコード共有はなく、仕様書（`docs/`）と契約のみが両者を結びます。
+このリポジトリは 2 つのエディションを **兄弟関係** で配布しています。Desktop 版は Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / Run イベントの `kind` 契約）を踏襲しつつ、Tauri 2 + Rust で再実装されています。`docker/` と `desktop/` の間にコード共有はなく、仕様書（`docs/`）と契約のみが両者を結びます。
 
 ## エディション
 
@@ -28,8 +28,8 @@
 
 | エディション | 状態 |
 | --- | --- |
-| Docker 版 | v0.3.5 をリリース済み（既存機能） |
-| Desktop 版 | Phase 0〜5 完了。Phase 6（macOS 完成 + Windows α + Linux α）は未着手。フェーズの内訳は [`desktop/README.md`](desktop/README.md) の「開発フェーズ」を参照 |
+| Docker 版 | v0.2.3 をリリース済み（既存機能）。変更内容は [`docker/MIX-agent/docs/release-notes-v0.2.3.md`](docker/MIX-agent/docs/release-notes-v0.2.3.md) |
+| Desktop 版 | Phase 0〜6 完了。Phase 7（macOS 完成 + Windows α + Linux α）は未着手。フェーズの内訳は [`desktop/README.md`](desktop/README.md) の「開発フェーズ」を参照 |
 
 ## アイコンの再生成
 
@@ -45,3 +45,7 @@ python3 -m venv .venv
 生成先: `docker/MIX-agent/apps/web/public/`（favicon / PWA 用）、
 `docker/MIX-agent/apps/MIX-agent/icon.svg`、
 `desktop/mix-agent-desktop/app/icons/`、`desktop/mix-agent-desktop/ui/public/`。
+
+ベクタの正本は `docker/MIX-agent/apps/web/public/icon.svg` で、スクリプトはそこから
+他の 3 箇所へ SVG をコピーします。PNG / ICO はスクリプト内で直接生成します。
+依存は開発用の Pillow のみで、配布物には含まれません。

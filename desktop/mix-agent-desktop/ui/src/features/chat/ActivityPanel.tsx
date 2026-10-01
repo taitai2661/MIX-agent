@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CheckCircle2, ChevronDown, CircleAlert, ClipboardList, Clock3, FileText, Globe2,
-  History, ListChecks, Loader2, Pencil, RotateCcw, Search, ShieldAlert, Terminal, Wrench,
+  CheckCircle2, ChevronDown, ChevronRight, CircleAlert, ClipboardList, Clock3, FileText,
+  Globe2, History, ListChecks, Loader2, Pencil, RotateCcw, Search, ShieldAlert, Terminal, Wrench,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -13,12 +13,12 @@ import {
   describeToolCall, isFileWrite, reduceRunEvents, type TodoItem, type ToolActivity,
 } from "@/lib/runEvents";
 import { useRunEvents } from "@/lib/runStore";
-import { PanelHeader } from "@/components/layout";
+import { Card, PanelHeader } from "@/components/layout";
 import { useUi } from "@/lib/ui";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
 
 function toolIcon(name: string) {
   if (name === "files") return FileText;
@@ -88,13 +88,13 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
             {tool.name}
           </span>
           <Badge tone={status.tone} size="sm" className="shrink-0">
-            <StatusIcon size={10} className={status.spin ? "spin" : undefined} />
+            <StatusIcon size={10} className={status.spin ? "animate-spin" : undefined} />
             {status.label}
           </Badge>
         </div>
-        <span className="break-all text-2xs text-muted">{description}</span>
+        <span className="break-all text-xs text-muted">{description}</span>
         {elapsed != null && (
-          <span className="text-2xs text-faint">{formatDuration(elapsed)}</span>
+          <span className="text-xs text-faint">{formatDuration(elapsed)}</span>
         )}
         {writeInfo && (
           <button
@@ -104,7 +104,7 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
             }
             className={cn(
               "mt-0.5 inline-flex w-fit max-w-full items-center gap-1 rounded-md border border-line",
-              "bg-inset px-1.5 py-0.5 text-2xs text-muted",
+              "bg-inset px-1.5 py-0.5 text-xs text-muted",
               "transition-colors hover:border-brand hover:text-fg",
             )}
           >
@@ -115,23 +115,33 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
         )}
         {tool.arguments != null && (
           <details className="group">
-            <summary className="cursor-pointer list-none text-2xs text-faint transition-colors hover:text-muted">
+            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-faint transition-colors hover:text-muted">
+              <ChevronRight
+                size={11}
+                aria-hidden="true"
+                className="shrink-0 transition-transform group-open:rotate-90"
+              />
               {t("引数")}
             </summary>
-            <pre className="mt-1 max-h-52 overflow-auto rounded-md bg-inset p-2 font-mono text-2xs leading-4 text-muted">
+            <pre className="mt-1 max-h-52 overflow-auto rounded-md bg-inset p-2 font-mono text-xs leading-4 text-muted">
               {safeJson(tool.arguments)}
             </pre>
           </details>
         )}
         {tool.error && (
-          <span className="break-words text-2xs text-danger">{tool.error}</span>
+          <span className="break-words text-xs text-danger">{tool.error}</span>
         )}
         {tool.result != null && (
           <details className="group">
-            <summary className="cursor-pointer list-none text-2xs text-faint transition-colors hover:text-muted">
+            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-faint transition-colors hover:text-muted">
+              <ChevronRight
+                size={11}
+                aria-hidden="true"
+                className="shrink-0 transition-transform group-open:rotate-90"
+              />
               {t("結果")}
             </summary>
-            <pre className="mt-1 max-h-52 overflow-auto rounded-md bg-inset p-2 font-mono text-2xs leading-4 text-muted">
+            <pre className="mt-1 max-h-52 overflow-auto rounded-md bg-inset p-2 font-mono text-xs leading-4 text-muted">
               {safeJson(tool.result)}
             </pre>
           </details>
@@ -145,14 +155,17 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
 function TodoList({ items }: { items: TodoItem[] }) {
   const done = items.filter((i) => i.status === "completed").length;
   return (
-    <Card className="overflow-hidden">
-      <CardTitle>
-        <ListChecks size={13} /> {t("計画")}
-        <span className="ml-auto font-normal text-faint">
+    <Card
+      title={t("計画")}
+      icon={<ListChecks size={13} />}
+      action={
+        <span className="font-mono text-xs font-normal text-faint">
           {done}/{items.length}
         </span>
-      </CardTitle>
-      <ul className="flex flex-col gap-1.5 p-2.5">
+      }
+      bodyClassName="gap-0 p-2.5"
+    >
+      <ul className="flex flex-col gap-1.5">
         {items.map((item) => (
           <li
             key={item.id}
@@ -165,7 +178,7 @@ function TodoList({ items }: { items: TodoItem[] }) {
               {item.status === "completed" ? (
                 <CheckCircle2 size={12} className="text-success" />
               ) : item.status === "in_progress" ? (
-                <Loader2 size={12} className="spin text-warning" />
+                <Spinner size={12} className="text-warning" />
               ) : (
                 <span className="block size-3 rounded-sm border border-line" />
               )}
@@ -259,35 +272,39 @@ export function ActivityPanel() {
         )}
 
         {runId && timeline?.verificationFailed && (
-          <Card className="border-danger">
-            <CardTitle className="border-danger text-danger">
-              <ShieldAlert size={13} /> {t("検証に失敗しました")}
-            </CardTitle>
-            <p className="p-2.5 text-xs text-muted">{timeline.verificationFailed}</p>
+          <Card
+            className="border-danger"
+            title={t("検証に失敗しました")}
+            icon={<ShieldAlert size={13} className="text-danger" />}
+            bodyClassName="p-2.5"
+          >
+            <p className="m-0 text-xs text-muted">{timeline.verificationFailed}</p>
           </Card>
         )}
 
         {runId && timeline?.verification && !timeline.verificationFailed && (
-          <Card>
-            <CardTitle>
-              <ShieldAlert size={13} /> {t("変更の確認中")}
-            </CardTitle>
-            <p className="p-2.5 text-xs text-muted">
+          <Card
+            title={t("変更の確認中")}
+            icon={<ShieldAlert size={13} />}
+            bodyClassName="p-2.5"
+          >
+            <p className="m-0 text-xs text-muted">
               {timeline.verification.reason || timeline.verification.tool}
             </p>
           </Card>
         )}
 
         {runId && !isLive && (checkpoints.data?.length ?? 0) > 0 && (
-          <Card>
-            <CardTitle>
-              <History size={13} /> {t("チェックポイント")}
-            </CardTitle>
+          <Card
+            title={t("チェックポイント")}
+            icon={<History size={13} />}
+            bodyClassName="gap-0 p-0"
+          >
             <ul className="flex flex-col divide-y divide-line">
               {(checkpoints.data ?? []).map((c) => (
                 <li key={c.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
                   <span className="flex items-center gap-1.5 text-xs text-muted">
-                    <Clock3 size={11} /> step {c.step_index}
+                    <Clock3 size={11} /> {t("ステップ")} {c.step_index}
                   </span>
                   <Button
                     size="sm"

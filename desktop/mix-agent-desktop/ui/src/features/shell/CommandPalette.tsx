@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot, CornerDownLeft, MessageSquare, Plus, Search, Settings2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { CONVERSATIONS_QUERY_KEY } from "@/lib/queries";
 import { useUi, type SettingsTab, type Surface, type View } from "@/lib/ui";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ListRow } from "@/components/layout";
 
 interface PaletteItem {
   id: string;
@@ -48,8 +49,6 @@ export function CommandPalette() {
   const setSurface = useUi((s) => s.setSurface);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
 
   // Only fetched while the palette is open: it is mounted permanently, and as
   // a fifth observer of this key it made a `list_conversations` call on every
@@ -61,17 +60,9 @@ export function CommandPalette() {
   });
 
   useEffect(() => {
-    if (open) {
-      // Remember what had focus so closing hands it back instead of dropping
-      // focus onto <body>.
-      openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setQuery("");
-      setSelected(0);
-      window.setTimeout(() => inputRef.current?.focus(), 10);
-    } else {
-      openerRef.current?.focus();
-      openerRef.current = null;
-    }
+    if (!open) return;
+    setQuery("");
+    setSelected(0);
   }, [open]);
 
   const items = useMemo<PaletteItem[]>(() => {
@@ -152,8 +143,9 @@ export function CommandPalette() {
     } else if (e.key === "Escape") {
       setOpen(false);
     } else if (e.key === "Tab") {
-      // A modal combobox with nowhere else to go: letting Tab escape would
-      // leave focus behind the backdrop with no way back.
+      // A modal combobox with nowhere else to go. Radix's focus trap keeps Tab
+      // inside the dialog, so swallowing it here is redundant, but a combobox
+      // that moved focus on Tab would still be wrong.
       e.preventDefault();
     }
   };
@@ -161,19 +153,17 @@ export function CommandPalette() {
   const activeId = `palette-option-${selected}`;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 pt-[12vh] backdrop-blur-[1px]"
-      onClick={() => setOpen(false)}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
+    // A real dialog rather than a hand-rolled `fixed inset-0` overlay: the old
+    // one had no focus trap, no portal, and no `inert` background, which is why
+    // it had to swallow Tab itself and hand focus back by hand.
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
         aria-label={t("コマンドパレット")}
-        onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[60vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-lg"
+        className="top-[12vh] flex max-h-[60vh] w-full max-w-lg -translate-y-0 flex-col overflow-hidden p-0"
       >
+        <DialogTitle className="sr-only">{t("コマンドパレット")}</DialogTitle>
         <input
-          ref={inputRef}
+          autoFocus
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-listbox"
@@ -184,7 +174,7 @@ export function CommandPalette() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
-          className="h-11 shrink-0 border-b border-line bg-transparent px-3 text-sm text-fg outline-none placeholder:text-faint"
+          className="h-control shrink-0 border-b border-line bg-inset px-3 text-sm text-fg outline-none placeholder:text-faint"
         />
         <div
           id="palette-listbox"
@@ -193,28 +183,23 @@ export function CommandPalette() {
           className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1"
         >
           {filtered.map((item, i) => (
-            <button
-              type="button"
+            <ListRow
               role="option"
               id={`palette-option-${i}`}
               aria-selected={i === selected}
               key={item.id}
+              selected={i === selected}
               onMouseEnter={() => setSelected(i)}
               onClick={() => {
                 item.run();
                 setOpen(false);
               }}
-              className={cn(
-                "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm",
-                "text-fg transition-colors duration-75",
-                i === selected ? "bg-hover" : "text-muted hover:bg-hover hover:text-fg",
-              )}
             >
               <span className="shrink-0 text-faint">{item.icon}</span>
               <span className="truncate">{item.label}</span>
-              {item.hint && <span className="ml-auto text-2xs text-faint">{item.hint}</span>}
+              {item.hint && <span className="ms-auto text-xs text-faint">{item.hint}</span>}
               {i === selected && <CornerDownLeft size={12} className="shrink-0 text-faint" />}
-            </button>
+            </ListRow>
           ))}
           {filtered.length === 0 && (
             <p className="px-2 py-4 text-center text-xs text-faint">
@@ -222,7 +207,7 @@ export function CommandPalette() {
             </p>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

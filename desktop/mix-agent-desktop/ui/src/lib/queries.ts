@@ -18,11 +18,49 @@ export const PROJECTS_STALE_MS = 30_000;
 /** How often the working tree is re-read. */
 export const GIT_STATUS_POLL_MS = 15_000;
 
+/** How long a provider list is considered fresh. See `useProviders`. */
+export const PROVIDERS_STALE_MS = 30_000;
+
 export const PROJECTS_QUERY_KEY = ["projects"] as const;
 export const CONVERSATIONS_QUERY_KEY = ["conversations"] as const;
 export const PENDING_APPROVALS_QUERY_KEY = ["pending_approvals"] as const;
+export const PROVIDERS_QUERY_KEY = ["providers"] as const;
+export const PROVIDER_PRESETS_QUERY_KEY = ["provider_presets"] as const;
+export const MODELS_QUERY_KEY = ["models"] as const;
 
 export const gitStatusKey = (root: string) => ["git_status", root] as const;
+
+/** Every configured provider.
+ *
+ * The key was written out by hand at each call site, which meant three
+ * independent observers shared one cache entry while disagreeing about
+ * `staleTime` — and the onboarding wizard joined the list. A provider list only
+ * changes when a provider is created, updated or deleted, and every such
+ * mutation invalidates the key, so the default zero staleness just buys a
+ * refetch on mount for panes that are otherwise idle.
+ */
+export function useProviders() {
+  return useQuery({
+    queryKey: PROVIDERS_QUERY_KEY,
+    queryFn: api.listProviders,
+    staleTime: PROVIDERS_STALE_MS,
+  });
+}
+
+/** The built-in provider catalog. Fixed at build time — it never changes for a
+ * given install, so it is fetched once per session. */
+export function useProviderPresets() {
+  return useQuery({
+    queryKey: PROVIDER_PRESETS_QUERY_KEY,
+    queryFn: api.providerPresets,
+    staleTime: Infinity,
+  });
+}
+
+/** Models discovered on every provider. */
+export function useModels() {
+  return useQuery({ queryKey: MODELS_QUERY_KEY, queryFn: () => api.listModels() });
+}
 
 export function useProjects() {
   return useQuery({

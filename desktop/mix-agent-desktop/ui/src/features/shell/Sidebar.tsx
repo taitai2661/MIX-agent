@@ -18,9 +18,13 @@ import {
   CONVERSATIONS_QUERY_KEY, useConversations, usePendingApprovals, useProjects,
 } from "@/lib/queries";
 import { useApplySettings } from "@/lib/settings";
+import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useConfirm } from "@/components/ui/dialog";
+import { Segmented, SegmentedOption } from "@/components/ui/segmented";
+import { Input, SearchField } from "@/components/ui/input";
+import { NavRow, SectionLabel } from "@/components/layout";
 import { ResizableHandle } from "./ResizableHandle";
 import { useCreateThread } from "./useShellEvents";
 import { usePanelWidth } from "./usePanelWidth";
@@ -87,6 +91,7 @@ export function Sidebar() {
     "mix-agent-sidebar-width", 264, 210, 440,
   );
   const applySettings = useApplySettings();
+  const { confirm, dialog } = useConfirm();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -189,7 +194,6 @@ export function Sidebar() {
   return (
     <>
       <aside
-        data-collapsed={!sidebarOpen}
         aria-label={t("サイドバー")}
         style={{ "--sidebar-w": `${width}px` } as React.CSSProperties}
         className={cn(
@@ -210,122 +214,71 @@ export function Sidebar() {
           {t("新規スレッド")}
         </Button>
 
-        <label className="flex h-8 items-center gap-2 rounded-md border border-line bg-surface px-2.5 transition-colors hover:border-line-strong focus-within:border-brand focus-within:ring-2 focus-within:ring-focus">
-          <Search size={13} className="shrink-0 text-faint" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("スレッドを検索")}
-            aria-label={t("スレッドを検索")}
-            className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch("")}
-              aria-label={t("クリア")}
-              className="shrink-0 text-faint transition-colors hover:text-fg"
-            >
-              <X size={11} />
-            </button>
-          )}
-        </label>
+        <SearchField
+          icon={<Search size={13} />}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t("スレッドを検索")}
+          aria-label={t("スレッドを検索")}
+          {...(search ? { onClear: () => setSearch(""), clearLabel: t("クリア") } : {})}
+        />
 
         {(filterCounts.all > 0 || filterCounts.chat > 0 || filterCounts["desktop-agent"] > 0) && (
-          <div
-            role="tablist"
-            aria-label={t("サーフェスで絞り込み")}
-            className="flex h-7 items-center gap-0.5 rounded-md border border-line bg-surface p-0.5"
-          >
-            {filterOptions.map((opt) => {
-              const selected = threadFilter === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  data-testid={`thread-filter-${opt.id}`}
-                  onClick={() => setThreadFilter(opt.id)}
-                  className={cn(
-                    "flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded px-1.5",
-                    "text-2xs font-medium transition-colors duration-100",
-                    selected
-                      ? "bg-bg text-fg shadow-xs"
-                      : "text-muted hover:text-fg",
-                  )}
-                  title={opt.label}
-                >
-                  <opt.Icon size={11} className="shrink-0" aria-hidden="true" />
-                  <span className="truncate">{opt.label}</span>
-                  <span
-                    className={cn(
-                      "shrink-0 rounded-sm px-1 font-mono text-2xs leading-4",
-                      selected ? "bg-active text-fg" : "text-faint",
-                    )}
-                  >
-                    {filterCounts[opt.id]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <Segmented aria-label={t("サーフェスで絞り込み")}>
+            {filterOptions.map((opt) => (
+              <SegmentedOption
+                key={opt.id}
+                value={opt.id}
+                label={opt.label}
+                selected={threadFilter === opt.id}
+                onSelect={setThreadFilter}
+                data-testid={`thread-filter-${opt.id}`}
+                trailing={filterCounts[opt.id]}
+              >
+                <opt.Icon size={11} className="shrink-0" aria-hidden="true" />
+                {opt.label}
+              </SegmentedOption>
+            ))}
+          </Segmented>
         )}
 
         {NAV_GROUPS.map((group) => (
           <nav key={group.title} className="flex flex-col gap-0.5">
-            <h2 className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint">
-              {t(group.title)}
-            </h2>
+            <SectionLabel>{t(group.title)}</SectionLabel>
             {group.items.map((item) => (
-              <button
-                type="button"
+              <NavRow
                 key={item.id}
+                icon={item.icon}
+                selected={view === item.id}
                 onClick={() => setView(item.id)}
-                aria-current={view === item.id ? "page" : undefined}
-                className={cn(
-                  "flex h-7 w-full items-center gap-2 rounded-md px-2 text-sm",
-                  "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg",
-                  "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-                  view === item.id && "bg-active font-medium text-fg",
-                )}
+                trailing={
+                  item.id === "settings" && pendingCount > 0
+                    ? <Badge tone="warning" size="sm">{pendingCount}</Badge>
+                    : undefined
+                }
               >
-                <span className="shrink-0 text-faint">{item.icon}</span>
-                <span className="truncate">{t(item.label)}</span>
-                {item.id === "settings" && pendingCount > 0 && (
-                  <Badge tone="warning" size="sm" className="ml-auto">
-                    {pendingCount}
-                  </Badge>
-                )}
-              </button>
+                {t(item.label)}
+              </NavRow>
             ))}
           </nav>
         ))}
 
         {(projects.data?.length ?? 0) > 0 && (
           <nav className="flex flex-col gap-0.5">
-            <h2 className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint">
-              {t("プロジェクト")}
-            </h2>
+            <SectionLabel>{t("プロジェクト")}</SectionLabel>
             {projects.data!.map((p) => (
-              <button
-                type="button"
+              <NavRow
                 key={p.id}
+                icon={<Folder size={15} />}
                 title={p.rootPath ?? p.name}
+                selected={activeProjectId === p.id}
                 onClick={() => {
                   setActiveProjectId(activeProjectId === p.id ? null : p.id);
                   setView("chat");
                 }}
-                className={cn(
-                  "flex h-7 w-full items-center gap-2 rounded-md px-2 text-sm",
-                  "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg",
-                  "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-                  activeProjectId === p.id && "bg-active font-medium text-fg",
-                )}
               >
-                <Folder size={15} className="shrink-0 text-faint" />
-                <span className="truncate">{p.name}</span>
-              </button>
+                {p.name}
+              </NavRow>
             ))}
           </nav>
         )}
@@ -334,7 +287,7 @@ export function Sidebar() {
           <Button
             size="sm"
             variant="default"
-            className="mx-1 w-[calc(100%-0.5rem)] justify-start"
+            className="mx-1 w-[calc(100%_-_0.5rem)] justify-start"
             onClick={() => setActiveProjectId(null)}
             title={t("プロジェクトフィルタを解除")}
           >
@@ -351,28 +304,24 @@ export function Sidebar() {
               if (!items?.length) return null;
               return (
                 <section key={group}>
-                  <h2 className="flex items-center gap-1 px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint">
-                    {t(GROUP_LABEL[group])}
+                  <SectionLabel trailing={
                     <span className="font-mono font-normal text-faint/70">{items.length}</span>
-                  </h2>
+                  }>
+                    {t(GROUP_LABEL[group])}
+                  </SectionLabel>
                   <ul className="flex flex-col gap-0.5">
                     {items.map((c) => (
                       <li key={c.id}>
+                        {/* A real `<button>`, not a `div role="button"`. The row also
+                            holds rename / export / delete buttons, and nesting those
+                            inside another button is invalid — so the title is the
+                            button and it stretches over the row with a pseudo-element,
+                            which keeps the whole row clickable without the invalid
+                            nesting. */}
                         <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openThread(c)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              openThread(c);
-                            }
-                          }}
-                          aria-current={conversationId === c.id ? "true" : undefined}
                           className={cn(
-                            "group relative flex cursor-pointer flex-col gap-0.5 rounded-md py-1.5 pl-2 pr-2",
-                            "text-left transition-colors duration-100 hover:bg-hover",
-                            "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
+                            "group relative flex flex-col gap-0.5 rounded-md py-1.5 pe-2 ps-2",
+                            "transition-colors duration-100 hover:bg-hover",
                             conversationId === c.id && "bg-active",
                           )}
                         >
@@ -381,7 +330,6 @@ export function Sidebar() {
                               className="h-6 px-1.5 text-xs"
                               value={renameDraft}
                               autoFocus
-                              onClick={(e) => e.stopPropagation()}
                               onChange={(e) => setRenameDraft(e.target.value)}
                               onKeyDown={(e) => {
                                 e.stopPropagation();
@@ -400,7 +348,12 @@ export function Sidebar() {
                             />
                           ) : (
                             <>
-                              <span className="flex min-w-0 items-center gap-1.5 pr-14">
+                              <button
+                                type="button"
+                                onClick={() => openThread(c)}
+                                aria-current={conversationId === c.id ? "true" : undefined}
+                                className="flex min-w-0 items-center gap-1.5 text-start after:absolute after:inset-0 after:content-['']"
+                              >
                                 {c.project_id && (
                                   <span
                                     className="size-1.5 shrink-0 rounded-full bg-brand"
@@ -411,11 +364,13 @@ export function Sidebar() {
                                 <span className="truncate text-sm font-medium text-fg">
                                   {c.title}
                                 </span>
-                              </span>
+                              </button>
                               {c.preview && (
-                                <span className="truncate text-xs text-muted">{c.preview}</span>
+                                <span className="pointer-events-none truncate text-xs text-muted">
+                                  {c.preview}
+                                </span>
                               )}
-                              <span className="flex items-center gap-1 text-2xs text-faint">
+                              <span className="pointer-events-none flex items-center gap-1 text-xs text-faint">
                                 <span>{relativeTime(c.updated_at)}</span>
                                 <span className="text-line">·</span>
                                 <span className="font-mono uppercase">{c.mode}</span>
@@ -428,10 +383,11 @@ export function Sidebar() {
                               </span>
 
                               {/* Revealed on hover/focus only, so the list reads as
-                                  text rather than as a wall of icons. */}
+                                  text rather than as a wall of icons. `relative` keeps
+                                  them above the title's stretched pseudo-element. */}
                               <span
                                 className={cn(
-                                  "absolute right-1 top-1.5 flex gap-0.5",
+                                  "absolute end-1 top-1.5 flex gap-0.5",
                                   "opacity-0 transition-opacity duration-100",
                                   "group-hover:opacity-100 group-focus-within:opacity-100",
                                 )}
@@ -441,8 +397,7 @@ export function Sidebar() {
                                   size="icon-sm"
                                   title={t("名前を変更")}
                                   aria-label={t("名前を変更")}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
+                                  onClick={() => {
                                     setRenaming(c.id);
                                     setRenameDraft(c.title);
                                   }}
@@ -454,22 +409,22 @@ export function Sidebar() {
                                   size="icon-sm"
                                   title={t("エクスポート")}
                                   aria-label={t("エクスポート")}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void exportThread(c);
-                                  }}
+                                  onClick={() => void exportThread(c)}
                                 >
                                   <Download size={12} />
                                 </Button>
                                 <Button
-                                  variant="ghost"
+                                  variant="ghost-danger"
                                   size="icon-sm"
-                                  className="text-danger hover:text-danger"
                                   title={t("削除")}
                                   aria-label={t("削除")}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (window.confirm(t("このスレッドを削除しますか？"))) {
+                                  onClick={async () => {
+                                    if (await confirm({
+                                      title: t("スレッドを削除しますか？"),
+                                      description: c.title,
+                                      confirmLabel: t("削除"),
+                                      tone: "danger",
+                                    })) {
                                       remove.mutate(c.id);
                                     }
                                   }}
@@ -493,21 +448,28 @@ export function Sidebar() {
         )}
 
         {conversations.isError && (
-          <div
-            role="alert"
-            className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-3 text-xs text-danger"
-          >
+          <Alert tone="danger" className="mt-2">
             {errorMessage(conversations.error) || t("エラー")}
-          </div>
+          </Alert>
         )}
         {!conversations.isError && !hasThreads && !conversations.isPending && (
           <div className="mt-2 flex flex-col items-start gap-1 rounded-lg border border-dashed border-line px-3 py-3 text-start">
             <span className="text-xs font-medium text-muted">
               {t("スレッドがありません")}
             </span>
-            <span className="text-2xs text-faint leading-4">
+            <span className="text-xs leading-4 text-faint">
               {t("新しい会話を始めましょう")}
             </span>
+          </div>
+        )}
+        {conversations.isPending && (
+          <div aria-hidden className="mt-2 flex flex-col gap-1.5">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="rounded-md border border-line px-2 py-2">
+                <Skeleton className="h-3 w-2/3" />
+                <Skeleton className="mt-1.5 h-2.5 w-1/3" />
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -541,7 +503,7 @@ export function Sidebar() {
           <ThreadIcon size={14} />
         </Button>
         <span className="flex-1" />
-        <span className="text-2xs text-faint">MIX-agent</span>
+        <span className="text-xs text-faint">MIX-agent</span>
       </div>
       </aside>
       {sidebarOpen && (
@@ -554,6 +516,7 @@ export function Sidebar() {
           onCommit={commitWidth}
         />
       )}
+      {dialog}
     </>
   );
 }

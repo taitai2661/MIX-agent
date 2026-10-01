@@ -7,8 +7,11 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { Card, Field, Row, Section } from "@/components/layout";
+import { EmptyState } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import type { BrowserProfileView, BrowserStatus } from "@/lib/types";
 
@@ -51,7 +54,11 @@ export function BrowserPane() {
   const [scrollY, setScrollY] = useState(600);
   const [condition, setCondition] = useState("selector");
   const [busy, setBusy] = useState(false);
+  // `null` until the first status read lands. The pane used to show a literal
+  // "…" inside a badge, which read as a status value rather than as "loading".
+  const [loading, setLoading] = useState(true);
   const [log, setLog] = useState<LogEntry[]>([]);
+  const { confirm, dialog } = useConfirm();
 
   const refresh = useCallback(async () => {
     try {
@@ -63,6 +70,8 @@ export function BrowserPane() {
       }
     } catch (e) {
       setLog((l) => [...l, { id: nextId++, action: "info", ok: false, summary: String(e) }]);
+    } finally {
+      setLoading(false);
     }
   }, [workspaceId]);
 
@@ -120,15 +129,21 @@ export function BrowserPane() {
         </Button>
       }>
         <Row className="gap-1.5">
-          <Badge size="sm" className="font-mono">{status?.backend ?? "…"}</Badge>
+          <Badge size="sm" className="font-mono">
+            {status?.backend ?? (loading ? t("読み込み中…") : "—")}
+          </Badge>
           <Badge size="sm">{status?.headless ? t("headless") : t("headed")}</Badge>
           <Badge size="sm">{status?.profiles ?? 0} {t("profiles")}</Badge>
           <Badge size="sm">{status?.artifacts ?? 0} {t("artifacts")}</Badge>
         </Row>
         {status?.executable ? (
-          <code className="break-all text-2xs text-faint">{status.executable}</code>
+          <code className="break-all text-xs text-faint">{status.executable}</code>
+        ) : loading ? (
+          <p className="m-0 inline-flex items-center gap-1.5 text-xs text-muted">
+            <Spinner size={11} /> {t("読み込み中…")}
+          </p>
         ) : (
-          <p className="m-0 text-2xs text-muted">
+          <p className="m-0 text-xs text-muted">
             {t("No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.")}
           </p>
         )}
@@ -147,11 +162,20 @@ export function BrowserPane() {
               </option>
             ))}
           </Select>
-          <code className="min-w-0 flex-1 truncate font-mono text-2xs text-faint">{workspaceId}</code>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs text-faint">{workspaceId}</code>
           <Button
             disabled={busy}
             onClick={async () => {
-              if (!confirm(t("Delete this profile's cookies, storage and cache?"))) return;
+              // Wiping a profile's cookies, storage and cache is not reversible,
+              // so it is a `danger` confirmation like every other destructive
+              // action rather than the native alert it used to be.
+              const ok = await confirm({
+                title: t("プロファイルをリセットしますか？"),
+                description: t("Cookie・localStorage・キャッシュが消えます。"),
+                confirmLabel: t("リセット"),
+                tone: "danger",
+              });
+              if (!ok) return;
               try {
                 await api.browserResetProfile(workspaceId);
                 setWorkspaceId(crypto.randomUUID());
@@ -174,10 +198,9 @@ export function BrowserPane() {
               <Button
                 key={a.id}
                 size="sm"
-                aria-pressed={a.id === action}
+                selected={a.id === action}
                 onClick={() => setAction(a.id)}
                 title={t(a.hint)}
-                className={cn(a.id === action && "border-brand bg-brand-soft text-brand")}
               >
                 <Icon size={11} /> {t(a.label)}
               </Button>
@@ -262,16 +285,16 @@ export function BrowserPane() {
 
         <Row>
           <Button variant="primary" disabled={busy} onClick={() => void run()}>
-            <ChevronRight size={12} /> {busy ? t("Running…") : t("Run")}
+            <ChevronRight size={12} /> {busy ? t("実行中…") : t("実行")}
           </Button>
         </Row>
       </Card>
 
       <Card title={t("Activity")}>
         {log.length === 0 ? (
-          <p className="m-0 text-xs text-faint">{t("No actions yet.")}</p>
+          <EmptyState title={t("No actions yet.")} />
         ) : (
-          <ul className="m-0 flex list-none flex-col p-0">
+          <ul className="flex flex-col">
             {log.map((e) => (
               <li key={e.id} className="border-t border-line py-2 first:border-0 first:pt-0">
                 <Row className="gap-2">
@@ -286,11 +309,16 @@ export function BrowserPane() {
                   )}
                 </Row>
                 {e.detail && (
-                  <details>
-                    <summary className="mt-1 cursor-pointer list-none text-xs text-muted transition-colors hover:text-fg">
+                  <details className="group">
+                    <summary className="mt-1 flex cursor-pointer list-none items-center gap-1 text-xs text-muted transition-colors hover:text-fg">
+                      <ChevronRight
+                        size={11}
+                        aria-hidden="true"
+                        className="shrink-0 transition-transform group-open:rotate-90"
+                      />
                       {t("output")}
                     </summary>
-                    <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs leading-4 text-muted">
+                    <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-4 text-muted">
                       {e.detail}
                     </pre>
                   </details>
@@ -303,22 +331,23 @@ export function BrowserPane() {
 
       {profiles.length > 0 && (
         <Card title={t("Known profiles")}>
-          <ul className="m-0 flex list-none flex-col gap-1 p-0 text-xs">
+          <ul className="flex flex-col gap-1 text-xs">
             {profiles.map((p) => (
               <li key={p.workspace_id} className="flex items-center gap-2">
                 <span className="text-muted">{p.display_name}</span>
-                <code className="font-mono text-2xs text-faint">{p.workspace_id.slice(0, 8)}</code>
+                <code className="font-mono text-xs text-faint">{p.workspace_id.slice(0, 8)}</code>
                 <Badge tone={p.provisioned ? "success" : "neutral"} size="sm">
                   {p.provisioned ? t("ready") : t("empty")}
                 </Badge>
               </li>
             ))}
           </ul>
-          <p className="m-0 text-2xs text-muted">
+          <p className="m-0 text-xs text-muted">
             {t("Each workspace keeps its own cookies, localStorage and cache, matching the agent's workspace.")}
           </p>
         </Card>
       )}
+      {dialog}
     </Section>
   );
 }

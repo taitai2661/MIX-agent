@@ -25,6 +25,7 @@ fn full_settings() -> SettingsView {
         projects_root: Some("/tmp/projects".into()),
         project_doc_max_bytes: Some(65_536),
         project_doc_fallback_filenames: vec!["TEAM_GUIDE.md".into()],
+        onboarding_completed: Some(true),
     }
 }
 
@@ -35,6 +36,28 @@ async fn a_missing_row_reads_back_as_the_defaults() {
     assert_eq!(read, SettingsView::default());
     assert!(read.egress_allowlist.is_empty());
     assert_eq!(read.language, None);
+    assert_eq!(read.onboarding_completed, None);
+}
+
+/// A row written before the onboarding flag existed has no such key. Serde must
+/// fill it in rather than failing the whole document, otherwise upgrading the
+/// app would hand every existing user the wizard again — which is also the
+/// behaviour a fresh install depends on.
+#[tokio::test]
+async fn a_row_without_the_onboarding_key_reads_back_as_never_onboarded() {
+    let storage = temp_storage().await;
+    sqlx::query("INSERT INTO app_settings (id, owner_id, data) VALUES ('singleton', ?, ?)")
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(r#"{"default_mode":"agent","theme":"dark"}"#)
+        .execute(storage.pool())
+        .await
+        .expect("insert legacy row");
+
+    let read = read_settings(storage.pool()).await.expect("read");
+    assert_eq!(read.onboarding_completed, None);
+    // The rest of the legacy document still deserializes.
+    assert_eq!(read.default_mode.as_deref(), Some("agent"));
+    assert_eq!(read.theme.as_deref(), Some("dark"));
 }
 
 #[tokio::test]
@@ -80,6 +103,7 @@ async fn the_second_save_replaces_every_field_and_stays_a_single_row() {
     assert_eq!(read.theme, None);
     assert!(read.egress_allowlist.is_empty());
     assert!(!read.auto_update);
+    assert_eq!(read.onboarding_completed, None);
 }
 
 /// Corrupted storage must not fail the read: the UI wants defaults, not an

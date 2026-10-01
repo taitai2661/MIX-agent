@@ -4,14 +4,14 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 const alertVariants = cva(
-  "flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+  "flex items-start gap-2 rounded-lg border border-transparent px-3 py-2 text-sm",
   {
     variants: {
       tone: {
-        info: "border-transparent bg-info-soft text-info",
-        success: "border-transparent bg-success-soft text-success",
-        warning: "border-transparent bg-warning-soft text-warning",
-        danger: "border-transparent bg-danger-soft text-danger",
+        info: "bg-info-soft text-info",
+        success: "bg-success-soft text-success",
+        warning: "bg-warning-soft text-warning",
+        danger: "bg-danger-soft text-danger",
       },
     },
     defaultVariants: { tone: "info" },
@@ -29,9 +29,20 @@ export interface AlertProps
   extends React.ComponentProps<"div">,
     VariantProps<typeof alertVariants> {
   action?: ReactNode;
+  /** Set when `children` already contain a leading icon, so the alert does not
+   *  render a second one. A verification-failure alert used to show both the
+   *  tone's `CircleAlert` and its own `ShieldAlert`. */
+  hideIcon?: boolean;
 }
 
-export function Alert({ className, tone = "info", action, children, ...props }: AlertProps) {
+export function Alert({
+  className,
+  tone = "info",
+  action,
+  hideIcon = false,
+  children,
+  ...props
+}: AlertProps) {
   const Icon = ICONS[tone ?? "info"];
   return (
     <div
@@ -39,7 +50,7 @@ export function Alert({ className, tone = "info", action, children, ...props }: 
       className={cn(alertVariants({ tone }), className)}
       {...props}
     >
-      <Icon size={14} className="mt-0.5 shrink-0" />
+      {!hideIcon && <Icon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />}
       <div className="min-w-0 flex-1">{children}</div>
       {action}
     </div>

@@ -3,7 +3,7 @@ import { Wrench } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { DataTable, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, TableSkeleton } from "@/components/shared";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Select } from "@/components/ui/input";
 import type { PermissionRuleView, ToolView } from "@/lib/types";
@@ -32,7 +32,9 @@ export function ToolsPane() {
 
   return (
     <Section>
-      {list.length === 0 ? (
+      {tools.isPending ? (
+        <TableSkeleton />
+      ) : list.length === 0 ? (
         <EmptyState icon={<Wrench size={22} />} title={t("ツール")} sub={t("まだ登録されていません。")} />
       ) : (
         <>
@@ -57,7 +59,7 @@ export function ToolsPane() {
                     </Badge>
                     {tool.mixed && (
                       <span
-                        className="text-2xs text-faint"
+                        className="text-xs text-faint"
                         title={t("読み取りは許可、書き込み・削除は承認")}
                       >
                         read / write

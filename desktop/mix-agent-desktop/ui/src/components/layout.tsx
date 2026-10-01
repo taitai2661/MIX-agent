@@ -3,7 +3,6 @@ import { ArrowLeft, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { Button } from "./ui/button";
-import { Label } from "./ui/label";
 
 /** Scrollable page body for a top-level view (Projects, Agents, Schedules). */
 export function Page({
@@ -21,7 +20,7 @@ export function Page({
 }) {
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", className)}>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-6">
+      <div className="mx-auto flex w-full max-w-content flex-col gap-4 px-6 py-6">
         {(title || actions) && (
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -39,11 +38,14 @@ export function Page({
   );
 }
 
-/** Vertical stack of cards, the standard body of a settings tab. */
-export function Section({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("flex flex-col gap-4", className)}>{children}</div>;
-}
-
+/**
+ * The app's only card.
+ *
+ * A near-identical duplicate used to live in `components/ui/card.tsx` as
+ * `Card`/`CardTitle`/`CardBody`, used by exactly one file. Its title slot was
+ * forced on every consumer and the only place that wanted trailing content had
+ * to bolt a `ml-auto` counter onto it — which is what the `action` slot is for.
+ */
 export function Card({
   title,
   icon,
@@ -78,7 +80,22 @@ export function Card({
   );
 }
 
-/** Label + control + optional hint, with consistent vertical rhythm. */
+/** Stacked group of cards, the standard body of a settings or list tab. */
+export function Section({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("flex flex-col gap-4", className)}>{children}</div>;
+}
+
+/** Label + control + optional hint, with consistent vertical rhythm.
+ *
+ *  With a label, a real `<label>` wraps both the visible text and the control,
+ *  so the control gets its accessible name implicitly and no `id`/`htmlFor`
+ *  pair has to be threaded through sixteen call sites. The text is a `<span>`,
+ *  **not** the `Label` component (Radix's `<label>`) — nesting one label inside
+ *  another is invalid HTML and left the inner one pointing at nothing.
+ *
+ *  Without a label it is a plain `<div>`: several callers use this purely for
+ *  the gap, and a wrapping label with no text would swallow the control's name
+ *  rather than supply it. */
 export function Field({
   label,
   hint,
@@ -90,12 +107,19 @@ export function Field({
   children: ReactNode;
   className?: string;
 }) {
-  return (
-    <label className={cn("flex flex-col gap-1.5", className)}>
-      {label && <Label>{label}</Label>}
+  const control = label ? (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted select-none">{label}</span>
       {children}
-      {hint && <span className="text-2xs text-faint">{hint}</span>}
     </label>
+  ) : (
+    children
+  );
+  return (
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      {control}
+      {hint && <span className="text-xs text-faint">{hint}</span>}
+    </div>
   );
 }
 
@@ -142,7 +166,11 @@ export function DataTable<T>({
         <thead>
           <tr className="border-b border-line bg-inset text-2xs text-muted">
             {columns.map((c, i) => (
-              <th key={i} className="px-3 py-1.5 text-start font-medium whitespace-nowrap">
+              <th
+                key={i}
+                scope="col"
+                className="px-3 py-1.5 text-start font-medium whitespace-nowrap"
+              >
                 {c}
               </th>
             ))}
@@ -163,6 +191,110 @@ export function DataTable<T>({
 /** Shared cell padding so callers only supply content. */
 export const td = "px-3 py-1.5 align-middle text-muted";
 export const tdStrong = "px-3 py-1.5 align-middle font-medium text-fg";
+
+/** A `<kbd>` in the keyboard-hint rows. Six of these appeared verbatim across
+ *  the composer's hint bar and the transcript's welcome screen. */
+export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <kbd
+      className={cn(
+        "rounded-sm border border-line bg-surface px-1 font-mono text-xs leading-4 text-muted",
+        className,
+      )}
+    >
+      {children}
+    </kbd>
+  );
+}
+
+/** Nav-style row: icon + label, with a selected state.
+ *
+ *  This exact utility string was pasted into the sidebar's nav, the sidebar's
+ *  project list and the settings nav. The focus ring is not restated — the
+ *  global `:focus-visible` rule in tokens.css covers it. */
+export function NavRow({
+  icon,
+  children,
+  selected = false,
+  trailing,
+  className,
+  ...props
+}: {
+  icon?: ReactNode;
+  children: ReactNode;
+  selected?: boolean;
+  trailing?: ReactNode;
+  className?: string;
+} & Omit<React.ComponentProps<"button">, "className" | "children">) {
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "page" : undefined}
+      className={cn(
+        "flex h-row w-full items-center gap-2 rounded-md px-2 text-sm",
+        "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg",
+        selected && "bg-active font-medium text-fg",
+        className,
+      )}
+      {...props}
+    >
+      {icon && <span className="shrink-0 text-faint">{icon}</span>}
+      <span className="min-w-0 flex-1 truncate text-start">{children}</span>
+      {trailing}
+    </button>
+  );
+}
+
+/** Group heading above a sidebar/settings nav section. */
+export function SectionLabel({
+  children,
+  trailing,
+  className,
+}: {
+  children: ReactNode;
+  trailing?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <h2
+      className={cn(
+        "flex items-center gap-1 px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint",
+        className,
+      )}
+    >
+      <span className="truncate">{children}</span>
+      {trailing}
+    </h2>
+  );
+}
+
+/** A selectable row inside a list, sized by the shared `--row` height. */
+export function ListRow({
+  children,
+  selected = false,
+  className,
+  ...props
+}: {
+  children: ReactNode;
+  selected?: boolean;
+  className?: string;
+} & Omit<React.ComponentProps<"button">, "className" | "children">) {
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "true" : undefined}
+      className={cn(
+        "flex h-row w-full items-center gap-2 rounded-md px-2 text-start",
+        "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg",
+        selected && "bg-active font-medium text-fg",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
 
 /** Header row of a side panel: icon, title, optional trailing controls, close.
  *
@@ -191,10 +323,7 @@ export function PanelHeader({
 }) {
   return (
     <div
-      className={cn(
-        "flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3",
-        className,
-      )}
+      className={cn("flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3", className)}
     >
       {onBack ? (
         <Button variant="ghost" size="icon-sm" title={t("戻る")} aria-label={t("戻る")} onClick={onBack}>

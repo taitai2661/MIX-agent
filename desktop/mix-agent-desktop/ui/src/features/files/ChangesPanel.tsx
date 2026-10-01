@@ -2,38 +2,19 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileDiff, FileText, GitBranch } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { DiffLines, parseUnifiedDiff } from "@/features/chat/DiffView";
 import { useActiveRoot, useGitStatus } from "@/lib/queries";
-import { PanelHeader } from "@/components/layout";
+import { ListRow, PanelHeader } from "@/components/layout";
 import { Alert, Skeleton } from "@/components/ui/alert";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorAlert } from "@/components/shared";
+import { Segmented, SegmentedOption } from "@/components/ui/segmented";
+import { GitStatusBadge } from "@/components/ui/status";
+import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 
 type Scope = "unstaged" | "staged";
-
-function statusLabel(status: string): string {
-  if (status.includes("?")) return t("未追跡");
-  if (status.includes("A")) return t("追加");
-  if (status.includes("D")) return t("削除");
-  if (status.includes("R")) return t("改名");
-  if (status.includes("C")) return t("コピー");
-  return t("変更");
-}
-
-function statusTone(status: string): NonNullable<BadgeProps["tone"]> {
-  if (status.includes("?")) return "info";
-  if (status.includes("D")) return "danger";
-  if (status.includes("A")) return "success";
-  return "warning";
-}
-
-function statusLetter(status: string): string {
-  if (status.includes("?")) return "?";
-  return status.trim().slice(-1) || "M";
-}
 
 /** Render a `git diff` payload: split into per-file blocks for headers. */
 function GitDiffBody({ unified }: { unified: string }) {
@@ -128,28 +109,26 @@ export function ChangesPanel() {
       <PanelHeader icon={<GitBranch size={14} />} title={t("変更")} onClose={close} />
       <div className={panelBody}>
         <div className="flex items-center gap-1.5">
-          <div
-            role="tablist"
-            aria-label={t("変更")}
-            className="inline-flex items-center gap-0.5 rounded-lg bg-inset p-0.5"
-          >
-            {(["unstaged", "staged"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                role="tab"
-                aria-selected={scope === s}
-                onClick={() => setScope(s)}
-                className={cn(
-                  "h-6 rounded-md px-2 text-xs font-medium",
-                  "text-muted transition-colors duration-100 hover:text-fg",
-                  scope === s && "bg-surface text-fg shadow-xs",
-                )}
-              >
-                {s === "unstaged" ? t("作業ツリー") : t("ステージ済み")}
-              </button>
-            ))}
-          </div>
+          {/* Which set of changes is listed, not a panel switch: a radiogroup,
+              matching every other filter in the app. */}
+          <Segmented aria-label={t("変更")}>
+            <SegmentedOption
+              value="unstaged"
+              label={t("作業ツリー")}
+              selected={scope === "unstaged"}
+              onSelect={setScope}
+            >
+              {t("作業ツリー")}
+            </SegmentedOption>
+            <SegmentedOption
+              value="staged"
+              label={t("ステージ済み")}
+              selected={scope === "staged"}
+              onSelect={setScope}
+            >
+              {t("ステージ済み")}
+            </SegmentedOption>
+          </Segmented>
           <span className="flex-1" />
           {status.data?.branch && (
             <Badge size="sm" className="font-mono">{status.data.branch}</Badge>
@@ -166,23 +145,19 @@ export function ChangesPanel() {
           <ul className="flex flex-col gap-0.5">
             {entries.map((entry) => (
               <li key={entry.path}>
-                <button
-                  type="button"
-                  onClick={() => setGitDiffPath(entry.path)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start",
-                    "transition-colors duration-75 hover:bg-hover",
-                    "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
-                  )}
-                >
-                  <Badge tone={statusTone(entry.status)} size="sm" className="shrink-0 font-mono">
-                    {statusLetter(entry.status)}
-                  </Badge>
+                <ListRow onClick={() => setGitDiffPath(entry.path)}>
+                  <GitStatusBadge
+                    letter={gitStatusLetter(entry.status)}
+                    label={gitStatusLabel(entry.status)}
+                    tone={gitStatusTone(entry.status)}
+                  />
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
                     {entry.path}
                   </span>
-                  <span className="shrink-0 text-2xs text-faint">{statusLabel(entry.status)}</span>
-                </button>
+                  <span className="shrink-0 text-xs text-faint">
+                    {gitStatusLabel(entry.status)}
+                  </span>
+                </ListRow>
               </li>
             ))}
           </ul>
@@ -239,7 +214,7 @@ export function FilePreviewPanel() {
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           {file.data.truncated && (
-            <div className="shrink-0 border-b border-line bg-warning-soft px-3 py-1.5 text-2xs text-warning">
+            <div className="shrink-0 border-b border-line bg-warning-soft px-3 py-1.5 text-xs text-warning">
               {t("ファイルが大きすぎるため冒頭のみ表示します")}
             </div>
           )}

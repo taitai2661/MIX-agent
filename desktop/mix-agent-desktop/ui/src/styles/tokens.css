@@ -9,7 +9,6 @@
    Layering:
      @theme          → light values, emits both utilities and CSS variables
      [data-theme]    → dark overrides of the same --color-* variables
-     :root aliases   → legacy var() names, consumed by legacy.css until it dies
    ========================================================================== */
 
 @import "tailwindcss";
@@ -39,6 +38,13 @@
   --color-brand-hover: #1a52b4;
   --color-brand-soft: rgba(31, 95, 208, 0.09);
   --color-focus: rgba(31, 95, 208, 0.35);
+
+  /* Text drawn *on top of* a saturated fill — primary buttons, danger buttons,
+     the "done" check in the onboarding rail. Kept apart from `--color-brand-fg`
+     because danger and success fills need the same treatment and would
+     otherwise each hardcode a literal. In dark mode every one of those fills
+     is a light tint, so the text on top has to be dark, not white. */
+  --color-on-solid: #ffffff;
 
   --color-success: #15803d;
   --color-success-soft: rgba(21, 128, 61, 0.1);
@@ -84,14 +90,27 @@
   --radius-2xl: 16px;
 
   /* -------------------------------------------------------------- motion */
-  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
-  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* `--animate-*` emits the `animate-*` utility, so the recording pulse is a
+     class like any other instead of an inline `animation:` string. Spinner
+     speed is the built-in `animate-spin` and nothing else — the second, faster
+     keyframe that used to live here meant two spinners ran at different speeds
+     in the same view. */
+  --animate-mix-pulse: mix-pulse 1.2s ease-out infinite;
 
   /* ------------------------------------------------------------- shadows */
   --shadow-xs: 0 1px 2px rgba(13, 13, 13, 0.05);
-  --shadow-sm: 0 1px 3px rgba(13, 13, 13, 0.07);
   --shadow-md: 0 6px 20px rgba(13, 13, 13, 0.1);
   --shadow-lg: 0 16px 48px rgba(13, 13, 13, 0.16);
+
+  /* -------------------------------------------------------------- layout */
+  /* The shell's three fixed measurements. They used to be `h-11` / `h-7` /
+     `max-w-[820px]` written at each site, which is how the same header ended
+     up at three different heights. Named tokens make a mismatch a type error
+     in intent rather than something you have to spot by eye. */
+  --container-content: 820px;
+  --spacing-titlebar: 44px;
+  --spacing-control: 32px;
+  --spacing-row: 28px;
 }
 
 [data-theme="dark"] {
@@ -118,6 +137,9 @@
   --color-brand-soft: rgba(111, 155, 255, 0.14);
   --color-focus: rgba(111, 155, 255, 0.45);
 
+  /* Dark-on-tint, not white: every solid fill in this theme is a light colour. */
+  --color-on-solid: #0b1020;
+
   --color-success: #4ade80;
   --color-success-soft: rgba(74, 222, 128, 0.12);
   --color-warning: #fbbf24;
@@ -133,50 +155,12 @@
   --color-diff-del-fg: #ffa198;
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.62);
 }
 
-/* Legacy aliases. Every rule still living in legacy.css reads the old names;
-   this block is what keeps it rendering until each rule is migrated. */
 :root {
   color-scheme: light;
-
-  --bg: var(--color-bg);
-  --bg-inset: var(--color-inset);
-  --bg-sidebar: var(--color-sidebar);
-  --bg-hover: var(--color-hover);
-  --bg-active: var(--color-active);
-  --fg: var(--color-fg);
-  --fg-muted: var(--color-muted);
-  --fg-dim: var(--color-faint);
-  --border: var(--color-line);
-  --border-strong: var(--color-line-strong);
-  --accent: var(--color-fg);
-  --accent-fg: var(--color-bg);
-  --accent-hover: var(--color-active);
-  --composer-bg: var(--color-inset);
-  --link: var(--color-brand);
-  --focus: var(--color-focus);
-  --success: var(--color-success);
-  --success-bg: var(--color-success-soft);
-  --warning: var(--color-warning);
-  --warning-bg: var(--color-warning-soft);
-  --danger: var(--color-danger);
-  --danger-bg: var(--color-danger-soft);
-  --info-bg: var(--color-info-soft);
-  --diff-add: var(--color-diff-add);
-  --diff-add-fg: var(--color-diff-add-fg);
-  --diff-del: var(--color-diff-del);
-  --diff-del-fg: var(--color-diff-del-fg);
-  --shadow-sm: var(--shadow-xs);
-  --shadow-md: var(--shadow-md);
-  --shadow-lg: var(--shadow-lg);
-  --font-ui: var(--font-sans);
-  --titlebar-h: 44px;
-  --sidebar-w: 264px;
-  --right-panel-w: 360px;
 }
 
 /* ------------------------------------------------------------------ base */
@@ -228,7 +212,7 @@ ol {
 }
 
 a {
-  color: var(--color-link);
+  color: var(--color-brand);
   text-decoration: none;
 }
 
@@ -243,9 +227,18 @@ a:hover {
   color: inherit;
 }
 
+/* The single focus ring for the whole app.
+   This used to also be pasted by hand onto a dozen interactive elements as
+   `focus-visible:outline-2 focus-visible:outline-offset-1
+   focus-visible:outline-focus`, two of which disagreed on the offset. Every
+   natively focusable element matches this rule on its own, so the only reason
+   to restate it is to *remove* it — which is what the few elements with their
+   own focus treatment (the composer textarea, the palette input, the resize
+   handle) do by opting out with `outline-none`. */
 :focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 1px;
+  border-radius: var(--radius-sm);
 }
 
 .app-titlebar {
@@ -284,12 +277,9 @@ a:hover {
   background-clip: content-box;
 }
 
-@keyframes mix-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
+/* Consumed through `--animate-mix-pulse` above, so it reaches the tree as the
+   `animate-mix-pulse` utility. There is deliberately no second spinner
+   keyframe: `animate-spin` is the only spinner in the app. */
 @keyframes mix-pulse {
   from {
     transform: scale(1);
@@ -299,10 +289,6 @@ a:hover {
     transform: scale(1.45);
     opacity: 0;
   }
-}
-
-.spin {
-  animation: mix-spin 900ms linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

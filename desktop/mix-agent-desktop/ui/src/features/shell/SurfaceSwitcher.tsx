@@ -1,6 +1,5 @@
 import { Bot, Check, ChevronDown, MessageSquare } from "lucide-react";
 import { useUi, type Surface } from "@/lib/ui";
-import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,25 +49,12 @@ export function SurfaceSwitcher() {
             <DropdownMenuItem
               key={s.id}
               data-testid={`surface-switcher-item-${s.id}`}
-              data-selected={selected}
               onSelect={() => setSurface(s.id)}
-              className={cn(
-                "flex items-start gap-2.5 py-2",
-                selected && "bg-active",
-              )}
+              description={t(s.hint)}
             >
-              <s.Icon size={15} className="mt-0.5 shrink-0 text-faint" />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm font-medium text-fg">{t(s.label)}</span>
-                <span className="text-2xs leading-tight text-muted">{t(s.hint)}</span>
-              </span>
-              {selected && (
-                <Check
-                  size={14}
-                  className="mt-0.5 shrink-0 text-fg"
-                  aria-hidden="true"
-                />
-              )}
+              <s.Icon size={15} className="shrink-0 text-faint" />
+              <span className="min-w-0 flex-1 truncate font-medium">{t(s.label)}</span>
+              {selected && <Check size={14} className="ms-auto shrink-0 text-brand" aria-hidden="true" />}
             </DropdownMenuItem>
           );
         })}

@@ -1,26 +1,31 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Card, DataTable, Field, Row, Section, td, tdStrong } from "@/components/layout";
-import { ErrorBox, EmptyState } from "@/components/shared";
+import { ErrorBox, EmptyState, TableSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
+import { YesNo } from "@/components/ui/status";
 import { Input, Select } from "@/components/ui/input";
+import { MODELS_QUERY_KEY, PROVIDERS_QUERY_KEY, useProviderPresets, useProviders } from "@/lib/queries";
 import { LocalDiscoveryCard } from "./LocalDiscoveryCard";
 import type { ProviderPresetView, ProviderView } from "@/lib/types";
 
 export function ProvidersPane() {
   const queryClient = useQueryClient();
-  const providers = useQuery({ queryKey: ["providers"], queryFn: api.listProviders });
-  const presets = useQuery({ queryKey: ["provider_presets"], queryFn: api.providerPresets });
+  const providers = useProviders();
+  const presets = useProviderPresets();
   const [draftPreset, setDraftPreset] = useState("");
   const [draftLabel, setDraftLabel] = useState("");
   const [draftBaseUrl, setDraftBaseUrl] = useState("");
   const [draftApiKey, setDraftApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   const createProvider = useMutation({
     mutationFn: () => {
@@ -35,8 +40,8 @@ export function ProvidersPane() {
       });
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["providers"] });
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
+      void queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
       setDraftLabel("");
       setDraftBaseUrl("");
       setDraftApiKey("");
@@ -49,8 +54,8 @@ export function ProvidersPane() {
   const deleteProvider = useMutation({
     mutationFn: (id: string) => api.deleteProvider(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["providers"] });
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
+      void queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
     },
   });
 
@@ -62,7 +67,7 @@ export function ProvidersPane() {
     mutationFn: (id: string) => api.connectProvider(id),
     onSuccess: (count, id) => {
       setSyncCounts((prev) => ({ ...prev, [id]: count }));
-      void queryClient.invalidateQueries({ queryKey: ["models"] });
+      void queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
     },
   });
 
@@ -79,17 +84,25 @@ export function ProvidersPane() {
       <LocalDiscoveryCard />
       <Card title={t("プロバイダーを追加")} icon={<Plus size={13} />}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Preset">
-            <Select value={draftPreset} onChange={(e) => onPresetChange(e.target.value)}>
-              <option value="">プリセットを選択…</option>
+          <Field label={t("プリセット")}>
+            <Select
+              value={draftPreset}
+              onChange={(e) => onPresetChange(e.target.value)}
+              disabled={presets.isPending}
+            >
+              {/* The placeholder used to read "choose a preset" and then pop into
+                  fifty real options, which looked like a mis-selection. */}
+              <option value="">
+                {presets.isPending ? t("読み込み中…") : t("プリセットを選択…")}
+              </option>
               {(presets.data ?? []).map((p: ProviderPresetView) => (
                 <option key={p.slug} value={p.slug}>{p.label} — {p.category}</option>
               ))}
             </Select>
           </Field>
-          <Field label="Label">
+          <Field label={t("ラベル")}>
             <Input
-              placeholder="表示名"
+              placeholder={t("表示名")}
               value={draftLabel}
               onChange={(e) => setDraftLabel(e.target.value)}
             />
@@ -101,7 +114,7 @@ export function ProvidersPane() {
               onChange={(e) => setDraftBaseUrl(e.target.value)}
             />
           </Field>
-          <Field label="API Key">
+          <Field label={t("API キー")}>
             <Input
               type="password"
               placeholder="sk-…"
@@ -122,15 +135,19 @@ export function ProvidersPane() {
         </Row>
       </Card>
 
-      {list.length === 0 ? (
+      {providers.isPending ? (
+        <TableSkeleton />
+      ) : list.length === 0 ? (
         <EmptyState
           icon={<KeyRound size={22} />}
           title={t("プロバイダーが未設定です")}
-          sub="プリセットを選んで API キーを入力してください。"
+          sub={t("プリセットを選んで API キーを入力してください。")}
         />
       ) : (
         <DataTable
-          columns={["ラベル", "種類", "Base URL", "API Key", "有効", "モデル", ""]}
+          columns={[
+            t("ラベル"), t("種類"), "Base URL", t("API キー"), t("有効"), t("モデル"), "",
+          ]}
           rows={list}
           rowKey={(p: ProviderView) => p.id}
         >
@@ -141,13 +158,11 @@ export function ProvidersPane() {
               <td className={`${td} font-mono`}>{p.base_url ?? "—"}</td>
               <td className={td}>
                 {p.has_api_key
-                  ? <Badge tone="success" size="sm">保存済</Badge>
-                  : <Badge tone="warning" size="sm">未設定</Badge>}
+                  ? <Badge tone="success" size="sm">{t("保存済み")}</Badge>
+                  : <Badge tone="warning" size="sm">{t("未設定")}</Badge>}
               </td>
               <td className={td}>
-                {p.enabled
-                  ? <Badge tone="success" size="sm">✓</Badge>
-                  : <Badge size="sm">—</Badge>}
+                <YesNo value={p.enabled} onLabel={t("有効")} offLabel={t("無効")} />
               </td>
               <td className={td}>
                 {syncCounts[p.id] !== undefined ? (
@@ -161,26 +176,25 @@ export function ProvidersPane() {
                     disabled={syncProvider.isPending}
                     onClick={() => syncProvider.mutate(p.id)}
                   >
-                    <RefreshCw
-                      size={13}
-                      className={syncProvider.isPending && syncProvider.variables === p.id
-                        ? "animate-spin"
-                        : undefined}
-                    />
+                    {syncProvider.isPending && syncProvider.variables === p.id
+                      ? <Spinner size={13} />
+                      : <RefreshCw size={13} />}
                   </Button>
                 )}
               </td>
               <td className={`${td} w-12`}>
                 <Button
-                  variant="ghost"
+                  variant="ghost-danger"
                   size="icon-sm"
-                  className="text-danger hover:text-danger"
                   title={t("削除")}
                   aria-label={t("削除")}
-                  onClick={() => {
-                    // Every other destructive action in the app confirms
-                    // first; losing a provider also loses its model list.
-                    if (window.confirm(t("このプロバイダーを削除しますか？"))) {
+                  onClick={async () => {
+                    if (await confirm({
+                      title: t("プロバイダーを削除しますか？"),
+                      description: t("このプロバイダーのモデル一覧も消えます。"),
+                      confirmLabel: t("削除"),
+                      tone: "danger",
+                    })) {
                       deleteProvider.mutate(p.id);
                     }
                   }}
@@ -194,6 +208,7 @@ export function ProvidersPane() {
       )}
       {syncProvider.isError && <ErrorBox error={syncProvider.error} />}
       {deleteProvider.isError && <ErrorBox error={deleteProvider.error} />}
+      {dialog}
     </Section>
   );
 }

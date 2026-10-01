@@ -133,6 +133,13 @@ export interface SendMessageOutput {
   run_id: string;
 }
 
+/** Mirrors the Rust `SettingsView` one-for-one.
+ *
+ * Every key is listed even though the UI only edits a handful of them: the
+ * backend replaces the stored document wholesale on every save, so a field the
+ * type forgot to declare would be dropped from the row the next time the user
+ * pressed Save anywhere in Settings.
+ */
 export interface SettingsView {
   default_model_id: string | null;
   default_mode: string | null;
@@ -141,6 +148,10 @@ export interface SettingsView {
   telemetry_consent: boolean;
   language: string | null;
   theme: string | null;
+  projects_root: string | null;
+  project_doc_max_bytes: number | null;
+  project_doc_fallback_filenames: string[];
+  onboarding_completed: boolean | null;
 }
 
 export interface ToolView {

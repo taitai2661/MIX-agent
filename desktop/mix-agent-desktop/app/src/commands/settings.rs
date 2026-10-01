@@ -2,7 +2,17 @@ use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+/// The single settings document.
+///
+/// `#[serde(default)]` sits on the container rather than on individual fields
+/// so one rule covers the whole struct: any key missing from the stored JSON
+/// falls back to `Default` instead of failing the parse. Without it a
+/// hand-edited or truncated row would deserialize to an error and
+/// [`read_settings`] would throw away *every* stored preference, not just the
+/// unreadable one. It also means a field added in a future version reads back
+/// as its default rather than blanking the document written by an older build.
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
 pub struct SettingsView {
     pub default_model_id: Option<String>,
     pub default_mode: Option<String>,
@@ -16,16 +26,25 @@ pub struct SettingsView {
     /// Default parent folder for auto-generated project workspaces
     /// (Projectless chats, legacy backfills). `None` →
     /// `~/Documents/MIX-agent Projects`.
-    #[serde(default)]
     pub projects_root: Option<String>,
     /// Codex-compatible `project_doc_max_bytes`: combined byte cap for the
     /// `AGENTS.md` chain. `None` → 32 KiB.
-    #[serde(default)]
     pub project_doc_max_bytes: Option<u64>,
     /// Codex-compatible `project_doc_fallback_filenames`: extra instruction
     /// filenames consulted after `AGENTS.override.md` / `AGENTS.md`.
-    #[serde(default)]
     pub project_doc_fallback_filenames: Vec<String>,
+    /// Whether the first-run wizard has been finished or explicitly deferred.
+    ///
+    /// `None` is the same as `false` to the UI: a fresh install has never
+    /// written this key, and the wizard must appear. It is persisted rather
+    /// than kept in `localStorage` so that "あとで" survives a webview data
+    /// wipe, travels with a backup/restore, and does not resurrect the wizard
+    /// on another machine once the user has already set the app up.
+    ///
+    /// This is *not* a mirror of "a provider exists": deleting the only
+    /// provider would otherwise re-arm the wizard for someone who already
+    /// finished it.
+    pub onboarding_completed: Option<bool>,
 }
 
 #[tauri::command]

@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  ArrowDown, BookOpen, Brain, FileText, MessageSquare, Search, ShieldAlert, ShieldCheck, Sparkles, Terminal, Wand2,
+  ArrowDown, BookOpen, Brain, ChevronRight, FileText, MessageSquare, Search, ShieldAlert, ShieldCheck, Sparkles, Terminal, Wand2,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -15,6 +15,8 @@ import { useUi } from "@/lib/ui";
 import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/layout";
+import { Spinner } from "@/components/ui/spinner";
 
 export function Transcript({
   messages,
@@ -57,7 +59,7 @@ export function Transcript({
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div
-          className="mx-auto flex w-full max-w-[820px] flex-col gap-6 px-6 py-6"
+          className="mx-auto flex w-full max-w-content flex-col gap-6 px-6 py-6"
           role="log"
           aria-live="polite"
           aria-relevant="additions text"
@@ -107,19 +109,19 @@ function Welcome() {
         </p>
       </div>
       <QuickPrompts />
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-2xs text-faint">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-faint">
         <span className="inline-flex items-center gap-1">
-          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Enter</kbd>
+          <Kbd>Enter</Kbd>
           {t("送信")}
         </span>
         <span className="inline-flex items-center gap-1">
-          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">⇧</kbd>
+          <Kbd>⇧</Kbd>
           +
-          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">Enter</kbd>
+          <Kbd>Enter</Kbd>
           {t("改行")}
         </span>
         <span className="inline-flex items-center gap-1">
-          <kbd className="rounded-sm border border-line bg-surface px-1 font-mono text-2xs leading-4">⌘K</kbd>
+          <Kbd>⌘K</Kbd>
           {t("コマンドパレット")}
         </span>
       </div>
@@ -147,25 +149,21 @@ function QuickPrompts() {
       {QUICK_PROMPTS.map((p) => {
         const Icon = p.icon;
         return (
-          <button
+          <Button
             key={p.id}
-            type="button"
+            variant="default"
             onClick={() => {
               window.dispatchEvent(new CustomEvent("mix:insert-prompt", {
                 detail: { text: p.text, mode: p.mode },
               }));
             }}
-            className={cn(
-              "group flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2.5 text-start",
-              "transition-colors duration-100 hover:border-line-strong hover:bg-hover",
-              "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-            )}
+            className="group h-auto items-start justify-start gap-2 px-3 py-2.5 text-start"
           >
             <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
               <Icon size={12} aria-hidden="true" />
             </span>
             <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{t(p.text)}</span>
-          </button>
+          </Button>
         );
       })}
     </div>
@@ -192,7 +190,7 @@ const MessageItem = memo(function MessageItem({
             {message.attachments.map((a, i) => (
               <span
                 key={i}
-                className="inline-flex items-center gap-1 rounded-md border border-line bg-inset px-1.5 py-0.5 text-2xs text-muted"
+                className="inline-flex items-center gap-1 rounded-md border border-line bg-inset px-1.5 py-0.5 text-xs text-muted"
               >
                 <FileText size={11} />
                 {a.filename ?? a.mime_type}
@@ -203,7 +201,7 @@ const MessageItem = memo(function MessageItem({
         <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-inset px-3.5 py-2 text-sm leading-6 text-fg">
           {message.content}
         </div>
-        <div className="px-1 text-2xs text-faint">{relativeTime(message.created_at)}</div>
+        <div className="px-1 text-xs text-faint">{relativeTime(message.created_at)}</div>
       </div>
     );
   }
@@ -213,7 +211,7 @@ const MessageItem = memo(function MessageItem({
     <div className="flex flex-col gap-1.5">
       <div
         className={cn(
-          "group flex items-center gap-1.5 text-2xs text-faint",
+          "group flex items-center gap-1.5 text-xs text-faint",
           "[&_.actions]:ml-auto [&_.actions]:opacity-0",
           "hover:[&_.actions]:opacity-100 focus-within:[&_.actions]:opacity-100",
         )}
@@ -262,8 +260,15 @@ function Reasoning({ text, streaming = false }: { text: string; streaming?: bool
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
       className="group rounded-lg border border-line bg-inset"
     >
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-1.5 text-2xs font-medium text-muted transition-colors hover:text-fg">
-        <Brain size={12} className="shrink-0" />
+      {/* `list-none` removes the native marker, so the disclosure state needs a
+          affordance of its own: a chevron that rotates with `open`. */}
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-fg">
+        <ChevronRight
+          size={12}
+          aria-hidden="true"
+          className="shrink-0 transition-transform group-open:rotate-90"
+        />
+        <Brain size={12} className="shrink-0" aria-hidden="true" />
         {t("思考プロセス")}
       </summary>
       <div className="max-h-72 overflow-y-auto whitespace-pre-wrap border-t border-line px-3 py-2 text-xs leading-5 text-muted">
@@ -307,15 +312,17 @@ function LiveBlock({ live }: { live: RunTimeline }) {
       ) : (
         busy && (
           <div className="flex items-center gap-1.5 text-xs text-faint">
-            <span className="spin inline-flex">○</span>
+            <Spinner size={12} />
             {t("思考中…")}
           </div>
         )
       )}
       {live.verificationFailed && (
-        <Alert tone="warning">
-          <ShieldAlert size={13} className="mt-0.5 shrink-0" />
-          <span>{live.verificationFailed}</span>
+        <Alert tone="warning" hideIcon>
+          <span className="inline-flex items-start gap-2">
+            <ShieldAlert size={13} className="mt-0.5 shrink-0" />
+            <span>{live.verificationFailed}</span>
+          </span>
         </Alert>
       )}
     </div>
@@ -394,7 +401,7 @@ function ApprovalCard({ live }: { live: RunTimeline }) {
         <ShieldCheck size={15} className="shrink-0" />
         {t("承認が必要です")} — <code className="font-mono text-xs">{approval.name}</code>
       </div>
-      <pre className="mx-3 max-h-44 overflow-auto rounded-md bg-surface/60 p-2 font-mono text-2xs leading-5 text-muted">
+      <pre className="mx-3 max-h-44 overflow-auto rounded-md bg-surface/60 p-2 font-mono text-xs leading-5 text-muted">
         {JSON.stringify(approval.arguments, null, 2)}
       </pre>
       <div className="flex items-center justify-end gap-2 px-3 py-2">

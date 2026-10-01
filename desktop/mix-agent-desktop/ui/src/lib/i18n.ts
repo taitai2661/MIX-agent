@@ -75,7 +75,6 @@ const en: Record<string, string> = {
   "名前を変更": "Rename",
   "削除": "Delete",
   "エクスポート": "Export",
-  "このスレッドを削除しますか？": "Delete this thread?",
   "言語": "Language",
   "テーマ": "Theme",
   "ライト": "Light",
@@ -175,7 +174,6 @@ const en: Record<string, string> = {
   "ローカル LLM を検出": "Detect local LLMs",
   "LM Studio や Ollama などのローカル推論サーバーを自動で探します。": "Automatically look for local inference servers such as LM Studio or Ollama.",
   "この PC で検出できるランタイムはありません。下の手動指定か、上のプリセットから追加してください。": "No runtimes were detected on this machine. Use the manual field below, or add a preset above.",
-  "手動で URL を指定": "Specify a URL manually",
   "Swagger や任意のポートで起動中のサーバーも指定できます。例: http://192.168.1.10:11434/v1": "Also accepts a server on a custom port or a network address. e.g. http://192.168.1.10:11434/v1",
   "取り込む": "Import",
   "取り込み済み": "Imported",
@@ -217,7 +215,6 @@ const en: Record<string, string> = {
   "資料を追加": "Add source",
   "紐づく会話": "Linked chats",
   "このプロジェクトで新しいチャット": "New chat in this project",
-  "プロジェクトを削除しますか？ 会話は残ります。": "Delete this project? Chats are kept.",
   "新規プロジェクト": "New project",
   "プロジェクトを作成": "Create project",
   "プロジェクト名": "Project name",
@@ -261,7 +258,6 @@ const en: Record<string, string> = {
   "アクティビティを表示": "Show activity",
   "サイドパネルを閉じる": "Close side panel",
   "プロバイダーが未設定です": "No providers configured",
-  "このプロバイダーを削除しますか？": "Delete this provider?",
   "接続に失敗しました": "Connection failed",
   "OAuth に失敗しました": "OAuth failed",
   "検出": "Detect",
@@ -292,7 +288,6 @@ const en: Record<string, string> = {
   "ファイル名": "Filename",
   "チャンク": "Chunks",
   "登録日時": "Added at",
-  "Delete \"{name}\"?": "Delete \"{name}\"?",
 
   // Memory pane
   "Memory を追加": "Add memory",
@@ -303,7 +298,6 @@ const en: Record<string, string> = {
   "キーワード (例: rust, deploy, postgres)": "Keyword (e.g. rust, deploy, postgres)",
   "登録済み Memory": "Saved memories",
   "まだ Memory がありません。": "No memories yet.",
-  "Delete \"{title}\"?": "Delete \"{title}\"?",
   "Mark as still valid": "Mark as still valid",
   "Search instead of editing": "Search instead of editing",
   "Revision history": "Revision history",
@@ -317,6 +311,7 @@ const en: Record<string, string> = {
   "説明": "Description",
   "既定権限": "Default permission",
   "権限ルール": "Permission rules",
+  "スコープ付きルール": "Scoped rules",
   "読み取りは許可、書き込み・削除は承認": "Reads are allowed; writes and deletes ask for approval",
 
   // Approvals pane
@@ -342,7 +337,6 @@ const en: Record<string, string> = {
   "Vision": "Vision",
   "Tools": "Tools",
   "Reasoning": "Reasoning",
-  "Verify": "Verify",
 
   // Diff preview
   "binary or unreadable old content": "binary or unreadable old content",
@@ -364,6 +358,15 @@ const en: Record<string, string> = {
   "Memories": "Memories",
   "Skills": "Skills",
   "Active Runs": "Active Runs",
+  "Database Encryption": "Database Encryption",
+  "Encrypted at rest": "Encrypted at rest",
+  "Not encrypted (in-memory + Keychain only)": "Not encrypted (in-memory + Keychain only)",
+  "Encrypted": "Encrypted",
+  "Pending": "Pending",
+  "Master key is present in the OS Keychain": "Master key is present in the OS Keychain",
+  "Master key will be created on first use": "Master key will be created on first use",
+  "Keychain status unknown": "Keychain status unknown",
+  "Database at-rest encryption is not enabled in this build. Conversation logs, run history and tool arguments are stored in plaintext; rely on disk-level encryption (FileVault / BitLocker / LUKS) until the SQLCipher migration lands.": "Database at-rest encryption is not enabled in this build. Conversation logs, run history and tool arguments are stored in plaintext; rely on disk-level encryption (FileVault / BitLocker / LUKS) until the SQLCipher migration lands.",
 
   // Browser pane
   "Backend": "Backend",
@@ -378,12 +381,8 @@ const en: Record<string, string> = {
   "Workspace profile": "Workspace profile",
   "new profile": "new profile",
   "(not provisioned)": "(not provisioned)",
-  "Delete this profile's cookies, storage and cache?":
-    "Delete this profile's cookies, storage and cache?",
   "Reset": "Reset",
   "Action": "Action",
-  "Running…": "Running…",
-  "Run": "Run",
   "Activity": "Activity",
   "No actions yet.": "No actions yet.",
   "ok": "ok",
@@ -457,6 +456,170 @@ const en: Record<string, string> = {
   // Composer / transcript landmarks
   "メッセージを入力": "Write a message",
   "会話": "Conversation",
+
+  // First-run wizard. The rail labels are translated at render from a table in
+  // `Onboarding.tsx`, so they never appear as a `t()` literal in a test sweep.
+  "セットアップの進行状況": "Setup progress",
+  "モデル提供元": "Model provider",
+  "作業フォルダ": "Working folder",
+  "あとで設定する": "Set up later",
+  "設定はあとから変更できます": "You can change all of this later",
+  "始める": "Get started",
+  "ようこそ": "Welcome",
+  "表示言語": "Display language",
+  "ローカルで動く AI ワークスペースです。": "A local AI workspace that runs on your own machine.",
+  "設定はあとからいつでも変更できます。": "You can change this at any time, from Settings.",
+  "質問、对談、アイデア出し": "Questions, discussion, brainstorming",
+  "思考モード": "Thinking mode",
+  "長い推論の過程をテーブルで": "Shows the steps of a long chain of thought",
+  "フォルダの中のファイルを読み書き": "Reads and writes files inside a folder",
+  "ブラウザ操作": "Browser control",
+  "実際にブラウザを操作して検証": "Drives a real browser to verify results",
+
+  "モデル提供元の種類": "Kind of model provider",
+  "この PC で動かす": "Runs on this PC",
+  "クラウド API": "Cloud API",
+  "API キーは不要です。电脑上だけで 움직きます。": "No API key. Everything stays on this machine.",
+  "LM Studio や Ollama などが起動中か調べます。": "Looks for a running LM Studio, Ollama, or similar.",
+  "見つかりませんでした。LM Studio か Ollama を起動してからもう一度検出するか、「クラウド API」タブを使ってください。":
+    "Nothing was found. Start LM Studio or Ollama and scan again, or use the Cloud API tab.",
+  "API キーは OS の資格情報ストレージに保存され、設定画面には表示されません。":
+    "The API key is stored in your OS credential store and is never shown again in Settings.",
+  "API キー": "API key",
+  "このプロバイダーでは API キーが必要です": "This provider requires an API key",
+  "このプロバイダーでは API キーは任意です": "This provider does not need an API key",
+  "選択してください…": "Choose one…",
+  "プリセットを選ぶと入力されます": "Filled in from the preset",
+  "確認中…": "Checking…",
+  "接続してモデル一覧を取得": "Connect and fetch models",
+
+  "フォルダを選択してください": "Choose a folder first",
+  "MIX-agent がファイルを読む・書く場所です。プロジェクトを作ると、そのフォルダの中だけが対象になります。":
+    "This is where MIX-agent reads and writes files. Creating a project limits it to the contents of that folder.",
+  "既存のフォルダを選んでください（新しいフォルダは作成されません）":
+    "Pick a folder that already exists — this wizard does not create one.",
+  "このプロジェクトを使う": "Use this project",
+  "このフォルダを使う": "Use this folder",
+  "あとから設定する": "Decide later",
+
+  "準備ができました": "You're all set",
+  "チャットを始められます。ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。":
+    "You can start chatting. Reading or writing files, and running shell commands, always ask first.",
+  "件": "models",
+  "未設定（チャットはプロジェクトなしで始まります）":
+    "Not set (chats will start without a project)",
+  "チャットを始める": "Start chatting",
+  "設定はここで変えられます": "You can change any of this from Settings",
+
+  // Status indicators. These used to be bare `✓` glyphs and coloured dots with
+  // no text at all, so the state was unreachable without seeing the colour;
+  // see components/ui/status.tsx.
+  "対応": "Yes",
+
+  // Confirmations. These used to be `window.confirm` strings; the dialog
+  // primitive splits them into a title and a consequence, so the question and
+  // the "what you lose" line are separate keys.
+  "スレッドを削除しますか？": "Delete this thread?",
+  "プロバイダーを削除しますか？": "Delete this provider?",
+  "このプロバイダーのモデル一覧も消えます。": "Its model list goes with it.",
+  "MCP 接続を削除しますか？": "Delete this MCP connection?",
+  "Memory を削除しますか？": "Delete this memory?",
+  "ドキュメントを削除しますか？": "Delete this document?",
+  "プロジェクトを削除しますか？": "Delete this project?",
+  "会話は残ります。": "Its chats are kept.",
+  "資料を削除しますか？": "Remove this reference?",
+  "この版に戻しますか？": "Restore this revision?",
+  "{at} の内容で上書きされます。": "The current text is overwritten with the version from {at}.",
+
+  // Schedules — this pane was almost entirely untranslated, including the
+  // enable/disable toggle's accessible name, which was the literal "Stop".
+  "Cron で定期実行。アプリ起動中 (および次回起動時に 1 回) 自動実行されます。":
+    "Runs on a cron schedule, while the app is open and once more at next launch.",
+  "定期ジョブを追加": "Add a scheduled job",
+  "登録済みジョブ": "Scheduled jobs",
+  "ジョブはまだありません。": "No scheduled jobs yet.",
+  "ジョブを削除しますか？": "Delete this job?",
+  "Job 名": "Job name",
+  "Cron 式": "Cron expression",
+  "Cron 式 (例: 0 9 * * *)": "Cron expression (e.g. 0 9 * * *)",
+  "実行プロンプト…": "Prompt to run…",
+  "モデル: 会話の既定": "Model: the chat's default",
+  "次回": "Next",
+  "最終実行": "Last run",
+  "停止中": "Paused",
+  "有効にする": "Enable",
+  "登録": "Add",
+
+  // Skills — likewise untranslated.
+  "取り込み元": "Import from",
+  "SKILL.md を貼る": "Paste SKILL.md",
+  "zip ファイル": "zip file",
+  "ディレクトリ": "Directory",
+  ".skill.zip を選択": "Choose a .skill.zip",
+  "選択": "Choose",
+  "まだ Skill はありません。": "No skills yet.",
+  "resources": "resources",
+  "{name} を {target} に書き出しました": "Exported {name} to {target}",
+  "同梱リソースを読み込む": "Load bundled resources",
+  "同梱リソースはありません。": "No bundled resources.",
+
+  // Browser
+  "プロファイルをリセットしますか？": "Reset this profile?",
+  "Cookie・localStorage・キャッシュが消えます。": "Its cookies, localStorage and cache are cleared.",
+  "リセット": "Reset",
+  "実行": "Run",
+
+  // Local runtime scan
+  "検出中…": "Scanning…",
+  "ランタイム": "Runtime",
+  "オンライン": "Online",
+  "{hosts} を {ms}ms で走査 — {found}": "Swept {hosts} in {ms}ms — {found}",
+  "{n} 件が起動中": "{n} running",
+  "起動中のランタイムは見つかりませんでした": "No running runtimes found",
+  "{port} 番: {note}": "Port {port}: {note}",
+  "{port} 番は応答していますが、LLM サーバーではありません":
+    "Port {port} answered but is not an LLM server",
+  "{label} を追加しました（{n} モデル）": "Added {label} ({n} models)",
+  "{label} / {n} モデル — 上のテーブルから追加できます":
+    "{label} / {n} models — add it from the table above",
+  "Skill を削除しますか？": "Delete this skill?",
+
+  // MCP
+  "MCP サーバはまだありません": "No MCP servers yet",
+  "接続を追加して「すべて接続」を押すと agent が使える tool として公開されます。":
+    "Add a connection and press Connect all to publish its tools to the agent.",
+  "すべて接続": "Connect all",
+  "再接続": "Reconnect",
+  "接続中…": "Connecting…",
+  "接続済み": "Connected",
+  "未接続": "Not connected",
+  "ツール数": "Tools",
+  "状態": "Status",
+  "MCP サーバを追加": "Add an MCP server",
+  "起動コマンド (例: npx -y @modelcontextprotocol/server-filesystem /workspace)":
+    "Launch command (e.g. npx -y @modelcontextprotocol/server-filesystem /workspace)",
+  "登録済みサーバ": "Registered servers",
+  "{count} 個の MCP tool を agent から使えます。": "{count} MCP tools are now available to the agent.",
+  "ブラウザでサインインを完了してください。アプリがリダイレクトを受け取ります。":
+    "Finish signing in in the browser; the app picks up the redirect.",
+
+  // Providers / models
+  "プリセットを選んで API キーを入力してください。": "Pick a preset and enter an API key.",
+  "プリセット": "Preset",
+  "プリセットを選択…": "Choose a preset…",
+  "表示名": "Display name",
+  "種類": "Kind",
+  "保存済み": "Saved",
+  "能力を確認": "Verify",
+
+  // Memory
+  "検証済み": "Verified",
+  "{n} モデル": "{n} models",
+
+  "セットアップガイド": "Setup guide",
+  "もう一度見る": "Show me again",
+  "モデル提供元の追加方法と、作業フォルダの選び方を確認できます。":
+    "Walk through adding a model provider and choosing a working folder.",
 };
 
 /** Translate a Japanese UI key into the active display language. */

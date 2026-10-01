@@ -60,7 +60,7 @@ export function BackupSettings() {
   return (
     <Section>
       <Card title={t("バックアップ / 復元")} icon={<Archive size={13} />}>
-        <p className="m-0 text-2xs text-faint">
+        <p className="m-0 text-xs text-faint">
           {t(
             "データベース全体をスナップショットし、圧縮・暗号化します (Argon2id + AES-256-GCM)。API キーは OS キーチェーンに残るため含まれません。",
           )}

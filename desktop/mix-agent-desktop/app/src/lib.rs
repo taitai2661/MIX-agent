@@ -405,16 +405,23 @@ pub async fn build_app_state(
 }
 
 /// Read the egress allowlist out of `app_settings`.
+///
+/// `app_settings` holds one JSON document per row, and `SettingsView` has no
+/// `rename_all`, so every key on disk is snake_case (`egress_allowlist`). This
+/// used to poke at the raw JSON looking for `egressAllowlist`, which never
+/// matches, so an allowlist entered in Settings → Network was silently
+/// discarded and the tools ran wide-open to every public domain. Going through
+/// `read_settings` keeps the two sides from drifting again — a renamed field
+/// moves both at once, and a field added without `#[serde(default)]` still
+/// degrades to the defaults rather than failing the launch.
+///
+/// An empty allowlist is unchanged: `EgressPolicy` documents "no allowlist set
+/// ⇒ allow public domains, deny private IPs", so only users who actually
+/// configured one see a behaviour change.
 pub(crate) async fn load_egress_policy(storage: &Storage) -> mixd_tools::EgressPolicy {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT data FROM app_settings WHERE id = 'singleton'")
-            .fetch_optional(storage.pool())
-            .await
-            .unwrap_or(None);
-    let allowlist = row
-        .and_then(|(raw,)| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|v| v.get("egressAllowlist").cloned())
-        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+    let allowlist = crate::commands::settings::read_settings(storage.pool())
+        .await
+        .map(|settings| settings.egress_allowlist)
         .unwrap_or_default();
     mixd_tools::EgressPolicy::from_allowlist(allowlist)
 }
@@ -846,5 +853,61 @@ mod tests {
             Some(super::APP_IDENTIFIER),
             "APP_IDENTIFIER drifted from tauri.conf.json"
         );
+    }
+
+    async fn temp_storage() -> mixd_storage::Storage {
+        let dir = std::env::temp_dir().join(format!("mixd-egress-test-{}", uuid::Uuid::new_v4()));
+        mixd_storage::Storage::open(&dir)
+            .await
+            .expect("open temp storage")
+    }
+
+    /// The allowlist entered in Settings → Network has to survive the round trip
+    /// into the policy the tools actually enforce. It is stored snake_case
+    /// (`SettingsView` has no `rename_all`), and the loader once looked for
+    /// `egressAllowlist` instead — so every configured allowlist was silently
+    /// dropped and `web_fetch` ran wide-open to every public domain.
+    #[tokio::test]
+    async fn the_configured_egress_allowlist_reaches_the_policy() {
+        let storage = temp_storage().await;
+        sqlx::query("INSERT INTO app_settings (id, owner_id, data) VALUES ('singleton', ?, ?)")
+            .bind(mixd_storage::records::SINGLE_USER_ID)
+            .bind(r#"{"egress_allowlist":["api.example.com","*.internal.test"]}"#)
+            .execute(storage.pool())
+            .await
+            .expect("insert settings row");
+
+        let policy = super::load_egress_policy(&storage).await;
+        assert_eq!(policy.allowlist, ["api.example.com", "*.internal.test"]);
+        assert!(policy.enforce("https://api.example.com/v1").is_ok());
+        assert!(policy.enforce("https://elsewhere.test/v1").is_err());
+    }
+
+    /// The wide-open default is a documented behaviour, not an accident: an
+    /// empty allowlist allows public hosts and still refuses private IPs.
+    #[tokio::test]
+    async fn an_unconfigured_allowlist_stays_wide_open_for_public_hosts() {
+        let storage = temp_storage().await;
+        let policy = super::load_egress_policy(&storage).await;
+        assert!(policy.allowlist.is_empty());
+        assert!(policy.enforce("https://example.com/").is_ok());
+        assert!(policy.enforce("https://127.0.0.1/").is_err());
+    }
+
+    /// A row written by an older build must not fail the launch: the tools fall
+    /// back to the defaults rather than the app refusing to start.
+    #[tokio::test]
+    async fn an_unreadable_settings_row_still_yields_a_usable_policy() {
+        let storage = temp_storage().await;
+        sqlx::query(
+            "INSERT INTO app_settings (id, owner_id, data) VALUES ('singleton', ?, 'not json')",
+        )
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .execute(storage.pool())
+        .await
+        .expect("insert garbage row");
+
+        let policy = super::load_egress_policy(&storage).await;
+        assert!(policy.allowlist.is_empty());
     }
 }

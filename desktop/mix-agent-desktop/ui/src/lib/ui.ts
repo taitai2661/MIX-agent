@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getLanguage, setLanguage, type Language } from "./i18n";
-import { applyTheme, storeTheme, type Theme } from "./theme";
+import { storeTheme, type Theme } from "./theme";
 
 export type View = "chat" | "agents" | "projects" | "schedules" | "settings";
 
@@ -90,6 +90,16 @@ interface UiState {
   setTheme: (theme: Theme) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /** Force the first-run wizard open for this session.
+   *
+   * Deliberately *not* persisted. Whether the wizard shows on its own is a
+   * question about the installation (has anything been set up yet?), and that
+   * answer lives in the backend; this flag only covers "the user just asked to
+   * see it again from Settings". Writing it to localStorage would make
+   * dismissing the wizard permanent in a way Settings cannot undo.
+   */
+  onboardingForcedOpen: boolean;
+  setOnboardingForcedOpen: (open: boolean) => void;
 }
 
 const SIDEBAR_KEY = "mix-agent-sidebar-open";
@@ -300,10 +310,6 @@ export const useUi = create<UiState>((set) => ({
   },
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  onboardingForcedOpen: false,
+  setOnboardingForcedOpen: (onboardingForcedOpen) => set({ onboardingForcedOpen }),
 }));
-
-/** Apply the stored theme once at boot (before React renders). */
-export function initTheme(theme: Theme): void {
-  applyTheme(theme);
-  useUi.setState({ theme });
-}

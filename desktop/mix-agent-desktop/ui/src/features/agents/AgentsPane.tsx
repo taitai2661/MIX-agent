@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { Card, Field, Page, Row } from "@/components/layout";
-import { EmptyState, ErrorBadge } from "@/components/shared";
+import { EmptyState, ErrorBadge, ListSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -59,9 +59,8 @@ export function AgentsPane() {
                 className={cn(
                   "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1",
                   "text-xs transition-colors duration-100",
-                  checked
-                    ? "border-brand bg-brand-soft text-brand"
-                    : "border-line bg-surface text-muted hover:border-line-strong hover:text-fg",
+                  "border-line bg-surface text-muted hover:border-line-strong hover:text-fg",
+                  "has-[:checked]:border-brand has-[:checked]:bg-brand-soft has-[:checked]:text-brand",
                 )}
               >
                 <input
@@ -91,7 +90,9 @@ export function AgentsPane() {
         </Row>
       </Card>
 
-      {list.length === 0 ? (
+      {agents.isPending ? (
+        <ListSkeleton />
+      ) : list.length === 0 ? (
         <EmptyState icon={<Bot size={22} />} title={t("エージェント")} sub={t("まだ登録されていません。")} />
       ) : (
         <div className="flex flex-col gap-3">
@@ -99,7 +100,7 @@ export function AgentsPane() {
             <Card key={a.id}>
               <Row align="between">
                 <strong className="text-sm text-fg">{a.name}</strong>
-                <span className="text-2xs text-faint">{relativeTime(a.updated_at)}</span>
+                <span className="text-xs text-faint">{relativeTime(a.updated_at)}</span>
               </Row>
               <Row className="gap-1">
                 {a.tool_ids.map((id) => (

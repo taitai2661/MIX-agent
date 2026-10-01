@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, KeyRound, Plug, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
+import { KeyRound, Plug, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { Card, DataTable, Field, Row, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState, ErrorBadge } from "@/components/shared";
+import { EmptyState, ErrorBadge, TableSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
+import { useConfirm } from "@/components/ui/dialog";
+import { YesNo } from "@/components/ui/status";
 import type { McpConnectionView } from "@/lib/types";
 
 export function McpPane() {
@@ -18,6 +20,7 @@ export function McpPane() {
   const [draftTransport, setDraftTransport] = useState("stdio");
   const [draftCommand, setDraftCommand] = useState("");
   const [draftUrl, setDraftUrl] = useState("");
+  const { confirm, dialog } = useConfirm();
   const [toolCount, setToolCount] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -53,7 +56,7 @@ export function McpPane() {
     mutationFn: api.connectMcp,
     onSuccess: (count) => {
       setToolCount(count);
-      setNotice(`${count} MCP tool(s) available to the agent.`);
+      setNotice(tf("{count} 個の MCP tool を agent から使えます。", { count }));
       void invalidate();
     },
     onError: (e) => setNotice(t("接続に失敗しました") + `: ${errorMessage(e)}`),
@@ -63,7 +66,7 @@ export function McpPane() {
   const oauth = useMutation({
     mutationFn: (id: string) => api.startMcpOauth(id),
     onSuccess: async (out) => {
-      setNotice("Complete sign-in in the browser; the app picks up the redirect.");
+      setNotice(t("ブラウザでサインインを完了してください。アプリがリダイレクトを受け取ります。"));
       try {
         await api.openExternal(out.authorization_url);
       } catch {
@@ -77,10 +80,10 @@ export function McpPane() {
 
   return (
     <Section>
-      <Card title="MCP サーバを追加" icon={<Plus size={13} />}>
+      <Card title={t("MCP サーバを追加")} icon={<Plus size={13} />}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Name">
-            <Input placeholder="名前" value={draftName} onChange={(e) => setDraftName(e.target.value)} />
+          <Field label={t("名前")}>
+            <Input placeholder={t("名前")} value={draftName} onChange={(e) => setDraftName(e.target.value)} />
           </Field>
           <Field label="Transport">
             <Select value={draftTransport} onChange={(e) => setDraftTransport(e.target.value)}>
@@ -92,7 +95,7 @@ export function McpPane() {
         {draftTransport === "stdio" ? (
           <Field label="Command">
             <Input
-              placeholder="起動コマンド (例: npx -y @modelcontextprotocol/server-filesystem /workspace)"
+              placeholder={t("起動コマンド (例: npx -y @modelcontextprotocol/server-filesystem /workspace)")}
               value={draftCommand}
               onChange={(e) => setDraftCommand(e.target.value)}
             />
@@ -119,7 +122,7 @@ export function McpPane() {
       </Card>
 
       <Card
-        title="登録済みサーバ"
+        title={t("登録済みサーバ")}
         icon={<Server size={13} />}
         action={
           <Row className="flex-nowrap gap-1.5">
@@ -129,25 +132,29 @@ export function McpPane() {
               disabled={connect.isPending}
               onClick={() => connect.mutate()}
             >
-              <Plug size={11} /> {connect.isPending ? "接続中…" : "すべて接続"}
+              <Plug size={11} /> {connect.isPending ? t("接続中…") : t("すべて接続")}
             </Button>
             <Button size="sm" disabled={connect.isPending} onClick={() => connect.mutate()}>
-              <RefreshCw size={11} /> 再接続
+              <RefreshCw size={11} /> {t("再接続")}
             </Button>
           </Row>
         }
       >
-        {toolCount !== null && <Badge tone="success" size="sm">{toolCount} tools</Badge>}
+        {toolCount !== null && (
+          <Badge tone="success" size="sm">{`${toolCount} ${t("件")}`}</Badge>
+        )}
         {notice && <p className="m-0 text-xs text-muted">{notice}</p>}
-        {list.length === 0 ? (
+        {connections.isPending ? (
+          <TableSkeleton />
+        ) : list.length === 0 ? (
           <EmptyState
             icon={<Server size={22} />}
-            title="MCP サーバはまだありません"
-            sub="接続を追加して「すべて接続」を押すと agent が使える tool として公開されます。"
+            title={t("MCP サーバはまだありません")}
+            sub={t("接続を追加して「すべて接続」を押すと agent が使える tool として公開されます。")}
           />
         ) : (
           <DataTable
-            columns={["名前", "Transport", "状態", "有効", "tools", ""]}
+            columns={[t("名前"), "Transport", t("状態"), t("有効"), t("ツール数"), ""]}
             rows={list}
             rowKey={(c: McpConnectionView) => c.id}
           >
@@ -157,13 +164,11 @@ export function McpPane() {
                 <td className={td}><Badge size="sm" className="font-mono">{c.transport}</Badge></td>
                 <td className={td}>
                   <Badge tone={c.status === "connected" ? "success" : "warning"} size="sm">
-                    {c.status}
+                    {c.status === "connected" ? t("接続済み") : t("未接続")}
                   </Badge>
                 </td>
                 <td className={td}>
-                  {c.enabled
-                    ? <Badge tone="success" size="sm"><Check size={10} /></Badge>
-                    : <Badge size="sm">—</Badge>}
+                  <YesNo value={c.enabled} onLabel={t("有効")} offLabel={t("無効")} />
                 </td>
                 <td className={td}>{c.tool_count}</td>
                 <td className={`${td} w-20`}>
@@ -180,12 +185,23 @@ export function McpPane() {
                       </Button>
                     )}
                     <Button
-                      variant="ghost"
+                      variant="ghost-danger"
                       size="icon-sm"
-                      className="text-danger hover:text-danger"
                       title={t("削除")}
                       aria-label={t("削除")}
-                      onClick={() => remove.mutate(c.id)}
+                      onClick={async () => {
+                        // Deleting an MCP server used to be the one destructive
+                        // action with no confirmation at all, while the provider
+                        // and thread deletions right next to it had one.
+                        if (await confirm({
+                          title: t("MCP 接続を削除しますか？"),
+                          description: c.name,
+                          confirmLabel: t("削除"),
+                          tone: "danger",
+                        })) {
+                          remove.mutate(c.id);
+                        }
+                      }}
                     >
                       <Trash2 size={13} />
                     </Button>
@@ -196,6 +212,7 @@ export function McpPane() {
           </DataTable>
         )}
       </Card>
+      {dialog}
     </Section>
   );
 }

@@ -3,12 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, FileText, Search, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
-import { t, tf } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { Card, DataTable, Row, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState, ErrorBadge } from "@/components/shared";
+import { EmptyState, ErrorBadge, ErrorBox, TableSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import type { KnowledgeDocView, KnowledgeSearchHit } from "@/lib/types";
 
 export function KnowledgePane() {
@@ -18,6 +20,9 @@ export function KnowledgePane() {
   const [filename, setFilename] = useState("pasted.md");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeSearchHit[] | null>(null);
+  const [searchError, setSearchError] = useState<unknown>(null);
+  const [searching, setSearching] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   const paste = useMutation({
     mutationFn: () => api.ingestKnowledge({ filename, text }),
@@ -37,7 +42,20 @@ export function KnowledgePane() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["knowledge"] }),
   });
 
-  const search = async () => setHits(await api.searchKnowledge(query, 10));
+  // Same as the memory pane: a failed search used to reject into nothing, so
+  // the results list just stayed empty with no explanation.
+  const search = async () => {
+    setSearchError(null);
+    setSearching(true);
+    try {
+      setHits(await api.searchKnowledge(query, 10));
+    } catch (error) {
+      setHits(null);
+      setSearchError(error);
+    } finally {
+      setSearching(false);
+    }
+  };
 
   return (
     <Section>
@@ -92,13 +110,16 @@ export function KnowledgePane() {
               if (e.key === "Enter" && query.trim()) void search();
             }}
           />
-          <Button disabled={!query.trim()} onClick={() => void search()}>
-            <Search size={12} /> {t("検索")}
+          <Button disabled={!query.trim() || searching} onClick={() => void search()}>
+            {searching ? <Spinner size={12} /> : <Search size={12} />} {t("検索")}
           </Button>
         </Row>
+        {searchError != null && <ErrorBox error={searchError} />}
         {hits && (
-          <ul className="m-0 flex list-none flex-col gap-2 p-0 text-xs">
-            {hits.length === 0 && <li className="text-faint">{t("該当なし")}</li>}
+          <ul className="flex flex-col gap-2 text-xs">
+            {hits.length === 0 && (
+              <li className="text-faint">{t("該当なし")}</li>
+            )}
             {hits.map((h) => (
               <li key={h.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
                 <Row className="gap-1.5">
@@ -113,7 +134,9 @@ export function KnowledgePane() {
       </Card>
 
       <h2 className="text-sm font-semibold text-fg">{t("登録済みドキュメント")}</h2>
-      {(docs.data ?? []).length === 0 ? (
+      {docs.isPending ? (
+        <TableSkeleton />
+      ) : (docs.data ?? []).length === 0 ? (
         <EmptyState icon={<BookOpen size={22} />} title={t("まだドキュメントがありません。")} />
       ) : (
         <DataTable
@@ -128,12 +151,20 @@ export function KnowledgePane() {
               <td className={td}>{new Date(d.created_at).toLocaleString()}</td>
               <td className={`${td} w-12`}>
                 <Button
-                  variant="ghost"
+                  variant="ghost-danger"
                   size="icon-sm"
-                  className="text-danger hover:text-danger"
                   title={t("削除")}
                   aria-label={t("削除")}
-                  onClick={() => { if (confirm(tf("Delete \"{name}\"?", { name: d.filename }))) remove.mutate(d.doc_id); }}
+                  onClick={async () => {
+                    if (await confirm({
+                      title: t("ドキュメントを削除しますか？"),
+                      description: d.filename,
+                      confirmLabel: t("削除"),
+                      tone: "danger",
+                    })) {
+                      remove.mutate(d.doc_id);
+                    }
+                  }}
                 >
                   <Trash2 size={13} />
                 </Button>
@@ -142,6 +173,7 @@ export function KnowledgePane() {
           )}
         </DataTable>
       )}
+      {dialog}
     </Section>
   );
 }

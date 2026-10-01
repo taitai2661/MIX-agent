@@ -9,9 +9,10 @@ import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useProjects } from "@/lib/queries";
 import { useUi } from "@/lib/ui";
-import { Card, Field, Page, Row } from "@/components/layout";
-import { EmptyState, ErrorBadge } from "@/components/shared";
+import { Card, Field, ListRow, Page, Row } from "@/components/layout";
+import { EmptyState, ErrorBadge, ListSkeleton } from "@/components/shared";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { ProjectView } from "@/lib/types";
@@ -28,6 +29,7 @@ export function ProjectsPane() {
   const setActiveProjectId = useUi((s) => s.setActiveProjectId);
   const mode = useUi((s) => s.mode);
   const modelId = useUi((s) => s.modelId);
+  const { confirm, dialog } = useConfirm();
 
   const projects = useProjects();
   const conversations = useConversations();
@@ -148,10 +150,10 @@ export function ProjectsPane() {
               {t("フォルダを選択")}
             </Button>
           </Row>
-          <p className="m-0 text-2xs text-faint">
+          <p className="m-0 text-xs text-faint">
             {t("このフォルダがエージェントの作業ディレクトリになります")}
           </p>
-          <p className="m-0 text-2xs text-faint">
+          <p className="m-0 text-xs text-faint">
             <FileText size={11} className="me-0.5 inline-block align-[-1.5px]" /> AGENTS.md /{" "}
             CLAUDE.md {t("を検出すると自動で読み込みます")}
           </p>
@@ -173,7 +175,7 @@ export function ProjectsPane() {
             >
               {t("指示を保存")}
             </Button>
-            <span className="text-2xs text-faint">
+            <span className="text-xs text-faint">
               {instructionsDraft.length} / {INSTRUCTIONS_MAX}
             </span>
           </Row>
@@ -189,14 +191,23 @@ export function ProjectsPane() {
                       {item.slice(0, 120)}
                     </span>
                     <Button
-                      variant="ghost"
+                      variant="ghost-danger"
                       size="icon-sm"
-                      className="text-danger hover:text-danger"
                       title={t("削除")}
                       aria-label={t("削除")}
-                      onClick={() =>
-                        update.mutate({ sources: selected.sources.filter((_, i) => i !== index) })
-                      }
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: t("資料を削除しますか？"),
+                          description: item.slice(0, 120),
+                          confirmLabel: t("削除"),
+                          tone: "danger",
+                        });
+                        if (ok) {
+                          update.mutate({
+                            sources: selected.sources.filter((_, i) => i !== index),
+                          });
+                        }
+                      }}
                     >
                       <Trash2 size={12} />
                     </Button>
@@ -227,7 +238,7 @@ export function ProjectsPane() {
             >
               <Plus size={12} /> {t("資料を追加")}
             </Button>
-            <span className="text-2xs text-faint">
+            <span className="text-xs text-faint">
               {selected.sources.length} / {SOURCES_MAX}
             </span>
           </Row>
@@ -245,17 +256,16 @@ export function ProjectsPane() {
             <ul className="flex flex-col gap-0.5">
               {linked.map((c) => (
                 <li key={c.id}>
-                  <button
-                    type="button"
-                    className="flex w-full flex-col rounded-md px-2 py-1.5 text-start transition-colors hover:bg-hover"
+                  <ListRow
+                    className="h-auto flex-col items-start gap-0.5 py-1.5"
                     onClick={() => {
                       setConversationId(c.id);
                       setView("chat");
                     }}
                   >
-                    <span className="truncate text-sm font-medium text-fg">{c.title}</span>
-                    <span className="text-2xs text-faint">{relativeTime(c.updated_at)}</span>
-                  </button>
+                    <span className="w-full truncate text-sm font-medium text-fg">{c.title}</span>
+                    <span className="text-xs text-faint">{relativeTime(c.updated_at)}</span>
+                  </ListRow>
                 </li>
               ))}
             </ul>
@@ -267,8 +277,13 @@ export function ProjectsPane() {
             size="sm"
             variant="danger"
             disabled={remove.isPending}
-            onClick={() => {
-              if (window.confirm(t("プロジェクトを削除しますか？ 会話は残ります。"))) {
+            onClick={async () => {
+              if (await confirm({
+                title: t("プロジェクトを削除しますか？"),
+                description: t("会話は残ります。"),
+                confirmLabel: t("削除"),
+                tone: "danger",
+              })) {
                 remove.mutate(selected.id);
               }
             }}
@@ -278,6 +293,7 @@ export function ProjectsPane() {
           {update.isError && <ErrorBadge error={update.error} />}
           {create.isError && <ErrorBadge error={create.error} />}
         </Row>
+        {dialog}
       </Page>
     );
   }
@@ -297,7 +313,7 @@ export function ProjectsPane() {
               {t("フォルダを選択")}
             </Button>
           </Row>
-          <span className="text-2xs text-faint">
+          <span className="text-xs text-faint">
             {t("このフォルダがエージェントの作業ディレクトリになります")}
           </span>
         </div>
@@ -324,7 +340,9 @@ export function ProjectsPane() {
         </Row>
       </Card>
 
-      {list.length === 0 ? (
+      {projects.isPending ? (
+        <ListSkeleton />
+      ) : list.length === 0 ? (
         <EmptyState icon={<Folder size={22} />} title={t("プロジェクト")} sub={t("まだありません。")} />
       ) : (
         <div className="flex flex-col gap-3">
@@ -338,19 +356,23 @@ export function ProjectsPane() {
                 >
                   <span className="truncate">{p.name}</span>
                   {p.rootPath && (
-                    <span className="truncate text-2xs font-normal text-faint">{p.rootPath}</span>
+                    <span className="truncate text-xs font-normal text-faint">{p.rootPath}</span>
                   )}
                 </button>
                 <Row className="flex-nowrap gap-2">
-                  <span className="text-2xs text-faint">{relativeTime(p.updated_at)}</span>
+                  <span className="text-xs text-faint">{relativeTime(p.updated_at)}</span>
                   <Button
-                    variant="ghost"
+                    variant="ghost-danger"
                     size="icon-sm"
-                    className="text-danger hover:text-danger"
                     title={t("削除")}
                     aria-label={t("削除")}
-                    onClick={() => {
-                      if (window.confirm(t("プロジェクトを削除しますか？ 会話は残ります。"))) {
+                    onClick={async () => {
+                      if (await confirm({
+                        title: t("プロジェクトを削除しますか？"),
+                        description: t("会話は残ります。"),
+                        confirmLabel: t("削除"),
+                        tone: "danger",
+                      })) {
                         remove.mutate(p.id);
                       }
                     }}
@@ -366,6 +388,7 @@ export function ProjectsPane() {
           ))}
         </div>
       )}
+      {dialog}
     </Page>
   );
 }

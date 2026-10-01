@@ -67,7 +67,7 @@ class AppErrorBoundary extends Component<BoundaryProps, BoundaryState> {
         <h1 className="text-lg font-semibold text-fg">{t("The interface failed to start")}</h1>
         <p className="max-w-lg text-sm text-danger">{error.message}</p>
         {error.stack && (
-          <pre className="max-h-64 max-w-3xl overflow-auto rounded-lg bg-inset p-3 text-start font-mono text-2xs leading-4 text-muted">
+          <pre className="max-h-64 max-w-3xl overflow-auto rounded-lg bg-inset p-3 text-start font-mono text-xs leading-4 text-muted">
             {error.stack}
           </pre>
         )}

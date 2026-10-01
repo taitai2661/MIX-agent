@@ -1,15 +1,15 @@
-# MIX-agent Desktop — Architecture（Phase 5 完了時点）
+# MIX-agent Desktop — Architecture（Phase 6 完了時点）
 
 ## 目的
 
-`docker/MIX-agent/` 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約 / Capability 3 状態 / Checkpoint / Stagnation / Verification / Tiered Summary / Budget Extension / 暗号化 Secret）を **Tauri 2 + Rust + React 19** のネイティブアプリへ再実装する。`docker/` との **コード共有ゼロ**、仕様書のみで契約を結ぶ。
+`docker/MIX-agent/` 版の中核機能（Provider Adapter / Run Engine / Tool Registry / Run イベントの `kind` 契約 / Capability 3 状態 / Checkpoint / Stagnation / Verification / Tiered Summary / Budget Extension / 暗号化 Secret）を **Tauri 2 + Rust + React 19** のネイティブアプリへ再実装する。`docker/` との **コード共有ゼロ**、仕様書のみで契約を結ぶ。
 
 ## ディレクトリ
 
 ```
 MIX-agent/
-├── docker/MIX-agent/           # Docker 版（変更なし）
-├── desktop/mix-agent-desktop/  # Desktop 版（Cargo + npm workspace）
+├── docker/MIX-agent/           # Docker 版（Desktop 側の変更では触らない）
+├── desktop/mix-agent-desktop/  # Desktop 版（Cargo + pnpm workspace）
 │   ├── app/         Tauri 2 shell + #[tauri::command] surface
 │   ├── core/        Run Engine / state / events / context
 │   ├── providers/   OpenAI / Anthropic / Gemini / OpenAI-Compatible / Ollama / LM Studio
@@ -17,15 +17,16 @@ MIX-agent/
 │   ├── browser/     Browser Operator + chromiumoxide backend
 │   ├── mcp/         MCP client host
 │   ├── storage/     SQLite + Keychain
+│   ├── scripts/     fetch-chromium.mjs
 │   └── ui/          React 19 + Vite + Tailwind
-└── docs/desktop/    Desktop 版設計資料（本ファイル）
+└── docs/desktop/    Desktop 版設計資料（本ファイル・api-mapping.md）
 ```
 
 ## 信頼境界
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Tauri App (1 OSプロセス / tokio runtime)                     │
+│ Tauri App (tokio runtime 上の一つのバイナリ)                 │
 │                                                              │
 │  WebView ─ invoke('cmd') ─► #[tauri::command]   ◄── emit()   │
 │  (WKWebView / WebView2 / WebKitGTK)                          │
@@ -36,24 +37,52 @@ MIX-agent/
 │  mixd-browser (Browser Operator, chromiumoxide backend)      │
 │  mixd-mcp (rmcp host, OAuth PKCE)                            │
 │  mixd-storage (sqlx+SQLite WAL, keyring-rs)                  │
+│                                                              │
+│  └─ 子プロセスとして実 Chromium を起動（Browser Operator）    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-WebView からは `fs` / `shell` / `http` プラグインを **露出しない**（`app/capabilities/default.toml` で deny）。すべての操作が `#[tauri::command]` 経由となり、Rust が信頼の単一源泉。
+DB は同一プロセスの tokio runtime 上で in-proc に開かれます（Docker 版の
+PostgreSQL コンテナに相当する分離はありません）。ただし Browser Operator は
+実 Chromium を**子プロセスとして**起動するため、単一の OS プロセスではありません。
+
+WebView からは `fs` / `shell` / `http` プラグインの権限を `app/capabilities/default.toml`
+で一切付与していません（明示的な deny ではなく不許可）。すべての操作が
+`#[tauri::command]` 経由となり、Rust が信頼の単一源泉です。
 
 ## Docker 版との整合点
 
 | Docker 版 | Desktop 版 | 共有方針 |
 | --- | --- | --- |
-| `routes.py` の URL 契約 | `#[tauri::command]` 引数・戻り JSON | 形を完全一致 |
-| SSE `kind` 値一覧 | `app::RunEvent` 列挙体 | 形を完全一致 |
+| `routes.py` の URL 契約 | `#[tauri::command]` 引数・戻り JSON | 形の対応関係を維持（対応表は [`api-mapping.md`](api-mapping.md)） |
+| Run イベントの `kind` 値一覧 | `mixd_core::runs::engine::RunEvent` | 共通分は同じ `kind` 名。差分は下述 |
 | Capability 3 状態 | `mixd_core::routing::CapabilityState` | 仕様踏襲 |
-| Checkpoint / Stagnation / Verification | `core::runs::{checkpoints,stagnation,verification}` | 仕様踏襲 |
+| Checkpoint / Stagnation / Verification | `core::runs::{checkpoint_store,stagnation,verification}` | 仕様踏襲 |
 | Tiered Summary | `core::context` | 仕様踏襲 |
 | 暗号化 Secret (AES-GCM + AAD) | `storage::secrets` | 仕様踏襲 |
 | pg_trgm / JSONB Index | SQLite `json_extract` + FTS5 | 再実装 |
 | マルチユーザー / 管理者作成 | 単一ユーザー前提 | 削除 |
 | Docker container 群 | tokio runtime 上の in-proc タスク | 置換 |
+
+### Run イベントの `kind` 差分
+
+`app/src/run_events.rs` は Docker 版が SSE で流すのと同じ JSON 形状を、
+Tauri の `run_event` というイベント名で emit します。
+ただし `kind` の一覧は **完全一致ではありません**。
+
+共通（両エディションが使う）: `text` / `reasoning` / `message` / `status` / `error` /
+`model_started` / `model_selected` / `tool_started` / `tool_result` /
+`context_summary` / `checkpoint_saved` / `budget_extension_requested` /
+`budget_extension_resolved` / `stagnation_detected` / `verification_required`
+
+Desktop のみ: `tool_denied` / `tool_approval_requested` / `tool_approval_resolved` /
+`destructive_tool_called` / `verification_failed` / `todo_list` / `awaiting_approval`
+
+Docker のみ: `model_rerouted` / `plan` / `approval` / `browser_frame` / `phase_advanced`
+
+UI 側の解釈は `ui/src/lib/runEvents.ts` の `applyRunEvent()` が持ちます。
+`default` 分岐で未知の `kind` は黙って無視されるので、Desktop 側で
+`kind` を増やすときは同じ switch にケースを追加してください。
 
 ## Browser Operator
 
@@ -71,40 +100,56 @@ Browser Operator (mixd-browser::operator)   ← Workspace Profile 保持
    │  navigate / click / type / scroll /
    │  dom / screenshot / evaluate / wait_for
    ▼
-Backend: enum BrowserBackend (chromiumoxide)  ← 差し替え可能
+   Backend: enum BrowserBackend  ← 差し替え可能
+          Chromium          = 同梱 Chromium を起動
+          SystemChromium    = システム Chromium にフォールバック
+          Disabled          = 実行ファイルが見つからない
    │
    ▼
-Bundled Chromium (~+100MB)
+   Bundled Chromium (~370MB/プラットフォーム) or system Chromium
 ```
 
-macOS で先行実装。Phase 4 で `chromiumoxide` を導入し、`BrowserBackend::Chromium` から起動する。
+`mixd-core` は `chromiumoxide` に依存しません。backend の差し替えだけで
+Browser 実装の差し替えが可能で、`BrowserBackend` は 3 状態
+（`Chromium` / `SystemChromium` / `Disabled`）を持ちます。
 
 ## セキュリティ
 
-- **OS Keychain**: `keyring-rs` で Provider Key / DB 暗号化鍵 / MCP token / OAuth refresh token を用途別 AAD で保存。
-- **DB 透過暗号化**: WAL + AES-GCM（鍵は Keychain から取得）。
-- **Egress allowlist + private IP deny**: `tools::network` で reqwest の Proxy に自前実装。
-- **WebView CSP**: `app/tauri.conf.json` の `security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
-- **Sandbox**: macOS `sandbox-exec`、Windows Job Object、Linux landlock + bubblewrap（Phase 2 以降）。
+- **OS Keychain**: `keyring-rs` で Provider Key / DB 暗号化鍵 / MCP token / OAuth refresh token を用途別 AAD（`"{purpose}|{name}"`）で保存。
+- **DB 透過暗号化**: WAL + AES-256-GCM（鍵は Keychain から取得）。
+- **Egress allowlist + private IP deny**: `tools::network` が reqwest 実行前に検査。allowlist が空なら公開ホストのみ許可し、private IP は常に拒否します。保存済みルールは `*.example.com` のようなワイルドカードに対応します。
+- **WebView CSP**: `app/tauri.conf.json` の `app.security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
+- **OS プロセス sandbox**: **未実装**。macOS `sandbox-exec` / Windows Job Object / Linux landlock + bubblewrap のいずれもコードに存在しません。`terminal` tool はユーザーの権限で任意のプロセスを起動でき、`browser` tool も外部 Chromium を無制限に操作できます。敵対的なコードを安全に実行する用途には使わないでください。
 
 ## Bundled Chromium
 
 Desktop 版はブラウザを同梱する。取得は `scripts/fetch-chromium.mjs` が
 Chrome for Testing の公開エンドポイントから行い、`app/resources/chromium/` に
-下列レイアウトで展開して `.gitignore` 対象（1プラットフォーム約 370 MB）。
+次のレイアウトで展開して `.gitignore` 対象（1プラットフォーム約 370 MB）になります。
 
-| OS | パス |
-| --- | --- |
-| macOS | `chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium` |
-| Windows | `chromium/chrome-win/chrome.exe` |
-| Linux | `chromium/chrome-linux/chrome` |
+| OS | パス（第一候補） | フォールバック候補 |
+| --- | --- | --- |
+| macOS | `chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium` | `chrome-mac/Google Chrome for Testing.app/…`、`chromium/Chromium.app/…` |
+| Windows | `chromium/chrome-win/chrome.exe` | `chromium/chrome.exe` |
+| Linux | `chromium/chrome-linux/chrome` | `chromium/chrome` |
 
 `tauri.conf.json` の `bundle.resources` は **map 形式**（source → target）で
-`resources/chromium` を `Resources/chromium` に配置する。解決は
-`mixd_browser::profile::find_bundled_chromium()` が行い、
-`app.path().resource_dir()` を基準に解決する（`app_data` から推測しない）。
+`"resources/chromium": "chromium"` を宣言し、macOS バンドルでは
+`Contents/Resources/chromium` 配下に配置されます。
+
+探索は `mixd_browser::profile` が行います。
+
+- `find_bundled_chromium()` が上の候補を順に `is_file()` で探します。
+- 基準ディレクトリの選定は `resolve_resource_dir()` が担当します。
+  パッケージ済みアプリでは `app.path().resource_dir()` を優先します
+  （`app_data` から推測しません）。一方 debug ビルド（`cargo` / `tauri dev`）では
+  `resource_dir()` が `target/debug` を指し、`tauri-build` がミラーした Chromium は
+  macOS framework のシンボリックリンクを欠いた不完全なツリーになるため、
+  `app/resources` の pristine な実体を優先します。`env!("CARGO_MANIFEST_DIR")` は
+  `cfg` で release から切り離されるため、ローカルパスが配布バイナリに焼き込まれません。
+
 同梱が無い場合は system Chromium（macOS / Windows / Linux の既知パス）に
-フォールバックし、それも無ければ Browser 機能を `disabled` として報告する。
+フォールバックし、それも無ければ Browser 機能を `disabled` として報告します。
 
 ```bash
 node scripts/fetch-chromium.mjs              # 安定版を取得
@@ -112,8 +157,9 @@ MIX_SKIP_CHROMIUM=1 cargo check              # 取得をスキップ
 MIX_CHROMIUM_VERSION=154.0.8037.57 node scripts/fetch-chromium.mjs  # 固定
 ```
 
-`pnpm tauri build` の `beforeBuildCommand` が UI ビルド後に自動で取得する。
-macOS 配布時は同梱の `Chromium.app` も署名対象になる。
+`pnpm tauri build` の `beforeBuildCommand` が UI ビルド後に自動で取得します。
+macOS 配布時は同梱の `Chromium.app` も署名対象になるだけで、 notarization は
+別途の設定が必要です（このリポジトリには含まれていません）。
 
 ## 自動更新
 
@@ -139,12 +185,16 @@ cargo tauri signer generate -w ~/.tauri/mix-agent.key \
 
 # 3) app/tauri.conf.json を編集する
 #    plugins.updater.active           = true
+#    plugins.updater.dialog           = false
 #    plugins.updater.endpoints        = ["https://example.com/updates/{{target}}/{{arch}}/{{current_version}}"]
 #    plugins.updater.pubkey           = "生成された公開鍵"
+#    bundle.createUpdaterArtifacts    = true
 ```
 
-`bundle.createUpdaterArtifacts: true` を有効にしておかないと、署名済み更新
-アーティファクト（`.tar.gz` / `.msi.zip` / `.app.tar.gz`）が生成されない。
+`bundle.createUpdaterArtifacts` は現在の `tauri.conf.json` には**含まれておらず**、
+`true` にしておかないと署名済み更新アーティファクト（`.tar.gz` / `.msi.zip` /
+`.app.tar.gz`）が生成されません。`dialog: false` なので UI 側のバナーからの
+インストールに依存します。
 
 ## Backup / Restore
 
@@ -177,22 +227,31 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 
 ## フェーズ
 
-| Phase | 内容 |
-| --- | --- |
-| 0 | 雛形 / workspace / capabilities / CI |
-| 1 | storage + providers + 単発Chat |
-| 2 | tools + permission gate + egress |
-| 3 | Agent 自律性 + context 圧縮 / retrieval |
-| 4 | MCP host + Browser Operator |
-| 5 | Memory / Knowledge / Skills / Projects / Schedules / Agents |
-| 6 | tray / menu / notification / auto-update / backup / release CI |
+| Phase | 内容 | 状態 |
+| --- | --- | --- |
+| 0 | 雛形 / workspace / capabilities / CI | ✅ |
+| 1 | storage + providers + 単発Chat | ✅ |
+| 2 | tools + permission gate + egress | ✅ |
+| 3 | Agent 自律性 + context 圧縮 / retrieval | ✅ |
+| 4 | MCP host + Browser Operator | ✅ |
+| 5 | Memory / Knowledge / Skills / Projects / Schedules / Agents | ✅ |
+| 6 | tray / menu / notification / auto-update / backup / release CI | ✅ |
+| 7 | macOS 完成 + Windows α + Linux α | ⏳ |
+
+Phase 6 はコードと配布 CI の基盤まで入っていますが、auto-update は
+`tauri.conf.json` で無効のままなので、署名済み配布物はまだ出具ません。
+Phase 7（macOS 完成 + Windows α + Linux α）が未着手です。
 
 ## 既知の残タスク
 
 - 署名鍵の生成と `latest.json` 発行基盤（auto-update を有効化する前作業）。
+- `bundle.createUpdaterArtifacts` の有効化（未設定）。
 - Knowledge は lexical 検索のみ。embedding 検索は未実装。
 - Memory の自動生成（Run 後の抽出）は未実装。手動 CRUD + revision のみ。
 - シグナル / PTY ベースの対話 terminal（現在は timeout 付きの実行のみ）。
+- OS プロセス sandbox（macOS / Windows / Linux とも未実装）。
+- Provider プリセットは Docker 版の 52 件中 50 件（`cloudflare` と
+  `azure-ai-foundry` が未移植）。
 
 ## ライセンス
 

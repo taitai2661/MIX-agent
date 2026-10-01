@@ -27,13 +27,13 @@ export function DiagnosticsPane() {
   const d = diagnostics.data;
   return (
     <Section>
-      {!d ? (
+      {diagnostics.isPending || !d ? (
         <Skeleton className="h-20 w-full" />
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2">
             <Check label={t("Storage")} ok={d.db_ok}>
-              <code className="break-all text-2xs text-faint">{d.data_dir}</code>
+              <code className="break-all text-xs text-faint">{d.data_dir}</code>
             </Check>
             <Check label={t("Secrets (Keychain)")} ok={d.secrets_ok} />
             <Check label={t("Engine")} ok={d.engine_ok} />
@@ -46,7 +46,7 @@ export function DiagnosticsPane() {
                     ? t("Encrypted at rest")
                     : t("Not encrypted (in-memory + Keychain only)")}
                 </span>
-                <span className="text-2xs text-faint">
+                <span className="text-xs text-faint">
                   {d.db_key_present === true
                     ? t("Master key is present in the OS Keychain")
                     : d.db_key_present === false

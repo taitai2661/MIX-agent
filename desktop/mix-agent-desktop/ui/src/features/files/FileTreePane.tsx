@@ -5,14 +5,16 @@ import {
   FolderTree, RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { useActiveProject, gitStatusKey, useGitStatus } from "@/lib/queries";
 import { PanelHeader } from "@/components/layout";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { GitStatusBadge } from "@/components/ui/status";
+import { ErrorAlert } from "@/components/shared";
+import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 import { ResizableHandle } from "@/features/shell/ResizableHandle";
 import { usePanelWidth } from "@/features/shell/usePanelWidth";
 
@@ -22,33 +24,23 @@ const TEXT_EXTS = new Set([
   "css", "scss", "html", "svg", "sh", "bash", "zsh", "sql", "xml", "env", "lock",
 ]);
 
-/**
- * "Modified" is the most common git state, so it gets the strongest of the four
- * semantic tones; the old stylesheet gave it the accent colour, which in light
- * mode was plain black and therefore indistinguishable from the file name.
- */
-function badgeTone(status: string): NonNullable<BadgeProps["tone"]> {
-  if (status.includes("?")) return "info";
-  if (status.includes("D")) return "danger";
-  if (status.includes("A")) return "success";
-  return "warning";
-}
-
-function badgeLetter(status: string): string {
-  if (status.includes("?")) return "?";
-  return status.trim().slice(-1) || "M";
-}
 
 function isTextFile(name: string): boolean {
   const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
   return TEXT_EXTS.has(ext) || !name.includes(".");
 }
 
+/**
+ * Row styling for the tree. Real `<button>`s now, not `div role="button"` with
+ * hand-rolled Enter/Space handling. The height comes from the shared `--row`
+ * token so the tree matches every other list in the app; it used to be `h-6`,
+ * a fourth density alongside the sidebar's two-line rows and the palette's
+ * `h-8`.
+ */
 const rowClass = [
-  "flex h-6 w-full cursor-pointer items-center gap-1.5 rounded-md",
-  "pr-1.5 text-start text-xs text-muted",
+  "flex h-row w-full cursor-pointer items-center gap-1.5 rounded-md",
+  "pe-1.5 ps-1.5 text-start text-xs text-muted",
   "transition-colors duration-75 hover:bg-hover hover:text-fg",
-  "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
 ].join(" ");
 
 interface TreeContext {
@@ -67,8 +59,14 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
     staleTime: 10_000,
   });
 
+  // A placeholder is not a control, so it deliberately drops the row's
+  // hover/focus affordance — the shared `rowClass` used to leave both in place,
+  // which made a loading row look clickable.
   const placeholder = (text: string) => (
-    <div className={cn(rowClass, "cursor-default")} style={{ paddingLeft: `${8 + depth * 14}px` }}>
+    <div
+      className="flex h-row w-full items-center gap-1.5 rounded-md ps-1.5 pe-1.5 text-xs"
+      style={{ paddingLeft: `${8 + depth * 14}px` }}
+    >
       <span className="truncate text-faint">{text}</span>
     </div>
   );
@@ -77,7 +75,7 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
   if (query.isError) return placeholder(errorMessage(query.error) || t("エラー"));
 
   const entries = (query.data ?? []).filter((entry) => ctx.showHidden || !entry.hidden);
-  if (entries.length === 0) return placeholder("（空）");
+  if (entries.length === 0) return placeholder(t("（空）"));
 
   return (
     <>
@@ -89,19 +87,12 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
           const open = ctx.expanded.has(childPath);
           return (
             <div key={childPath}>
-              <div
+              <button
+                type="button"
                 className={rowClass}
                 style={indent}
-                role="button"
-                tabIndex={0}
                 aria-expanded={open}
                 onClick={() => ctx.toggle(childPath)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    ctx.toggle(childPath);
-                  }
-                }}
               >
                 {open
                   ? <ChevronDown size={12} className="shrink-0" />
@@ -110,7 +101,7 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
                   ? <FolderOpen size={13} className="shrink-0 text-faint" />
                   : <Folder size={13} className="shrink-0 text-faint" />}
                 <span className="truncate">{entry.name}</span>
-              </div>
+              </button>
               {open && <DirRows path={childPath} depth={depth + 1} ctx={ctx} />}
             </div>
           );
@@ -121,29 +112,25 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
           ? <File size={13} className="shrink-0 text-faint" />
           : <FileText size={13} className="shrink-0 text-faint" />;
         return (
-          <div
+          <button
             key={childPath}
+            type="button"
             className={rowClass}
             style={indent}
-            role="button"
-            tabIndex={0}
             onClick={() => ctx.onOpenFile(childPath)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                ctx.onOpenFile(childPath);
-              }
-            }}
+            title={status ? `${entry.name} — ${gitStatusLabel(status)}` : entry.name}
           >
             <span className="w-3 shrink-0" />
             {icon}
             <span className="truncate">{entry.name}</span>
             {status && (
-              <Badge tone={badgeTone(status)} size="sm" className="ml-auto shrink-0 font-mono">
-                {badgeLetter(status)}
-              </Badge>
+              <GitStatusBadge
+                letter={gitStatusLetter(status)}
+                label={gitStatusLabel(status)}
+                tone={gitStatusTone(status)}
+              />
             )}
-          </div>
+          </button>
         );
       })}
     </>
@@ -248,7 +235,9 @@ export function FileTreePane() {
       )}
 
       {root && git.isError && (
-        <p className="px-3 py-2 text-2xs text-danger">{t("git を利用できません")}</p>
+        <div className="p-2">
+          <ErrorAlert error={t("git を利用できません")} />
+        </div>
       )}
       </aside>
       <ResizableHandle

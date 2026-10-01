@@ -6,7 +6,7 @@ import { errorMessage } from "@/lib/errors";
 import { useRunEvents } from "@/lib/runStore";
 import { isBusy, isTerminal } from "@/lib/runEvents";
 import {
-  CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useProjects,
+  CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useModels, useProjects,
 } from "@/lib/queries";
 import { SURFACE_MODES, useUi } from "@/lib/ui";
 import type { ModelView, ProjectView, RunView } from "@/lib/types";
@@ -40,7 +40,7 @@ export function ChatPane() {
   const clearLive = useRunEvents((s) => s.clear);
 
   const conversations = useConversations();
-  const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
+  const models = useModels();
   const projects = useProjects();
   const messages = useQuery({
     queryKey: ["messages", conversationId],
@@ -220,12 +220,14 @@ export function ChatPane() {
         projectId={activeProjectId}
         onProjectChange={onProjectChange}
         onCreateProject={createProject}
+        modelsPending={models.isPending}
+        projectsPending={projects.isPending}
         busy={busy}
         onSend={onSend}
         onStop={onStop}
       />
       {(sendMessage.isError || projectError) && (
-        <div className="mx-auto w-full max-w-[820px] px-6 pb-3">
+        <div className="mx-auto w-full max-w-content px-6 pb-3">
           <Alert tone="danger">
             {errorMessage(sendMessage.error ?? projectError)}
           </Alert>

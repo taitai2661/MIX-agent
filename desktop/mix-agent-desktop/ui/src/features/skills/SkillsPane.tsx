@@ -1,25 +1,27 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { Download, FileCode, Sparkles, Trash2, Upload } from "lucide-react";
+import { ChevronRight, Download, FileCode, Sparkles, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { CodeBlock } from "@/components/CopyButton";
 import { Card, Row, Section } from "@/components/layout";
-import { EmptyState } from "@/components/shared";
+import { EmptyState, ListSkeleton } from "@/components/shared";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
+import { Segmented, SegmentedOption } from "@/components/ui/segmented";
+import { Spinner } from "@/components/ui/spinner";
 import { Input, Textarea } from "@/components/ui/input";
 import type { SkillResourceView, SkillView } from "@/lib/types";
 
 type Source = "paste" | "zip" | "directory";
 
 const SOURCE_LABEL: Record<Source, string> = {
-  paste: "SKILL.md を貼る",
-  zip: "zip ファイル",
-  directory: "ディレクトリ",
+  paste: t("SKILL.md を貼る"),
+  zip: t("zip ファイル"),
+  directory: t("ディレクトリ"),
 };
 
 export function SkillsPane() {
@@ -30,6 +32,7 @@ export function SkillsPane() {
   const [directory, setDirectory] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
   const [selected, setSelected] = useState<string | null>(null);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -78,7 +81,7 @@ export function SkillsPane() {
       if (!target) return;
       const b64 = await api.exportSkill(name, true);
       await api.saveBase64File(target, b64);
-      setNotice(`Exported ${name} to ${target}`);
+      setNotice(tf("{name} を {target} に書き出しました", { name, target }));
     },
     onError: (e) => setError(errorMessage(e)),
   });
@@ -87,29 +90,20 @@ export function SkillsPane() {
 
   return (
     <Section>
-      <Card title="取り込む" icon={<Upload size={13} />}>
-        <div
-          role="tablist"
-          aria-label="取り込み元"
-          className="inline-flex w-fit items-center gap-0.5 rounded-lg bg-inset p-0.5"
-        >
+      <Card title={t("取り込む")} icon={<Upload size={13} />}>
+        <Segmented aria-label={t("取り込み元")} className="w-fit">
           {(["paste", "zip", "directory"] as Source[]).map((s) => (
-            <button
+            <SegmentedOption
               key={s}
-              type="button"
-              role="tab"
-              aria-selected={source === s}
-              onClick={() => setSource(s)}
-              className={cn(
-                "h-6 rounded-md px-2 text-xs font-medium",
-                "text-muted transition-colors duration-100 hover:text-fg",
-                source === s && "bg-surface text-fg shadow-xs",
-              )}
+              value={s}
+              label={SOURCE_LABEL[s]}
+              selected={source === s}
+              onSelect={setSource}
             >
               {SOURCE_LABEL[s]}
-            </button>
+            </SegmentedOption>
           ))}
-        </div>
+        </Segmented>
 
         {source === "paste" && (
           <>
@@ -126,7 +120,7 @@ export function SkillsPane() {
                 disabled={!paste.trim() || importPaste.isPending}
                 onClick={() => importPaste.mutate()}
               >
-                <Upload size={12} /> 取り込む
+                <Upload size={12} /> {t("取り込む")}
               </Button>
             </Row>
           </>
@@ -144,9 +138,13 @@ export function SkillsPane() {
                 if (typeof picked === "string") importZip.mutate(picked);
               }}
             >
-              <Upload size={12} /> .skill.zip を選択
+              <Upload size={12} /> {t(".skill.zip を選択")}
             </Button>
-            {importZip.isPending && <span className="text-xs text-muted">読み込み中…</span>}
+            {importZip.isPending && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+                <Spinner size={11} /> {t("読み込み中…")}
+              </span>
+            )}
           </Row>
         )}
 
@@ -164,14 +162,14 @@ export function SkillsPane() {
                 if (typeof picked === "string") setDirectory(picked);
               }}
             >
-              選択
+              {t("選択")}
             </Button>
             <Button
               variant="primary"
               disabled={!directory || importDirectory.isPending}
               onClick={() => importDirectory.mutate(directory)}
             >
-              <Upload size={12} /> 取り込む
+              <Upload size={12} /> {t("取り込む")}
             </Button>
           </Row>
         )}
@@ -180,8 +178,10 @@ export function SkillsPane() {
         {error && <Alert tone="danger">{error}</Alert>}
       </Card>
 
-      {list.length === 0 ? (
-        <EmptyState icon={<Sparkles size={22} />} title="まだ Skill はありません。" />
+      {skills.isPending ? (
+        <ListSkeleton />
+      ) : list.length === 0 ? (
+        <EmptyState icon={<Sparkles size={22} />} title={t("まだ Skill はありません。")} />
       ) : (
         list.map((s: SkillView) => (
           <Card key={s.name}>
@@ -194,7 +194,7 @@ export function SkillsPane() {
                   size="sm"
                   onClick={() => setSelected(selected === s.name ? null : s.name)}
                 >
-                  <FileCode size={12} /> resources
+                  <FileCode size={12} /> {t("resources")}
                 </Button>
                 <Button
                   size="sm"
@@ -206,23 +206,33 @@ export function SkillsPane() {
                 </Button>
                 <Button
                   size="sm"
-                  className="text-danger hover:text-danger"
+                  variant="ghost-danger"
                   title={t("削除")}
                   aria-label={t("削除")}
-                  onClick={() => { if (confirm(`Delete skill "${s.name}"?`)) remove.mutate(s.name); }}
+                  onClick={async () => {
+                    if (await confirm({
+                      title: t("Skill を削除しますか？"),
+                      description: s.name,
+                      confirmLabel: t("削除"),
+                      tone: "danger",
+                    })) {
+                      remove.mutate(s.name);
+                    }
+                  }}
                 >
                   <Trash2 size={12} />
                 </Button>
               </Row>
             </Row>
             <p className="m-0 text-xs text-muted">{s.description}</p>
-            <pre className="m-0 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-inset p-2 font-mono text-2xs leading-4 text-muted">
+            <pre className="m-0 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-inset p-2 font-mono text-xs leading-4 text-muted">
               {s.body_markdown}
             </pre>
             {selected === s.name && <ResourceList name={s.name} />}
           </Card>
         ))
       )}
+      {dialog}
     </Section>
   );
 }
@@ -246,7 +256,7 @@ function ResourceList({ name }: { name: string }) {
             }
           }}
         >
-          Load bundled resources
+          {t("同梱リソースを読み込む")}
         </Button>
       </Row>
     );
@@ -255,11 +265,16 @@ function ResourceList({ name }: { name: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       {resources.length === 0 && (
-        <p className="m-0 text-xs text-faint">No bundled resources.</p>
+        <p className="m-0 text-xs text-faint">{t("同梱リソースはありません。")}</p>
       )}
       {resources.map((r) => (
         <details key={r.path} className="group">
-          <summary className="cursor-pointer list-none font-mono text-xs text-muted transition-colors hover:text-fg">
+          <summary className="flex cursor-pointer list-none items-center gap-1 font-mono text-xs text-muted transition-colors hover:text-fg">
+            <ChevronRight
+              size={11}
+              aria-hidden="true"
+              className="shrink-0 transition-transform group-open:rotate-90"
+            />
             {r.path}
           </summary>
           <CodeBlock language="" code={r.content} />
