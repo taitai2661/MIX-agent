@@ -1006,7 +1006,7 @@ wheels = [
 
 [[package]]
 name = "mix-agent"
-version = "0.3.0"
+version = "0.3.5"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -1026,6 +1026,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pypdf" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1056,6 +1057,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pypdf", specifier = ">=5,<7" },
     { name = "python-multipart", specifier = ">=0.0.20,<1" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
 ]

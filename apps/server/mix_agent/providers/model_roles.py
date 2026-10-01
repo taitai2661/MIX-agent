@@ -13,6 +13,36 @@ NON_CHAT_MODEL_PREFIXES = {
         "nvidia/nv-embed",
         "nvidia/nv-rerank",
         "nvidia/parakeet",
+        # Embedding / retrieval / reranking families (never chat-capable).
+        "nvidia/llama-nemotron-embed",
+        "nvidia/llama-nemotron-rerank",
+        "nvidia/rerank-",
+        "nvidia/llama-3.2-nemoretriever",
+        "nvidia/gliner",
+        "baai/bge-",
+        # Image / video / audio generation and perception models.
+        "black-forest-labs/flux",
+        "nvidia/cosmos-transfer",
+        "nvidia/cosmos-predict",
+        "nvidia/sparsedrive",
+        "nvidia/bevformer",
+        "nvidia/streampetr",
+        "nvidia/active-speaker-detection",
+        "nvidia/synthetic-video-detector",
+        "nvidia/magpie-tts",
+        "nvidia/studiovoice",
+        # Task-specific classifiers and scene-code models that answer with
+        # labels rather than conversational text.
+        "nvidia/usdcode",
+        "nvidia/usdvalidate",
+        "nvidia/nemotron-content-safety",
+        "nvidia/nemotron-3-content-safety",
+        "nvidia/llama-3.1-nemotron-safety-guard",
+        "meta/esmfold",
+        "meta/esm2-",
+        # Translation / recurrent models that reject chat completions.
+        "nvidia/riva-translate-4b-instruct",
+        "google/recurrentgemma-2b",
     ),
 }
 

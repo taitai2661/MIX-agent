@@ -51,7 +51,7 @@ async def lifespan(app):
     )
 
 
-app = FastAPI(title="MIX agent", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.3.5", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -79,7 +79,8 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+        "default-src 'self'; script-src 'self' 'sha256-i2aw5SfnpQW4OtZJAk0oWu5VOM5eHaP8Ut4joV2YKUk='; "
+        "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
     return response
 
@@ -119,8 +120,21 @@ async def push_service_worker():
     return FileResponse(path, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
 
+STATIC_MEDIA_TYPES = {
+    ".svg": "image/svg+xml",
+    ".ico": "image/vnd.microsoft.icon",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".webmanifest": "application/manifest+json",
+}
+
+
 @app.get("/{path:path}")
 async def frontend(path: str):
     if path.startswith("api/") or not (web / "index.html").exists():
         return JSONResponse({"detail": "Not found"}, status_code=404)
+    root = web.resolve()
+    asset = (root / path).resolve()
+    if path and asset.is_file() and root in asset.parents:
+        return FileResponse(asset, media_type=STATIC_MEDIA_TYPES.get(asset.suffix.lower()))
     return FileResponse(web / "index.html")

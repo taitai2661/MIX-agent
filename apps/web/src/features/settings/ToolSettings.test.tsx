@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { BrowserSettings } from "./ToolSettings";
 
 it("shows the overall Browser install percentage and stage", () => {
@@ -13,8 +14,8 @@ it("shows the overall Browser install percentage and stage", () => {
     },
   });
   const html = renderToStaticMarkup(
-    <QueryClientProvider client={client}><BrowserSettings /></QueryClientProvider>,
+    <QueryClientProvider client={client}><MemoryRouter><BrowserSettings /></MemoryRouter></QueryClientProvider>,
   );
-  expect(html).toContain("インストール中 42%");
+  expect(html).toContain("インストール中… 42%");
   expect(html).toContain("ダウンロード中");
 });

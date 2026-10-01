@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 from mix_agent.api import routes
-from mix_agent.db.models import Message, Model, Provider, Run, User
+from mix_agent.db.models import Message, Model, Provider, Run, Settings, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.runs.mode_policy import mode_prompt, tool_allowed
@@ -100,7 +100,7 @@ def test_default_tools_and_resolved_snapshot(signed, monkeypatch, mode):
 
 def test_long_work_snapshots_autonomous_policy_and_tools(signed, monkeypatch):
     mid = create_model(caps={"reasoning": True, "tools": True})
-    response = send(signed, monkeypatch, mid, "agent", acknowledge_unknown_capability=True)
+    response = send(signed, monkeypatch, mid, "agent")
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
         run = db.get(Run, response.json()["run_id"])
@@ -130,6 +130,15 @@ def test_preset_tool_restrictions(signed, monkeypatch, tool_ids):
 @pytest.mark.parametrize("caps", [{}, {"reasoning": False, "tools": False}])
 def test_chat_keeps_plain_conversation_available(signed, monkeypatch, caps):
     mid = create_model(caps=caps)
+
+    class UnsupportedProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            return False
+
+    monkeypatch.setattr(routes, "Adapter", UnsupportedProbeAdapter)
     response = send(signed, monkeypatch, mid)
     assert response.status_code == 200
     with SessionLocal() as db:
@@ -195,6 +204,60 @@ def test_unknown_tool_probe_failure_is_not_retried_until_manual_check(signed, mo
     assert len(calls) == 2
 
 
+def test_chat_reprobes_stale_probe_and_keeps_tools(signed, monkeypatch):
+    from mix_agent import config
+
+    mid = create_model("compatible", {})
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        model.data = {**model.data, "tool_probe": {"status": "unsupported", "source": "automatic"}}
+        db.commit()
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "chat")
+    assert response.status_code == 200
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "supported"
+        assert model.data["tool_probe"]["probe_version"] == config.TOOL_PROBE_VERSION
+        assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"]
+
+
+def test_thinking_reprobes_stale_probe(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        model.data = {**model.data, "tool_probe": {"status": "unsupported", "source": "automatic"}}
+        db.commit()
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "thinking")
+    assert response.status_code == 200
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        assert db.get(Model, mid).data["tool_probe"]["status"] == "supported"
+        assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"]
+
+
 def test_tool_probe_survives_model_edit_and_provider_sync(signed, monkeypatch):
     mid = create_model("compatible", {})
     with SessionLocal() as db:
@@ -235,6 +298,102 @@ def test_manual_tool_override_wins_over_automatic_probe(signed, monkeypatch):
     assert response.status_code == 200
     with SessionLocal() as db:
         assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"] == []
+
+
+def test_chat_probes_unknown_tools_automatically(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "chat")
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "supported"
+        assert db.get(Run, response.json()["run_id"]).data["snapshot"]["tools"]
+
+
+def test_agent_probes_unknown_tools_automatically(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    calls = []
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            calls.append(True)
+            return True
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    response = send(signed, monkeypatch, mid, "agent")
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "supported"
+        snapshot = db.get(Run, response.json()["run_id"]).data["snapshot"]
+        assert snapshot["tools"]
+        assert snapshot["mode"] == "agent"
+
+
+def test_agent_silently_drops_tools_when_probe_returns_unknown(signed, monkeypatch):
+    mid = create_model("compatible", {})
+
+    class UnknownProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            raise TimeoutError()
+
+    monkeypatch.setattr(routes, "Adapter", UnknownProbeAdapter)
+    response = send(signed, monkeypatch, mid, "agent")
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        model = db.get(Model, mid)
+        assert model.data["tool_probe"]["status"] == "unknown"
+        snapshot = db.get(Run, response.json()["run_id"]).data["snapshot"]
+        assert snapshot["tool_ids"] == []
+        assert snapshot["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_background_probe_confirms_auto_candidate_capabilities(signed, monkeypatch):
+    mid = create_model("compatible", {})
+    with SessionLocal() as db:
+        settings = db.get(Settings, "settings")
+        settings.data = {**settings.data, "auto_model_ids": [mid]}
+        db.commit()
+
+    class ProbeAdapter:
+        def __init__(self, *_):
+            pass
+
+        async def probe_tools(self, _):
+            return True
+
+        async def probe_vision(self, _):
+            return False
+
+    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    with SessionLocal() as db:
+        confirmed = await routes.probe_due_models(db, limit=1)
+        db.commit()
+        assert confirmed == 1
+        record = db.get(Model, mid).data["tool_probe"]
+        assert record["status"] == "supported"
+        assert record["vision"] == "unsupported"
+        assert record["source"] == "automatic"
 
 
 @pytest.mark.parametrize(
@@ -639,6 +798,10 @@ async def test_running_stream_can_be_cancelled(signed, monkeypatch, mode):
     finally:
         task.cancel()
         await task
-    assert cancels == [("execution", "/cancel"), ("mcp", "/cancel")]
+    assert cancels == [
+        ("execution", "/cancel"),
+        ("mcp", "/cancel"),
+        ("browser", "/browser-close"),
+    ]
     with SessionLocal() as db:
         assert db.get(Run, run_id).status == "cancelled"

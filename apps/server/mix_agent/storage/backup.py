@@ -39,7 +39,7 @@ def unseal(raw, password):
 
 
 def check_idle(db):
-    if db.scalar(select(Run.id).where(Run.status.in_(["queued", "running", "waiting_approval"]))):
+    if db.scalar(select(Run.id).where(Run.status.in_(["queued", "running", "waiting_approval", "paused"]))):
         raise ValueError("すべての実行を停止してからバックアップしてください")
     if db.scalar(select(ScheduledRun.id).where(ScheduledRun.status.in_(["pending", "running", "retrying"]))):
         raise ValueError("待機中または再試行待ちの定期実行を停止してからバックアップしてください")
@@ -97,7 +97,7 @@ def validate(raw, password):
     if payload.get("schema") == "0001" and backup_tables == expected_tables - {"login_events"}:
         payload["tables"]["login_events"] = []
     for missing in expected_tables - set(payload["tables"]):
-        if missing in ("mcp_auth_states",):
+        if missing in ("mcp_auth_states", "projects"):
             payload["tables"][missing] = []
     if set(payload["tables"]) != expected_tables:
         raise ValueError("Schema mismatch")

@@ -25,19 +25,20 @@ from mix_agent.providers.adapters import (
 )
 from mix_agent.reliability import classify_failure, reliability, retry_after, speed
 from mix_agent.reliability import record as record_reliability
-from mix_agent.routing import routing_profile, select_auto_model
+from mix_agent.providers.model_quality import quality_prior, request_cost
+from mix_agent.routing import routing_context, routing_profile, select_auto_model
 from mix_agent.runs import engine
 from sqlalchemy import select
 
 
-def make_model(caps, context=20000, model_id="auto-test", provider_data=None):
+def make_model(caps, context=20000, model_id="auto-test", provider_data=None, extra=None):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data=provider_data or {"kind": "openai"})
         db.add(provider)
         db.flush()
         model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": model_id,
-                                             "capabilities": caps, "context_window": context})
+                                             "capabilities": caps, "context_window": context, **(extra or {})})
         db.add(model)
         db.commit()
         return model.id
@@ -385,6 +386,7 @@ def test_completed_answers_record_tps_for_manual_models_and_statistics(signed, m
         assert message.data["performance"] == {
             "output_tokens": 5,
             "generation_ms": event.data["generation_ms"],
+            "first_output_ms": event.data["first_output_ms"],
             "tokens_per_second": event.data["tokens_per_second"],
         }
         assert not db.scalar(select(AutoReliabilityEvent).where(
@@ -817,3 +819,68 @@ def test_feedback_replaces_or_clears_only_auto_answers(signed):
     assert signed.put(f"/api/v1/messages/{message_id}/feedback", json={"value": None}).json()["value"] is None
     with SessionLocal() as db:
         assert db.scalar(select(Feedback).where(Feedback.message_id == message_id)) is None
+
+
+def test_routing_context_hierarchy_reuses_broader_evidence():
+    profile = routing_context("write a python function", "chat", [], False, 120)
+    assert profile.coarse.startswith(profile.legacy)
+    assert profile.exact.startswith(profile.coarse)
+    assert "task:coding" in profile.exact
+    assert "lang:en" in profile.exact
+    levels = profile.levels
+    assert levels[profile.exact] > levels[profile.coarse] > levels[profile.legacy]
+
+
+def test_quality_prior_prefers_stronger_known_model(signed):
+    strong = make_model({}, model_id="gpt-4.1")
+    light = make_model({}, model_id="gpt-4o-mini")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        selected, details = select_auto_model(
+            db, owner, [strong, light], "hello", "chat", [], False, ["hello"], 10, "quality-priority",
+            priority="quality",
+        )
+    assert selected.id == strong
+    assert details["quality"][strong] > details["quality"][light]
+
+
+def test_cost_priority_prefers_cheaper_model(signed):
+    cheap = make_model({}, model_id="cheap", extra={"pricing_override": {"input": 1.0, "output": 2.0}})
+    pricey = make_model({}, model_id="pricey", extra={"pricing_override": {"input": 100.0, "output": 200.0}})
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        selected, details = select_auto_model(
+            db, owner, [cheap, pricey], "hello", "chat", [], False, ["hello"], 10, "cost-priority",
+            priority="cost",
+        )
+    assert selected.id == cheap
+    assert details["cost"]["selected"] is not None
+
+
+def test_auto_tiebreak_is_stable_for_a_request_key(signed):
+    first = make_model({}, model_id="tie-first")
+    second = make_model({}, model_id="tie-second")
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        picks = {
+            select_auto_model(db, owner, [first, second], "hello", "chat", [], False, ["hello"], 10, "same-key")[0].id
+            for _ in range(3)
+        }
+    assert len(picks) == 1
+    assert picks.issubset({first, second})
+
+
+def test_auto_priority_setting_persists_and_is_snapshotted(signed, monkeypatch):
+    model_id = make_model({}, model_id="priority-model")
+    assert signed.put("/api/v1/settings", json={"auto_model_ids": [model_id], "auto_priority": "speed"}).status_code == 200
+    assert signed.get("/api/v1/settings").json()["data"]["auto_priority"] == "speed"
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
+    response = signed.post(f"/api/v1/conversations/{conversation}/messages", json={
+        "model_id": "auto", "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "priority-snapshot"})
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.data["snapshot"]["auto_priority"] == "speed"
+        assert run.data["auto_routing"]["priority"] == "speed"

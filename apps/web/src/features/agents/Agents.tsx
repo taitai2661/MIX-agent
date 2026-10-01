@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,8 +22,8 @@ export function Agents() {
   return (
     <main className="page">
       <Title
-        title="アシスタント設定"
-        sub="役割と使えるToolを決めて、自分に合ったアシスタントに。"
+        title={t("アシスタント設定")}
+        sub={t("役割と使えるToolを決めて、自分に合ったアシスタントに。")}
         action={
           <Button
             onClick={() => {
@@ -31,7 +32,7 @@ export function Agents() {
             }}
           >
             <Plus size={16} />
-            設定を追加
+            {t("設定を追加")}
           </Button>
         }
       />
@@ -88,10 +89,10 @@ export function Agents() {
           }}
         >
           <div className="form-grid">
-            <Field label="名前">
+            <Field label={t("名前")}>
               <input name="name" required defaultValue={editing?.data.name} />
             </Field>
-            <Field label="モデル">
+            <Field label={t("モデル")}>
               <select name="model_id" defaultValue={editing?.data.model_id}>
                 <option value="auto">Auto</option>
                 {models.data?.map((m) => (
@@ -101,15 +102,15 @@ export function Agents() {
                 ))}
               </select>
             </Field>
-            <Field label="モード">
+            <Field label={t("モード")}>
               <select name="mode" defaultValue={editing?.data.mode || "agent"}>
                 <option value="chat">chat</option>
                 <option value="thinking">thinking</option>
                 <option value="agent">agent</option>
               </select>
-              <small>chat と thinking は固定予算です。下の実行予算は agent で使用します。</small>
+              <small>{t("chat と thinking は固定予算です。下の実行予算は agent で使用します。")}</small>
             </Field>
-            <Field label="最大モデル呼び出し回数">
+            <Field label={t("最大モデル呼び出し回数")}>
               <input
                 name="steps"
                 type="number"
@@ -118,7 +119,7 @@ export function Agents() {
                 defaultValue={editing?.data.max_steps || 200}
               />
             </Field>
-            <Field label="最大実行時間（秒）">
+            <Field label={t("最大実行時間（秒）")}>
               <input
                 name="seconds"
                 type="number"
@@ -127,7 +128,7 @@ export function Agents() {
                 defaultValue={editing?.data.max_seconds || 3600}
               />
             </Field>
-            <Field label="最大Tool Call数">
+            <Field label={t("最大Tool Call数")}>
               <input
                 name="calls"
                 type="number"
@@ -136,7 +137,7 @@ export function Agents() {
                 defaultValue={editing?.data.max_tool_calls || 500}
               />
             </Field>
-            <Field label="最大出力Token">
+            <Field label={t("最大出力Token")}>
               <input
                 name="tokens"
                 type="number"
@@ -147,7 +148,7 @@ export function Agents() {
                 }
               />
             </Field>
-            <Field label="Temperature（互換API向け）">
+            <Field label={t("Temperature（互換API向け）")}>
               <input
                 name="temperature"
                 type="number"
@@ -164,7 +165,7 @@ export function Agents() {
               rows={5}
               defaultValue={
                 editing?.data.system_prompt ||
-                "あなたは親切で正確なアシスタントです。"
+                t("あなたは親切で正確なアシスタントです。")
               }
             />
           </Field>
@@ -176,13 +177,13 @@ export function Agents() {
                 editing ? editing.data.memory_scopes?.length > 0 : true
               }
             />
-            ユーザーMemoryを使用する
+            {t("ユーザーMemoryを使用する")}
           </label>
           <label className="check">
             <input name="auto_learn" type="checkbox" defaultChecked={editing ? editing.data.auto_learn !== false : true} />
-            会話からMemory・Skillを自動で学習する
+            {t("会話からMemory・Skillを自動で学習する")}
           </label>
-          <h3>使用可能Tool</h3>
+          <h3>{t("使用可能Tool")}</h3>
           <div className="tool-checks">
             {tools.data?.map((t) => (
               <label className="check" key={t.id}>
@@ -199,23 +200,23 @@ export function Agents() {
               </label>
             ))}
           </div>
-          <h3>使用するSkill</h3>
+          <h3>{t("使用するSkill")}</h3>
           <div className="tool-checks">
             {skills.data?.map((skill) => (
               <label className="check" key={skill.id}>
                 <input name="skills" value={skill.id} type="checkbox" defaultChecked={editing?.data.skill_ids?.includes(skill.id)} />
-                <span>{skill.data.name}<small>{skill.data.description || "再利用可能な手順"}</small></span>
+                <span>{skill.data.name}<small>{skill.data.description || t("再利用可能な手順")}</small></span>
               </label>
             ))}
           </div>
           <div className="form-actions">
-            <Button>保存</Button>
+            <Button>{t("保存")}</Button>
             <Button
               variant="ghost"
               type="button"
               onClick={() => setOpen(false)}
             >
-              キャンセル
+              {t("キャンセル")}
             </Button>
           </div>
         </form>
@@ -244,7 +245,7 @@ export function Agents() {
       </div>
       {!rows.data?.length && !open && (
         <Empty>
-          用途別のアシスタント設定を作成できます。標準のAgentモードは設定を作成せずに利用できます。
+          {t("用途別のアシスタント設定を作成できます。標準のAgentモードは設定を作成せずに利用できます。")}
         </Empty>
       )}
     </main>

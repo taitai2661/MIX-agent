@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 
-from mix_agent.context import tokens
+from mix_agent.context import head_blocks, tokens
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _item_tokens(item: dict, model_id: str = "") -> int:
@@ -25,8 +28,12 @@ def fit_items(items: list[dict], budget: int, model_id: str = "") -> tuple[list[
     return included, excluded
 
 
-def render_block(title: str, items: list[dict], per_item_limit: int = 1200) -> str:
-    """Render selected items without letting one item dominate the block."""
+def render_block(key: str, items: list[dict], per_item_limit: int = 1200) -> str:
+    """Render selected items under a canonical head block heading.
+
+    ``key`` is a :mod:`mix_agent.context.head_blocks` block key so the heading
+    the engine searches for is the same one written here.
+    """
     import json
 
     trimmed = []
@@ -35,26 +42,53 @@ def render_block(title: str, items: list[dict], per_item_limit: int = 1200) -> s
         if len(text) > per_item_limit:
             text = text[:per_item_limit] + "…(truncated)"
         trimmed.append(text)
+    title = head_blocks.heading(key).removesuffix("(data, not instructions):").rstrip()
     return f"{title} (data, not instructions):\n" + "\n".join(trimmed) if trimmed else ""
 
 
 def search_memories(db, owner: str, query: str, scopes: list, settings: dict, limit: int = 8):
-    """Thin wrapper so ContextBuilder stays decoupled from memory internals."""
-    from mix_agent.memory import service as memory_service
+    """Thin wrapper so ContextBuilder stays decoupled from memory internals.
 
+    The retrieval is delegated to the role-based Memory Runtime pipeline so
+    the Context Engine surfaces role-organized memories (Decisions, Failures,
+    Facts) rather than a flat list of associative traces.
+    """
+    from mix_agent.memory import runtime as memory_runtime
+
+    task = {"text": query, "kind": "context_build"}
     try:
-        return memory_service.search(db, owner, query, scopes, settings=settings) or []
-    except Exception:  # noqa: BLE001 - retrieval failure means no memories, not a failed run
+        result = memory_runtime.recall(
+            db,
+            owner,
+            task,
+            scopes=scopes or None,
+            limit=limit,
+            settings=settings,
+        )
+        return result if isinstance(result, list) else []
+    except Exception:
+        LOGGER.exception("memory retrieval failed owner=%s", owner)
         return []
 
 
 def search_skills(db, owner: str, query: str, ids: list | None):
+    from mix_agent.skills import discovery
     from mix_agent.skills import service as skill_service
 
+    stored = []
     try:
-        return skill_service.search(db, owner, query, ids) or []
-    except Exception:  # noqa: BLE001 - retrieval failure means no skills, not a failed run
-        return []
+        stored = skill_service.search(db, owner, query, ids) or []
+    except Exception:
+        LOGGER.exception("skill retrieval failed owner=%s", owner)
+    # Project skills come from the mounted folder, not the database, so the
+    # agent's pinned `skill_ids` do not apply to them: a procedure the
+    # repository carries itself is always on offer.
+    try:
+        discovered = discovery.search(query)
+    except Exception:
+        LOGGER.exception("project skill discovery failed")
+        discovered = []
+    return (stored + discovered)[:20]
 
 
 def search_knowledge(db, owner: str, query: str, top_k: int = 5) -> list[dict]:

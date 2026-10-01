@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MIX agent",
-    "version": "0.3.0"
+    "version": "0.3.5"
   },
   "paths": {
     "/health": {
@@ -452,6 +452,41 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Delete Provider",
+        "operationId": "delete_provider_api_v1_providers__key__delete",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/providers/{key}/{action}": {
@@ -582,6 +617,22 @@
         }
       }
     },
+    "/api/v1/browser/update": {
+      "post": {
+        "summary": "Browser Update",
+        "operationId": "browser_update_api_v1_browser_update_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/statistics": {
       "get": {
         "summary": "Settings Statistics",
@@ -594,6 +645,47 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StatisticsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/usage": {
+      "get": {
+        "summary": "Settings Usage",
+        "description": "Return per-model token usage and estimated cost for the account.\n\nOnly token counts and resolved prices are aggregated; prompt and completion\ntext are never stored.  Rows whose price is unknown stay in the token totals\nand are reported separately so the cost figure is never silently inflated.",
+        "operationId": "settings_usage_api_v1_settings_usage_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -860,6 +952,22 @@
             }
           },
           {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -900,6 +1008,90 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ConversationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{key}": {
+      "delete": {
+        "summary": "Delete Project",
+        "operationId": "delete_project_api_v1_projects__key__delete",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Edit Projects",
+        "operationId": "edit_projects_api_v1_projects__key__patch",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectInputPatch"
               }
             }
           }
@@ -1150,6 +1342,110 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/push/key": {
+      "get": {
+        "summary": "Push Key",
+        "operationId": "push_key_api_v1_push_key_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/push/subscriptions": {
+      "get": {
+        "summary": "Push Subscriptions",
+        "operationId": "push_subscriptions_api_v1_push_subscriptions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Push Subscription",
+        "operationId": "save_push_subscription_api_v1_push_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Push Subscription",
+        "operationId": "delete_push_subscription_api_v1_push_subscriptions_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1720,6 +2016,43 @@
         }
       }
     },
+    "/api/v1/runs/{key}/checkpoints": {
+      "get": {
+        "summary": "List Checkpoints",
+        "operationId": "list_checkpoints_api_v1_runs__key__checkpoints_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/runs/{key}/events": {
       "get": {
         "summary": "Run Events",
@@ -1804,6 +2137,200 @@
         }
       }
     },
+    "/api/v1/runs/{key}/browser-frames": {
+      "get": {
+        "summary": "Browser Frames",
+        "operationId": "browser_frames_api_v1_runs__key__browser_frames_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{key}/browser-frames/{artifact_id}": {
+      "get": {
+        "summary": "Browser Frame Image",
+        "operationId": "browser_frame_image_api_v1_runs__key__browser_frames__artifact_id__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Artifact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{key}/browser-pause": {
+      "post": {
+        "summary": "Browser Pause",
+        "operationId": "browser_pause_api_v1_runs__key__browser_pause_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{key}/browser-manual": {
+      "post": {
+        "summary": "Browser Manual",
+        "operationId": "browser_manual_api_v1_runs__key__browser_manual_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{key}/browser-return": {
+      "post": {
+        "summary": "Browser Return",
+        "operationId": "browser_return_api_v1_runs__key__browser_return_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/runs/{key}/resume": {
       "post": {
         "summary": "Resume",
@@ -1825,6 +2352,53 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ResumeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{key}/budget-extension": {
+      "post": {
+        "summary": "Decide Budget Extension",
+        "operationId": "decide_budget_extension_api_v1_runs__key__budget_extension_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetExtensionDecisionInput"
               }
             }
           }
@@ -2486,6 +3060,215 @@
             "schema": {
               "type": "string",
               "title": "Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/import": {
+      "post": {
+        "summary": "Import Skill",
+        "operationId": "import_skill_api_v1_skills_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillImportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/import/archive": {
+      "post": {
+        "summary": "Import Skill Archive",
+        "operationId": "import_skill_archive_api_v1_skills_import_archive_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_skill_archive_api_v1_skills_import_archive_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/import/directory": {
+      "post": {
+        "summary": "Import Skill Directory",
+        "operationId": "import_skill_directory_api_v1_skills_import_directory_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{key}/export": {
+      "get": {
+        "summary": "Export Skill",
+        "operationId": "export_skill_api_v1_skills__key__export_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{key}/export.zip": {
+      "get": {
+        "summary": "Export Skill Zip",
+        "operationId": "export_skill_zip_api_v1_skills__key__export_zip_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{key}/resources": {
+      "get": {
+        "summary": "Skill Resource",
+        "operationId": "skill_resource_api_v1_skills__key__resources_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Path"
             }
           }
         ],
@@ -3353,6 +4136,80 @@
         }
       }
     },
+    "/api/v1/projects": {
+      "get": {
+        "summary": "List Projects",
+        "operationId": "list_projects_api_v1_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecordView"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api V1 Projects Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Projects",
+        "operationId": "create_projects_api_v1_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/push-sw.js": {
+      "get": {
+        "summary": "Push Service Worker",
+        "operationId": "push_service_worker_push_sw_js_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/{path}": {
       "get": {
         "summary": "Frontend",
@@ -3861,6 +4718,20 @@
         ],
         "title": "BackupInput"
       },
+      "Body_import_skill_archive_api_v1_skills_import_archive_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_skill_archive_api_v1_skills_import_archive_post"
+      },
       "Body_restore_api_v1_backups_restore_post": {
         "properties": {
           "file": {
@@ -3895,6 +4766,102 @@
           "file"
         ],
         "title": "Body_upload_api_v1_artifacts_post"
+      },
+      "BudgetExtensionDecisionInput": {
+        "properties": {
+          "grant": {
+            "type": "boolean",
+            "title": "Grant"
+          },
+          "max_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400.0,
+                "minimum": 30.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seconds"
+          },
+          "max_steps": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Steps"
+          },
+          "max_tool_calls": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tool Calls"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "grant"
+        ],
+        "title": "BudgetExtensionDecisionInput"
+      },
+      "BudgetExtensionRequestView": {
+        "properties": {
+          "tool_calls_used": {
+            "type": "integer",
+            "title": "Tool Calls Used"
+          },
+          "tool_calls_limit": {
+            "type": "integer",
+            "title": "Tool Calls Limit"
+          },
+          "steps_used": {
+            "type": "integer",
+            "title": "Steps Used"
+          },
+          "steps_limit": {
+            "type": "integer",
+            "title": "Steps Limit"
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "title": "Elapsed Seconds"
+          },
+          "max_seconds": {
+            "type": "integer",
+            "title": "Max Seconds"
+          },
+          "requested_at": {
+            "type": "string",
+            "title": "Requested At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_calls_used",
+          "tool_calls_limit",
+          "steps_used",
+          "steps_limit",
+          "elapsed_seconds",
+          "max_seconds",
+          "requested_at"
+        ],
+        "title": "BudgetExtensionRequestView"
       },
       "ContextSummaryView": {
         "properties": {
@@ -3960,6 +4927,17 @@
             ],
             "title": "Folder Id"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "pinned": {
             "type": "boolean",
             "title": "Pinned",
@@ -3993,6 +4971,17 @@
               }
             ],
             "title": "Folder Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "pinned": {
             "anyOf": [
@@ -4035,6 +5024,25 @@
                 "type": "null"
               }
             ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "todos": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Todos"
           }
         },
         "type": "object",
@@ -4056,6 +5064,8 @@
               "queued",
               "running",
               "waiting_approval",
+              "paused",
+              "budget_extension_pending",
               "completed",
               "failed",
               "cancelled",
@@ -4133,6 +5143,11 @@
             ],
             "title": "Mode",
             "default": "chat"
+          },
+          "research_mode": {
+            "type": "boolean",
+            "title": "Research Mode",
+            "default": false
           }
         },
         "type": "object",
@@ -4153,6 +5168,17 @@
               }
             ],
             "title": "Folder Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "pinned": {
             "anyOf": [
@@ -4592,10 +5618,14 @@
               {
                 "type": "string",
                 "enum": [
+                  "candidate",
+                  "active",
+                  "superseded",
+                  "expired",
+                  "archived",
+                  "disputed",
                   "latent",
                   "established",
-                  "superseded",
-                  "archived",
                   "deleted"
                 ]
               },
@@ -4658,6 +5688,79 @@
               }
             ],
             "title": "Metadata"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "preference",
+                  "goal",
+                  "constraint",
+                  "experience",
+                  "failure",
+                  "solution",
+                  "observation",
+                  "hypothesis",
+                  "question"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "agent",
+                  "tool",
+                  "browser",
+                  "external",
+                  "consolidation"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
+          },
+          "role_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Metadata"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "unverified",
+                  "pending",
+                  "verified",
+                  "disputed",
+                  "rejected"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification"
           },
           "importance": {
             "type": "integer",
@@ -4798,11 +5901,6 @@
             "maxItems": 5,
             "title": "Artifact Ids"
           },
-          "acknowledge_unknown_capability": {
-            "type": "boolean",
-            "title": "Acknowledge Unknown Capability",
-            "default": false
-          },
           "temporary_mode": {
             "type": "boolean",
             "title": "Temporary Mode",
@@ -4811,6 +5909,11 @@
           "allow_tools": {
             "type": "boolean",
             "title": "Allow Tools",
+            "default": false
+          },
+          "research_mode": {
+            "type": "boolean",
+            "title": "Research Mode",
             "default": false
           }
         },
@@ -4914,6 +6017,16 @@
               }
             ],
             "title": "Context Window Override"
+          },
+          "pricing_override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PricingInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source": {
             "type": "string",
@@ -5028,6 +6141,16 @@
             ],
             "title": "Context Window Override"
           },
+          "pricing_override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PricingInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source": {
             "anyOf": [
               {
@@ -5136,6 +6259,17 @@
           "tokens_per_second": {
             "type": "number",
             "title": "Tokens Per Second"
+          },
+          "first_output_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Output Ms"
           }
         },
         "type": "object",
@@ -5235,6 +6369,122 @@
           "created_at"
         ],
         "title": "PermissionRuleView"
+      },
+      "PricingInput": {
+        "properties": {
+          "input": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "cache_read": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PricingInput"
+      },
+      "ProjectInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 20000,
+            "title": "Instructions",
+            "default": ""
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ProjectInput"
+      },
+      "ProjectInputPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProjectInputPatch"
       },
       "ProviderInput": {
         "properties": {
@@ -5440,6 +6690,34 @@
               }
             ],
             "title": "Max Tool Calls"
+          },
+          "from_checkpoint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Checkpoint"
+          },
+          "unknown_actions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unknown Actions"
           }
         },
         "additionalProperties": false,
@@ -5485,6 +6763,45 @@
         "type": "object",
         "title": "RunBudgetView"
       },
+      "RunCheckpointView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "step": {
+            "type": "integer",
+            "title": "Step"
+          },
+          "tool_count": {
+            "type": "integer",
+            "title": "Tool Count"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "step",
+          "tool_count",
+          "trigger"
+        ],
+        "title": "RunCheckpointView"
+      },
       "RunView": {
         "properties": {
           "id": {
@@ -5497,12 +6814,24 @@
               "queued",
               "running",
               "waiting_approval",
+              "paused",
+              "budget_extension_pending",
               "completed",
               "failed",
               "cancelled",
               "interrupted"
             ],
             "title": "Status"
+          },
+          "browser_manual_active": {
+            "type": "boolean",
+            "title": "Browser Manual Active",
+            "default": false
+          },
+          "browser_pause_requested": {
+            "type": "boolean",
+            "title": "Browser Pause Requested",
+            "default": false
           },
           "reason": {
             "anyOf": [
@@ -5581,6 +6910,60 @@
                 "type": "null"
               }
             ]
+          },
+          "budget_extension_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetExtensionRequestView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budget_extensions_used": {
+            "type": "integer",
+            "title": "Budget Extensions Used",
+            "default": 0
+          },
+          "budget_extensions_max": {
+            "type": "integer",
+            "title": "Budget Extensions Max",
+            "default": 0
+          },
+          "stagnation": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stagnation"
+          },
+          "checkpoint_resumed_from": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Resumed From"
+          },
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/RunCheckpointView"
+            },
+            "type": "array",
+            "title": "Checkpoints"
           }
         },
         "type": "object",
@@ -5692,6 +7075,15 @@
       },
       "SettingsInput": {
         "properties": {
+          "ui_language": {
+            "type": "string",
+            "enum": [
+              "ja",
+              "en"
+            ],
+            "title": "Ui Language",
+            "default": "ja"
+          },
           "default_model_id": {
             "type": "string",
             "title": "Default Model Id",
@@ -5721,6 +7113,17 @@
             "type": "boolean",
             "title": "Auto Dynamic Switching",
             "default": true
+          },
+          "auto_priority": {
+            "type": "string",
+            "enum": [
+              "balanced",
+              "quality",
+              "speed",
+              "cost"
+            ],
+            "title": "Auto Priority",
+            "default": "balanced"
           },
           "setup_complete": {
             "type": "boolean",
@@ -5928,52 +7331,33 @@
             "title": "Memory Seed Limit",
             "default": 24
           },
-          "memory_max_candidates": {
-            "type": "integer",
-            "maximum": 256.0,
-            "minimum": 8.0,
-            "title": "Memory Max Candidates",
-            "default": 96
-          },
           "memory_result_limit": {
             "type": "integer",
             "maximum": 30.0,
             "minimum": 1.0,
             "title": "Memory Result Limit",
             "default": 8
-          },
-          "memory_min_association_weight": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.05,
-            "title": "Memory Min Association Weight",
-            "default": 0.2
-          },
-          "memory_activation_decay": {
-            "type": "number",
-            "maximum": 0.95,
-            "minimum": 0.1,
-            "title": "Memory Activation Decay",
-            "default": 0.55
-          },
-          "memory_retrieval_budget_ms": {
-            "type": "integer",
-            "maximum": 1000.0,
-            "minimum": 20.0,
-            "title": "Memory Retrieval Budget Ms",
-            "default": 120
-          },
-          "memory_max_depth": {
-            "type": "integer",
-            "maximum": 3.0,
-            "minimum": 0.0,
-            "title": "Memory Max Depth",
-            "default": 2
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "SettingsInput"
+      },
+      "SkillImportInput": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 200000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "SkillImportInput"
       },
       "SkillInput": {
         "properties": {
@@ -6453,6 +7837,305 @@
           "id"
         ],
         "title": "ToolView"
+      },
+      "UsageDayView": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens"
+        ],
+        "title": "UsageDayView"
+      },
+      "UsageGroupView": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "cached_tokens": {
+            "type": "integer",
+            "title": "Cached Tokens"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "pricing_source": {
+            "type": "string",
+            "title": "Pricing Source"
+          },
+          "unpriced": {
+            "type": "boolean",
+            "title": "Unpriced"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "model_id",
+          "provider_id",
+          "model_name",
+          "mode",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "cached_tokens",
+          "total_tokens",
+          "pricing_source",
+          "unpriced"
+        ],
+        "title": "UsageGroupView"
+      },
+      "UsageProviderView": {
+        "properties": {
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "cached_tokens": {
+            "type": "integer",
+            "title": "Cached Tokens"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "unpriced": {
+            "type": "boolean",
+            "title": "Unpriced"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider_id",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "cached_tokens",
+          "total_tokens",
+          "unpriced"
+        ],
+        "title": "UsageProviderView"
+      },
+      "UsageSummaryView": {
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens"
+          },
+          "cached_tokens": {
+            "type": "integer",
+            "title": "Cached Tokens"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "priced_requests": {
+            "type": "integer",
+            "title": "Priced Requests"
+          },
+          "unpriced_requests": {
+            "type": "integer",
+            "title": "Unpriced Requests"
+          },
+          "estimated_requests": {
+            "type": "integer",
+            "title": "Estimated Requests"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "cached_tokens",
+          "total_tokens",
+          "priced_requests",
+          "unpriced_requests",
+          "estimated_requests"
+        ],
+        "title": "UsageSummaryView"
+      },
+      "UsageView": {
+        "properties": {
+          "retention_days": {
+            "type": "integer",
+            "title": "Retention Days"
+          },
+          "total": {
+            "$ref": "#/components/schemas/UsageSummaryView"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/UsageDayView"
+            },
+            "type": "array",
+            "title": "Days"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/UsageGroupView"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/UsageProviderView"
+            },
+            "type": "array",
+            "title": "Providers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "retention_days",
+          "total",
+          "days",
+          "groups",
+          "providers"
+        ],
+        "title": "UsageView"
       },
       "UsernameChangeInput": {
         "properties": {

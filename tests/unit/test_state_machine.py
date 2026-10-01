@@ -17,6 +17,8 @@ def test_run_states_are_defined_in_one_place():
         "queued",
         "running",
         "waiting_approval",
+        "paused",
+        "budget_extension_pending",
         "completed",
         "failed",
         "cancelled",
@@ -40,6 +42,9 @@ def test_terminal_states():
         ("queued", "cancelled"),
         ("queued", "failed"),
         ("running", "waiting_approval"),
+        ("running", "paused"),
+        ("paused", "queued"),
+        ("paused", "cancelled"),
         ("running", "completed"),
         ("running", "failed"),
         ("running", "cancelled"),
@@ -89,7 +94,7 @@ def test_terminal_states_cannot_leave_or_move_among_themselves():
 
 
 def test_unknown_status_is_rejected():
-    assert not is_valid_status("paused")
+    assert is_valid_status("paused")
     assert not is_valid_status("")
     assert not is_valid_status(None)
     assert is_valid_status("running")

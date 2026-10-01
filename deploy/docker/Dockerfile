@@ -9,6 +9,7 @@ RUN pnpm build
 FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
+COPY LICENSE NOTICE /app/
 COPY apps/server/pyproject.toml apps/server/uv.lock /app/
 RUN pip install --no-cache-dir uv==0.12.7 && uv sync --frozen --no-dev --no-install-project
 ENV PATH="/app/.venv/bin:$PATH"
@@ -66,6 +67,7 @@ COPY --from=web /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 COPY runners/mcp/main.py /app/mcp_runner.py
 COPY apps/server/mix_agent/mcp/protocol.py /app/mcp_protocol.py
+COPY apps/server/mix_agent/tools/network.py /app/mix_agent/tools/network.py
 COPY packages/tool_contracts/snapshots.py /app/snapshots.py
 USER 1000:1000
 CMD ["uvicorn", "mcp_runner:app", "--host", "0.0.0.0", "--port", "8002"]

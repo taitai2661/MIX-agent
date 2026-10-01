@@ -20,9 +20,7 @@ ROOT = Path(os.getenv("WORKSPACE", "/workspace"))
 PROCESSES = {}
 BROWSER = None
 PLAYWRIGHT = None
-CONTEXT = None
-PAGE = None
-BROWSER_CONFIG = None
+PAGES = {}
 LOCK = asyncio.Lock()
 
 
@@ -181,8 +179,8 @@ def browser_config(values):
     }
 
 
-async def page(values=None):
-    global PLAYWRIGHT, BROWSER, CONTEXT, PAGE, BROWSER_CONFIG
+async def page(run_id, values=None):
+    global PLAYWRIGHT, BROWSER
     config = browser_config(values)
     if BROWSER is None:
         try:
@@ -200,16 +198,17 @@ async def page(values=None):
             raise ValueError(
                 "Chromiumを起動できません。Browserが導入されているか確認してください。"
             ) from exc
-    if PAGE is None or BROWSER_CONFIG != config:
-        if CONTEXT is not None:
-            await CONTEXT.close()
+    entry = PAGES.get(run_id)
+    if entry is None or entry["config"] != config:
+        if entry is not None:
+            await entry["context"].close()
         context_args = {
             "accept_downloads": False, "service_workers": "block", "locale": config["locale"],
             "viewport": config["viewport"],
         }
         if config["user_agent"]:
             context_args["user_agent"] = config["user_agent"]
-        CONTEXT = await BROWSER.new_context(**context_args)
+        context = await BROWSER.new_context(**context_args)
 
         async def guard(route):
             from urllib.parse import urlsplit
@@ -225,11 +224,20 @@ async def page(values=None):
             else:
                 await guard(route)
 
-        await CONTEXT.route("**/*", block_images)
-        PAGE = await CONTEXT.new_page()
-        PAGE.set_default_timeout(config["timeout"])
-        BROWSER_CONFIG = config
-    return PAGE
+        await context.route("**/*", block_images)
+        current_page = await context.new_page()
+        current_page.set_default_timeout(config["timeout"])
+        PAGES[run_id] = {"context": context, "page": current_page, "config": config}
+    return PAGES[run_id]["page"]
+
+
+async def browser_frame(current_page):
+    result = {"url": current_page.url}
+    try:
+        result["frame_base64"] = base64.b64encode(await current_page.screenshot(timeout=5000)).decode()
+    except Exception:
+        result["frame_unavailable"] = True
+    return result
 
 
 class Execute(BaseModel):
@@ -348,7 +356,7 @@ async def execute(body: Execute):
                 stop(PROCESSES[args["process_id"]])
                 return {"ok": True}
             if name.startswith("browser_"):
-                p = await page(body.browser_settings)
+                p = await page(body.run_id, body.browser_settings)
                 if name == "browser_open":
                     from urllib.parse import urlsplit
 
@@ -357,32 +365,36 @@ async def execute(body: Execute):
                     await p.goto(args["url"], wait_until="domcontentloaded")
                 elif name == "browser_click":
                     await p.locator(args["selector"]).first.click()
+                    return await browser_frame(p)
                 elif name == "browser_type":
                     await p.locator(args["selector"]).first.fill(args["text"])
+                    return await browser_frame(p)
                 elif name == "browser_extract":
                     limit = max(1, min(100, int(args.get("limit", 20) or 20)))
                     items = await p.locator(args["selector"]).evaluate_all(
                         "elements => elements.slice(0, " + str(limit) + ").map(e => ({text: (e.innerText || '').slice(0, 2000), href: e.href || (e.querySelector('a') || {}).href || ''}))"
                     )
-                    return {"url": p.url, "count": len(items), "items": items}
+                    return {**await browser_frame(p), "count": len(items), "items": items}
                 elif name == "browser_wait":
                     timeout = max(1000, min(30000, int(args.get("timeout_ms", 10000) or 10000)))
                     if args.get("selector"):
                         try:
                             await p.locator(args["selector"]).first.wait_for(timeout=timeout)
-                            return {"url": p.url, "ready": True}
+                            return {**await browser_frame(p), "ready": True}
                         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-                            return {"url": p.url, "ready": False}
+                            return {**await browser_frame(p), "ready": False}
                     await p.wait_for_timeout(timeout)
-                    return {"url": p.url, "ready": True}
+                    return {**await browser_frame(p), "ready": True}
                 elif name == "browser_screenshot":
-                    return {
-                        "image_base64": base64.b64encode(await p.screenshot()).decode()
-                    }
+                    shot = await browser_frame(p)
+                    # Reuse the single capture for both the UI frame and the model-visible image.
+                    if "frame_base64" in shot:
+                        return {**shot, "image_base64": shot.pop("frame_base64")}
+                    return {**shot, "error": "Screen capture unavailable"}
                 elif name != "browser_read":
                     raise ValueError("Unknown browser tool")
                 return {
-                    "url": p.url,
+                    **await browser_frame(p),
                     "text": (await p.locator("body").inner_text())[:30000],
                 }
         raise ValueError("Unknown tool")
@@ -395,6 +407,41 @@ async def cancel(body: dict):
     for entry in PROCESSES.values():
         if entry["run_id"] == body["run_id"]:
             stop(entry)
+    return {"ok": True}
+
+
+@app.post("/browser-manual")
+async def browser_manual(body: dict):
+    run_id = str(body.get("run_id", ""))
+    action = body.get("action")
+    async with LOCK:
+        if run_id not in PAGES:
+            raise HTTPException(404, "Browser page unavailable")
+        p = PAGES[run_id]["page"]
+        try:
+            if action == "click":
+                await p.mouse.click(float(body["x"]), float(body["y"]))
+            elif action == "type":
+                await p.keyboard.insert_text(str(body["text"])[:4096])
+            elif action == "key":
+                if body.get("key") not in ("Enter", "Tab", "Backspace", "Escape"):
+                    raise ValueError("Unsupported key")
+                await p.keyboard.press(body["key"])
+            elif action == "scroll":
+                await p.mouse.wheel(0, max(-2000, min(2000, int(body.get("dy", 0)))))
+            elif action != "frame":
+                raise ValueError("Unsupported action")
+            return await browser_frame(p)
+        except Exception as exc:
+            raise HTTPException(422, "Manual browser operation failed") from exc
+
+
+@app.post("/browser-close")
+async def browser_close(body: dict):
+    async with LOCK:
+        entry = PAGES.pop(str(body.get("run_id", "")), None)
+        if entry:
+            await entry["context"].close()
     return {"ok": True}
 
 

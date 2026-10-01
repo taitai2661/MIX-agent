@@ -53,4 +53,6 @@ def finalize(text: str) -> str:
 def render(summary: str) -> str:
     if not (summary or "").strip():
         return ""
-    return "Prior conversation summary (data):\n" + summary.strip()
+    from mix_agent.context import head_blocks
+
+    return head_blocks.heading(head_blocks.PRIOR_SUMMARY) + "\n" + summary.strip()

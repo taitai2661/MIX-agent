@@ -2,11 +2,15 @@
 
 Builds provider input as::
 
-    System / Task State / Prior Summary / Memory / Skills / Knowledge
-    / Recent Conversation / Current User Message
+    System / Task State / Prior Summary / Relevant memory (role-organized)
+    / Skills / Knowledge / Recent Conversation / Current User Message
 
 and enforces model-aware budgets *before* sending. Legacy
 ``Run.data.history`` payloads are ingested read-only for back-compat.
+
+The "Relevant memory" block is now rendered in role buckets so the model can
+distinguish Decision / Failure / Experience / Fact from one glance instead of
+digesting an undifferentiated list of "traces".
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from __future__ import annotations
 import json
 
 from mix_agent.context import budget as budget_mod
-from mix_agent.context import retrievers, tokens, tools_selector
+from mix_agent.context import head_blocks, retrievers, tokens, tools_selector
 from mix_agent.context import task_state as task_state_mod
 from mix_agent.context.references import (
     extract_data_url_images,
@@ -22,6 +26,8 @@ from mix_agent.context.references import (
 )
 from mix_agent.context.summary import render as render_summary
 from mix_agent.context.types import CONTEXT_VERSION, ContextBudgetError
+from mix_agent.memory import runtime as mem_runtime
+from mix_agent.memory import types as mem_types
 
 TOOL_PROTOCOL_RESERVED = 2000
 
@@ -67,6 +73,12 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
 
     Always keeps the latest user message. Excluded (older) messages are
     returned for progressive summarization instead of being dropped silently.
+
+    Tool-call/result pairing is preserved: an ``assistant`` message carrying
+    ``tool_calls`` and its matching ``role: "tool"`` results are treated as a
+    unit. Slicing between them produces a protocol violation (the provider
+    rejects an orphan ``function_call_output``/``tool_result``), so the window
+    breaks at pair boundaries.
     """
     if not messages:
         return [], []
@@ -81,7 +93,8 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
         message = messages[idx]
         cost = tokens.count(_message_text(message), model_id) + 8
         cost += sum(len(str(image)) // 3 for image in message.get("images") or [])
-        cost += len(message.get("image_refs") or []) * 30
+        cost += len(message.get("image_refs") or []) * 768
+        cost += sum(len(str(call.get("arguments") or "")) // 2 + 40 for call in message.get("tool_calls") or [])
         if idx == mandatory_idx:
             included_rev.append(message)
             used += cost
@@ -96,6 +109,48 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
     # Mandatory message must survive even when everything else is evicted.
     if mandatory_idx is not None and not any(m is messages[mandatory_idx] for m in included):
         included.append(messages[mandatory_idx])
+    included, excluded = _repair_tool_pairing(included, excluded)
+    return included, excluded
+
+
+def _repair_tool_pairing(included: list[dict], excluded: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Drop orphan tool calls/results so the provider never sees a broken pair.
+
+    An assistant message may carry ``tool_calls`` whose ``role: "tool"`` results
+    fell on the other side of the budget window (or vice versa). Keeping only
+    one side is a protocol violation, so we strip the dangling half. Results are
+    dropped preferentially: losing an already-computed result is cheaper than
+    losing the assistant turn that frames the next action.
+    """
+    included_ids = {m.get("call_id") for m in included if m.get("role") == "tool"}
+    included_tool_calls = set()
+    for message in included:
+        for call in message.get("tool_calls") or []:
+            call_id = call.get("id")
+            if isinstance(call_id, str) and call_id:
+                included_tool_calls.add(call_id)
+    # 1. Tool results whose assistant turn was evicted → move to excluded.
+    new_included: list[dict] = []
+    orphaned_results: list[dict] = []
+    for message in included:
+        if message.get("role") == "tool" and message.get("call_id") not in included_tool_calls:
+            orphaned_results.append(message)
+        else:
+            new_included.append(message)
+    included = new_included
+    # 2. Assistant turns with tool_calls whose results were evicted → strip the
+    #    tool_calls so the message is a plain assistant turn.
+    final: list[dict] = []
+    for message in included:
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls and message.get("role") == "assistant":
+            kept = [c for c in tool_calls if c.get("id") in included_ids]
+            if len(kept) != len(tool_calls):
+                message = {**message, "tool_calls": kept or None}
+        final.append(message)
+    included = final
+    if orphaned_results:
+        excluded = orphaned_results + excluded
     return included, excluded
 
 
@@ -140,13 +195,17 @@ def build_initial(
     task_state_rendered = task_state_mod.render(task_state_mod.ensure(task_state_value, task_goal))
     summary_rendered = render_summary(previous_summary)
 
-    memory_included, memory_excluded = _fit_block(memories or [], budgets["memory"], model_id)
+    # Memory rendering is now role-organized: each role group is fitted
+    # against a slice of the memory budget so the most important buckets
+    # (decisions, failures) keep priority over generic facts.
+    memory_included, memory_excluded, memory_block, memory_groups = _render_memory(
+        memories or [], budgets["memory"], model_id,
+    )
     skills_included, skills_excluded = _fit_block(skills or [], budgets["skills"], model_id)
     knowledge_included, knowledge_excluded = _fit_block(knowledge or [], budgets["knowledge"], model_id)
 
-    memory_block = retrievers.render_block("Relevant memories", memory_included)
-    skills_block = retrievers.render_block("Relevant reusable skills", skills_included)
-    knowledge_block = retrievers.render_block("Relevant knowledge", knowledge_included)
+    skills_block = retrievers.render_block(head_blocks.SKILLS, skills_included)
+    knowledge_block = retrievers.render_block(head_blocks.KNOWLEDGE, knowledge_included)
 
     head_parts = [system_text]
     if task_state_rendered:
@@ -219,6 +278,7 @@ def build_initial(
         "included": {
             "recent_count": len(recent),
             "memory_ids": [m.get("id") for m in memory_included],
+            "memory_groups": memory_groups,
             "skill_ids": [m.get("id") for m in skills_included],
             "knowledge_ids": [m.get("id") or m.get("chunk_id") for m in knowledge_included],
         },
@@ -258,6 +318,113 @@ def resolve_for_provider(messages: list[dict], image_loader) -> list[dict]:
 
 def _fit_block(items: list[dict], budget: int, model_id: str = ""):
     return retrievers.fit_items(items, budget, model_id)
+
+
+# Priority shares inside the memory budget.  Decisions and Failures are
+# surfaced even when the budget is tight; Questions/Experiences share the
+# remainder so we don't drown the model in low-confidence memories.
+_MEMORY_ROLE_PRIORITY: tuple[tuple[str, float], ...] = (
+    (mem_types.ROLE_DECISION, 0.28),
+    (mem_types.ROLE_FAILURE, 0.22),
+    (mem_types.ROLE_PREFERENCE, 0.12),
+    (mem_types.ROLE_GOAL, 0.10),
+    (mem_types.ROLE_FACT, 0.18),
+    (mem_types.ROLE_EXPERIENCE, 0.06),
+    (mem_types.ROLE_HYPOTHESIS, 0.02),
+    (mem_types.ROLE_QUESTION, 0.02),
+)
+
+
+def _render_memory(
+    memories: list[dict],
+    budget: int,
+    model_id: str = "",
+) -> tuple[list[dict], list[dict], str, dict[str, int]]:
+    """Render the memory block in role-organized buckets.
+
+    The output keeps the highest-priority roles (decisions, failures) visible
+    even when the total budget is small, and surfaces only the most relevant
+    Facts / Experiences when there is room.  Returns ``(included, excluded,
+    block_text, group_counts)``.
+    """
+    if not memories or budget <= 0:
+        return [], [{"id": m.get("id"), "reason": "no_budget"} for m in memories], "", {}
+    grouped = mem_runtime.group_for_context(memories)
+    grouped_sets: dict[str, set[str]] = {key: {item["id"] for item in items if item.get("id")} for key, items in grouped.items()}
+    flat_ids: dict[str, dict] = {item["id"]: item for item in memories if item.get("id")}
+    included: list[dict] = []
+    excluded: list[dict] = []
+    sections: list[str] = []
+    # Report every bucket, including the empty ones: the trace is rendered as a
+    # per-bucket panel, so a missing key would be indistinguishable from a bug.
+    counts: dict[str, int] = {key: 0 for key in grouped}
+    used = 0
+    label_map = {
+        "decisions": "Relevant active Decisions",
+        "failures": "Past failures to avoid",
+        "preferences": "User preferences",
+        "goals": "Active goals / constraints",
+        "facts": "Relevant facts",
+        "experiences": "Relevant experiences",
+        "questions": "Open hypotheses / questions",
+        "other": "Other memory",
+    }
+    for role, share in _MEMORY_ROLE_PRIORITY:
+        bucket_key = _bucket_key_for_role(role)
+        bucket = grouped.get(bucket_key) or []
+        if not bucket:
+            continue
+        bucket_budget = max(120, int(budget * share))
+        bucket_included, bucket_excluded = _fit_block(bucket, bucket_budget, model_id)
+        counts[bucket_key] = len(bucket_included)
+        included.extend(bucket_included)
+        for entry in bucket_excluded:
+            excluded.append({"id": entry.get("id"), "reason": f"budget:{bucket_key}"})
+        if bucket_included:
+            text = json.dumps(bucket_included, ensure_ascii=False)
+            if len(text) > 1200:
+                text = text[:1200] + "…(truncated)"
+            sections.append(f"{label_map[bucket_key]}:\n{text}")
+        used += sum(len(json.dumps(m, ensure_ascii=False)) for m in bucket_included) // 2
+    # Leftover budget lets the highest-priority buckets absorb spillover.
+    leftover = max(0, budget - used)
+    if leftover > 200:
+        for role, share in _MEMORY_ROLE_PRIORITY:
+            bucket_key = _bucket_key_for_role(role)
+            bucket = grouped.get(bucket_key) or []
+            room_ids = grouped_sets.get(bucket_key, set()) - {m["id"] for m in included}
+            extras = [flat_ids[i] for i in room_ids if i in flat_ids]
+            if not extras:
+                continue
+            extra_included, _ = _fit_block(extras, leftover, model_id)
+            for item in extra_included:
+                if item["id"] in {m["id"] for m in included}:
+                    continue
+                included.append(item)
+                counts[bucket_key] = counts.get(bucket_key, 0) + 1
+                leftover -= len(json.dumps(item, ensure_ascii=False)) // 2 + 20
+                if leftover <= 100:
+                    break
+            if leftover <= 100:
+                break
+    block = head_blocks.heading(head_blocks.MEMORY) + "\n" + "\n\n".join(sections) if sections else ""
+    return included, excluded, block, counts
+
+
+def _bucket_key_for_role(role: str) -> str:
+    return {
+        mem_types.ROLE_DECISION: "decisions",
+        mem_types.ROLE_FAILURE: "failures",
+        mem_types.ROLE_PREFERENCE: "preferences",
+        mem_types.ROLE_GOAL: "goals",
+        mem_types.ROLE_CONSTRAINT: "goals",
+        mem_types.ROLE_FACT: "facts",
+        mem_types.ROLE_EXPERIENCE: "experiences",
+        mem_types.ROLE_SOLUTION: "experiences",
+        mem_types.ROLE_OBSERVATION: "experiences",
+        mem_types.ROLE_HYPOTHESIS: "questions",
+        mem_types.ROLE_QUESTION: "questions",
+    }.get(role, "other")
 
 
 def history_from_built(built: dict) -> list[dict]:

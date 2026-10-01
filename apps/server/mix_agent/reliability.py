@@ -106,6 +106,19 @@ def _events(db, owner_id: str, current: datetime):
     ))).copy()
 
 
+def _matches_profile(profile, value) -> bool:
+    """Whether an event's stored profile applies to the requested route.
+
+    ``profile`` may be a single key (legacy) or a hierarchy set, and ``None``
+    always matches so unprofiled legacy evidence stays usable.
+    """
+    if profile is None:
+        return True
+    if isinstance(profile, str):
+        return value in {profile, None}
+    return value is None or value in profile
+
+
 def _weight(created_at: datetime, current: datetime) -> float:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=UTC)
@@ -136,8 +149,8 @@ def speed(db, owner_id: str, model_id: str, provider_id: str, scope: str,
         and event.data.get("scope") == scope
         and event.data.get("outcome") == "success"
         # Unprofiled records are legacy evidence.  They remain a fallback while
-        # all new records stay isolated by the exact profile.
-        and (profile is None or event.data.get("profile") in {profile, None})
+        # all new records stay isolated by the profile hierarchy.
+        and _matches_profile(profile, event.data.get("profile"))
     )]
 
     def robust_average(values):
@@ -250,7 +263,7 @@ def reliability(db, owner_id: str, model_id: str, provider_id: str, scope: str,
     # Hierarchical, decayed evidence. Small direct samples are deliberately shrunk
     # toward broader model/provider evidence and a conservative beta prior.
     def matches_profile(event):
-        return profile is None or event.data.get("profile") in {profile, None}
+        return _matches_profile(profile, event.data.get("profile"))
 
     groups = (
         (4.0, [e for e in events if e.data.get("model_id") == model_id and e.data.get("provider_id") == provider_id

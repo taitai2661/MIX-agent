@@ -8,6 +8,9 @@ os.environ["MIX_DATA"] = str(ROOT)
 os.environ["MIX_KEYS"] = str(ROOT / "keys")
 os.environ["DATABASE_URL"] = "postgresql+psycopg://mix:test-only-password@postgres-test/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://testserver"
+# Point the model-info catalog at a path that never exists so no test reaches
+# the network; individual tests override the lookup itself when they need one.
+os.environ["MIX_MODEL_INFO_URL"] = str(ROOT / "model-info")
 
 from fastapi.testclient import TestClient
 from mix_agent.db.models import Base

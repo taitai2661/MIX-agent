@@ -4,10 +4,12 @@ from copy import deepcopy
 
 KIND_VALUES = ("openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible")
 CUSTOM_KINDS = ("compatible", "anthropic", "gemini")
+TRANSPORT_IDS = ("openai_responses", "openai_compatible", "anthropic_messages",
+                 "gemini_generate_content", "ollama", "lmstudio")
 
 
 def preset(id, name, category, kind, url="", api_key=True, private=False, *, transport_id=None,
-           discovery_id=None, extra_config_schema=()):
+           discovery_id=None, extra_config_schema=(), model_transports=None, session_header=None):
     transport_id = transport_id or {
         "openai": "openai_responses", "anthropic": "anthropic_messages",
         "gemini": "gemini_generate_content", "ollama": "ollama", "lmstudio": "lmstudio",
@@ -21,8 +23,43 @@ def preset(id, name, category, kind, url="", api_key=True, private=False, *, tra
     return {"id": id, "name": name, "category": category, "kind": kind,
             "default_url": url, "api_key_required": api_key, "allow_private_default": private,
             "transport_id": transport_id, "discovery_id": discovery_id,
-            "metadata_resolver_ids": ("provider_api", "official_catalog", "models_dev", "builtin"),
-            "extra_config_schema": list(extra_config_schema)}
+            "metadata_resolver_ids": ("provider_api", "model_info"),
+            "extra_config_schema": list(extra_config_schema),
+            "model_transports": dict(model_transports or {}),
+            "session_header": session_header}
+
+
+def _endpoint_transports(responses=(), messages=()):
+    """Map model ids served on a single non-default gateway endpoint."""
+    return {**{model: "openai_responses" for model in responses},
+            **{model: "anthropic_messages" for model in messages}}
+
+
+# OpenCode publishes exactly one endpoint per model and serves the model there
+# only: /chat/completions for the OpenAI-compatible families, /responses for
+# OpenAI-style models and /messages for Anthropic-style ones.  Every other model
+# keeps the preset default.  Sources: https://opencode.ai/docs/go and
+# https://opencode.ai/docs/zen ("Endpoints").
+OPENCODE_GO_MODEL_TRANSPORTS = _endpoint_transports(
+    responses=("grok-4.7", "grok-4.6", "gpt-6-luna", "gpt-5.6-luna",
+               "muse-spark-1.3-contributor", "muse-spark-1.2-contributor"),
+    messages=("minimax-m3", "minimax-m2.7", "minimax-m2.5", "qwen3.8-max", "qwen3.8-flash",
+              "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus"),
+)
+
+OPENCODE_ZEN_MODEL_TRANSPORTS = _endpoint_transports(
+    responses=("gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
+               "gpt-5.6-luna", "gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-pro",
+               "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.3-codex", "gpt-5.3-codex-spark",
+               "gpt-5.2", "gpt-5.2-codex", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max",
+               "gpt-5.1-codex-mini", "gpt-5", "gpt-5-codex", "gpt-5-nano",
+               "grok-4.7", "grok-4.6", "grok-4.5", "grok-build-0.1",
+               "muse-spark-1.3", "muse-spark-1.2", "muse-spark-1.3-contributor-free"),
+    messages=("claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5",
+              "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
+              "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5",
+              "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.5-plus"),
+)
 
 
 # A preset is only offered with a documented compatible endpoint.  Gateways or
@@ -81,11 +118,19 @@ PRESETS = (
     preset("azure-ai-foundry", "Azure AI Foundry", "クラウド", "compatible", extra_config_schema=(
         {"key": "deployment_name", "label": "Deployment name", "required": True},
         {"key": "api_version", "label": "API version", "required": False},)),
+    preset("opencode-zen", "OpenCode Zen", "ゲートウェイ", "compatible", "https://opencode.ai/zen/v1",
+           model_transports=OPENCODE_ZEN_MODEL_TRANSPORTS),
+    # Go rejects inference without this header (HTTP 400 ``MissingSessionID``).
+    # Zen answers 200 without it, so only Go declares one.
+    preset("opencode-go", "OpenCode Go", "ゲートウェイ", "compatible", "https://opencode.ai/zen/go/v1",
+           model_transports=OPENCODE_GO_MODEL_TRANSPORTS, session_header="x-opencode-session"),
     preset("custom", "カスタム", "カスタム", "compatible"),
 )
-assert len(PRESETS) == 50
+assert len(PRESETS) == 52
 BY_ID = {item["id"]: item for item in PRESETS}
 assert all(item["transport_id"] and item["discovery_id"] and item["metadata_resolver_ids"] for item in PRESETS)
+assert all(transport in TRANSPORT_IDS
+           for item in PRESETS for transport in item["model_transports"].values())
 
 
 def catalog():
