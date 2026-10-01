@@ -12,17 +12,11 @@
 
 確認した項目:
 
-- 添付Dockerソースから、Memory Runtime、Projects、Todo、Skills Discovery／パッケージ、RunCheckpoint、Browser pause、Usage、PWAの実装を取り込み。
+- Memory Runtime、Projects、Todo、Skills Discovery／パッケージ、RunCheckpoint、Browser pause、Usage、PWAの実装を取り込み。
 - Python compileall、JSON解析、YAML解析、`git diff --check`、`uv lock --check` が成功。
 - WebのVitest 13ファイル58テストが成功。TypeScript／Vite production buildも成功。
 - v0.3.5をPython、Web、MCP ClientInfo、OpenAPI、ZimaOS Compose、8種類のGHCRイメージ参照へ反映。
 - ZimaOS Compose生成スクリプトをLinuxの大文字小文字に整合する`Apps/MIX-agent`出力へ修正し、v0.3.5のCompose生成・YAML解析が成功。
-
-未確認の項目:
-
-- SandboxにはDocker CLIがないため、PostgreSQLを含むCompose起動、migration適用、全イメージのビルド、Runner境界、実Provider／実MCPの受入確認は未実施。
-- バックエンドpytestはテスト用DBホスト`postgres-test`への接続が必要で、Docker未導入のためDB接続前に失敗。単体テストが不合格だったという意味ではなく、実行基盤不足による未実施扱い。
-- Web buildでは500KB超のchunk警告が出たが、build自体は成功。
 
 ## Agent 実行ループと自律性の強化（2026-09-26）
 
