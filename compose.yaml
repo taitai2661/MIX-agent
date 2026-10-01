@@ -55,9 +55,21 @@ services:
       MIX_KEYS: /keys
       RUNNER_KEYS: /runner-keys
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+      # Read-only view of one host folder, used for AGENTS.md / CLAUDE.md and
+      # for skills discovered under .mix/skills (then .claude/skills, then
+      # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
+      MIX_PROJECT_MOUNT: /project
+      # Source of the model-info catalog: an https address or a directory
+      # mounted into this container (see the volumes comment below).
+      MIX_MODEL_INFO_URL: "${MIX_MODEL_INFO_URL:-https://taitai2661.github.io/model-info/v1}"
     volumes:
       - data:/data
       - policy:/data/egress
+      # Agent Skills are scanned from /data/skills, inside the data volume. To
+      # author SKILL.md on the host instead, set MIX_SKILLS_DIR and add your own
+      # mount here; bind-mounting the checkout would let imports write skills
+      # into the source tree.
+      - ${MIX_PROJECT_DIR:-.}:/project:ro
       - keys:/keys
       - db-secret:/db-secret:ro
       - execution-token:/execution-keys:ro
@@ -65,6 +77,9 @@ services:
       - manager-token:/manager-keys:ro
       - browser-token:/browser-keys:ro
       - browser-provisioner-token:/browser-provisioner-keys:ro
+      # Local model-info checkout instead of the published catalog:
+      #   - ./model-info:/model-info:ro   (with MIX_MODEL_INFO_URL=/model-info/v1)
+      # - ${MIX_MODEL_INFO_DIR:-./model-info}:/model-info:ro
     command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
     networks: [database, execution, mcp, internet]
     extra_hosts: ["host.docker.internal:host-gateway"]

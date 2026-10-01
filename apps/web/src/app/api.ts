@@ -1,5 +1,6 @@
 import type { components } from "../generated/api";
 import { ja } from "./strings";
+import { t } from "./i18n";
 import { uuid } from "./uuid";
 export type Row = Omit<components["schemas"]["RecordView"], "data"> & {
   data: Record<string, any>;
@@ -67,17 +68,17 @@ export async function api<T = any>(
     if (!response.ok) {
       const error = await response
         .json()
-        .catch(() => ({ detail: ja.communicationFailed }));
+        .catch(() => ({ detail: t(ja.communicationFailed) }));
       throw new Error(
         typeof error.detail === "string"
-          ? error.detail
+          ? t(error.detail)
           : JSON.stringify(error.detail),
       );
     }
     return response.json();
   } catch (error) {
     if (controller.signal.aborted)
-      throw new Error(timedOut() ? ja.requestTimeout : ja.requestInterrupted);
+      throw new Error(t(timedOut() ? ja.requestTimeout : ja.requestInterrupted));
     throw error;
   } finally {
     cleanup();

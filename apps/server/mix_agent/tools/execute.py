@@ -15,13 +15,30 @@ from mix_agent.auth.security import read_secret, store_secret
 from mix_agent.db.models import Agent, Artifact, Conversation, MCPConnection, ScheduledJob, Settings, now
 from mix_agent.knowledge import service as knowledge
 from mix_agent.mcp import oauth as mcp_oauth
+from mix_agent.memory import runtime as memory_runtime
 from mix_agent.memory import service as memory
+from mix_agent.memory import tools as memory_tools
 from mix_agent.skills import service as skills
 from mix_agent.tools.network import fetch_public, fetch_public_bytes
 
 DDGS_TIMELIMIT = {"day": "d", "week": "w", "month": "m", "year": "y"}
 BRAVE_FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
 TAVILY_TIME_RANGE = {"day": "day", "week": "week", "month": "month", "year": "year"}
+
+# Artifact kinds that exist only for model context / internal bookkeeping and
+# must never surface as user-facing downloads (see save_artifact lifecycle docs).
+INTERNAL_ARTIFACT_KINDS = {"context-tool-output", "context-image", "browser-frame"}
+
+
+def is_user_artifact(value):
+    """True when a value looks like an artifact the user should see.
+
+    Context-internal artifacts carry kind in INTERNAL_ARTIFACT_KINDS. Missing
+    or unknown kinds are treated as user-visible so explicit tools keep working.
+    """
+    if not isinstance(value, dict) or not value.get("artifact_id"):
+        return False
+    return value.get("kind") not in INTERNAL_ARTIFACT_KINDS
 
 
 def _sanitize_domains(domains):
@@ -299,6 +316,7 @@ async def execute(db, run, tool, args):
             "browser" if name.startswith("browser_") else "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
                                       "browser_settings": browser_settings}
         )
+        # The frame is a UI observation, never part of the model tool result.
         if "image_base64" in result:
             artifact = save_artifact(
                 db, run.owner_id, base64.b64decode(result.pop("image_base64")), "screenshot.png", "image/png"
@@ -354,35 +372,100 @@ async def execute(db, run, tool, args):
             result = await _search_searxng(query, count, data.get("searxng_url", ""))
         else:
             result = await _search_ddgs(query, count, freshness)
-    elif name == "memory_search":
-        searched = memory.search(db, run.owner_id, args.get("query", ""), scopes, debug=bool(args.get("debug")))
-        result = searched if args.get("debug") else {"memories": searched}
-    elif name.startswith("memory_"):
+    elif name == "memory_recall":
         if not scopes:
             raise ValueError("Memory is disabled for this agent")
-        result = memory.change(
+        result = memory_tools.recall(
             db,
             run.owner_id,
-            args.get("content"),
-            args.get("id"),
-            name == "memory_delete",
-            scope=scopes[0],
-            source_run=run.id,
+            query=args.get("query", ""),
             scopes=scopes,
-            importance=args.get("importance", 2),
-            category=args.get("category"),
-            pinned=args.get("pinned", False),
-            confidence=args.get("confidence"),
-            salience=args.get("salience"),
+            roles=args.get("roles"),
+            limit=int(args.get("limit") or 8),
+        )
+    elif name == "memory_remember":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.remember(
+            db,
+            run.owner_id,
+            content=args.get("content", ""),
+            role=args.get("role") or "fact",
+            scope=args.get("scope") or scopes[0],
+            role_metadata=args.get("role_metadata"),
             entities=args.get("entities"),
             concepts=args.get("concepts"),
+            evidence=args.get("evidence"),
+            task_id=run.id,
+            source_kind="agent",
+        )
+    elif name == "memory_forget":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.forget(
+            db,
+            run.owner_id,
+            memory_id=args.get("id"),
+            query=args.get("query"),
+            reason=str(args.get("reason") or "agent forget"),
+        )
+    elif name == "memory_search":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        # Legacy alias: redirect through the role-based Recall Pipeline so
+        # older agents transparently benefit from the role taxonomy.
+        result = memory_tools.recall(
+            db, run.owner_id,
+            query=args.get("query", ""),
+            scopes=scopes,
+            limit=8,
+        )
+    elif name in ("memory_add", "memory_update"):
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.remember(
+            db,
+            run.owner_id,
+            content=args.get("content", ""),
+            role="fact",
+            scope=scopes[0],
+            entities=args.get("entities"),
+            concepts=args.get("concepts"),
+            task_id=run.id,
+            source_kind="agent",
+        )
+    elif name == "memory_delete":
+        if not scopes:
+            raise ValueError("Memory is disabled for this agent")
+        result = memory_tools.forget(
+            db, run.owner_id,
+            memory_id=args.get("id"),
+            reason="agent forget",
         )
     elif name == "skill_search":
-        result = {"skills": skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))}
+        from mix_agent.skills import discovery
+
+        stored = skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))
+        # The same project skills the prompt advertises, so the model can read
+        # one back after seeing it in the catalogue.
+        seen = {row.get("id") for row in stored}
+        merged = stored + [row for row in discovery.search(args.get("query", "")) if row.get("id") not in seen]
+        result = {"skills": merged}
     elif name == "skill_add":
         result = skills.change(db, run.owner_id, name=args["name"], description=args.get("description", ""), content=args["content"], source_run=run.id)
     elif name == "skill_update":
         result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
+    elif name == "skill_resource":
+        row = skills.find(db, run.owner_id, args.get("skill", ""))
+        if row:
+            result = skills.read_resource(db, run.owner_id, row.id, args.get("path", ""))
+        else:
+            from mix_agent.skills import discovery
+
+            pkg = discovery.find(args.get("skill", ""))
+            if not pkg:
+                raise ValueError("Skill was not found")
+            result = discovery.read_resource(pkg, args.get("path", ""))
     elif name == "update_plan":
         result = {key: args[key] for key in ("steps", "pending", "verification") if key in args}
     elif name == "schedule_list":

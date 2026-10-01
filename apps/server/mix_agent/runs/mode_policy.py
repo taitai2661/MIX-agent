@@ -5,13 +5,25 @@ from copy import deepcopy
 MODE_POLICIES = {
     "chat": {"label": "通常", "max_seconds": 1200, "max_steps": 12, "max_tool_calls": 12,
              "planning": False, "delegation": False, "checkpointing": False,
-             "background_processes": False, "persistent_browser": False, "auto_skill_learning": False},
+             "background_processes": False, "persistent_browser": False, "auto_skill_learning": False,
+             "checkpoint_every_steps": 0, "checkpoint_keep_recent": 0,
+             "planning_steps": 0, "verification_steps": 0,
+             "budget_extension": False, "stagnation_detection": False, "strict_verification": False,
+             "max_budget_extensions": 0},
     "thinking": {"label": "深く考える", "max_seconds": 2700, "max_steps": 24, "max_tool_calls": 24,
                   "planning": False, "delegation": False, "checkpointing": False,
-                  "background_processes": False, "persistent_browser": False, "auto_skill_learning": False},
+                  "background_processes": False, "persistent_browser": False, "auto_skill_learning": False,
+                  "checkpoint_every_steps": 0, "checkpoint_keep_recent": 0,
+                  "planning_steps": 0, "verification_steps": 0,
+                  "budget_extension": False, "stagnation_detection": False, "strict_verification": False,
+                  "max_budget_extensions": 0},
     "agent": {"label": "長作業", "max_seconds": 5400, "max_steps": 300, "max_tool_calls": 750,
               "planning": True, "delegation": True, "checkpointing": True,
-              "background_processes": True, "persistent_browser": True, "auto_skill_learning": True},
+              "background_processes": True, "persistent_browser": True, "auto_skill_learning": True,
+              "checkpoint_every_steps": 10, "checkpoint_keep_recent": 20,
+              "planning_steps": 30, "verification_steps": 20,
+              "budget_extension": True, "stagnation_detection": True, "strict_verification": True,
+              "max_budget_extensions": 2},
 }
 
 MODE_PROMPTS = {
@@ -46,7 +58,19 @@ MODE_PROMPTS = {
         "actual tool results, and record verification with update_plan after the last change. "
         "Continue until the outcome is verified or a real authorization, user-choice, or budget "
         "blocker remains. Never claim completion for unverified work. Finish with the result, "
-        "verification evidence, and only meaningful follow-up work."
+        "verification evidence, and only meaningful follow-up work.\n\n"
+        "Long-work execution rules:\n"
+        "- Start with `phase:<name>` markers in update_plan.steps so each phase can be verified "
+        "independently.\n"
+        "- After every write or destructive terminal command, run a read-only check tool and record "
+        "the evidence in update_plan.verification.\n"
+        "- If the same tool fails repeatedly, change tool or approach instead of retrying. Consider "
+        "skill_search and memory_search for known good procedures.\n"
+        "- If work stalls, call update_plan to refresh pending and completed steps before continuing.\n"
+        "- If a budget extension is requested, the user is asked once per extension. Continuing past "
+        "the limit stops the run.\n"
+        "- If the server requests a checkpoint resume, follow the last saved checkpoint's state and "
+        "continue from there."
     ),
 }
 

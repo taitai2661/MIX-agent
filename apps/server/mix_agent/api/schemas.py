@@ -14,7 +14,10 @@ class RecordView(BaseModel):
 
 
 ChatMode = Literal["chat", "thinking", "agent"]
-RunStatus = Literal["queued", "running", "waiting_approval", "completed", "failed", "cancelled", "interrupted"]
+RunStatus = Literal[
+    "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
+    "completed", "failed", "cancelled", "interrupted",
+]
 ApprovalDecision = Literal["once", "always", "denied"]
 ApprovalStatus = Literal["pending", "once", "always", "denied", "expired"]
 
@@ -40,6 +43,7 @@ class PerformanceView(BaseModel):
     output_tokens: int
     generation_ms: int
     tokens_per_second: float
+    first_output_ms: int | None = None
 
 
 class MessageDataView(BaseModel):
@@ -84,12 +88,15 @@ class ConversationSelectionView(BaseModel):
     model_id: str
     agent_id: str = ""
     mode: ChatMode = "chat"
+    research_mode: bool = False
 
 
 class ConversationMessagesView(BaseModel):
     messages: list[MessageView]
     runs: list[ConversationRunView]
     selection: ConversationSelectionView | None = None
+    project_id: str | None = None
+    todos: list[dict] = Field(default_factory=list)
 
 
 class SendMessageView(BaseModel):
@@ -157,9 +164,29 @@ class RunBudgetView(BaseModel):
     max_tool_calls: int | None = None
 
 
+class BudgetExtensionRequestView(BaseModel):
+    tool_calls_used: int
+    tool_calls_limit: int
+    steps_used: int
+    steps_limit: int
+    elapsed_seconds: int
+    max_seconds: int
+    requested_at: str
+
+
+class RunCheckpointView(BaseModel):
+    id: str
+    step: int
+    tool_count: int
+    trigger: str
+    created_at: str | None = None
+
+
 class RunView(BaseModel):
     id: str
     status: RunStatus
+    browser_manual_active: bool = False
+    browser_pause_requested: bool = False
     reason: str | None = None
     steps: int
     tool_count: int
@@ -170,6 +197,12 @@ class RunView(BaseModel):
     approvals: list[ApprovalView]
     context_summary: ContextSummaryView | None = None
     answer_evaluation: AnswerEvaluationView | None = None
+    budget_extension_request: BudgetExtensionRequestView | None = None
+    budget_extensions_used: int = 0
+    budget_extensions_max: int = 0
+    stagnation: list[dict] | None = None
+    checkpoint_resumed_from: dict | None = None
+    checkpoints: list[RunCheckpointView] = Field(default_factory=list)
 
 
 class StatisticsSummaryView(BaseModel):
@@ -196,6 +229,70 @@ class StatisticsView(BaseModel):
     retention_days: int
     total: StatisticsSummaryView
     groups: list[StatisticsGroupView]
+
+
+class PricingInput(Input):
+    input: float | None = Field(default=None, ge=0)
+    output: float | None = Field(default=None, ge=0)
+    cache_read: float | None = Field(default=None, ge=0)
+
+
+class UsageSummaryView(BaseModel):
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    priced_requests: int
+    unpriced_requests: int
+    estimated_requests: int
+
+
+class UsageDayView(BaseModel):
+    date: str
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+
+
+class UsageGroupView(BaseModel):
+    key: str
+    model_id: str
+    provider_id: str
+    model_name: str
+    mode: str
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    pricing_source: str
+    unpriced: bool
+    provider_name: str | None = None
+
+
+class UsageProviderView(BaseModel):
+    provider_id: str
+    provider_name: str | None = None
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    unpriced: bool
+
+
+class UsageView(BaseModel):
+    retention_days: int
+    total: UsageSummaryView
+    days: list[UsageDayView]
+    groups: list[UsageGroupView]
+    providers: list[UsageProviderView]
 
 
 class DiagnosticsFailureView(BaseModel):
@@ -294,6 +391,8 @@ class ModelInput(Input):
     # A user-supplied limit takes precedence over catalog/provider metadata and
     # must survive the next provider refresh.
     context_window_override: int | None = Field(default=None, ge=1024, le=10000000)
+    # USD per 1,000,000 tokens.  An administrator override beats catalog data.
+    pricing_override: PricingInput | None = None
     source: str = "manual"
 
 
@@ -316,7 +415,14 @@ class AgentInput(Input):
 class ConversationInput(Input):
     title: str = Field(default="新しいチャット", max_length=200)
     folder_id: str | None = None
+    project_id: str | None = None
     pinned: bool = False
+
+
+class ProjectInput(Input):
+    name: str = Field(min_length=1, max_length=100)
+    instructions: str = Field(default="", max_length=20000)
+    sources: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ScheduledJobInput(Input):
@@ -340,6 +446,7 @@ class ConversationFolderInput(Input):
 
 class ConversationStateInput(Input):
     folder_id: str | None = None
+    project_id: str | None = None
     pinned: bool | None = None
     archived: bool | None = None
 
@@ -356,9 +463,9 @@ class MessageInput(Input):
     agent_id: str = ""
     mode: Literal["chat", "thinking", "agent"] = "chat"
     artifact_ids: list[str] = Field(default_factory=list, max_length=5)
-    acknowledge_unknown_capability: bool = False
     temporary_mode: bool = False
     allow_tools: bool = False
+    research_mode: bool = False
 
 
 class DecisionInput(Input):
@@ -372,15 +479,68 @@ class MemoryInput(Input):
     strength: float | None = Field(default=None, ge=0, le=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
     salience: float | None = Field(default=None, ge=0, le=1)
-    lifecycle_state: Literal["latent", "established", "superseded", "archived", "deleted"] | None = None
+    lifecycle_state: Literal[
+        "candidate", "active", "superseded", "expired", "archived", "disputed",
+        # legacy aliases kept for backward compatibility
+        "latent", "established", "deleted",
+    ] | None = None
     entities: list[str] | None = Field(default=None, max_length=50)
     concepts: list[str] | None = Field(default=None, max_length=50)
     temporal_context: str | None = Field(default=None, max_length=200)
     metadata: dict | None = None
+    # Role-based taxonomy
+    role: Literal[
+        "fact", "decision", "preference", "goal", "constraint",
+        "experience", "failure", "solution", "observation",
+        "hypothesis", "question",
+    ] | None = None
+    source_kind: Literal[
+        "user", "agent", "tool", "browser", "external", "consolidation",
+    ] | None = None
+    role_metadata: dict | None = None
+    verification: Literal[
+        "unverified", "pending", "verified", "disputed", "rejected",
+    ] | None = None
     # Deprecated compatibility inputs. Category is retained only as legacy metadata.
     importance: int = Field(default=2, ge=1, le=5)
     category: str | None = Field(default=None, max_length=50)
     pinned: bool = False
+
+
+class MemoryEvidenceInput(Input):
+    kind: Literal[
+        "user_message", "conversation", "tool_result", "browser",
+        "file", "code_change", "external", "agent_action", "observation",
+    ]
+    ref: str = Field(default="", max_length=500)
+    summary: str = Field(default="", max_length=2000)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    data: dict | None = None
+
+
+class MemoryResolveConflictInput(Input):
+    resolution: Literal["prefer_a", "prefer_b", "merge", "dismiss"]
+    prefer: str | None = Field(default=None, max_length=36)
+
+
+class MemoryRememberInput(Input):
+    """Reduced-shape ``memory.remember`` tool surface."""
+    content: str = Field(min_length=1, max_length=10000)
+    role: Literal[
+        "fact", "decision", "preference", "goal", "constraint",
+        "experience", "failure", "solution", "observation",
+        "hypothesis", "question",
+    ] = "fact"
+    scope: Literal["working", "task", "project", "user", "world"] = "task"
+    source_kind: Literal[
+        "user", "agent", "tool", "browser", "external", "consolidation",
+    ] | None = None
+    role_metadata: dict | None = None
+    entities: list[str] | None = Field(default=None, max_length=50)
+    concepts: list[str] | None = Field(default=None, max_length=50)
+    evidence: list[dict] | None = Field(default=None, max_length=20)
+    task_id: str | None = Field(default=None, max_length=36)
+    explicit_user: bool = False
 
 
 class SkillInput(Input):
@@ -388,6 +548,10 @@ class SkillInput(Input):
     description: str = Field(default="", max_length=1000)
     content: str = Field(min_length=1, max_length=50000)
     enabled: bool = True
+
+
+class SkillImportInput(Input):
+    text: str = Field(min_length=1, max_length=200000)
 
 
 class MCPInput(Input):
@@ -421,10 +585,12 @@ class MCPUninstallInput(Input):
 
 
 class SettingsInput(Input):
+    ui_language: Literal["ja", "en"] = "ja"
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
     auto_retry_count: int = Field(default=3, ge=0)
     auto_dynamic_switching: bool = True
+    auto_priority: Literal["balanced", "quality", "speed", "cost"] = "balanced"
     setup_complete: bool = False
     brave_api_key: str | None = None
     tavily_api_key: str | None = None
@@ -450,12 +616,7 @@ class SettingsInput(Input):
     tool_settings: dict[str, dict[str, object]] = Field(default_factory=dict)
     memory_auto_formation: bool = True
     memory_seed_limit: int = Field(default=24, ge=4, le=64)
-    memory_max_candidates: int = Field(default=96, ge=8, le=256)
     memory_result_limit: int = Field(default=8, ge=1, le=30)
-    memory_min_association_weight: float = Field(default=0.2, ge=0.05, le=1)
-    memory_activation_decay: float = Field(default=0.55, ge=0.1, le=0.95)
-    memory_retrieval_budget_ms: int = Field(default=120, ge=20, le=1000)
-    memory_max_depth: int = Field(default=2, ge=0, le=3)
 
 
 class FeedbackInput(Input):
@@ -471,6 +632,15 @@ class PermissionInput(Input):
 
 class ResumeInput(Input):
     acknowledge_unknown_result: bool = False
+    max_seconds: int | None = Field(default=None, ge=30, le=86400)
+    max_steps: int | None = Field(default=None, ge=1, le=2000)
+    max_tool_calls: int | None = Field(default=None, ge=1, le=5000)
+    from_checkpoint: str | None = Field(default=None, max_length=64)
+    unknown_actions: list[dict] | None = Field(default=None, max_length=50)
+
+
+class BudgetExtensionDecisionInput(Input):
+    grant: bool
     max_seconds: int | None = Field(default=None, ge=30, le=86400)
     max_steps: int | None = Field(default=None, ge=1, le=2000)
     max_tool_calls: int | None = Field(default=None, ge=1, le=5000)

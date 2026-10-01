@@ -4,6 +4,7 @@ import { ChevronRight, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { ErrorBox, Field, Logo } from "@/components/shared";
+import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 
 export function Auth({
   setup,
@@ -14,18 +15,18 @@ export function Auth({
 }) {
   const [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false);
+  useLanguage();
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     setBusy(true);
     setError(null);
     try {
-      onDone(
-        await api(setup ? "/setup/admin" : "/auth/login", "POST", {
+      const result = await api(setup ? "/setup/admin" : "/auth/login", "POST", {
           username: form.get("username"),
           password: form.get("password"),
-        }),
-      );
+        });
+      onDone(result);
     } catch (e) {
       setError(e);
     } finally {
@@ -37,14 +38,15 @@ export function Auth({
       <div className="auth-card">
         <Logo />
         <p className="eyebrow">YOUR AI. YOUR SPACE.</p>
-        <h1>{setup ? "ようこそ、MIX agentへ。" : "おかえりなさい。"}</h1>
+        <label className="field"><span>{t("表示言語")}</span><select aria-label={t("表示言語")} value={getLanguage()} onChange={e => setLanguage(e.target.value as "ja" | "en")}><option value="ja">{t("日本語")}</option><option value="en">English</option></select></label>
+        <h1>{t(setup ? "ようこそ、MIX agentへ。" : "おかえりなさい。")}</h1>
         <p>
-          {setup
+          {t(setup
             ? "まずは管理者アカウントを作成しましょう。"
-            : "あなたのワークスペースにログインします。"}
+            : "あなたのワークスペースにログインします。")}
         </p>
         <form onSubmit={submit}>
-          <Field label="ユーザー名">
+          <Field label={t("ユーザー名")}>
             <input
               name="username"
               required
@@ -53,8 +55,8 @@ export function Auth({
             />
           </Field>
           <Field
-            label="パスワード"
-            hint="12文字以上。API Keyとは別のパスワードです。"
+            label={t("パスワード")}
+            hint={t("12文字以上。API Keyとは別のパスワードです。")}
           >
             <input
               name="password"
@@ -67,13 +69,12 @@ export function Auth({
           </Field>
           <ErrorBox error={error} />
           <Button disabled={busy}>
-            {busy ? "処理中…" : setup ? "ワークスペースを作成" : "ログイン"}
+            {t(busy ? "処理中…" : setup ? "ワークスペースを作成" : "ログイン")}
             <ChevronRight size={16} />
           </Button>
         </form>
         <small>
-          <ShieldCheck size={13} /> 接続先のAI
-          Providerへ送信した内容は、そのProviderの規約に従います。
+          <ShieldCheck size={13} /> {t("接続先のAI Providerへ送信した内容は、そのProviderの規約に従います。")}
         </small>
       </div>
     </main>

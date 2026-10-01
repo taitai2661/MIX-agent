@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -53,7 +54,7 @@ export function MCP() {
     <>
       <Title
         title="MCP"
-        sub="外部サービスを、Agentが使えるToolとして接続します。"
+        sub={t("外部サービスを、Agentが使えるToolとして接続します。")}
         action={
           <Button
             onClick={() => {
@@ -63,7 +64,7 @@ export function MCP() {
             }}
           >
             <Plus size={16} />
-            接続を追加
+            {t("接続を追加")}
           </Button>
         }
       />
@@ -78,14 +79,14 @@ export function MCP() {
         <div className="mcp-store-intro">
           <div>
             <p className="eyebrow">MCP STORE</p>
-            <h2 id="mcp-store-title">Toolを追加</h2>
+            <h2 id="mcp-store-title">{t("Toolを追加")}</h2>
             <p>
-              公式Registryから選ぶだけ。ローカルMCPは専用コンテナで隔離されます。
+              {t("公式Registryから選ぶだけ。ローカルMCPは専用コンテナで隔離されます。")}
             </p>
           </div>
           <span className="mcp-safe-badge">
             <ShieldCheck size={16} />
-            既定でネットワークなし
+            {t("既定でネットワークなし")}
           </span>
         </div>
         <label className="mcp-store-search">
@@ -93,13 +94,13 @@ export function MCP() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="名前やサービスで検索"
-            aria-label="MCP Registryを検索"
+            placeholder={t("名前やサービスで検索")}
+            aria-label={t("MCP Registryを検索")}
           />
           {query && (
             <button
               type="button"
-              aria-label="検索をクリア"
+              aria-label={t("検索をクリア")}
               onClick={() => setQuery("")}
             >
               <X size={16} />
@@ -109,14 +110,14 @@ export function MCP() {
         {catalog.isLoading && (
           <div className="mcp-store-state">
             <LoaderCircle className="spin" size={22} />
-            Registryを読み込んでいます
+            {t("Registryを読み込んでいます")}
           </div>
         )}
         {!catalog.isLoading && !catalog.data?.servers?.length && (
           <div className="mcp-store-state">
             <PackageOpen size={24} />
-            <strong>該当するMCPがありません</strong>
-            <span>別の名前やサービス名で検索してください。</span>
+            <strong>{t("該当するMCPがありません")}</strong>
+            <span>{t("別の名前やサービス名で検索してください。")}</span>
           </div>
         )}
         <div className="mcp-store-grid">
@@ -141,13 +142,13 @@ export function MCP() {
                   </small>
                 </div>
               </div>
-              <p>{server.description || "説明はありません"}</p>
+              <p>{server.description || t("説明はありません")}</p>
               <div className="mcp-card-meta">
-                <span className="tag">{server.selected?.kind || "未対応"}</span>
+                <span className="tag">{server.selected?.kind || t("未対応")}</span>
                 {server.selected?.kind !== "remote" && server.selected && (
                   <span>
                     <ShieldCheck size={13} />
-                    Docker隔離
+                    {t("Docker隔離")}
                   </span>
                 )}
               </div>
@@ -164,10 +165,10 @@ export function MCP() {
                   <Download size={15} />
                 )}
                 {installed.has(server.registry_id)
-                  ? "導入済み"
+                  ? t("導入済み")
                   : server.selected
-                    ? "内容を確認"
-                    : "未対応"}
+                    ? t("内容を確認")
+                    : t("未対応")}
                 {server.selected && !installed.has(server.registry_id) && (
                   <ChevronRight size={15} />
                 )}
@@ -230,7 +231,7 @@ export function MCP() {
                 setSelected(null);
                 setNotice(
                   toolCount === null
-                    ? "導入しました。接続確認は導入済み一覧から再実行できます。"
+                    ? t("導入しました。接続確認は導入済み一覧から再実行できます。")
                     : `導入が完了し、${toolCount}件のToolを利用できるようになりました。`,
                 );
                 qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
@@ -260,7 +261,7 @@ export function MCP() {
               <button
                 type="button"
                 className="icon-button"
-                aria-label="閉じる"
+                aria-label={t("閉じる")}
                 disabled={installing}
                 onClick={() => setSelected(null)}
               >
@@ -268,7 +269,7 @@ export function MCP() {
               </button>
             </div>
             <p className="mcp-install-description">
-              {selected.description || "説明はありません"}
+              {selected.description || t("説明はありません")}
             </p>
             <div className="mcp-install-summary">
               <span>
@@ -278,18 +279,18 @@ export function MCP() {
               <span>
                 <ShieldCheck size={16} />
                 {selected.selected?.kind === "remote"
-                  ? "リクエスト単位で接続"
-                  : "専用Dockerコンテナ"}
+                  ? t("リクエスト単位で接続")
+                  : t("専用Dockerコンテナ")}
               </span>
               <span>
                 <KeyRound size={16} />
-                Secretは実行時のみ注入
+                {t("Secretは実行時のみ注入")}
               </span>
             </div>
             <fieldset className="mcp-network-options">
               <legend>
                 <Network size={16} />
-                実行時ネットワーク
+                {t("実行時ネットワーク")}
               </legend>
               {[
                 {
@@ -322,16 +323,16 @@ export function MCP() {
                     onChange={() => setNetworkCapability(option.value)}
                   />
                   <span>
-                    <strong>{option.title}</strong>
-                    <small>{option.description}</small>
+                    <strong>{t(option.title)}</strong>
+                    <small>{t(option.description)}</small>
                   </span>
                 </label>
               ))}
             </fieldset>
             {networkCapability === "restricted" && (
               <Field
-                label="許可ドメイン"
-                hint="1行に1ホスト。localhost、private、metadata宛は常に拒否されます。"
+                label={t("許可ドメイン")}
+                hint={t("1行に1ホスト。localhost、private、metadata宛は常に拒否されます。")}
               >
                 <textarea
                   name="domains"
@@ -345,9 +346,9 @@ export function MCP() {
               <div className="mcp-secret-section">
                 <h3>
                   <KeyRound size={16} />
-                  必要なSecret
+                  {t("必要なSecret")}
                 </h3>
-                <p>暗号化してMCP単位で保存し、コンテナ起動時だけ注入します。</p>
+                <p>{t("暗号化してMCP単位で保存し、コンテナ起動時だけ注入します。")}</p>
                 {selected.selected.environment
                   .filter((item: any) => item.secret)
                   .map((item: any) => (
@@ -361,7 +362,7 @@ export function MCP() {
                         type="password"
                         required={item.required}
                         autoComplete="off"
-                        placeholder={item.required ? "必須" : "任意"}
+                        placeholder={item.required ? t("必須") : t("任意")}
                       />
                     </Field>
                   ))}
@@ -374,18 +375,18 @@ export function MCP() {
                 disabled={installing}
                 onClick={() => setSelected(null)}
               >
-                キャンセル
+                {t("キャンセル")}
               </Button>
               <Button disabled={installing}>
                 {installing ? (
                   <>
                     <LoaderCircle className="spin" size={16} />
-                    安全にインストール中…
+                    {t("安全にインストール中…")}
                   </>
                 ) : (
                   <>
                     <Download size={16} />
-                    インストール
+                    {t("インストール")}
                   </>
                 )}
               </Button>
@@ -404,7 +405,7 @@ export function MCP() {
           }}
         >
           <FileText size={16} />
-          Filesystemテンプレート
+          {t("Filesystemテンプレート")}
         </Button>
       </div>
       {open && (
@@ -437,7 +438,7 @@ export function MCP() {
             }
           }}
         >
-          <Field label="名前">
+          <Field label={t("名前")}>
             <input
               name="name"
               required
@@ -446,7 +447,7 @@ export function MCP() {
               }
             />
           </Field>
-          <Field label="接続方式">
+          <Field label={t("接続方式")}>
             <select
               value={transport}
               onChange={(e) => setTransport(e.target.value)}
@@ -467,7 +468,7 @@ export function MCP() {
             </Field>
           ) : (
             <>
-              <Field label="インストール済み実行ファイル">
+              <Field label={t("インストール済み実行ファイル")}>
                 <input
                   name="command"
                   required
@@ -479,7 +480,7 @@ export function MCP() {
                   }
                 />
               </Field>
-              <Field label="引数（JSON配列）">
+              <Field label={t("引数（JSON配列）")}>
                 <input
                   name="args"
                   defaultValue={
@@ -496,24 +497,24 @@ export function MCP() {
           <Field
             label="Secret（JSON）"
             hint={
-              '例: {"headers":{"Authorization":"Bearer ..."}} または {"env":{"TOKEN":"..."}}'
+              t("例: {\"headers\":{\"Authorization\":\"Bearer ...\"}} または {\"env\":{\"TOKEN\":\"...\"}}")
             }
           >
             <textarea
               name="credentials"
               defaultValue={editing ? "" : "{}"}
-              placeholder="空欄で保持、{}でSecretを削除"
+              placeholder={t("空欄で保持、{}でSecretを削除")}
               autoComplete="off"
             />
           </Field>
           <div className="form-actions">
-            <Button>保存</Button>
+            <Button>{t("保存")}</Button>
             <Button
               variant="ghost"
               type="button"
               onClick={() => setOpen(false)}
             >
-              キャンセル
+              {t("キャンセル")}
             </Button>
           </div>
         </form>
@@ -527,7 +528,7 @@ export function MCP() {
           <p>
             {r.data.transport} · {r.data.url || r.data.command}
           </p>
-          <small>{r.data.enabled ? "有効" : "切断済み"}</small>
+          <small>{r.data.enabled ? t("有効") : t("切断済み")}</small>
           <div className="form-actions">
             {!r.data.registry_id && (
               <Button
@@ -539,7 +540,7 @@ export function MCP() {
                   setOpen(true);
                 }}
               >
-                編集
+                {t("編集")}
               </Button>
             )}
             {r.data.command ===
@@ -551,20 +552,20 @@ export function MCP() {
                   try {
                     await api("/mcp/connections/" + r.id + "/install", "POST");
                     setNotice(
-                      "パッケージを導入しました。接続・Tool取得を実行してください。",
+                      t("パッケージを導入しました。接続・Tool取得を実行してください。"),
                     );
                   } catch (e) {
                     setError(e);
                   }
                 }}
               >
-                パッケージを導入
+                {t("パッケージを導入")}
               </Button>
             )}
             {[
-              ["test", "接続テスト"],
-              ["sync", "接続・Tool取得"],
-              ["disconnect", "切断"],
+              ["test", t("接続テスト")],
+              ["sync", t("接続・Tool取得")],
+              ["disconnect", t("切断")],
             ].map(([a, label]) => (
               <Button
                 key={a}
@@ -578,8 +579,8 @@ export function MCP() {
                     );
                     setNotice(
                       result.tools
-                        ? result.tools.length + "件のToolを確認しました"
-                        : "切断しました",
+                        ? `${result.tools.length} ${t("件のToolを確認しました")}`
+                        : t("切断しました"),
                     );
                     qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
                     qc.invalidateQueries({ queryKey: ["/tools"] });
@@ -607,7 +608,7 @@ export function MCP() {
                   }
                 }}
               >
-                OAuthで認証
+                {t("OAuthで認証")}
               </Button>
             )}
             {r.data.registry_id && (
@@ -623,7 +624,7 @@ export function MCP() {
                   }
                 }}
               >
-                更新を確認
+                {t("更新を確認")}
               </Button>
             )}
             {r.data.state === "uninstalled_data_retained" && (
@@ -640,7 +641,7 @@ export function MCP() {
                   }
                 }}
               >
-                保持データから再導入
+                {t("保持データから再導入")}
               </Button>
             )}
             {r.data.runtime?.driver &&
@@ -662,10 +663,10 @@ export function MCP() {
                   }}
                 >
                   {action === "start"
-                    ? "起動"
+                    ? t("起動")
                     : action === "stop"
-                      ? "停止"
-                      : "再起動"}
+                      ? t("停止")
+                      : t("再起動")}
                 </Button>
               ))}
             <Button
@@ -694,13 +695,13 @@ export function MCP() {
                 }
               }}
             >
-              アンインストール
+              {t("アンインストール")}
             </Button>
           </div>
         </div>
       ))}
       {!rows.data?.length && !open && (
-        <Empty>MCP接続を追加すると、Tool Registryに登録できます。</Empty>
+        <Empty>{t("MCP接続を追加すると、Tool Registryに登録できます。")}</Empty>
       )}
     </>
   );

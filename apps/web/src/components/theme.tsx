@@ -1,5 +1,7 @@
 import { Laptop, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
+import { t } from "@/app/i18n";
+import { applyAccent, type ResolvedTheme } from "@/components/accent";
 
 export type Theme = "light" | "dark" | "system";
 const key = "mix-agent-theme";
@@ -16,8 +18,9 @@ export function ThemeController() {
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      document.documentElement.dataset.theme =
-        theme === "system" ? (query.matches ? "dark" : "light") : theme;
+      const resolved: ResolvedTheme = theme === "system" ? (query.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.theme = resolved;
+      applyAccent(resolved);
     };
     apply();
     query.addEventListener("change", apply);
@@ -40,10 +43,10 @@ function ThemeToggle({ theme, onChange }: { theme: Theme; onChange: (theme: Them
     ["system", Laptop, "システム"],
   ];
   return (
-    <div className="theme-toggle" aria-label="テーマ">
+    <div className="theme-toggle" aria-label={t("テーマ")}>
       {options.map(([value, Icon, label]) => (
         <button
-          aria-label={label}
+          aria-label={t(label)}
           aria-pressed={theme === value}
           className={theme === value ? "selected" : ""}
           key={value}

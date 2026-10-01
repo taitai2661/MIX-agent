@@ -87,6 +87,10 @@ class Conversation(Record, Base):
     __tablename__ = "conversations"
 
 
+class Project(Record, Base):
+    __tablename__ = "projects"
+
+
 class ConversationFolder(Record, Base):
     __tablename__ = "conversation_folders"
 
@@ -114,6 +118,14 @@ class PerformanceEvent(Record, Base):
     __tablename__ = "performance_events"
     __table_args__ = (
         Index("performance_event_owner_created", "owner_id", "created_at"),
+    )
+
+
+class ModelUsageEvent(Record, Base):
+    """A privacy-minimal, time-bounded record of one model call's token usage."""
+    __tablename__ = "model_usage_events"
+    __table_args__ = (
+        Index("model_usage_owner_created", "owner_id", "created_at"),
     )
 
 
@@ -167,16 +179,46 @@ class Permission(Record, Base):
 
 
 class Memory(Record, Base):
+    """A single Memory Item.
+
+    The model keeps the existing associative-memory columns (``strength``,
+    ``confidence``, ``salience``, ``activation_count``) so legacy retrieval and
+    tests continue to work.  The new role-based columns are additive:
+
+    - ``role`` distinguishes what kind of knowledge the item holds (Fact,
+      Decision, Failure, Experience, ...).  ``scope`` separates where the
+      knowledge belongs (Working, Task, Project, User, World).
+    - ``lifecycle_state`` is widened from the old 5-value vocabulary to
+      ``candidate / active / superseded / expired / archived / disputed``.
+    - ``verification`` carries the human/system verdict for items that need it
+      (Decisions, Failures, Hypotheses).  ``superseded_by_id`` and
+      ``disputed_by_id`` point at the items that overtook or contested them.
+    - ``task_id`` ties an item to the Run that produced or owns it.
+    - ``source_kind`` distinguishes user / agent / tool / browser / external /
+      consolidation so the agent can reason about how trustworthy an item is.
+    """
+
     __tablename__ = "memories"
     lifecycle_state: Mapped[str] = mapped_column(String(20), default="established", index=True)
-    strength: Mapped[float] = mapped_column(default=0.6)
+    role: Mapped[str] = mapped_column(String(20), default="fact", index=True)
+    scope: Mapped[str] = mapped_column(String(20), default="user", index=True)
+    source_kind: Mapped[str] = mapped_column(String(20), default="agent", index=True)
     confidence: Mapped[float] = mapped_column(default=0.7)
     salience: Mapped[float] = mapped_column(default=0.5)
+    strength: Mapped[float] = mapped_column(default=0.6)
     activation_count: Mapped[int] = mapped_column(Integer, default=0)
     last_activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    __table_args__ = (Index("memory_owner_state_created", "owner_id", "lifecycle_state", "created_at"),)
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    superseded_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    disputed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    verification: Mapped[str] = mapped_column(String(40), default="unverified", index=True)
+    __table_args__ = (
+        Index("memory_owner_state_created", "owner_id", "lifecycle_state", "created_at"),
+        Index("memory_owner_role_scope", "owner_id", "role", "scope"),
+        Index("memory_owner_task", "owner_id", "task_id"),
+    )
 
 
 class MemoryAssociation(Record, Base):
@@ -229,6 +271,47 @@ class MemoryRevision(Record, Base):
     __tablename__ = "memory_revisions"
 
 
+class MemoryEvidence(Record, Base):
+    """First-class Evidence record.
+
+    Memory items keep a list of evidence ids; the actual evidence lives here so
+    the agent can cite or re-validate a memory without losing the original
+    tool output, user message, browser observation or code-change reference.
+    """
+
+    __tablename__ = "memory_evidences"
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+    ref: Mapped[str] = mapped_column(String(500), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    memory_id: Mapped[str] = mapped_column(String(36), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    __table_args__ = (
+        Index("memory_evidence_owner_memory", "owner_id", "memory_id"),
+        Index("memory_evidence_owner_kind", "owner_id", "kind"),
+    )
+
+
+class MemoryConflict(Record, Base):
+    """A recorded disagreement between two Memory items.
+
+    Items do not silently overwrite each other: when a new item contradicts an
+    active one, both stay alive and a Conflict row ties them together until
+    the agent (or user) resolves the dispute.
+    """
+
+    __tablename__ = "memory_conflicts"
+    memory_a_id: Mapped[str] = mapped_column(String(36), index=True)
+    memory_b_id: Mapped[str] = mapped_column(String(36), index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolution: Mapped[str] = mapped_column(String(40), default="unresolved", index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        Index("memory_conflict_owner_resolved", "owner_id", "resolved", "created_at"),
+        UniqueConstraint("owner_id", "memory_a_id", "memory_b_id"),
+    )
+
+
 class Skill(Record, Base):
     __tablename__ = "skills"
 
@@ -262,12 +345,34 @@ class Run(Record, Base):
             "one_active_run",
             "conversation_id",
             unique=True,
-            postgresql_where=status.in_(["queued", "running", "waiting_approval"]),
+            postgresql_where=status.in_([
+                "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
+            ]),
         ),
         CheckConstraint(
-            "status IN ('queued', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled', 'interrupted')",
+            "status IN ('queued', 'running', 'waiting_approval', 'paused', "
+            "'budget_extension_pending', 'completed', 'failed', 'cancelled', 'interrupted')",
             name="ck_runs_status_valid",
         ),
+    )
+
+
+class RunCheckpoint(Record, Base):
+    """Durable per-step snapshot of a long-running Run for selective resume.
+
+    A checkpoint freezes the structured state (history, task_state, agent_plan,
+    summary, recent tool calls, and bookkeeping counters) at a known step so
+    the user can resume from that exact point instead of starting over.
+    """
+
+    __tablename__ = "run_checkpoints"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    tool_count: Mapped[int] = mapped_column(Integer, default=0)
+    trigger: Mapped[str] = mapped_column(String(30), default="interval")
+    __table_args__ = (
+        Index("run_checkpoint_run_step", "run_id", "step"),
+        Index("run_checkpoint_run_created", "run_id", "created_at"),
     )
 
 

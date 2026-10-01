@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -99,11 +100,27 @@ export function Providers() {
       setBusy(false);
     }
   }
+  async function remove(row: Row) {
+    if (!confirm(t("Providerと取得済みのモデルを削除しますか？ 元に戻せません。"))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/providers/" + row.id, "DELETE");
+      setNotice(t("Providerを削除しました"));
+      qc.invalidateQueries({ queryKey: ["/providers"] });
+      qc.invalidateQueries({ queryKey: ["/models"] });
+      qc.invalidateQueries({ queryKey: ["/settings"] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
       <Title
         title="AI Providers"
-        sub="Providerを保存すると、モデル一覧とAuto候補を自動設定します。"
+        sub={t("Providerを保存すると、モデル一覧とAuto候補を自動設定します。")}
         action={
           <Button
             onClick={() => {
@@ -111,13 +128,13 @@ export function Providers() {
             }}
           >
             <Plus size={16} />
-            Providerを追加
+            {t("Providerを追加")}
           </Button>
         }
       />
       <div className="notice">
         <KeyRound size={16} />
-        API Keyは暗号化して保存され、保存後は再表示されません。
+        {t("API Keyは暗号化して保存され、保存後は再表示されません。")}
       </div>
       <ErrorBox error={error || rows.error} />
       {notice && <p className="success">{notice}</p>}
@@ -127,13 +144,13 @@ export function Providers() {
           key={editing?.id || "new"}
           onSubmit={submit}
         >
-          <Field label="Providerを選ぶ" hint="プリセットは接続方式を安全に固定します。">
+          <Field label={t("Providerを選ぶ")} hint={t("プリセットは接続方式を安全に固定します。")}>
             <input
               type="search"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Providerを検索"
-              aria-label="Providerを検索"
+              placeholder={t("Providerを検索")}
+              aria-label={t("Providerを検索")}
             />
             <select
               name="preset_id"
@@ -154,7 +171,7 @@ export function Providers() {
                 if (privateInput) privateInput.checked = preset.allow_private_default;
               }}
             >
-              <option value="">従来の接続設定（編集時のみ）</option>
+              <option value="">{t("従来の接続設定（編集時のみ）")}</option>
               {Object.entries(
                 (filtered || []).reduce<Record<string, ProviderPreset[]>>((groups, item) => {
                   (groups[item.category] ||= []).push(item);
@@ -167,7 +184,7 @@ export function Providers() {
               ))}
             </select>
           </Field>
-          <Field label="表示名">
+          <Field label={t("表示名")}>
             <input
               name="name"
               required
@@ -175,18 +192,18 @@ export function Providers() {
               placeholder="My OpenAI"
             />
           </Field>
-          <Field label="カスタム接続方式" hint="カスタム以外では選択したプリセットの方式が使用されます。">
+          <Field label={t("カスタム接続方式")} hint={t("カスタム以外では選択したプリセットの方式が使用されます。")}>
             <select name="kind" defaultValue={editing?.data.kind || "compatible"}>
-              <option value="compatible">OpenAI互換</option>
+              <option value="compatible">{t("OpenAI互換")}</option>
               <option value="anthropic">Anthropic Messages</option>
               <option value="gemini">Gemini GenerateContent</option>
-              <option value="openai">OpenAI Responses（従来設定）</option>
-              <option value="openrouter">OpenRouter（従来設定）</option>
-              <option value="ollama">Ollama（従来設定）</option>
-              <option value="lmstudio">LM Studio（従来設定）</option>
+              <option value="openai">{t("OpenAI Responses（従来設定）")}</option>
+              <option value="openrouter">{t("OpenRouter（従来設定）")}</option>
+              <option value="ollama">{t("Ollama（従来設定）")}</option>
+              <option value="lmstudio">{t("LM Studio（従来設定）")}</option>
             </select>
           </Field>
-          <Field label="Base URL" hint="カスタムとURL未設定のプリセットでは必須です。">
+          <Field label="Base URL" hint={t("カスタムとURL未設定のプリセットでは必須です。")}>
             <input
               name="base_url"
               defaultValue={editing?.data.base_url}
@@ -197,27 +214,27 @@ export function Providers() {
             label="API Key"
             hint={
               editing
-                ? "空欄なら現在のKeyを保持します。"
-                : "ローカルモデルでは不要な場合があります。"
+                ? t("空欄なら現在のKeyを保持します。")
+                : t("ローカルモデルでは不要な場合があります。")
             }
           >
             <input name="api_key" type="password" autoComplete="off" />
           </Field>
           {selectedPreset?.extra_config_schema.map((field) => (
-            <Field key={field.key} label={field.label} hint="このProvider固有の接続設定です。">
+            <Field key={field.key} label={field.label} hint={t("このProvider固有の接続設定です。")}>
               <input name={"extra_config." + field.key} required={field.required}
                 defaultValue={editing?.data.extra_config?.[field.key] || ""} />
             </Field>
           ))}
           <details className="provider-advanced">
-            <summary>詳細設定</summary>
-            <Field label="要求回数の上限" hint="Providerへの要求を制限します。0は無制限です。">
+            <summary>{t("詳細設定")}</summary>
+            <Field label={t("要求回数の上限")} hint={t("Providerへの要求を制限します。0は無制限です。")}>
               <div className="rate-limit-input">
                 <input name="rate_limit_rpm" type="number" min="0" max="10000" step="1"
                   defaultValue={editing?.data.rate_limit_rpm || 0} />
                 <select name="rate_limit_period" defaultValue={editing?.data.rate_limit_period || "minute"}>
-                  <option value="minute">回 / 分</option>
-                  <option value="second">回 / 秒</option>
+                  <option value="minute">{t("回 / 分")}</option>
+                  <option value="second">{t("回 / 秒")}</option>
                 </select>
               </div>
             </Field>
@@ -228,16 +245,16 @@ export function Providers() {
               name="allow_private"
               defaultChecked={editing?.data.allow_private}
             />
-            明示したLAN・ローカル接続先を許可
+            {t("明示したLAN・ローカル接続先を許可")}
           </label>
           <div className="form-actions">
-            <Button disabled={busy}>保存</Button>
+            <Button disabled={busy}>{t("保存")}</Button>
             <Button
               type="button"
               variant="ghost"
               onClick={() => setOpen(false)}
             >
-              キャンセル
+              {t("キャンセル")}
             </Button>
           </div>
         </form>
@@ -253,7 +270,7 @@ export function Providers() {
               {row.data.kind} <span>·</span> {row.data.base_url}
             </p>
             <small>
-              {row.data.has_secret_id ? "API Key 保存済み" : "API Key なし"}
+              {row.data.has_secret_id ? t("API Key 保存済み") : t("API Key なし")}
             </small>
           </div>
           <div className="row-actions">
@@ -262,7 +279,7 @@ export function Providers() {
               disabled={busy}
               onClick={() => action(row, "test")}
             >
-              接続テスト
+              {t("接続テスト")}
             </Button>
             <Button
               variant="outline"
@@ -270,7 +287,7 @@ export function Providers() {
               onClick={() => action(row, "sync-models")}
             >
               <RefreshCw size={14} />
-              モデル取得
+              {t("モデル取得")}
             </Button>
             <Button
               variant="ghost"
@@ -278,13 +295,16 @@ export function Providers() {
                 openForm(row);
               }}
             >
-              編集
+              {t("編集")}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => remove(row)}>
+              {t("削除")}
             </Button>
           </div>
         </div>
       ))}
       {!rows.data?.length && !open && (
-        <Empty>Providerを追加して、チャットを始めましょう。</Empty>
+        <Empty>{t("Providerを追加して、チャットを始めましょう。")}</Empty>
       )}
     </>
   );

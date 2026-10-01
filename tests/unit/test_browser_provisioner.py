@@ -79,6 +79,36 @@ async def test_ready_install_is_reverified(monkeypatch):
     assert installer.current()["status"] == "ready"
 
 
+async def test_update_downloads_even_when_ready(monkeypatch):
+    installer.save({"status": "ready", "failure": None, "progress": 100})
+    launched = []
+
+    class Output:
+        async def read(self, _size):
+            return b""
+
+    class Process:
+        stdout = Output()
+        returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def launch(*args, **_kwargs):
+        launched.append(args)
+        return Process()
+
+    async def verify():
+        pass
+
+    monkeypatch.setattr(installer.asyncio, "create_subprocess_exec", launch)
+    monkeypatch.setattr(installer, "verify_browser", verify)
+    assert (await installer.start_update())["status"] == "installing"
+    await installer.TASK
+    assert launched == [("playwright", "install", "--only-shell", "chromium")]
+    assert installer.current()["status"] == "ready"
+
+
 async def test_timeout_kills_install_process(monkeypatch):
     class Output:
         async def read(self, _size):

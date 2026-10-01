@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.3.0
+Run with: python scripts/render_zimaos_compose.py v0.3.5
 PyYAML is required for this maintainer-only script.
 """
 
@@ -25,11 +25,32 @@ TARGETS = {
     "mcp-manager": "mcp-runtime",
     "egress-proxy": "egress",
 }
+# Host mounts a store install keeps: the MCP manager needs the Docker socket to
+# attach per-server containers to their own networks.
+ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
+
+
+def _is_bind_mount(volume: str) -> bool:
+    """True for a host bind mount, which a store install must not inherit.
+
+    A store app is unpacked under the store's own sysroot and the dashboard
+    supplies its data directories as named volumes. A host path carried over
+    from ``compose.yaml`` would instead resolve relative to that sysroot and
+    mount the install directory itself into the container — read-write for
+    ``./skills``, which would write imported skills into the store.
+
+    ``ALLOWED_BIND_MOUNTS`` is the exception: the MCP manager joins
+    per-server Docker networks through the host socket.
+    """
+    source = volume.split(":", 1)[0].strip()
+    if source in ALLOWED_BIND_MOUNTS:
+        return False
+    return source.startswith((".", "/", "~", "$")) or "/" in source or ":" in source
 
 
 def render(tag: str) -> str:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
-        raise ValueError("Expected a release tag such as v0.3.0")
+        raise ValueError("Expected a release tag such as v0.3.5")
     source = yaml.safe_load((ROOT / "compose.yaml").read_text())
     source.pop("x-restricted", None)
     source.pop("secrets", None)
@@ -42,10 +63,12 @@ def render(tag: str) -> str:
         service = source["services"][name]
         service.pop("build", None)
         service["image"] = f"{PACKAGE}-{TARGETS[name]}:{tag}"
-    source["services"]["init"]["volumes"] = [
-        volume for volume in source["services"]["init"]["volumes"]
-        if not volume.startswith("./deploy/docker/bootstrap.py:")
-    ]
+        # Named volumes only; see _is_bind_mount.
+        service["volumes"] = [
+            volume
+            for volume in service.get("volumes", [])
+            if not _is_bind_mount(volume)
+        ]
     # The ZimaOS dashboard is reached by private LAN IP. OAuth and push users
     # must set PUBLIC_ORIGIN to their actual HTTPS origin after installation.
     source["services"]["app"]["ports"] = ["8080:8080"]
@@ -110,4 +133,4 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.3.0"))
+    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.3.5"))

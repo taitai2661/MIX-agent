@@ -1,11 +1,16 @@
 """Provider-specific wire formats stay here; the run engine sees normalized events."""
 
+import hashlib
+
 import httpx
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError, UnprocessableEntityError
 
+PROVIDER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+
+from mix_agent.providers.capability_probe import VISION_DATA_URL
 from mix_agent.providers.catalog import get_preset
 from mix_agent.providers.metadata import context_limit, resolve
 from mix_agent.providers.model_roles import chat_capability
@@ -74,6 +79,15 @@ def is_nvidia_nim_chat_incompatible(provider, model_id, exc):
     return status_code == 400
 
 
+def anthropic_base_url(url):
+    """Base URL for the Anthropic SDK, which appends ``/v1/messages`` itself.
+
+    OpenCode gateways and user-entered Anthropic URLs commonly already end in
+    ``/v1``; passing those straight through would request ``/v1/v1/messages``.
+    """
+    return url.rstrip("/").removesuffix("/v1")
+
+
 def is_context_limit_error(exc):
     if isinstance(exc, ProviderContextLimitError):
         return True
@@ -90,6 +104,10 @@ class Adapter:
         self.key = key
         self.kind = provider["kind"]
         self.url = provider.get("base_url") or DEFAULT_URLS[self.kind]
+        # Gateways that route on a session header need one even when no
+        # conversation exists (probes, memory jobs); a config-derived value
+        # keeps those requests on the same routing path across restarts.
+        self.session_id = hashlib.sha256(self.url.encode()).hexdigest()[:32]
         self.preset = get_preset(provider.get("preset_id"))
         # Records created before presets retain a deliberate legacy mapping.
         if not self.preset:
@@ -103,6 +121,15 @@ class Adapter:
                    if field.get("required") and not provider.get("extra_config", {}).get(field["key"])]
         if missing:
             raise ProviderConfigurationError("missing_extra_config:" + ",".join(missing))
+
+    def transport_for(self, model):
+        """Wire format for one model; gateways may pin a model to an endpoint."""
+        return self.preset.get("model_transports", {}).get(model) or self.transport_id
+
+    def gateway_headers(self, session_id=None):
+        """Headers a gateway requires to route and cache a session."""
+        header = self.preset.get("session_header")
+        return {header: session_id or self.session_id} if header else {}
 
     async def list_models(self):
         headers = {"Authorization": "Bearer " + self.key} if self.key else {}
@@ -119,6 +146,7 @@ class Adapter:
             headers = {"x-goog-api-key": self.key}
             root = self.url.rstrip("/")
             url = root + ("/models" if root.endswith("/v1beta") else "/v1beta/models")
+        headers = {**headers, **self.gateway_headers()}
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             if self.discovery_id == "ollama_tags":
                 root = self.url.rstrip("/").removesuffix("/v1")
@@ -158,8 +186,16 @@ class Adapter:
             modalities = item.get("architecture", {}).get("input_modalities")
             if modalities is not None:
                 caps["vision"] = "image" in modalities
-            resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"])
+            resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"],
+                                     preset_id=self.preset.get("id"))
             metadata = resolved["metadata"]
+            # Documented capabilities fill only what the wire listing left
+            # unknown; a probe still decides whatever both leave unanswered.
+            catalog_caps = metadata.get("capabilities", {}).get("value")
+            if isinstance(catalog_caps, dict):
+                for key in ("tools", "vision", "reasoning", "structured_output"):
+                    if caps.get(key) is None:
+                        caps[key] = catalog_caps.get(key)
             context = metadata.get("context_window")
             result.append({
                 "model_id": model_id, "name": item.get("displayName", item.get("name", model_id)),
@@ -177,6 +213,7 @@ class Adapter:
         return {**model.get("capabilities", {}), **model.get("overrides", {})}
 
     async def stream(self, model, messages, tools, mode, settings):
+        transport_id = self.transport_for(model)
         method = {
             "openai_responses": self._openai,
             "openai_compatible": self._compatible,
@@ -184,9 +221,9 @@ class Adapter:
             "gemini_generate_content": self._gemini,
             "ollama": self._ollama,
             "lmstudio": self._lmstudio,
-        }.get(self.transport_id)
+        }.get(transport_id)
         if method is None:
-            raise ValueError(f"Unsupported transport: {self.transport_id}")
+            raise ValueError(f"Unsupported transport: {transport_id}")
         try:
             async for event in method(model, messages, tools, mode, settings):
                 yield event
@@ -206,26 +243,52 @@ class Adapter:
             yield event
 
     async def probe_tools(self, model):
-        """Verify tool-call wire support without exposing or running a real tool."""
+        """Verify tool-call wire support without exposing or running a real tool.
+
+        Most providers honor a forced tool_choice, but a few compatible endpoints
+        (for example NVIDIA NIM) ignore the forced choice and answer with text or
+        an empty stop turn.  Retry once with an unforced tool choice so a genuinely
+        tool-capable model is not misclassified as unsupported.
+        """
         probe = {
             "model_name": "mix_tool_probe",
             "description": "Internal compatibility check. Call this function now.",
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         }
-        settings = {
-            "max_output_tokens": 64,
-            "_tool_probe": True,
-            "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False},
-        }
-        async for event in self.stream(
-            model,
-            [{"role": "user", "content": "Call mix_tool_probe now. Do not answer with text."}],
-            [probe],
-            "chat",
-            settings,
-        ):
+        message = [{"role": "user", "content": "Call mix_tool_probe now. Do not answer with text."}]
+        base = {"max_output_tokens": 64, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}
+        for forced in (True, False):
+            async for event in self.stream(model, message, [probe], "chat", {**base, "_tool_probe": forced}):
+                if event["kind"] == "response":
+                    if any(call.get("name") == "mix_tool_probe" for call in event.get("tool_calls", [])):
+                        return True
+                    break
+        return False
+
+    async def probe_vision(self, model):
+        """Verify image wire support with a tiny image; never stores the response."""
+        message = [{
+            "role": "user",
+            "content": "Reply with the single word: ok",
+            "images": [VISION_DATA_URL],
+        }]
+        settings = {"max_output_tokens": 16, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}
+        async for event in self.stream(model, message, [], "chat", settings):
             if event["kind"] == "response":
-                return any(call.get("name") == "mix_tool_probe" for call in event.get("tool_calls", []))
+                return bool(event.get("message", {}).get("content"))
+        return False
+
+    async def probe_reasoning(self, model, resolved):
+        """Verify that a provider accepts its own reasoning-control request.
+
+        This only confirms the transport accepted the request; providers that
+        silently ignore unknown parameters may still return success.
+        """
+        message = [{"role": "user", "content": "Reply with the single word: ok"}]
+        settings = {"max_output_tokens": 2048, "reasoning_effort": "low", "_resolved_reasoning": resolved}
+        async for event in self.stream(model, message, [], "thinking", settings):
+            if event["kind"] == "response":
+                return True
         return False
 
     async def _openai(self, model, messages, tools, mode, settings):
@@ -275,7 +338,9 @@ class Adapter:
             )
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "function", "name": "mix_tool_probe"}
-        async with AsyncOpenAI(api_key=self.key, base_url=self.url, max_retries=0) as client:
+        async with AsyncOpenAI(api_key=self.key, base_url=self.url, max_retries=0,
+                               timeout=PROVIDER_TIMEOUT,
+                               default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
             stream = await client.responses.create(**args)
             async for event in stream:
                 if event.type == "response.output_text.delta":
@@ -338,9 +403,16 @@ class Adapter:
             args["tool_choice"] = {"type": "function", "function": {"name": "mix_tool_probe"}}
         content, calls, finished = "", {}, False
         reasoning_details, raw_reasoning = {}, ""
-        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0) as client:
-            stream = await client.chat.completions.create(**args)
+        usage = None
+        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0,
+                               timeout=PROVIDER_TIMEOUT,
+                               default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
+            stream = await self._compatible_create(client, args)
             async for chunk in stream:
+                # The usage-bearing final chunk carries no choices; capture it
+                # before the empty-choices guard drops it.
+                if getattr(chunk, "usage", None) is not None:
+                    usage = chunk.usage.model_dump()
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -402,7 +474,26 @@ class Adapter:
             "kind": "response",
             "message": {"role": "assistant", "content": content, "native": native},
             "tool_calls": list(calls.values()),
+            "usage": usage or {},
         }
+
+    async def _compatible_create(self, client, args):
+        """Open a streaming chat completion, requesting usage when supported.
+
+        OpenAI-compatible endpoints report token usage during streaming only when
+        ``stream_options.include_usage`` is set, but a few servers reject that
+        option.  Fall back to the plain request in that case so a strict endpoint
+        keeps working while everyone else gains measurable usage.
+        """
+        try:
+            return await client.chat.completions.create(
+                **{**args, "stream_options": {"include_usage": True}}
+            )
+        except (BadRequestError, UnprocessableEntityError) as exc:
+            details = str(exc).casefold()
+            if "stream_options" not in details and "include_usage" not in details:
+                raise
+            return await client.chat.completions.create(**args)
 
     async def _anthropic(self, model, messages, tools, mode, settings):
         wire, system = [], ""
@@ -449,7 +540,9 @@ class Adapter:
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "tool", "name": "mix_tool_probe"}
         async with (
-            AsyncAnthropic(api_key=self.key, base_url=self.url, max_retries=0) as client,
+            AsyncAnthropic(api_key=self.key, base_url=anthropic_base_url(self.url), max_retries=0,
+                           timeout=PROVIDER_TIMEOUT,
+                           default_headers=self.gateway_headers(settings.get("_session_id"))) as client,
             client.messages.stream(**args) as stream,
         ):
             async for event in stream:
@@ -522,10 +615,15 @@ class Adapter:
                 }
             }
         native, calls, text, finished = [], [], "", False
-        async with genai.Client(api_key=self.key, http_options={"base_url": self.url}).aio as client:
+        usage = None
+        async with genai.Client(api_key=self.key,
+                                http_options={"base_url": self.url, "timeout": 120000,
+                                               "headers": self.gateway_headers(settings.get("_session_id"))}).aio as client:
             async for chunk in await client.models.generate_content_stream(
                 model=model, contents=wire, config=cfg
             ):
+                if getattr(chunk, "usage_metadata", None) is not None:
+                    usage = chunk.usage_metadata.model_dump(exclude_none=True)
                 for candidate in chunk.candidates or []:
                     if candidate.finish_reason:
                         if str(candidate.finish_reason) not in ("FinishReason.STOP", "STOP"):
@@ -554,4 +652,5 @@ class Adapter:
             "kind": "response",
             "message": {"role": "assistant", "content": text, "native": native},
             "tool_calls": calls,
+            "usage": usage or {},
         }

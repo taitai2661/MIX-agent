@@ -38,9 +38,14 @@ def count_messages(messages: list[dict], model_id: str = "") -> int:
     total = 0
     for message in messages or []:
         total += count(str(message.get("content") or ""), model_id)
+        # Inline base64 images (legacy path). Dominates context; approximate
+        # decoded bytes / 2.
         for image in message.get("images") or []:
-            # Base64 images dominate context; approximate decoded bytes / 2.
             total += math.ceil(len(str(image)) / 3)
+        # Image references hoisted to artifacts by the context builder. Each one
+        # still becomes a real image part on the wire; count it or vision runs
+        # get a free pass through the budget (they were previously estimated at 0).
+        total += len(message.get("image_refs") or []) * 768
         for call in message.get("tool_calls") or []:
             total += count(str(call.get("arguments") or ""), model_id) + 40
         total += 8  # per-message framing overhead

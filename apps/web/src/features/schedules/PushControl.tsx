@@ -1,3 +1,4 @@
+import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
 import { useEffect, useState } from "react";
@@ -43,10 +44,10 @@ export function PushControl() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "通知設定に失敗しました"); }
     finally { setBusy(false); }
   }
-  return <section className="card"><h3>Webプッシュ通知</h3>
-    <p>定期実行の完了・失敗などを、このブラウザに通知します。</p>
-    {supported ? <Button type="button" variant="outline" disabled={busy} onClick={toggle}>{enabled ? "このブラウザの通知を停止" : "このブラウザで通知を有効化"}</Button>
-      : <p>このブラウザでは利用できません。HTTPS または localhost で開いてください。</p>}
+  return <section className="card"><h3>{t("Webプッシュ通知")}</h3>
+    <p>{t("定期実行の完了・失敗などを、このブラウザに通知します。")}</p>
+    {supported ? <Button type="button" variant="outline" disabled={busy} onClick={toggle}>{enabled ? t("このブラウザの通知を停止") : t("このブラウザで通知を有効化")}</Button>
+      : <p>{t("このブラウザでは利用できません。HTTPS または localhost で開いてください。")}</p>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }
