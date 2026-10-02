@@ -6,7 +6,17 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## v0.3.5リリース候補の確認（2026-10-01）
+
+確認した項目:
+
+- Memory Runtime、Projects、Todo、Skills Discovery／パッケージ、RunCheckpoint、Browser pause、Usage、PWAの実装を取り込み。
+- Python compileall、JSON解析、YAML解析、`git diff --check`、`uv lock --check` が成功。
+- WebのVitest 13ファイル58テストが成功。TypeScript／Vite production buildも成功。
+- v0.3.5をPython、Web、MCP ClientInfo、OpenAPI、ZimaOS Compose、8種類のGHCRイメージ参照へ反映。
+- ZimaOS Compose生成スクリプトをLinuxの大文字小文字に整合する`Apps/MIX-agent`出力へ修正し、v0.3.5のCompose生成・YAML解析が成功。
 
 ## Agent 実行ループと自律性の強化（2026-09-26）
 

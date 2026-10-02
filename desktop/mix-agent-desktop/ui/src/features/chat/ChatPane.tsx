@@ -10,6 +10,7 @@ import {
 } from "@/lib/queries";
 import { SURFACE_MODES, useUi } from "@/lib/ui";
 import type { ModelView, ProjectView, RunView } from "@/lib/types";
+import { nextVisit, type Welcome } from "./greeting";
 import { Composer, type DraftAttachment } from "./Composer";
 import { Transcript } from "./Transcript";
 import { Alert } from "@/components/ui/alert";
@@ -199,6 +200,28 @@ export function ChatPane() {
     [activeProjectId, activeConversationId, activeModelId, mode],
   );
 
+  // The empty-state greeting is picked once per visit, from the workspace
+  // snapshot. While the thread list is still in flight the Transcript falls
+  // back to the brand line, so the greeting never re-picks mid-session.
+  const [welcome, setWelcome] = useState<Welcome | null>(null);
+  useEffect(() => {
+    if (welcome || conversations.data === undefined) return;
+    const rows = conversations.data;
+    const stamps = rows
+      .map((row) => Date.parse(row.updated_at))
+      .filter((stamp) => Number.isFinite(stamp));
+    setWelcome(
+      nextVisit({
+        conversationCount: rows.length,
+        messageCount: rows.reduce((sum, row) => sum + (row.message_count || 0), 0),
+        projectCount: projects.data?.length ?? 0,
+        lastActivityAt: stamps.length ? Math.max(...stamps) : null,
+        surface,
+        projectActive: !!activeProjectId,
+      }).welcome,
+    );
+  }, [activeProjectId, conversations.data, projects.data, surface, welcome]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Transcript
@@ -208,6 +231,7 @@ export function ChatPane() {
         liveRunId={liveForThisConversation ? liveRunId : null}
         loading={messages.isPending}
         error={messages.isError ? messages.error : null}
+        welcome={welcome}
       />
       <Composer
         mode={mode}

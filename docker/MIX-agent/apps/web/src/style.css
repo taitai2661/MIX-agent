@@ -1890,6 +1890,28 @@ body {
   box-shadow: var(--shadow);
   transform: translateY(-2px);
 }
+/* 新しいチャット画面の挨拶の下に出る、開始の提案 */
+.welcome .suggestions {
+  margin-top: 26px;
+  max-width: 760px;
+}
+.welcome .suggestions button {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-height: 0;
+  padding: 13px 15px;
+  border-radius: 12px;
+}
+.welcome .suggestions button b {
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+.welcome .suggestions button svg:last-child {
+  flex: none;
+  margin-left: auto;
+}
 .messages {
   padding: 28px max(28px, calc((100% - 760px) / 2));
 }

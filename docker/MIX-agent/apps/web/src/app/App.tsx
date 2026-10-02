@@ -22,7 +22,7 @@ import {
   Pencil,
   Pin,
 } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 
 import { Empty, ErrorBox, Logo } from "@/components/shared";
@@ -33,6 +33,7 @@ import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
 import { Chat } from "@/features/chat/Chat";
 import { Conversations } from "@/features/chat/Conversations";
+import type { WorkspaceSnapshot } from "@/features/chat/greeting";
 import { Skills } from "@/features/skills/Skills";
 import { Settings } from "@/features/settings/Settings";
 import { Setup } from "@/features/setup/Setup";
@@ -117,6 +118,21 @@ export function App() {
     queryFn: () => api("/conversations?state=active"),
     enabled: !!user,
   });
+  // 新しいチャット画面の挨拶に使う、ワークスペースの状況だけを渡す。
+  const workspace = useMemo<WorkspaceSnapshot | null>(() => {
+    const rows = conversations.data;
+    if (!rows) return null;
+    const stamps = rows
+      .map((row) => Date.parse(String(row.data.last_message_at || row.created_at)))
+      .filter((stamp) => Number.isFinite(stamp));
+    return {
+      conversationCount: rows.length,
+      pinnedCount: rows.filter((row) => row.data.pinned).length,
+      projectCount: 0,
+      agentCount: 0,
+      lastMessageAt: stamps.length ? Math.max(...stamps) : null,
+    };
+  }, [conversations.data]);
   async function authenticated(value: any) {
     setCSRF(value.csrf);
     setUser(value);
@@ -302,9 +318,9 @@ export function App() {
         </header>
         <ErrorBoundary>
           <Routes>
-            <Route path="/" element={<Chat />} />
-            <Route path="/chat/:id" element={<Chat />} />
-            <Route path="/projects/:projectId/chat" element={<Chat />} />
+            <Route path="/" element={<Chat workspace={workspace} />} />
+            <Route path="/chat/:id" element={<Chat workspace={workspace} />} />
+            <Route path="/projects/:projectId/chat" element={<Chat workspace={workspace} />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<Projects />} />
             <Route path="/history" element={<Conversations />} />

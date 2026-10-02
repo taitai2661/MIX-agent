@@ -1,5 +1,5 @@
-import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
+import { t } from "@/app/i18n";
 import { uuid } from "@/app/uuid";
 import { ja } from "@/app/strings";
 import type { components } from "@/generated/api";
@@ -9,6 +9,7 @@ import {
   ArrowUp,
   Bot,
   Brain,
+  CornerDownLeft,
   FileText,
   FolderKanban,
   MessageSquare,
@@ -43,7 +44,7 @@ import {
   CheckpointsPanel,
   StagnationPanel,
 } from "./AgentLoop";
-import { randomGreeting } from "./greeting";
+import { nextVisit, welcomeTitle, type Welcome, type WorkspaceSnapshot } from "./greeting";
 import {
   liveToolCalls,
   parseRunEvent,
@@ -63,7 +64,7 @@ type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string
 type Feedback = components["schemas"]["FeedbackInput"]["value"];
 const modes = ["chat", "thinking", "agent"] as const satisfies readonly ChatMode[];
 
-export function Chat() {
+export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const { id, projectId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -91,8 +92,9 @@ export function Chat() {
     [reasoning, setReasoning] = useState(""),
     [events, setEvents] = useState<RunEvent[]>([]),
     [streamConnected, setStreamConnected] = useState(false);
-  const [welcome] = useState(() => randomGreeting());
+  const [welcome, setWelcome] = useState<Welcome | null>(null);
   const fileRef = useRef<HTMLInputElement>(null),
+    composer = useRef<HTMLTextAreaElement>(null),
     bottom = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const pendingSend = useRef<{
@@ -108,6 +110,16 @@ export function Chat() {
     enabled: !!id,
   });
   useEffect(() => { if (projectId) setSelectedProject(projectId); }, [projectId]);
+  useEffect(() => {
+    if (welcome || !workspace) return;
+    setWelcome(
+      nextVisit({
+        ...workspace,
+        projectCount: projects.data?.length ?? 0,
+        agentCount: agents.data?.length ?? 0,
+      }).welcome,
+    );
+  }, [agents.data, projects.data, welcome, workspace]);
   const run = useQuery<Run>({
     queryKey: ["run", runId],
     queryFn: () => api("/runs/" + runId),
@@ -335,15 +347,29 @@ export function Chat() {
     <div className="chat-page">
       <div className="chat-body">
         <div className="conversation">
-          {!id && !history.data?.messages?.length ? (
+          {!id && !history.data?.messages?.length && welcome ? (
             <section className="welcome">
               <div className="welcome-icon">
                 <Sparkles size={30} />
               </div>
               <p className="eyebrow">MIX</p>
-              <h1>{t(welcome)}</h1>
+              <h1>{welcomeTitle(welcome)}</h1>
               <div className="welcome-note">
-                <ShieldCheck size={14} /> {t("必要なときだけ、確認のうえで作業を進めます")}
+                <ShieldCheck size={14} /> {t(welcome.note)}
+              </div>
+              <div className="suggestions">
+                {welcome.suggestions.map((suggestion) => (
+                  <button
+                    key={suggestion.id}
+                    onClick={() => {
+                      setText(suggestion.prompt);
+                      composer.current?.focus();
+                    }}
+                  >
+                    <b>{t(suggestion.label)}</b>
+                    <CornerDownLeft size={15} />
+                  </button>
+                ))}
               </div>
             </section>
           ) : (
@@ -500,6 +526,7 @@ export function Chat() {
                 </div>
               )}
               <textarea
+                ref={composer}
                 aria-label={t("メッセージ")}
                 placeholder={t("MIX agent にメッセージを送信…")}
                 value={text}

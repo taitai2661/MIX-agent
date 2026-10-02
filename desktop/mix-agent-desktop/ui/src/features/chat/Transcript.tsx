@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  ArrowDown, BookOpen, Brain, ChevronRight, FileText, MessageSquare, Search, ShieldAlert, ShieldCheck, Sparkles, Terminal, Wand2,
+  ArrowDown, Brain, ChevronRight, CornerDownLeft, FileText, MessageSquare, ShieldAlert, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -10,6 +10,7 @@ import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
 import { isBusy, type RunTimeline } from "@/lib/runEvents";
+import { promptDetail, welcomeTitle, type Suggestion, type Welcome } from "./greeting";
 import type { MessageView, RunView } from "@/lib/types";
 import { useUi } from "@/lib/ui";
 import { Alert, Skeleton } from "@/components/ui/alert";
@@ -25,6 +26,7 @@ export function Transcript({
   liveRunId,
   loading = false,
   error = null,
+  welcome = null,
 }: {
   messages: MessageView[];
   runs: Map<string, RunView>;
@@ -34,6 +36,9 @@ export function Transcript({
   /** Set when the message history could not be loaded — without it a failed
    * fetch rendered as "no messages yet", i.e. as an empty conversation. */
   error?: unknown;
+  /** Empty-state copy. Null while the workspace snapshot is still loading, in
+   * which case the brand line and the keyboard hints render on their own. */
+  welcome?: Welcome | null;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(true);
@@ -68,7 +73,7 @@ export function Transcript({
           {error != null && (
             <Alert tone="danger">{errorMessage(error) || t("エラー")}</Alert>
           )}
-          {isEmpty && !error && <Welcome />}
+          {isEmpty && !error && <Welcome welcome={welcome} />}
           {!isEmpty && loading && messages.length === 0 && !showLive && (
             <Skeleton className="h-16 w-full" />
           )}
@@ -96,19 +101,37 @@ export function Transcript({
   );
 }
 
-function Welcome() {
+function Welcome({ welcome }: { welcome: Welcome | null }) {
   return (
     <div className="flex flex-col items-center gap-5 py-12 text-center">
       <div className="grid size-12 place-items-center rounded-2xl border border-line bg-gradient-to-b from-surface to-inset text-fg shadow-xs">
         <Sparkles size={22} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-2xl font-semibold tracking-tight text-fg">MIX-agent</h2>
+        <p className="text-[10px] font-bold tracking-[0.14em] text-accent uppercase">
+          MIX-agent
+        </p>
+        {welcome ? (
+          <h2 className="mx-auto max-w-lg text-xl font-semibold tracking-tight text-balance text-fg">
+            {welcomeTitle(welcome)}
+          </h2>
+        ) : (
+          <h2 className="text-2xl font-semibold tracking-tight text-fg">MIX-agent</h2>
+        )}
+        {welcome && (
+          <p className="mx-auto flex max-w-md items-center justify-center gap-1.5 text-xs text-faint">
+            <ShieldCheck size={13} aria-hidden="true" />
+            {t(welcome.note)}
+          </p>
+        )}
+      </div>
+      {welcome ? (
+        <WelcomeSuggestions suggestions={welcome.suggestions} />
+      ) : (
         <p className="mx-auto max-w-md text-sm text-muted">
           {t("何でも質問してください。/ でコマンド、⌘K で検索。")}
         </p>
-      </div>
-      <QuickPrompts />
+      )}
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-faint">
         <span className="inline-flex items-center gap-1">
           <Kbd>Enter</Kbd>
@@ -129,43 +152,28 @@ function Welcome() {
   );
 }
 
-interface QuickPrompt {
-  id: string;
-  icon: typeof Wand2;
-  text: string;
-  mode?: "chat" | "thinking" | "agent";
-}
-
-const QUICK_PROMPTS: QuickPrompt[] = [
-  { id: "explain", icon: Wand2, text: "このコードの意図と動作を、日本語で要約して", mode: "thinking" },
-  { id: "refactor", icon: Terminal, text: "リファクタ案を出して。安全策もセットで" },
-  { id: "search", icon: Search, text: "リポジトリ内の TODO を全部集めて" },
-  { id: "docs", icon: BookOpen, text: "このプロジェクトの README 草案を書いて" },
-];
-
-function QuickPrompts() {
+/** Context-driven starters. Each one fills the composer, like the quick
+ * prompts it replaces, so nothing is sent without an explicit keystroke. */
+function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[] }) {
   return (
     <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-      {QUICK_PROMPTS.map((p) => {
-        const Icon = p.icon;
-        return (
-          <Button
-            key={p.id}
-            variant="default"
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent("mix:insert-prompt", {
-                detail: { text: p.text, mode: p.mode },
-              }));
-            }}
-            className="group h-auto items-start justify-start gap-2 px-3 py-2.5 text-start"
-          >
-            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
-              <Icon size={12} aria-hidden="true" />
-            </span>
-            <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{t(p.text)}</span>
-          </Button>
-        );
-      })}
+      {suggestions.map((suggestion) => (
+        <Button
+          key={suggestion.id}
+          variant="default"
+          onClick={() => {
+            window.dispatchEvent(
+              new CustomEvent("mix:insert-prompt", { detail: promptDetail(suggestion) }),
+            );
+          }}
+          className="group h-auto items-start justify-start gap-2 px-3 py-2.5 text-start"
+        >
+          <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
+            <CornerDownLeft size={12} aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{t(suggestion.label)}</span>
+        </Button>
+      ))}
     </div>
   );
 }

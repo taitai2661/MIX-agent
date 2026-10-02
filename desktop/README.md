@@ -146,6 +146,25 @@ auto-update は基盤（`updater.rs`、署名付きアーティファクト設�
 `plugins.updater.active = false` / `endpoints: []` のままなので、出荷版は更新を
 確認しません。有効化の手順は [`docs/desktop/architecture.md`](../docs/desktop/architecture.md) を参照してください。
 
+### 空チャットの挨拶
+
+スレッドが空のとき、見出しは時間帯・曜日・季節の行事・二十四節気・日本の祝日・
+スレッド数・最終活動・訪問間隔・サーフェス・プロジェクト有無から文を合成して表示します
+（`ui/src/features/chat/greeting/`）。部品は250文で、「挨拶＋状況節＋締め」の3層を
+文体タグと文形タグで互換判定してから連結します。見出しの直下には補足の1文と、
+文脈から選ぶ開始提案が3枚並びます。提案は送信欄へ差し込むだけなので、自動送信はしません。
+
+`localStorage`（`mix-agent-welcome`）に訪問間隔と直近24件の部品 ID を保持し、
+同じ文面の連続を避けます。
+
+```sh
+cd ui && pnpm ui:test      # greeting/ を含む 182 ケース
+```
+
+Docker 版も同じ方式で実装していますが、両者は [`docs/desktop/architecture.md`](../docs/desktop/architecture.md)
+の方針どおりコードを共有せず、Desktop 版は `スレッド` / プロジェクト / 差分 /
+Browser など自分の語彙で書き下しています。
+
 ### モード別リミット
 
 Run Engine の既定上限はモードごとに次のように決まります（`core/src/mode.rs:31-53`）。
@@ -176,7 +195,7 @@ checkpoint 間隔（既定 10 ステップ）や停滞判定・検証などの�
 ### テスト
 
 `cargo test --workspace`（Rust）と `pnpm ui:test`（UI / vitest）で実行します。現在の件数は
-**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 91 ケース / 13 ファイル**です。
+**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 182 ケース / 20 ファイル**です。
 テストは継続的に追加されているため、数値はテストの追加・削除に合わせて更新してください。
 
 Rust 側は workspace 内に 7 つの `tests/` ディレクトリを持ちます。
