@@ -168,6 +168,9 @@ export const en: Record<string, string> = {
   // Generic
   "保存": "Save",
   "キャンセル": "Cancel",
+  "編集": "Edit",
+  "メッセージを編集": "Edit message",
+  "⌘+Enter で保存": "⌘+Enter to save",
   "作成": "Create",
   "検索": "Search",
   "読み込み中…": "Loading…",

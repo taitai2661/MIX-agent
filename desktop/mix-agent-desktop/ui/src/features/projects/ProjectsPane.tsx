@@ -5,6 +5,7 @@ import {
   ChevronLeft, FileText, Folder, FolderOpen, MessageSquare, Plus, Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useProjects } from "@/lib/queries";
@@ -40,6 +41,7 @@ export function ProjectsPane() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [instructionsDraft, setInstructionsDraft] = useState<string | null>(null);
   const [sourceDraft, setSourceDraft] = useState("");
+  const [chatError, setChatError] = useState<string | null>(null);
 
   const list = projects.data ?? [];
   const selected = list.find((p) => p.id === selectedId) ?? null;
@@ -101,13 +103,20 @@ export function ProjectsPane() {
 
   const newChatInProject = async () => {
     if (!selected) return;
-    const created = await api.createConversation({
-      mode, model_id: modelId, title: null, workspace_id: null, project_id: selected.id,
-    });
-    invalidate();
-    setActiveProjectId(selected.id);
-    setConversationId(created.id);
-    setView("chat");
+    setChatError(null);
+    try {
+      const created = await api.createConversation({
+        mode, model_id: modelId, title: null, workspace_id: null, project_id: selected.id,
+      });
+      invalidate();
+      setActiveProjectId(selected.id);
+      setConversationId(created.id);
+      setView("chat");
+    } catch (err) {
+      // Invoked with `void`, so a rejection used to surface only as an
+      // unhandled rejection: the click simply appeared to do nothing.
+      setChatError(errorMessage(err) || t("エラー"));
+    }
   };
 
   const openDetail = (project: ProjectView) => {
@@ -250,6 +259,7 @@ export function ProjectsPane() {
               <Plus size={12} /> {t("このプロジェクトで新しいチャット")}
             </Button>
           </Row>
+          {chatError && <ErrorBadge error={chatError} />}
           {linked.length === 0 ? (
             <p className="m-0 text-xs text-faint">{t("会話がありません")}</p>
           ) : (

@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n";
 import { Card, Row, Section } from "@/components/layout";
 import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { ErrorAlert } from "@/components/shared";
 
 function Check({ label, ok, children }: { label: string; ok: boolean; children?: React.ReactNode }) {
   return (
@@ -27,8 +28,12 @@ export function DiagnosticsPane() {
   const d = diagnostics.data;
   return (
     <Section>
-      {diagnostics.isPending || !d ? (
+      {diagnostics.isPending ? (
         <Skeleton className="h-20 w-full" />
+      ) : diagnostics.isError || !d ? (
+        // The old `isPending || !d` check rendered the skeleton forever on a
+        // failed query, so a broken diagnostics command looked like a hang.
+        <ErrorAlert error={diagnostics.error} />
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2">

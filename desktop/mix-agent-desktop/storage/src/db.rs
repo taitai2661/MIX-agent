@@ -128,9 +128,17 @@ async fn promote_staged_restore(data_dir: &Path) -> anyhow::Result<()> {
     }
     let live = data_dir.join("mix-agent.db");
     if live.is_file() {
-        tokio::fs::copy(&live, data_dir.join("mix-agent.db.pre-restore"))
-            .await
-            .ok();
+        // The safety copy is what makes a bad restore recoverable by hand, so a
+        // failure to write it must abort the promotion rather than silently
+        // overwrite the only copy of the live database.
+        let safety = data_dir.join("mix-agent.db.pre-restore");
+        tokio::fs::copy(&live, &safety).await.with_context(|| {
+            format!(
+                "copying {} to {} before promoting the restore",
+                live.display(),
+                safety.display()
+            )
+        })?;
     }
     // WAL sidecars belong to the old database; leaving them would let SQLite
     // replay stale pages over the restored file. They are copied next to the
@@ -142,9 +150,27 @@ async fn promote_staged_restore(data_dir: &Path) -> anyhow::Result<()> {
     ] {
         let from = data_dir.join(sidecar);
         if from.is_file() {
-            tokio::fs::copy(&from, data_dir.join(kept)).await.ok();
+            let kept = data_dir.join(kept);
+            tokio::fs::copy(&from, &kept).await.with_context(|| {
+                format!(
+                    "copying {} to {} before promoting the restore",
+                    from.display(),
+                    kept.display()
+                )
+            })?;
         }
-        tokio::fs::remove_file(&from).await.ok();
+        // A missing sidecar is normal; any other failure to remove one is not,
+        // because a stale WAL against the restored database loses data.
+        if let Err(err) = tokio::fs::remove_file(&from).await {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(err).with_context(|| {
+                    format!(
+                        "removing stale sidecar {} before promoting the restore",
+                        from.display()
+                    )
+                });
+            }
+        }
     }
     tokio::fs::rename(&staged, &live)
         .await

@@ -22,6 +22,10 @@ pub enum BrowserBackend {
     Disabled,
 }
 
+/// Cap on the in-memory artifact index. Screenshots are the main producer and
+/// a long browser session would otherwise grow it without bound.
+const MAX_ARTIFACTS: usize = 500;
+
 pub struct BrowserOperator {
     app_data: PathBuf,
     /// Tauri's resolved resource directory, where the bundled Chromium lives.
@@ -29,6 +33,9 @@ pub struct BrowserOperator {
     headless: bool,
     backends: RwLock<HashMap<uuid::Uuid, Arc<ChromiumBackend>>>,
     profiles: RwLock<HashMap<uuid::Uuid, BrowserProfile>>,
+    /// Serialises workspace backend creation so two simultaneous calls cannot
+    /// each build one and leak the loser's Chromium instance.
+    creation: Mutex<()>,
     artifacts: Mutex<Vec<crate::artifact::BrowserArtifact>>,
 }
 
@@ -49,6 +56,7 @@ impl BrowserOperator {
             headless,
             backends: RwLock::new(HashMap::new()),
             profiles: RwLock::new(HashMap::new()),
+            creation: Mutex::new(()),
             artifacts: Mutex::new(Vec::new()),
         }
     }
@@ -70,6 +78,13 @@ impl BrowserOperator {
         workspace_id: uuid::Uuid,
         display_name: &str,
     ) -> anyhow::Result<Arc<ChromiumBackend>> {
+        if let Some(existing) = self.backends.read().await.get(&workspace_id) {
+            return Ok(existing.clone());
+        }
+        // Re-check under the creation lock: without it two concurrent calls can
+        // both miss the read above, each build a backend, and one then overwrite
+        // the other in the map, orphaning a Chromium instance.
+        let _creation = self.creation.lock().await;
         if let Some(existing) = self.backends.read().await.get(&workspace_id) {
             return Ok(existing.clone());
         }
@@ -162,22 +177,26 @@ impl BrowserOperator {
             }
         };
         if let Some(artifact_id) = &response.artifact_id {
-            self.artifacts
-                .lock()
-                .await
-                .push(crate::artifact::BrowserArtifact {
-                    id: artifact_id.clone(),
-                    run_id: call.workspace_id,
-                    kind: crate::artifact::ArtifactKind::Screenshot,
-                    mime_type: "image/png".into(),
-                    path: self
-                        .app_data
-                        .join("artifacts")
-                        .join(call.workspace_id.to_string())
-                        .join(format!("{}.png", artifact_id))
-                        .to_string_lossy()
-                        .to_string(),
-                });
+            let mut artifacts = self.artifacts.lock().await;
+            artifacts.push(crate::artifact::BrowserArtifact {
+                id: artifact_id.clone(),
+                run_id: call.workspace_id,
+                kind: crate::artifact::ArtifactKind::Screenshot,
+                mime_type: "image/png".into(),
+                path: self
+                    .app_data
+                    .join("artifacts")
+                    .join(call.workspace_id.to_string())
+                    .join(format!("{}.png", artifact_id))
+                    .to_string_lossy()
+                    .to_string(),
+            });
+            // Drop the oldest entries once the index is full; the files stay on
+            // disk, but the in-memory list must not grow forever.
+            if artifacts.len() > MAX_ARTIFACTS {
+                let excess = artifacts.len() - MAX_ARTIFACTS;
+                artifacts.drain(..excess);
+            }
         }
         Ok(response)
     }
@@ -195,7 +214,12 @@ impl BrowserOperator {
                 workspace_id: uuid::Uuid::nil(),
                 action: crate::interface::BrowserAction::Close,
             };
-            let _ = backend.invoke(call).await;
+            // A failed close leaks a Chromium process, and clearing the map
+            // right after drops the only handle that could retry it, so the
+            // failure is logged rather than discarded.
+            if let Err(err) = backend.invoke(call).await {
+                tracing::warn!(%err, "closing a Chromium backend during shutdown failed");
+            }
         }
         self.backends.write().await.clear();
     }

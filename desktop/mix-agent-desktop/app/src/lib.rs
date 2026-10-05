@@ -767,7 +767,7 @@ fn init_tracing() {
 pub fn run() {
     init_tracing();
 
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -796,10 +796,20 @@ pub fn run() {
             // stdio sessions spawn long-lived reader tasks, and those tasks
             // would be torn down when a local runtime is dropped at the end of
             // setup, silently killing every connected server.
-            let storage = std::sync::Arc::new(
-                tauri::async_runtime::block_on(mixd_storage::Storage::open(&data_dir))
-                    .expect("open storage"),
-            );
+            // Startup failures are logged and returned rather than panicked:
+            // with `panic = "abort"` an `.expect` here killed the process with
+            // no diagnostic a user could act on.
+            let storage =
+                match tauri::async_runtime::block_on(mixd_storage::Storage::open(&data_dir)) {
+                    Ok(storage) => std::sync::Arc::new(storage),
+                    Err(err) => {
+                        tracing::error!(%err, dir = %data_dir.display(), "could not open storage");
+                        return Err(Box::<dyn std::error::Error>::from(format!(
+                            "could not open storage at {}: {err}",
+                            data_dir.display()
+                        )));
+                    }
+                };
             let secrets = std::sync::Arc::new(mixd_storage::SecretStore::new());
             // Tauri's resolved resource dir is where the bundled Chromium was
             // unpacked; guessing it from app_data breaks on installed builds.
@@ -814,13 +824,20 @@ pub fn run() {
                 app.path().resource_dir().ok().as_deref(),
                 Some(manifest_resources.as_path()),
             );
-            let state = tauri::async_runtime::block_on(build_app_state(
+            let state = match tauri::async_runtime::block_on(build_app_state(
                 storage,
                 secrets,
                 &data_dir,
                 resource_dir,
-            ))
-            .expect("build app state");
+            )) {
+                Ok(state) => state,
+                Err(err) => {
+                    tracing::error!(%err, "could not build the application state");
+                    return Err(Box::<dyn std::error::Error>::from(format!(
+                        "could not build the application state: {err}"
+                    )));
+                }
+            };
             app.manage(state);
             // Forward Run Engine broadcast events into the WebView.
             let managed = app.state::<AppState>();
@@ -849,6 +866,7 @@ pub fn run() {
             commands::conversations::list_conversations,
             commands::conversations::create_conversation,
             commands::conversations::send_message,
+            commands::conversations::edit_message,
             commands::conversations::list_messages,
             commands::conversations::rename_conversation,
             commands::conversations::delete_conversation,
@@ -927,8 +945,12 @@ pub fn run() {
             updater::check_for_updates,
             updater::install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running MIX-agent Desktop");
+        .run(tauri::generate_context!());
+
+    if let Err(err) = result {
+        tracing::error!(%err, "MIX-agent Desktop exited with an error");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]

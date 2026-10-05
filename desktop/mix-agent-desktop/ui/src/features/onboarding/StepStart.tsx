@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { Check, Folder, MessageSquare } from "lucide-react";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useActiveProject, useModels, useProviders } from "@/lib/queries";
 import { useCreateThread } from "@/features/shell/useShellEvents";
 import { Row } from "@/components/layout";
+import { ErrorBadge } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
@@ -33,10 +36,17 @@ export function StepStart({
   // it with a project already selected from an earlier session — the summary
   // has to describe the real active project, not this run's return value.
   const folderName = projectName ?? activeProject?.name ?? null;
+  const [error, setError] = useState<string | null>(null);
 
   const start = () => {
-    onStart();
-    createThread.mutate();
+    setError(null);
+    // Finish onboarding only once the thread exists. Marking it done first
+    // dismissed the wizard even when thread creation failed, dropping the user
+    // into the shell with no thread and no explanation.
+    createThread.mutate(undefined, {
+      onSuccess: () => onStart(),
+      onError: (err) => setError(errorMessage(err) || t("エラー")),
+    });
   };
 
   return (
@@ -77,6 +87,7 @@ export function StepStart({
           {t("設定はここで変えられます")}
         </span>
       </Row>
+      {error && <ErrorBadge error={error} />}
     </div>
   );
 }

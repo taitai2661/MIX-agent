@@ -139,7 +139,7 @@ export function ChatPane() {
         setConversationId(created.id);
         target = created.id;
       }
-      return api.sendMessage({
+      const out = await api.sendMessage({
         conversation_id: target,
         content,
         model_id: activeModelId,
@@ -150,16 +150,44 @@ export function ChatPane() {
         temperature: null,
         max_tokens: null,
       });
+      // Return the conversation the run actually belongs to. When this turn
+      // created it, `activeConversationId` in the closure below is still null,
+      // so the run used to be tagged to the wrong conversation and its messages
+      // were invalidated against a null key.
+      return { runId: out.run_id, conversationId: target };
     },
-    onSuccess: (out) => {
-      startRun(out.run_id, activeConversationId);
-      void queryClient.invalidateQueries({ queryKey: ["messages", activeConversationId] });
+    onSuccess: ({ runId, conversationId }) => {
+      startRun(runId, conversationId);
+      void queryClient.invalidateQueries({ queryKey: ["messages", conversationId] });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     },
   });
 
   const cancel = useMutation({
     mutationFn: (id: string) => api.cancelRun(id),
+  });
+
+  // Edit a user turn and regenerate from it. The backend removes that turn and
+  // everything after it, then starts a fresh Run, so this mirrors `sendMessage`
+  // exactly: adopt the new run and refresh the transcript.
+  const editMessage = useMutation({
+    mutationFn: async ({ messageId, content }: { messageId: string; content: string }) => {
+      if (!activeConversationId) throw new Error("no conversation");
+      return api.editMessage({
+        conversation_id: activeConversationId,
+        message_id: messageId,
+        content,
+        model_id: activeModelId,
+        mode,
+        reasoning: null,
+      });
+    },
+    onSuccess: (out) => {
+      startRun(out.run_id, activeConversationId);
+      void queryClient.invalidateQueries({ queryKey: ["messages", activeConversationId] });
+      void queryClient.invalidateQueries({ queryKey: ["runs", activeConversationId] });
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+    },
   });
 
   // Terminal status: refresh persisted history, then retire the live view
@@ -197,6 +225,11 @@ export function ChatPane() {
   const onSend = useCallback(
     (content: string, attachments: DraftAttachment[]) => sendMessage.mutate({ content, attachments }),
     [sendMessage],
+  );
+  const onEditMessage = useCallback(
+    (messageId: string, content: string) =>
+      editMessage.mutateAsync({ messageId, content }).then(() => undefined),
+    [editMessage],
   );
   const onStop = useCallback(() => {
     if (liveRunId) cancel.mutate(liveRunId);
@@ -244,6 +277,8 @@ export function ChatPane() {
         loading={messages.isPending}
         error={messages.isError ? messages.error : null}
         welcome={welcome}
+        onEditMessage={onEditMessage}
+        editDisabled={busy}
       />
       <Composer
         mode={mode}
@@ -262,10 +297,10 @@ export function ChatPane() {
         onSend={onSend}
         onStop={onStop}
       />
-      {(sendMessage.isError || projectError) && (
+      {(sendMessage.isError || editMessage.isError || projectError) && (
         <div className="mx-auto w-full max-w-content px-6 pb-3">
           <Alert tone="danger">
-            {errorMessage(sendMessage.error ?? projectError)}
+            {errorMessage(sendMessage.error ?? editMessage.error ?? projectError)}
           </Alert>
         </div>
       )}

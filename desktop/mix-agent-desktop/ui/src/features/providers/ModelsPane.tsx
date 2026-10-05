@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { DataTable, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState, TableSkeleton } from "@/components/shared";
+import { ErrorBox, EmptyState, TableSkeleton } from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { YesNo } from "@/components/ui/status";
 import { MODELS_QUERY_KEY, useModels, useProviders } from "@/lib/queries";
@@ -13,13 +15,28 @@ export function ModelsPane() {
   const queryClient = useQueryClient();
   const models = useModels();
   const providers = useProviders();
-  const verifyTools = (id: string) =>
-    api.verifyTools(id).then(() => queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY }));
+  // A failed capability check used to reject unhandled and leave the button
+  // looking inert; this surfaces the error and disables the row while it runs.
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const verifyTools = async (id: string) => {
+    setVerifyingId(id);
+    setVerifyError(null);
+    try {
+      await api.verifyTools(id);
+      await queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
+    } catch (err) {
+      setVerifyError(errorMessage(err) || t("エラー"));
+    } finally {
+      setVerifyingId(null);
+    }
+  };
 
   const list = models.data ?? [];
 
   return (
     <Section>
+      {verifyError && <ErrorBox error={verifyError} />}
       {models.isPending ? (
         // "No models yet" while the query is still in flight was indistinguishable
         // from the real empty state, so the pane flashed an empty table on every
@@ -47,7 +64,11 @@ export function ModelsPane() {
                 <td className={td}><YesNo value={m.supports_tool_calling} /></td>
                 <td className={td}><YesNo value={m.supports_reasoning} /></td>
                 <td className={`${td} w-24`}>
-                  <Button size="sm" onClick={() => void verifyTools(m.id)}>
+                  <Button
+                    size="sm"
+                    disabled={verifyingId === m.id}
+                    onClick={() => void verifyTools(m.id)}
+                  >
                     <Sparkles size={11} /> {t("能力を確認")}
                   </Button>
                 </td>

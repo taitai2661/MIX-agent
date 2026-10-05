@@ -41,6 +41,10 @@ pub struct FileDiffView {
     pub truncated: bool,
 }
 
+/// Upper bound on the on-disk file a diff preview will read. Larger files are
+/// shown as a whole-file replacement instead of loading them into memory.
+const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
+
 /// Preview what a `files` write would change, without touching the file.
 #[tauri::command]
 pub async fn preview_file_diff(
@@ -56,14 +60,23 @@ pub async fn preview_file_diff(
     let target =
         mixd_tools::files::FilesTool::safe_join(&root, path).map_err(crate::error::cmd_err)?;
 
-    let exists = tokio::fs::metadata(&target).await.is_ok();
-    let read = if exists {
+    let meta = tokio::fs::metadata(&target).await.ok();
+    let exists = meta.is_some();
+    // A diff is a preview, not the file itself. Reading a multi-hundred-megabyte
+    // workspace file (or a generated bundle) into memory only to show three
+    // lines of context used to stall the async executor; the read is capped and
+    // degrades to a whole-file replacement like the binary case does.
+    let too_large = meta
+        .as_ref()
+        .map(|m| m.len() > MAX_DIFF_BYTES)
+        .unwrap_or(false);
+    let read = if exists && !too_large {
         tokio::fs::read_to_string(&target).await
     } else {
         Ok(String::new())
     };
     let (disk, truncated) = match read {
-        Ok(content) => (content, false),
+        Ok(content) => (content, too_large),
         // Non-UTF-8 (binary) old content: degrade to a whole-file replacement.
         Err(_) => (String::new(), true),
     };

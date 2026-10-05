@@ -38,16 +38,18 @@ export function SchedulesPane() {
   const [cronError, setCronError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
-  // Live preview of the expression as the user types.
+  // Live preview of the expression as the user types. The `cancelled` guard
+  // drops a slower earlier response so it cannot overwrite the newest preview.
   useEffect(() => {
+    let cancelled = false;
     const handle = setTimeout(() => {
       if (!draftCron.trim()) { setPreview(null); setCronError(null); return; }
       api.previewCron(draftCron).then(
-        (times) => { setPreview(times); setCronError(null); },
-        (e) => { setPreview(null); setCronError(errorMessage(e)); },
+        (times) => { if (!cancelled) { setPreview(times); setCronError(null); } },
+        (e) => { if (!cancelled) { setPreview(null); setCronError(errorMessage(e)); } },
       );
     }, 300);
-    return () => clearTimeout(handle);
+    return () => { cancelled = true; clearTimeout(handle); };
   }, [draftCron]);
 
   const create = useMutation({

@@ -42,7 +42,20 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         let engine = handle.state::<crate::AppState>().engine.clone();
         let mut receiver = engine.subscribe();
-        while let Ok(event) = receiver.recv().await {
+        loop {
+            let event = match receiver.recv().await {
+                Ok(event) => event,
+                // A receiver that falls behind must not lose notifications for
+                // the rest of the session: the engine's buffer is finite, so a
+                // burst of token events can lag this watcher. The WebView bridge
+                // already treats `Lagged` as "skip and keep going"; this watcher
+                // used to exit its loop instead.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "notification watcher lagged; continuing");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             if event.kind == EVT_APPROVAL_REQUESTED {
                 let tool = event
                     .data

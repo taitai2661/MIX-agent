@@ -12,8 +12,12 @@
 //! different — possibly private — IP via DNS rebinding.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
+
+/// How long a hostname resolution may take before the call is failed.
+const DNS_TIMEOUT: Duration = Duration::from_secs(10);
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 
@@ -84,11 +88,15 @@ impl EgressPolicy {
         }
 
         // Hostname: resolve, vet every address, then hand the surviving list
-        // back so the caller can pin reqwest to them.
-        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
-            .await
-            .map_err(|e| anyhow!("cannot resolve {}: {}", host, e))?
-            .collect();
+        // back so the caller can pin reqwest to them. A resolver that never
+        // answers would otherwise block the tool call (and its cancellation)
+        // before reqwest's own timeout can apply.
+        let addrs: Vec<SocketAddr> =
+            tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
+                .await
+                .map_err(|_| anyhow!("cannot resolve {}: DNS lookup timed out", host))?
+                .map_err(|e| anyhow!("cannot resolve {}: {}", host, e))?
+                .collect();
         if addrs.is_empty() {
             bail!("{} did not resolve to any address", host);
         }

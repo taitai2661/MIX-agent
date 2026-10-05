@@ -140,6 +140,7 @@ export const en: Record<string, string> = {
   "画面履歴": "Screen history", "確度": "Confidence", "確認して再開": "Review and resume",
   "空欄で保持、{}でSecretを削除": "Leave blank to keep; use {} to delete the secret",
   "詳細": "Details", "統計を読み込んでいます…": "Loading statistics…", "編集": "Edit",
+  "メッセージを編集": "Edit message", "⌘+Enter で保存": "⌘+Enter to save",
   "繋がりを見る": "View connections", "繋がりを読み込み中…": "Loading connections…", "良い回答": "Good answer",
   "良くない回答": "Poor answer", "表示名": "Display name", "表示設定で変更": "Change in display settings",
   "要求回数の上限": "Request limit", "訂正": "Correct", "記憶の繋がり": "Memory connections",
@@ -384,3 +385,4 @@ export const en: Record<string, string> = {
 };
 
 export function t(value: string): string { return language === "en" ? en[value] ?? value : value; }
+

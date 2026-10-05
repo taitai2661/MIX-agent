@@ -501,7 +501,10 @@ impl RunEngine {
     /// Both are read once and reused for the process, so a profile the user just
     /// saved would otherwise stay invisible until the app was restarted.
     pub async fn invalidate_catalogues(&self) {
-        self.tools.read().await.invalidate_catalogues().await;
+        // Clone under the guard, drop it, then await the catalogue locks so a
+        // concurrent `replace_tools` is never queued behind them.
+        let registry = self.tools.read().await.clone();
+        registry.invalidate_catalogues().await;
     }
 
     /// Append one turn to the conversation transcript.
@@ -941,12 +944,11 @@ impl RunEngine {
         // The skill catalogue belongs in the system prompt, not in the history:
         // it is the same on every turn and the adapters cache it there.
         let mut system = request.system.clone().unwrap_or_default();
-        let skills_prompt = self
-            .tools
-            .read()
-            .await
-            .skills_prompt(request.root_path.as_deref())
-            .await;
+        // Snapshot the registry before awaiting its catalogue: holding the read
+        // guard across `skills_prompt(...).await` blocked an MCP reconnect's
+        // write lock for the whole lookup.
+        let registry = self.tools.read().await.clone();
+        let skills_prompt = registry.skills_prompt(request.root_path.as_deref()).await;
         if !skills_prompt.trim().is_empty() {
             if !system.trim().is_empty() {
                 system.push_str("\n\n");
@@ -1057,13 +1059,20 @@ impl RunEngine {
             // snapshot is what keeps the plan the model is acting on identical
             // to the plan the UI shows.
             let (head, checklist) = {
-                let tools = self.tools.read().await;
-                let head = if self.policy.context_tiered_summary {
-                    render_head(&task_state, &tools.todos, run_id).await
+                // Clone the checklist handle while the registry guard is held,
+                // then drop it: `render_head` and `snapshot` await the store's
+                // own lock, and holding the registry read guard across them
+                // stalled an MCP reconnect's write lock for the whole render.
+                let (todos, tiered) = {
+                    let tools = self.tools.read().await;
+                    (tools.todos.clone(), self.policy.context_tiered_summary)
+                };
+                let head = if tiered {
+                    render_head(&task_state, &todos, run_id).await
                 } else {
                     String::new()
                 };
-                (head, tools.todos.snapshot(run_id).await)
+                (head, todos.snapshot(run_id).await)
             };
             // Surface the checklist to the UI, not just to the model: a plan the
             // user cannot see is a plan they cannot correct.
@@ -1434,8 +1443,12 @@ impl RunEngine {
                 unverified_repair_turns = 0;
             }
 
-            // Intermediate checkpointing.
-            if self.policy.checkpointing && steps % self.policy.checkpoint_every_steps == 0 {
+            // Intermediate checkpointing. The interval is a public policy field
+            // a caller can set, so a zero must not turn the modulo into a panic.
+            if self.policy.checkpointing
+                && self.policy.checkpoint_every_steps > 0
+                && steps % self.policy.checkpoint_every_steps == 0
+            {
                 let snapshot = CheckpointSnapshot {
                     step_index: steps,
                     tool_calls: total_tool_calls,
@@ -1498,13 +1511,23 @@ impl RunEngine {
         // cleared it, so the *second* prompt of a Run — or a resumed one — was
         // answered instantly with the first prompt's verdict instead of asking.
         self.budget_decisions.lock().await.remove(&run_id);
-        let _ = sqlx::query(
+        // If this write fails the stale decision stays on the row and the next
+        // prompt is auto-answered with the previous verdict, so the failure has
+        // to be visible rather than discarded.
+        if let Err(err) = sqlx::query(
             "UPDATE runs SET data = json_remove(data, '$.budgetDecision') \
              WHERE id = ? AND data IS NOT NULL",
         )
         .bind(run_id.to_string())
         .execute(self.storage.pool())
-        .await;
+        .await
+        {
+            tracing::error!(
+                %run_id,
+                %err,
+                "clearing the persisted budget decision failed; a later prompt may be auto-answered"
+            );
+        }
         self.set_run_state(
             run_id,
             RunStatus::BudgetExtensionPending,

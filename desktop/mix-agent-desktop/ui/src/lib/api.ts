@@ -48,6 +48,10 @@ export const api = {
     attachments: Array<{ kind: string; mime_type: string; data_base64: string; filename: string | null }>;
     reasoning: string | null; temperature: number | null; max_tokens: number | null;
   }) => invoke<SendMessageOutput>("send_message", { input }),
+  editMessage: (input: {
+    conversation_id: string; message_id: string; content: string;
+    model_id: string | null; mode: string | null; reasoning: string | null;
+  }) => invoke<SendMessageOutput>("edit_message", { input }),
   listMessages: (conversationId: string, limit?: number) =>
     invoke<MessageView[]>("list_messages", { conversationId, limit: limit ?? null }),
   renameConversation: (id: string, title: string) =>

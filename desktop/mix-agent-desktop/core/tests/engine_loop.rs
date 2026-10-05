@@ -464,6 +464,15 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         .await;
     let _drain = spawn_event_drain(&engine);
     let run_id = Uuid::new_v4();
+    // `runs.conversation_id` references `conversations(id)`, so a real
+    // conversation has to exist before the run row is inserted.
+    let conversation_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES (?, ?, '{}')")
+        .bind(conversation_id.to_string())
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .execute(storage.pool())
+        .await
+        .expect("insert conversation");
     // `set_run_state` UPDATEs an existing row, so the failure can only be read
     // back if the run row is present — same as a real dispatch.
     sqlx::query(
@@ -472,14 +481,14 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
     )
     .bind(run_id.to_string())
     .bind(mixd_storage::records::SINGLE_USER_ID)
-    .bind(Uuid::new_v4().to_string())
+    .bind(conversation_id.to_string())
     .bind(Uuid::new_v4().to_string())
     .execute(storage.pool())
     .await
     .expect("insert run");
     let mut request = RunRequest {
         run_id,
-        conversation_id: Uuid::new_v4(),
+        conversation_id,
         workspace_id: Uuid::new_v4(),
         root_path: None,
         additional_paths: Vec::new(),

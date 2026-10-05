@@ -640,6 +640,111 @@ def test_message_retry_and_saved_selection(signed, monkeypatch):
     assert history["selection"]["model_id"] == model_id
 
 
+def test_edit_message_truncates_later_turns_and_regenerates(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    headers = {"Idempotency-Key": "edit-turn-1"}
+    first = signed.post(
+        url, json={"model_id": model_id, "content": "first", "mode": "chat"}, headers=headers
+    )
+    assert first.status_code == 200, first.text
+    with SessionLocal() as db:
+        db.get(Run, first.json()["run_id"]).status = "completed"
+        db.commit()
+    second = signed.post(
+        url,
+        json={"model_id": model_id, "content": "second", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-turn-2"},
+    )
+    assert second.status_code == 200, second.text
+    with SessionLocal() as db:
+        db.get(Run, second.json()["run_id"]).status = "completed"
+        db.commit()
+
+    history = signed.get(url).json()
+    target = history["messages"][0]["id"]
+    edited = signed.post(
+        "/api/v1/conversations/" + conversation["id"] + "/messages/" + target + "/edit",
+        json={"model_id": model_id, "content": "first (edited)", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-turn-3"},
+    )
+    assert edited.status_code == 200, edited.text
+
+    history = signed.get(url).json()
+    # The edited turn replaces the old one, and the turn that followed it — which
+    # answered the old wording — is gone along with its Run.
+    assert [message["data"]["content"] for message in history["messages"]] == ["first (edited)"]
+    assert len(history["runs"]) == 1
+    assert history["messages"][0]["id"] != target
+    assert edited.json()["run_id"] == history["runs"][0]["id"]
+
+
+def test_edit_message_rejects_assistant_and_other_conversations(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    posted = signed.post(
+        url,
+        json={"model_id": model_id, "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-role-1"},
+    )
+    assert posted.status_code == 200, posted.text
+    with SessionLocal() as db:
+        own_run = db.get(Run, posted.json()["run_id"])
+        own_run.status = "completed"
+        assistant = Message(
+            owner_id=own_run.owner_id,
+            conversation_id=conversation["id"],
+            data={"role": "assistant", "content": "reply"},
+        )
+        db.add(assistant)
+        db.commit()
+        assistant_id = assistant.id
+    # An assistant turn is not editable.
+    assert (
+        signed.post(
+            url + "/" + assistant_id + "/edit",
+            json={"content": "x"},
+            headers={"Idempotency-Key": "edit-role-2"},
+        ).status_code
+        == 422
+    )
+    # A user message from another conversation cannot be edited through it.
+    target = signed.get(url).json()["messages"][0]["id"]
+    other = signed.post("/api/v1/conversations", json={}).json()
+    assert (
+        signed.post(
+            "/api/v1/conversations/" + other["id"] + "/messages/" + target + "/edit",
+            json={"content": "x"},
+            headers={"Idempotency-Key": "edit-role-3"},
+        ).status_code
+        == 422
+    )
+
+
 def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monkeypatch):
     from mix_agent.api import routes
 

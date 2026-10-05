@@ -26,6 +26,12 @@ use crate::error::McpError;
 /// MCP protocol revision this client advertises.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
+/// Overall deadline for one Streamable-HTTP JSON-RPC exchange, headers and
+/// body together. A server that trickles bytes forever would otherwise hold a
+/// `tools/call` open indefinitely, since the shared HTTP client only bounds the
+/// gap between reads. Generous enough for genuinely slow tool work.
+const HTTP_CALL_TIMEOUT: Duration = Duration::from_secs(300);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Transport {
@@ -136,7 +142,13 @@ impl Session {
         match timeout(Duration::from_secs(60), rx.recv()).await {
             Ok(Some(Ok(v))) => Ok(v),
             Ok(Some(Err(e))) => Err(e),
-            Ok(None) => Err(McpError::ChannelClosed(method.to_string())),
+            // The reader dropped the sender without replying. Remove the
+            // pending entry so a later request with a reused id is not
+            // shadowed by a dead channel.
+            Ok(None) => {
+                self.pending.lock().await.remove(&id);
+                Err(McpError::ChannelClosed(method.to_string()))
+            }
             Err(_) => {
                 self.pending.lock().await.remove(&id);
                 Err(McpError::Timeout(method.to_string()))
@@ -167,8 +179,17 @@ impl Session {
         stdin.flush().await.map_err(McpError::Io)
     }
 
-    /// POST a JSON-RPC frame and read the reply (JSON body or SSE frame).
+    /// POST a JSON-RPC frame and read the reply (JSON body or SSE frame),
+    /// bounded by an overall deadline so a misbehaving server cannot hang a
+    /// tool call forever.
     async fn post_http(&self, body: &str) -> Result<Value, McpError> {
+        match timeout(HTTP_CALL_TIMEOUT, self.post_http_inner(body)).await {
+            Ok(result) => result,
+            Err(_) => Err(McpError::Timeout("streamable-http request".to_string())),
+        }
+    }
+
+    async fn post_http_inner(&self, body: &str) -> Result<Value, McpError> {
         let url = self.config.url.clone().ok_or(McpError::MissingUrl)?;
         let client = mixd_providers::transport::client();
         let mut req = client
@@ -404,7 +425,19 @@ impl Session {
         if self.config.transport == Transport::Stdio {
             *self.stdin.lock().await = None;
             if let Some(mut child) = self.child.lock().await.take() {
-                let _ = child.start_kill();
+                // A leaked MCP server process is invisible without this: the
+                // `Child` handle is dropped right after, so nothing else can
+                // report that the kill failed.
+                if let Err(err) = child.start_kill() {
+                    tracing::warn!(
+                        connection = %self.config.id,
+                        %err,
+                        "failed to kill the MCP server process"
+                    );
+                }
+                // Reap the child, but never let a wedged process stall
+                // shutdown.
+                let _ = timeout(Duration::from_secs(5), child.wait()).await;
             }
         }
         *self.status.write().await = ConnectionStatus::Disabled;

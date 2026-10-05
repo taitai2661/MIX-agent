@@ -178,13 +178,16 @@ impl Tool for TodoTool {
             };
             let id = match entry.get("id").and_then(|v| v.as_u64()) {
                 Some(raw) if raw > 0 => {
-                    let id = raw as usize;
-                    next_id = next_id.max(id + 1);
+                    // The id comes straight from model-authored tool arguments,
+                    // so a huge value must not overflow the counter (a panic in
+                    // debug builds, a silent wrap in release).
+                    let id = usize::try_from(raw).unwrap_or(usize::MAX);
+                    next_id = next_id.max(id.saturating_add(1));
                     id
                 }
                 _ => {
                     let id = next_id;
-                    next_id += 1;
+                    next_id = next_id.saturating_add(1);
                     id
                 }
             };

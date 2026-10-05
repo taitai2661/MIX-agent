@@ -33,6 +33,10 @@ const DEFAULT_MAX_WALL_CLOCK_MS: u64 = 30_000;
 const MAX_WALL_CLOCK_MS: u64 = 600_000;
 /// How much output to return. A runaway `yes` must not fill the context window.
 const MAX_OUTPUT_BYTES: usize = 200 * 1024;
+/// How many completed commands to retain. Each record can hold `MAX_OUTPUT_BYTES`
+/// of output, so an unbounded history is an unbounded memory leak over a long
+/// session.
+const MAX_HISTORY: usize = 200;
 
 pub struct TerminalTool {
     pub max_wall_clock_ms: u64,
@@ -411,7 +415,14 @@ impl Tool for TerminalTool {
                 None => "command did not report an exit status".to_string(),
             })
         };
-        self.history.lock().await.push(record);
+        {
+            let mut history = self.history.lock().await;
+            history.push(record);
+            if history.len() > MAX_HISTORY {
+                let excess = history.len() - MAX_HISTORY;
+                history.drain(..excess);
+            }
+        }
         Ok(ToolResult {
             ok,
             content: payload,

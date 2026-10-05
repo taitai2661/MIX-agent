@@ -2,7 +2,9 @@
 //! `list_conversations` preview, `list_run_events`) against a temporary
 //! SQLite database — the same shape `dispatch_run` writes.
 
-use mix_agent_desktop::commands::conversations::{fetch_conversation_summaries, fetch_messages};
+use mix_agent_desktop::commands::conversations::{
+    fetch_conversation_summaries, fetch_messages, truncate_messages_from,
+};
 use mix_agent_desktop::commands::runs::fetch_run_events;
 use mixd_storage::records::SINGLE_USER_ID;
 use mixd_storage::Storage;
@@ -206,6 +208,81 @@ async fn run_events_are_returned_in_sequence_order() {
     // Unknown run yields an empty list, not an error.
     let empty = fetch_run_events(pool, "run-missing").await.expect("fetch");
     assert!(empty.is_empty());
+}
+
+#[tokio::test]
+async fn truncate_messages_from_drops_the_turn_and_its_run() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-edit", "Edit test").await;
+
+    // Three turns, each with a distinct timestamp and its own Run.
+    for i in 0..3 {
+        let run = format!("run-{i}");
+        sqlx::query(
+            "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+             VALUES (?, ?, '{}', 'conv-edit', 'completed', ?)",
+        )
+        .bind(&run)
+        .bind(SINGLE_USER_ID)
+        .bind(format!("rk-{i}"))
+        .execute(pool)
+        .await
+        .expect("insert run");
+        insert_message(
+            pool,
+            &format!("m-{i}"),
+            "conv-edit",
+            serde_json::json!({
+                "role": "user",
+                "content": format!("turn {i}"),
+                "runId": run,
+                "kind": "user",
+            }),
+        )
+        .await;
+        sqlx::query("UPDATE messages SET created_at = ? WHERE id = ?")
+            .bind(format!("2026-01-01T00:00:0{i}.000Z"))
+            .bind(format!("m-{i}"))
+            .execute(pool)
+            .await
+            .expect("stamp");
+        sqlx::query(
+            "INSERT INTO run_events (id, run_id, sequence, kind, data) VALUES (?, ?, 1, 'text', '{}')",
+        )
+        .bind(format!("e-{i}"))
+        .bind(&run)
+        .execute(pool)
+        .await
+        .expect("insert event");
+    }
+
+    // Branch from the second turn: it and everything after it go.
+    let rowid: i64 = sqlx::query_scalar("SELECT rowid FROM messages WHERE id = 'm-1'")
+        .fetch_one(pool)
+        .await
+        .expect("target rowid");
+    truncate_messages_from(pool, "conv-edit", "2026-01-01T00:00:01.000Z", rowid)
+        .await
+        .expect("truncate");
+
+    let messages = fetch_messages(pool, "conv-edit", 100).await.expect("fetch");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "turn 0");
+
+    // The edited turn's Run and its events go with the transcript, so the
+    // activity panel cannot show a Run that has nothing behind it.
+    let runs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM runs WHERE conversation_id = 'conv-edit'")
+            .fetch_one(pool)
+            .await
+            .expect("count runs");
+    assert_eq!(runs, 1);
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM run_events")
+        .fetch_one(pool)
+        .await
+        .expect("count events");
+    assert_eq!(events, 1);
 }
 
 #[tokio::test]

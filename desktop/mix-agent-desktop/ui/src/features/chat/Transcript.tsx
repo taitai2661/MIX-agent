@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown, Brain, Check, ChevronRight, CircleAlert, CornerDownLeft, FileText, MessageSquare, ShieldAlert, ShieldCheck, Sparkles, Wrench,
+  ArrowDown, Brain, Check, ChevronRight, CircleAlert, FileText, MessageSquare, Pencil, ShieldAlert, ShieldCheck, Sparkles, Wrench,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -10,13 +10,12 @@ import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
 import { isBusy, describeToolCall, type RunTimeline, type ToolActivity } from "@/lib/runEvents";
-import { promptDetail, welcomeTitle, welcomeNote, greetingText, suggestionLabelId, type Suggestion, type Welcome } from "./greeting";
+import { welcomeTitle, welcomeNote, type Welcome } from "./greeting";
 import type { MessageView, RunView } from "@/lib/types";
 import { useUi } from "@/lib/ui";
 import { Alert, Skeleton } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Kbd } from "@/components/layout";
 import { Spinner } from "@/components/ui/spinner";
 
 export function Transcript({
@@ -27,6 +26,8 @@ export function Transcript({
   loading = false,
   error = null,
   welcome = null,
+  onEditMessage,
+  editDisabled = false,
 }: {
   messages: MessageView[];
   runs: Map<string, RunView>;
@@ -36,9 +37,13 @@ export function Transcript({
   /** Set when the message history could not be loaded — without it a failed
    * fetch rendered as "no messages yet", i.e. as an empty conversation. */
   error?: unknown;
-  /** Empty-state copy. Null while the workspace snapshot is still loading, in
-   * which case the brand line and the keyboard hints render on their own. */
+  /** Empty-state copy. Null while the workspace snapshot is still loading,
+   * in which case the brand line renders on its own. */
   welcome?: Welcome | null;
+  /** Edit a user turn and regenerate from it. Omitted on read-only surfaces. */
+  onEditMessage?: (messageId: string, content: string) => Promise<void>;
+  /** A Run is in flight: editing would race the transcript the engine appends. */
+  editDisabled?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(true);
@@ -110,6 +115,8 @@ export function Transcript({
               key={message.id}
               message={message}
               runs={runs}
+              onEdit={onEditMessage}
+              editDisabled={editDisabled}
               showRunError={
                 message.role === "assistant"
                   ? lastAssistantByRun.get(message.run_id ?? "") === message.id
@@ -166,55 +173,11 @@ function Welcome({ welcome }: { welcome: Welcome | null }) {
           </p>
         )}
       </div>
-      {welcome ? (
-        <WelcomeSuggestions suggestions={welcome.suggestions} />
-      ) : (
+      {!welcome && (
         <p className="mx-auto max-w-md text-sm text-muted">
           {t("何でも質問してください。/ でコマンド、⌘K で検索。")}
         </p>
       )}
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-faint">
-        <span className="inline-flex items-center gap-1">
-          <Kbd>Enter</Kbd>
-          {t("送信")}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Kbd>⇧</Kbd>
-          +
-          <Kbd>Enter</Kbd>
-          {t("改行")}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Kbd>⌘K</Kbd>
-          {t("コマンドパレット")}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/** Context-driven starters. Each one fills the composer, like the quick
- * prompts it replaces, so nothing is sent without an explicit keystroke. */
-function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[] }) {
-  return (
-    <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-      {suggestions.map((suggestion) => (
-        <Button
-          key={suggestion.id}
-          variant="default"
-          onClick={() => {
-            window.dispatchEvent(
-              new CustomEvent("mix:insert-prompt", { detail: promptDetail(suggestion) }),
-            );
-          }}
-          className="group h-auto items-start justify-start gap-2.5 rounded-xl border-line px-3.5 py-3 text-start transition-colors hover:border-line-strong"
-        >
-          <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
-            <CornerDownLeft size={12} aria-hidden="true" />
-          </span>
-          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{greetingText(suggestionLabelId(suggestion.id), suggestion.label)}</span>
-        </Button>
-      ))}
     </div>
   );
 }
@@ -224,10 +187,15 @@ function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[
 const MessageItem = memo(function MessageItem({
   message,
   runs,
+  onEdit,
+  editDisabled = false,
   showRunError = false,
 }: {
   message: MessageView;
   runs: Map<string, RunView>;
+  /** Edit this user turn and regenerate; absent on read-only transcripts. */
+  onEdit?: (messageId: string, content: string) => Promise<void>;
+  editDisabled?: boolean;
   /** Render this Run's failure under this (its last assistant) message. */
   showRunError?: boolean;
 }) {
@@ -237,31 +205,13 @@ const MessageItem = memo(function MessageItem({
 
   if (message.role === "user") {
     return (
-      <div className="flex flex-col items-end gap-1">
-        {message.attachments.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-1.5">
-            {message.attachments.map((a, i) => (
-              <span
-                key={i}
-                className="inline-flex items-center gap-1 rounded-md border border-line bg-inset px-1.5 py-0.5 text-xs text-muted"
-              >
-                <FileText size={11} />
-                {a.filename ?? a.mime_type}
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md border border-brand/20 bg-brand-soft px-3.5 py-2.5 text-sm leading-6 text-fg">
-          {message.content}
-        </div>
-        <div className="px-1 text-xs text-faint">{relativeTime(message.created_at)}</div>
-        {showRunError && run?.error && (
-          <Alert tone="danger" className="w-full">
-            <strong className="block font-medium">{t("実行に失敗しました")}</strong>
-            <span className="whitespace-pre-wrap break-words">{run.error}</span>
-          </Alert>
-        )}
-      </div>
+      <UserMessage
+        message={message}
+        run={run}
+        onEdit={onEdit}
+        editDisabled={editDisabled}
+        showRunError={showRunError}
+      />
     );
   }
 
@@ -321,6 +271,143 @@ const MessageItem = memo(function MessageItem({
     </div>
   );
 });
+
+/** A user turn with its inline editor. Kept separate from `MessageItem` so the
+ *  editing state does not re-render the (memoised) assistant rows, and so the
+ *  textarea's hooks only run for messages that actually carry them. */
+function UserMessage({
+  message,
+  run,
+  onEdit,
+  editDisabled,
+  showRunError,
+}: {
+  message: MessageView;
+  run: RunView | undefined;
+  onEdit?: (messageId: string, content: string) => Promise<void>;
+  editDisabled: boolean;
+  showRunError: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Re-seed from the persisted text whenever the editor opens, and focus it so
+  // the user can type without reaching for the mouse.
+  useEffect(() => {
+    if (!editing) return;
+    setDraft(message.content);
+    const frame = window.requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editing, message.content]);
+
+  const canSave =
+    draft.trim().length > 0 &&
+    draft.trim() !== message.content.trim() &&
+    !saving;
+
+  const save = async () => {
+    if (!canSave || !onEdit) return;
+    setSaving(true);
+    try {
+      await onEdit(message.id, draft.trim());
+      setEditing(false);
+    } catch {
+      // The parent renders the failure; keeping the editor open preserves the
+      // typed text instead of dropping it on a transient error.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="group/msg flex flex-col items-end gap-1">
+      {message.attachments.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {message.attachments.map((a, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 rounded-md border border-line bg-inset px-1.5 py-0.5 text-xs text-muted"
+            >
+              <FileText size={11} />
+              {a.filename ?? a.mime_type}
+            </span>
+          ))}
+        </div>
+      )}
+      {editing ? (
+        <div className="flex w-full max-w-[85%] flex-col items-end gap-1.5">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setEditing(false);
+                return;
+              }
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void save();
+              }
+            }}
+            rows={Math.min(8, draft.split("\n").length)}
+            aria-label={t("メッセージを編集")}
+            className="max-h-56 w-full resize-none rounded-2xl rounded-br-md border border-brand/40 bg-surface px-3.5 py-2.5 text-sm leading-6 text-fg outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+          />
+          <div className="flex items-center gap-1.5 px-1">
+            <span className="text-xs text-faint">{t("⌘+Enter で保存")}</span>
+            <Button size="sm" disabled={saving} onClick={() => setEditing(false)}>
+              {t("キャンセル")}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!canSave}
+              onClick={() => void save()}
+            >
+              {saving ? <Spinner size={12} /> : t("保存")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md border border-brand/20 bg-brand-soft px-3.5 py-2.5 text-sm leading-6 text-fg">
+            {message.content}
+          </div>
+          <div className="flex items-center gap-1 px-1 text-xs text-faint">
+            <span>{relativeTime(message.created_at)}</span>
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                disabled={editDisabled}
+                aria-label={t("メッセージを編集")}
+                title={t("メッセージを編集")}
+                className="inline-flex items-center gap-0.5 rounded px-1 text-faint opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 group-hover/msg:opacity-100 disabled:hidden"
+              >
+                <Pencil size={11} /> {t("編集")}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {showRunError && run?.error && (
+        <Alert tone="danger" className="w-full">
+          <strong className="block font-medium">{t("実行に失敗しました")}</strong>
+          <span className="whitespace-pre-wrap break-words">{run.error}</span>
+        </Alert>
+      )}
+    </div>
+  );
+}
 
 function Reasoning({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(streaming);
@@ -476,8 +563,10 @@ function BudgetButtons({
   request: { stepLimit?: number; toolCallLimit?: number };
 }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const decide = async (grant: boolean) => {
     setBusy(true);
+    setError(null);
     try {
       await api.budgetExtension({
         id: runId,
@@ -486,6 +575,10 @@ function BudgetButtons({
         tool_call_limit: grant ? (request.toolCallLimit ?? null) : null,
         wall_clock_minutes: grant ? 30 : null,
       });
+    } catch (err) {
+      // A rejected answer used to vanish: the buttons simply re-enabled and the
+      // run stayed blocked with no explanation.
+      setError(errorMessage(err) || t("エラー"));
     } finally {
       setBusy(false);
     }
@@ -498,6 +591,7 @@ function BudgetButtons({
       <Button size="sm" disabled={busy} onClick={() => void decide(false)}>
         {t("ここで終了する")}
       </Button>
+      {error && <span className="text-xs text-danger">{error}</span>}
     </>
   );
 }
@@ -505,12 +599,18 @@ function BudgetButtons({
 function ApprovalCard({ live }: { live: RunTimeline }) {
   const approval = live.approval!;
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const decide = async (grant: boolean, remember: boolean) => {
     const id = approval.approvalId;
     if (!id) return;
     setBusy(true);
+    setError(null);
     try {
       await api.decideApproval({ id, grant, remember });
+    } catch (err) {
+      // Without this a failed approval re-enabled the card silently while the
+      // run stayed blocked waiting for an answer that would never arrive.
+      setError(errorMessage(err) || t("エラー"));
     } finally {
       setBusy(false);
     }
@@ -525,6 +625,7 @@ function ApprovalCard({ live }: { live: RunTimeline }) {
         {JSON.stringify(approval.arguments, null, 2)}
       </pre>
       <div className="flex items-center justify-end gap-2 px-3 py-2">
+        {error && <span className="mr-auto text-xs text-danger">{error}</span>}
         <Button size="sm" disabled={busy || !approval.approvalId} onClick={() => void decide(false, false)}>
           {t("拒否")}
         </Button>

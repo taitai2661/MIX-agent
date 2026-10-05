@@ -457,6 +457,157 @@ pub async fn dispatch_run(
     })
 }
 
+#[derive(Deserialize)]
+pub struct EditMessageInput {
+    pub conversation_id: String,
+    pub message_id: String,
+    pub content: String,
+    pub model_id: Option<String>,
+    pub mode: Option<String>,
+    pub reasoning: Option<String>,
+}
+
+/// Edit a user turn and regenerate from it.
+///
+/// This is a "branch from here": the edited message and every message after it
+/// are removed, together with the Runs their transcripts belonged to, and the
+/// new text is dispatched as a fresh turn. Later turns are discarded rather
+/// than kept because they answered the old wording — keeping them would leave
+/// the conversation claiming the model replied to something the user never
+/// sent.
+#[tauri::command]
+pub async fn edit_message(
+    state: State<'_, AppState>,
+    input: EditMessageInput,
+) -> Result<SendMessageOutput, String> {
+    let content = input.content.trim().to_string();
+    if content.is_empty() {
+        return Err("メッセージを入力してください".to_string());
+    }
+    let pool = state.storage.pool();
+
+    // Locate the target by both id and conversation so a stray id from another
+    // thread cannot be used to rewrite history. `created_at` + `rowid` is the
+    // same ordering the transcript uses, so "onward" means what the UI shows.
+    let target: Option<(String, String, i64, Option<String>)> = sqlx::query_as(
+        "SELECT json_extract(data, '$.role'), created_at, rowid, \
+                json_extract(data, '$.attachments') \
+         FROM messages WHERE id = ? AND conversation_id = ?",
+    )
+    .bind(&input.message_id)
+    .bind(&input.conversation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    let Some((role, created_at, rowid, attachments_raw)) = target else {
+        return Err("メッセージが見つかりません".to_string());
+    };
+    if role != "user" {
+        return Err("ユーザーのメッセージのみ編集できます".to_string());
+    }
+
+    // The engine appends assistant turns to a transcript this command is about
+    // to rewrite, so an in-flight Run must finish (or be cancelled) first.
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM runs WHERE conversation_id = ? AND status IN \
+         ('queued','running','waiting_approval','budget_extension_pending')",
+    )
+    .bind(&input.conversation_id)
+    .fetch_one(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    if active > 0 {
+        return Err("実行中はメッセージを編集できません".to_string());
+    }
+
+    truncate_messages_from(pool, &input.conversation_id, &created_at, rowid).await?;
+
+    // Attachments are not editable in the transcript yet, but dropping them
+    // because the text changed would silently turn an image question into a
+    // text question, so the originals are carried into the replacement turn.
+    let attachments: Vec<AttachmentInput> = attachments_raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_default();
+
+    dispatch_run(
+        &state,
+        SendMessageInput {
+            conversation_id: input.conversation_id,
+            content,
+            model_id: input.model_id,
+            mode: input.mode,
+            workspace_id: None,
+            attachments,
+            reasoning: input.reasoning,
+            temperature: None,
+            max_tokens: None,
+        },
+    )
+    .await
+}
+
+/// Delete the target message and everything chronologically after it, plus the
+/// Runs whose transcripts those messages made up.
+///
+/// Runs are keyed to the conversation, not the message, so their rows would
+/// otherwise survive with no transcript and keep showing up in the activity
+/// panel with nothing behind them. `run_events`, checkpoints, tool calls and
+/// approvals reference a Run and are cleared with it (SQLite does not enforce
+/// those foreign keys here).
+///
+/// `pub` so integration tests can exercise the branch-and-regenerate
+/// truncation without standing up the full `AppState`.
+pub async fn truncate_messages_from(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    conversation_id: &str,
+    created_at: &str,
+    rowid: i64,
+) -> Result<(), String> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT json_extract(data, '$.runId') AS run_id FROM messages \
+         WHERE conversation_id = ? \
+         AND (created_at > ? OR (created_at = ? AND rowid >= ?))",
+    )
+    .bind(conversation_id)
+    .bind(created_at)
+    .bind(created_at)
+    .bind(rowid)
+    .fetch_all(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    for row in &rows {
+        let run_id: Option<String> = row.try_get("run_id").ok().flatten();
+        let Some(run_id) = run_id else { continue };
+        for (table, column) in [
+            ("run_events", "run_id"),
+            ("run_checkpoints", "run_id"),
+            ("tool_calls", "run_id"),
+            ("approvals", "run_id"),
+            ("runs", "id"),
+        ] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE {column} = ?"))
+                .bind(&run_id)
+                .execute(pool)
+                .await
+                .map_err(crate::error::cmd_err)?;
+        }
+    }
+    sqlx::query(
+        "DELETE FROM messages WHERE conversation_id = ? \
+         AND (created_at > ? OR (created_at = ? AND rowid >= ?))",
+    )
+    .bind(conversation_id)
+    .bind(created_at)
+    .bind(created_at)
+    .bind(rowid)
+    .execute(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    Ok(())
+}
+
 async fn resolve_provider_id(state: &AppState, model_id: &str) -> Result<String, String> {
     // Model ids are stored as `<provider_id>:<model>` when auto-discovered, and
     // bare model names otherwise. The shared resolver owns both the prefix

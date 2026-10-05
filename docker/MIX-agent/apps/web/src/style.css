@@ -746,6 +746,63 @@ svg {
 .message.user .message-label {
   display: none;
 }
+.message-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(420px, 60vw);
+}
+.message-edit textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 240px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.message-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.message-edit-hint {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.message-edit-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.message.user:hover .message-edit-trigger,
+.message-edit-trigger:focus-visible {
+  opacity: 1;
+}
+.message-edit-trigger:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+.message-edit-trigger:disabled {
+  display: none;
+}
 .mini-mark {
   display: grid;
   place-items: center;

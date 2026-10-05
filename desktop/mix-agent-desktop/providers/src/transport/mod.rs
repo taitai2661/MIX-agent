@@ -148,6 +148,10 @@ pub fn sse_stream(
     )
 }
 
+/// Cap on a single un-terminated SSE line. No legitimate provider event is
+/// anywhere near this large, so hitting it means the peer is not framing lines.
+const MAX_SSE_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+
 /// Append a network chunk to the SSE buffer and return every complete event.
 ///
 /// The buffer is raw bytes on purpose: `bytes_stream()` splits the body at
@@ -174,6 +178,13 @@ pub fn parse_sse_lines(buffer: &mut Vec<u8>, chunk: &Bytes) -> Vec<String> {
     }
     if start > 0 {
         buffer.drain(..start);
+    }
+    // A peer that never terminates a line would otherwise grow this buffer
+    // without bound for the life of the stream. Complete events have already
+    // been returned above, so dropping the oversized partial line is safe.
+    if buffer.len() > MAX_SSE_BUFFER_BYTES {
+        tracing::warn!(len = buffer.len(), "dropping an oversized SSE line buffer");
+        buffer.clear();
     }
     events
 }

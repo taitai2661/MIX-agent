@@ -226,8 +226,13 @@ pub async fn git_status(
         if line.len() < 4 {
             continue;
         }
-        let (xy, rest) = line.split_at(2);
-        let rest = rest.trim_start();
+        // `split_at(2)` panics when byte 2 is not a UTF-8 boundary, which a
+        // mangled path in `git status` can produce. `get` returns `None`
+        // instead, so an unparseable line is skipped rather than crashing.
+        let Some(xy) = line.get(..2) else {
+            continue;
+        };
+        let rest = line.get(2..).unwrap_or("").trim_start();
         let path = if let Some((_old, new)) = rest.split_once(" -> ") {
             // Rename: prefer the new path for display.
             new.trim().to_string()

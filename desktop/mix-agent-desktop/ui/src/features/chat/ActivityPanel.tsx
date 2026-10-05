@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -272,6 +272,28 @@ export function ActivityPanel({
   const timeline = isLive ? liveTimeline : replayed;
   const empty = !runId || (timeline && timeline.tools.length === 0);
 
+  // Resuming a checkpoint used to reject unhandled: the button never disabled
+  // and the panel silently stayed on the pre-resume snapshot.
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const resumeFromCheckpoint = async (id: string, checkpointId: string) => {
+    setResumingId(checkpointId);
+    setResumeError(null);
+    try {
+      await api.resumeRun({ id, from_checkpoint: checkpointId, unknown_actions: [] });
+      // Track the resumed run. Without this every event it emitted was dropped
+      // (`run_id !== liveRunId`) and the history query — `staleTime: Infinity`
+      // — was never refetched, so the panel froze on the pre-resume snapshot.
+      startRun(id, activeConversationId);
+      void queryClient.invalidateQueries({ queryKey: ["run_events", id] });
+      void queryClient.invalidateQueries({ queryKey: ["checkpoints", id] });
+    } catch (err) {
+      setResumeError(errorMessage(err) || t("エラー"));
+    } finally {
+      setResumingId(null);
+    }
+  };
+
   return (
     <>
       {!embedded && (
@@ -301,6 +323,11 @@ export function ActivityPanel({
         {runId && history.isError && (
           <p role="alert" className="px-2 py-6 text-center text-xs text-danger">
             {errorMessage(history.error) || t("エラー")}
+          </p>
+        )}
+        {resumeError && (
+          <p role="alert" className="px-2 text-center text-xs text-danger">
+            {resumeError}
           </p>
         )}
         {runId && !history.isError && !timeline && (
@@ -361,28 +388,8 @@ export function ActivityPanel({
                   </span>
                   <Button
                     size="sm"
-                    onClick={() => {
-                      void api
-                        .resumeRun({
-                          id: runId,
-                          from_checkpoint: c.id,
-                          unknown_actions: [],
-                        })
-                        .then(() => {
-                          // Track the resumed run. Without this every event it
-                          // emitted was dropped (`run_id !== liveRunId`) and the
-                          // history query — `staleTime: Infinity` — was never
-                          // refetched, so the panel froze on the pre-resume
-                          // snapshot.
-                          startRun(runId, activeConversationId);
-                          void queryClient.invalidateQueries({
-                            queryKey: ["run_events", runId],
-                          });
-                          void queryClient.invalidateQueries({
-                            queryKey: ["checkpoints", runId],
-                          });
-                        });
-                    }}
+                    disabled={resumingId === c.id}
+                    onClick={() => void resumeFromCheckpoint(runId, c.id)}
                   >
                     <RotateCcw size={11} /> {t("再開")}
                   </Button>

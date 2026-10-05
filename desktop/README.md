@@ -166,7 +166,7 @@ auto-update は基盤（`updater.rs`、署名付きアーティファクト設�
 同じ文面の連続を避けます。
 
 ```sh
-cd ui && pnpm ui:test      # greeting/ を含む 185 ケース
+cd ui && pnpm ui:test      # greeting/ を含む 191 ケース
 ```
 
 Docker 版も同じ方式で実装していますが、両者は [`docs/desktop/architecture.md`](../docs/desktop/architecture.md)
@@ -203,7 +203,7 @@ checkpoint 間隔（既定 10 ステップ）や停滞判定・検証などの�
 ### テスト
 
 `cargo test --workspace`（Rust）と `pnpm ui:test`（UI / vitest）で実行します。現在の件数は
-**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 187 ケース / 20 ファイル**です。
+**Rust 406 件**（`#[test]` / `#[tokio::test]`）と **UI 191 ケース / 21 ファイル**です。
 テストは継続的に追加されているため、数値はテストの追加・削除に合わせて更新してください。
 
 Rust 側は workspace 内に 7 つの `tests/` ディレクトリを持ちます。

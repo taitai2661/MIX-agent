@@ -355,6 +355,92 @@ def _conversation_artifact_ids(messages, runs=None):
     return ids
 
 
+def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()):
+    """Delete a user turn and every turn after it, together with their Runs.
+
+    Used by edit-and-resend: once the replaced turn and the replies to it are
+    gone, a regenerated Run is built from the surviving prefix alone. Shared
+    artifacts are retained — only files no surviving message or run references
+    are removed — so editing one conversation cannot delete another's uploads.
+    `keep_artifact_ids` are attachments the replacement turn reuses; they must
+    survive even though the only message referencing them is being deleted.
+    """
+    from mix_agent.db.models import (
+        Approval,
+        Artifact,
+        Event,
+        Feedback,
+        Message,
+        RunCheckpoint,
+        ToolCall,
+    )
+
+    rows = list(
+        db.scalars(
+            select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)
+        )
+    )
+    cut = next((index for index, message in enumerate(rows) if message.id == from_message_id), len(rows))
+    doomed = rows[cut:]
+    if not doomed:
+        return
+    message_ids = [message.id for message in doomed]
+    doomed_id_set = set(message_ids)
+    run_ids = {message.data.get("run_id") for message in doomed if message.data.get("run_id")}
+    runs = list(db.scalars(select(Run).where(Run.conversation_id == conversation.id)))
+    # The replaced turn's own Run is not referenced by any *surviving* message,
+    # so it is picked up through `input_message_id` instead of only `run_id`.
+    doomed_runs = [
+        run for run in runs if run.id in run_ids or run.data.get("input_message_id") in doomed_id_set
+    ]
+    for run in doomed_runs:
+        run_ids.add(run.id)
+    artifact_ids = set()
+    for message in doomed:
+        artifact_ids.update(message.data.get("artifact_ids", []))
+        artifact_ids.update(
+            item.get("artifact_id") for item in message.data.get("artifacts", []) if item.get("artifact_id")
+        )
+    for run in doomed_runs:
+        artifact_ids.update(_run_context_artifact_ids(run))
+        artifact_ids.update(
+            item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id")
+        )
+    if run_ids:
+        for approval in db.scalars(select(Approval).where(Approval.run_id.in_(run_ids))):
+            db.delete(approval)
+        for call in db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_ids))):
+            db.delete(call)
+        for event in db.scalars(select(Event).where(Event.run_id.in_(run_ids))):
+            db.delete(event)
+        for checkpoint in db.scalars(select(RunCheckpoint).where(RunCheckpoint.run_id.in_(run_ids))):
+            db.delete(checkpoint)
+        for run in db.scalars(select(Run).where(Run.id.in_(run_ids))):
+            db.delete(run)
+    if message_ids:
+        for feedback in db.scalars(select(Feedback).where(Feedback.message_id.in_(message_ids))):
+            db.delete(feedback)
+    for message in doomed:
+        db.delete(message)
+    db.flush()
+    if artifact_ids:
+        used: set = set()
+        for message in db.scalars(select(Message).where(Message.owner_id == conversation.owner_id)):
+            used.update(_conversation_artifact_ids([message]))
+        for run in db.scalars(select(Run).where(Run.owner_id == conversation.owner_id)):
+            used.update(_run_context_artifact_ids(run))
+            used.update(
+                item.get("artifact_id")
+                for item in run.data.get("browser_frames", [])
+                if item.get("artifact_id")
+            )
+        for artifact_id in artifact_ids - used - set(keep_artifact_ids):
+            artifact = db.get(Artifact, artifact_id)
+            if artifact and artifact.owner_id == conversation.owner_id:
+                (config.ARTIFACTS / artifact.id).unlink(missing_ok=True)
+                db.delete(artifact)
+
+
 def purge_conversation(db, conversation):
     """Remove a trashed conversation and its dependent records, retaining shared artifacts."""
     runs = list(db.scalars(select(Run).where(Run.conversation_id == conversation.id)))
@@ -2183,6 +2269,41 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
     )
     launch(run.id)
     return {"run_id": run.id}
+
+
+@router.post("/conversations/{key}/messages/{message_id}/edit", response_model=SendMessageView)
+async def edit_message(key: str, message_id: str, body: MessageInput, request: Request, ctx=Depends(context)):
+    """Replace a user turn and regenerate from it.
+
+    The edited turn and every turn after it are removed before the normal send
+    path runs, so the regenerated Run is built from the surviving prefix alone.
+    Keeping later replies would leave them answering wording the user never
+    actually sent.
+    """
+    db, s = ctx
+    conversation = own(db, Conversation, key, s.owner_id)
+    if conversation.data.get("deleted_at") or conversation.data.get("archived_at"):
+        raise HTTPException(409, "アーカイブまたはごみ箱から復元してから続けてください")
+    message = own(db, Message, message_id, s.owner_id)
+    if message.conversation_id != key or message.data.get("role") != "user":
+        raise HTTPException(422, "ユーザーのメッセージのみ編集できます")
+    if not body.content.strip():
+        raise HTTPException(422, "メッセージを入力してください")
+    active = db.scalar(select(Run).where(
+        Run.conversation_id == key,
+        Run.status.in_(("queued", "running", "waiting_approval", "paused", "budget_extension_pending")),
+    ))
+    if active:
+        raise HTTPException(409, "実行中はメッセージを編集できません")
+    # The editor only changes the text; keep the images/files the turn carried
+    # so editing an image question does not silently drop the image.
+    if not body.artifact_ids and message.data.get("artifact_ids"):
+        body.artifact_ids = list(message.data["artifact_ids"])
+    _delete_message_tail(db, conversation, message_id, keep_artifact_ids=body.artifact_ids)
+    db.commit()
+    # Reuse the normal send path for model/provider resolution, history building
+    # and Run creation instead of forking it.
+    return await send_message(key, body, request, ctx)
 
 
 @router.put("/messages/{key}/feedback")

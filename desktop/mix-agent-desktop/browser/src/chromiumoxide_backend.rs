@@ -11,9 +11,14 @@ use chromiumoxide::browser::{Browser, BrowserConfig};
 use futures_util::FutureExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use tokio::time::{timeout, Duration};
 
 use crate::interface::{BrowserAction, BrowserCall, BrowserResponse, BrowserTool, WaitCondition};
 use crate::profile::BrowserProfile;
+
+/// How long a Chromium launch may take before the call is failed. Launching is
+/// unbounded otherwise, which would hold the launch lock forever.
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct ChromiumBackend {
     executable: Option<PathBuf>,
@@ -21,6 +26,8 @@ pub struct ChromiumBackend {
     user_data_dir: Option<PathBuf>,
     browser: Arc<Mutex<Option<Browser>>>,
     handler: Arc<Mutex<Option<chromiumoxide::Handler>>>,
+    /// Serialises launches without holding `browser` across them.
+    launch_lock: Mutex<()>,
     artifact_dir: PathBuf,
 }
 
@@ -37,13 +44,20 @@ impl ChromiumBackend {
             user_data_dir,
             browser: Arc::new(Mutex::new(None)),
             handler: Arc::new(Mutex::new(None)),
+            launch_lock: Mutex::new(()),
             artifact_dir,
         }
     }
 
     async fn ensure_browser(&self) -> anyhow::Result<()> {
-        let mut guard = self.browser.lock().await;
-        if guard.is_some() {
+        if self.browser.lock().await.is_some() {
+            return Ok(());
+        }
+        // The launch lock serialises concurrent launchers; the `browser` mutex
+        // itself is never held across `Browser::launch`, so a hung launch cannot
+        // block `Close` or any other action for its whole duration.
+        let _launch = self.launch_lock.lock().await;
+        if self.browser.lock().await.is_some() {
             return Ok(());
         }
         let mut builder = BrowserConfig::builder().window_size(1280, 900);
@@ -65,9 +79,9 @@ impl ChromiumBackend {
                 return Err(anyhow::anyhow!("{}", err));
             }
         };
-        let (browser, handler) = match Browser::launch(config).await {
-            Ok(launched) => launched,
-            Err(err) => {
+        let (browser, handler) = match timeout(LAUNCH_TIMEOUT, Browser::launch(config)).await {
+            Ok(Ok(launched)) => launched,
+            Ok(Err(err)) => {
                 // Launching is the one Browser failure the app cannot recover
                 // from on its own, so it has to be visible in the log.
                 tracing::error!(
@@ -77,9 +91,19 @@ impl ChromiumBackend {
                 );
                 return Err(anyhow::anyhow!("failed to launch Chromium: {}", err));
             }
+            Err(_) => {
+                tracing::error!(
+                    executable = ?self.executable,
+                    "timed out launching Chromium"
+                );
+                return Err(anyhow::anyhow!(
+                    "timed out launching Chromium after {:?}",
+                    LAUNCH_TIMEOUT
+                ));
+            }
         };
         *self.handler.lock().await = Some(handler);
-        *guard = Some(browser);
+        *self.browser.lock().await = Some(browser);
         tracing::info!(executable = ?self.executable, "Chromium launched");
         Ok(())
     }

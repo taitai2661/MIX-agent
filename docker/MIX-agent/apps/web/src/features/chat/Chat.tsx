@@ -14,6 +14,7 @@ import {
   FolderKanban,
   MessageSquare,
   Paperclip,
+  Pencil,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -101,6 +102,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     [reasoning, setReasoning] = useState(""),
     [events, setEvents] = useState<RunEvent[]>([]),
     [streamConnected, setStreamConnected] = useState(false);
+  // Inline edit of a sent user turn, and the regeneration it triggers.
+  const [editingId, setEditingId] = useState<string | null>(null),
+    [editText, setEditText] = useState(""),
+    [savingEdit, setSavingEdit] = useState(false);
   const [welcome, setWelcome] = useState<Welcome | null>(null);
   // `nextVisit` advances the stored visit count, so guard against React
   // StrictMode's double-invoked effect: without this the count (and the recent
@@ -357,6 +362,50 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       setError(e);
     }
   }
+  function startEdit(m: Row) {
+    setEditingId(m.id);
+    setEditText(String(m.data.content || ""));
+    setError(null);
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText("");
+  }
+  /** Replace a sent user turn and regenerate from it. The backend drops that
+   *  turn and everything after it, so the reply stream starts clean. */
+  async function saveEdit(m: Row) {
+    const content = editText.trim();
+    if (!content || !id || savingEdit || active || busy) return;
+    setSavingEdit(true);
+    setError(null);
+    try {
+      const body = {
+        content,
+        model_id: model,
+        mode: researchMode ? "agent" : mode,
+        agent_id: agent,
+        artifact_ids: (m.data.artifact_ids as string[]) || [],
+        temporary_mode: temporaryMode,
+        allow_tools: allowTools,
+        research_mode: researchMode && !temporaryMode,
+      };
+      const r = await api<SendMessage>(
+        "/conversations/" + id + "/messages/" + m.id + "/edit",
+        "POST",
+        body,
+        uuid(),
+      );
+      cancelEdit();
+      setRunId(r.run_id);
+      qc.invalidateQueries({ queryKey: ["messages", id] });
+      qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+      qc.invalidateQueries({ queryKey: ["/conversations"] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
   return (
     <div className="chat-page">
       <div className="chat-body">
@@ -407,11 +456,57 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                       </>
                     )}
                   </div>
-                  <div className="markdown">
-                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                      {m.data.content}
-                    </Markdown>
-                  </div>
+                  {editingId === m.id ? (
+                    <div className="message-edit">
+                      <textarea
+                        aria-label={t("メッセージを編集")}
+                        value={editText}
+                        autoFocus
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            void saveEdit(m);
+                          }
+                        }}
+                      />
+                      <div className="message-edit-actions">
+                        <span className="message-edit-hint">{t("⌘+Enter で保存")}</span>
+                        <Button type="button" variant="ghost" onClick={cancelEdit} disabled={savingEdit}>
+                          {t("キャンセル")}
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => void saveEdit(m)}
+                          disabled={savingEdit || !editText.trim()}
+                        >
+                          {t("保存")}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="markdown">
+                      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                        {m.data.content}
+                      </Markdown>
+                    </div>
+                  )}
+                  {m.data.role === "user" && editingId !== m.id && (
+                    <button
+                      type="button"
+                      className="message-edit-trigger"
+                      aria-label={t("メッセージを編集")}
+                      title={t("メッセージを編集")}
+                      disabled={active || busy}
+                      onClick={() => startEdit(m)}
+                    >
+                      <Pencil size={12} /> {t("編集")}
+                    </button>
+                  )}
                   {m.data.artifacts?.map((artifact) => (
                     <ArtifactCard key={artifact.artifact_id} artifact={artifact} />
                   )) || m.data.artifact_ids?.map((artifact_id: string) => (
