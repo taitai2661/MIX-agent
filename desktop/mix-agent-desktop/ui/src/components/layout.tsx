@@ -18,21 +18,26 @@ export function Page({
   children: ReactNode;
   className?: string;
 }) {
+  const hasHeader = Boolean(title || sub || actions);
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", className)}>
-      <div className="mx-auto flex w-full max-w-content flex-col gap-4 px-6 py-6">
-        {(title || actions) && (
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
+    <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
+      {hasHeader && (
+        <header className="flex shrink-0 items-center border-b border-line bg-bg/80 px-6 py-4 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-content items-center gap-3">
+            <div className="min-w-0 flex-1">
               {title && (
-                <h2 className="text-lg font-semibold tracking-tight text-fg">{title}</h2>
+                <h1 className="truncate text-lg font-semibold tracking-tight text-fg">{title}</h1>
               )}
-              {sub && <p className="mt-0.5 text-sm text-muted">{sub}</p>}
+              {sub && <p className="mt-0.5 truncate text-xs text-muted">{sub}</p>}
             </div>
-            {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+            {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
           </div>
-        )}
-        {children}
+        </header>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-content flex-col gap-5 px-6 py-7">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -64,18 +69,18 @@ export function Card({
   return (
     <section
       className={cn(
-        "flex flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-xs",
+        "flex flex-col overflow-hidden rounded-xl border border-line bg-surface",
         className,
       )}
     >
       {(title || action) && (
-        <div className="flex items-center gap-1.5 border-b border-line px-3 py-2">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           {icon && <span className="shrink-0 text-faint">{icon}</span>}
           {title && <h3 className="min-w-0 flex-1 text-sm font-semibold text-fg">{title}</h3>}
           {action}
         </div>
       )}
-      <div className={cn("flex flex-col gap-2 p-3", bodyClassName)}>{children}</div>
+      <div className={cn("flex flex-col gap-3 p-4", bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -161,7 +166,7 @@ export function DataTable<T>({
   children: (row: T) => ReactNode;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-line">
+    <div className="overflow-x-auto rounded-xl border border-line">
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="border-b border-line bg-inset text-2xs text-muted">
@@ -169,7 +174,7 @@ export function DataTable<T>({
               <th
                 key={i}
                 scope="col"
-                className="px-3 py-1.5 text-start font-medium whitespace-nowrap"
+                className="px-3 py-2 text-start font-semibold whitespace-nowrap"
               >
                 {c}
               </th>
@@ -198,7 +203,7 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   return (
     <kbd
       className={cn(
-        "rounded-sm border border-line bg-surface px-1 font-mono text-xs leading-4 text-muted",
+        "rounded-[5px] border border-line bg-surface px-1.5 py-px font-mono text-2xs leading-4 text-muted",
         className,
       )}
     >
@@ -231,9 +236,9 @@ export function NavRow({
       type="button"
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "flex h-row w-full items-center gap-2 rounded-md px-2 text-sm",
+        "flex h-row w-full items-center gap-2 rounded-lg px-2.5 text-sm",
         "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg",
-        selected && "bg-active font-medium text-fg",
+        selected && "bg-brand-soft font-medium text-fg",
         className,
       )}
       {...props}
@@ -258,7 +263,7 @@ export function SectionLabel({
   return (
     <h2
       className={cn(
-        "flex items-center gap-1 px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-faint",
+        "flex items-center gap-1 px-2.5 pb-1 text-2xs font-semibold uppercase tracking-[0.08em] text-faint",
         className,
       )}
     >
@@ -284,9 +289,9 @@ export function ListRow({
       type="button"
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "flex h-row w-full items-center gap-2 rounded-md px-2 text-start",
+        "flex h-row w-full items-center gap-2 rounded-lg px-2.5 text-start",
         "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg",
-        selected && "bg-active font-medium text-fg",
+        selected && "bg-brand-soft font-medium text-fg",
         className,
       )}
       {...props}
@@ -323,7 +328,10 @@ export function PanelHeader({
 }) {
   return (
     <div
-      className={cn("flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3", className)}
+      className={cn(
+        "flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-surface/80 px-3 backdrop-blur",
+        className,
+      )}
     >
       {onBack ? (
         <Button variant="ghost" size="icon-sm" title={t("戻る")} aria-label={t("戻る")} onClick={onBack}>

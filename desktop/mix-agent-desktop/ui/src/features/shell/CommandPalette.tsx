@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Bot, CornerDownLeft, MessageSquare, Plus, Search, Settings2,
+  Bot, CornerDownLeft, Keyboard, MessageSquare, Plus, Search, Settings2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { CONVERSATIONS_QUERY_KEY } from "@/lib/queries";
 import { useUi, type SettingsTab, type Surface, type View } from "@/lib/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { ListRow } from "@/components/layout";
+import { ListRow, Kbd } from "@/components/layout";
 
 interface PaletteItem {
   id: string;
@@ -47,6 +47,7 @@ export function CommandPalette() {
   const setConversationId = useUi((s) => s.setConversationId);
   const openSettings = useUi((s) => s.openSettings);
   const setSurface = useUi((s) => s.setSurface);
+  const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
 
@@ -91,7 +92,7 @@ export function CommandPalette() {
     }));
     const surfaces: PaletteItem[] = (["chat", "desktop-agent"] as Surface[]).map((id) => ({
       id: `surface:${id}`,
-      label: id === "chat" ? "chat" : "desktop-agent",
+      label: id === "chat" ? "チャット" : "エージェント",
       hint: t("サーフェスを切り替え"),
       icon: id === "chat" ? <MessageSquare size={14} /> : <Bot size={14} />,
       run: () => setSurface(id),
@@ -107,12 +108,19 @@ export function CommandPalette() {
           window.dispatchEvent(new CustomEvent("mix:new-thread"));
         },
       },
+      {
+        id: "action:shortcuts",
+        label: t("ショートカット一覧"),
+        hint: "?",
+        icon: <Keyboard size={14} />,
+        run: () => setShortcutsOpen(true),
+      },
       ...surfaces,
       ...views,
       ...settingsTabs,
       ...threads,
     ];
-  }, [conversations.data, openSettings, setConversationId, setView, setSurface]);
+  }, [conversations.data, openSettings, setConversationId, setView, setSurface, setShortcutsOpen]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -159,28 +167,32 @@ export function CommandPalette() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         aria-label={t("コマンドパレット")}
-        className="top-[12vh] flex max-h-[60vh] w-full max-w-lg -translate-y-0 flex-col overflow-hidden p-0"
+        className="top-[12vh] flex max-h-[60vh] w-full max-w-xl -translate-y-0 flex-col overflow-hidden p-0"
       >
         <DialogTitle className="sr-only">{t("コマンドパレット")}</DialogTitle>
-        <input
-          autoFocus
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="palette-listbox"
-          aria-activedescendant={filtered.length > 0 ? activeId : undefined}
-          aria-autocomplete="list"
-          aria-label={t("コマンドを検索…")}
-          placeholder={t("コマンドを検索…")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={onKey}
-          className="h-control shrink-0 border-b border-line bg-inset px-3 text-sm text-fg outline-none placeholder:text-faint"
-        />
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-line bg-inset px-3.5">
+          <Search size={15} className="shrink-0 text-faint" aria-hidden="true" />
+          <input
+            autoFocus
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="palette-listbox"
+            aria-activedescendant={filtered.length > 0 ? activeId : undefined}
+            aria-autocomplete="list"
+            aria-label={t("コマンドを検索…")}
+            placeholder={t("コマンドを検索…")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onKey}
+            className="h-11 min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
+          />
+          <Kbd className="hidden sm:inline-flex">Esc</Kbd>
+        </div>
         <div
           id="palette-listbox"
           role="listbox"
           aria-label={t("コマンドパレット")}
-          className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1"
+          className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1.5"
         >
           {filtered.map((item, i) => (
             <ListRow

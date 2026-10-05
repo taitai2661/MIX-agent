@@ -7,7 +7,7 @@ const buttonVariants = cva(
   [
     "inline-flex items-center justify-center gap-1.5 whitespace-nowrap",
     "rounded-md font-medium select-none",
-    "transition-colors duration-100 ease-out",
+    "transition-[background-color,border-color,color,box-shadow,transform] duration-100 ease-out",
     // The focus ring itself lives in tokens.css as a global `:focus-visible`
     // rule, so it is deliberately *not* restated here. That rule applies to
     // every natively focusable element, which is why the hand-copied
@@ -23,13 +23,14 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: [
-          "bg-inset text-fg border border-line",
-          "hover:bg-hover hover:border-line-strong",
+          "bg-surface text-fg border border-line",
+          "hover:bg-inset hover:border-line-strong active:scale-[0.98]",
         ],
-        primary: "bg-brand text-on-solid hover:bg-brand-hover",
+        primary:
+          "bg-brand text-on-solid hover:bg-brand-hover active:scale-[0.98]",
         // `on-solid`, not a literal `white`: in dark mode every solid fill in
         // the palette is a light tint, so text on top of one has to be dark.
-        danger: "bg-danger text-on-solid hover:opacity-90",
+        danger: "bg-danger text-on-solid hover:opacity-90 active:scale-[0.98]",
         // The destructive *quiet* action. Nine call sites were open-coding
         // `variant="ghost" className="text-danger hover:text-danger"`; as a
         // variant the danger tint is no longer optional, and it is a token
@@ -39,11 +40,11 @@ const buttonVariants = cva(
         link: "text-brand underline-offset-4 hover:underline",
       },
       size: {
-        sm: "h-7 px-2.5 text-xs",
-        md: "h-control px-3 text-sm",
-        lg: "h-9 px-4 text-sm",
-        icon: "size-control p-0",
-        "icon-sm": "size-6 p-0",
+        sm: "h-8 px-3 text-xs",
+        md: "h-control px-3.5 text-sm",
+        lg: "h-10 px-5 text-sm",
+        icon: "size-control shrink-0 p-0",
+        "icon-sm": "size-6 shrink-0 p-0",
       },
     },
     defaultVariants: { variant: "default", size: "md" },
@@ -61,20 +62,22 @@ export interface ButtonProps
   selected?: boolean;
 }
 
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { className, variant, size, asChild = false, type, selected, ...props },
-  ref,
-) {
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      ref={ref}
-      type={asChild ? undefined : (type ?? "button")}
-      aria-pressed={selected}
-      className={cn(buttonVariants({ variant, size }), className)}
-      {...props}
-    />
-  );
-});
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  function Button(
+    { className, variant, size, asChild = false, type, selected, ...props },
+    ref,
+  ) {
+    const Comp = asChild ? Slot : "button";
+    return (
+      <Comp
+        ref={ref}
+        type={asChild ? undefined : (type ?? "button")}
+        aria-pressed={selected}
+        className={cn(buttonVariants({ variant, size }), className)}
+        {...props}
+      />
+    );
+  },
+);
 
 export { buttonVariants };

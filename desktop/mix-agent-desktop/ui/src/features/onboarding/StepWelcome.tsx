@@ -40,6 +40,9 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-5">
+      <div className="grid size-12 place-items-center rounded-2xl border border-line bg-gradient-to-b from-surface to-inset text-brand">
+        <Sparkles size={22} aria-hidden="true" />
+      </div>
       <div className="flex flex-col gap-1.5">
         <h2 className="text-xl font-semibold tracking-tight text-fg">{t("ようこそ")}</h2>
         <p className="text-sm text-muted">
@@ -51,7 +54,7 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
         {CAPABILITIES.map(({ Icon, title, body }) => (
           <li
             key={title}
-            className="flex items-start gap-2.5 rounded-lg border border-line bg-surface px-3 py-2.5"
+            className="flex items-start gap-2.5 rounded-xl border border-line bg-surface px-3 py-3 transition-colors hover:border-line-strong"
           >
             <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand">
               <Icon size={14} aria-hidden="true" />

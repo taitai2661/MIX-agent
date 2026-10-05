@@ -94,6 +94,10 @@ interface UiState {
   setTheme: (theme: Theme) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /** The keyboard-shortcut cheat sheet. Session-only (not persisted): it is a
+   *  reference the user opens on demand, not a remembered panel. */
+  shortcutsOpen: boolean;
+  setShortcutsOpen: (open: boolean) => void;
   /** Force the first-run wizard open for this session.
    *
    * Deliberately *not* persisted. Whether the wizard shows on its own is a
@@ -192,6 +196,18 @@ function readThreadFilter(): ThreadFilter {
  */
 export function defaultModeForSurface(surface: Surface): RunMode {
   return SURFACE_MODES[surface][0];
+}
+
+/**
+ * Which surface a conversation belongs to, derived from its run mode.
+ *
+ * `ConversationSummary` carries a `mode`, not a surface, so the sidebar's
+ * thread filter has to map one back to the other. It is the inverse of
+ * `SURFACE_MODES`: `agent` runs live on the desktop-agent surface, everything
+ * else (`chat`, `thinking`) is the chat surface.
+ */
+export function surfaceForMode(mode: string): Surface {
+  return mode === "agent" ? "desktop-agent" : "chat";
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -316,6 +332,8 @@ export const useUi = create<UiState>((set) => ({
   },
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  shortcutsOpen: false,
+  setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   onboardingForcedOpen: false,
   setOnboardingForcedOpen: (onboardingForcedOpen) => set({ onboardingForcedOpen }),
 }));

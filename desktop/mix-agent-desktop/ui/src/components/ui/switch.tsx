@@ -21,7 +21,7 @@ export const Switch = forwardRef<
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          "pointer-events-none block size-4 rounded-full bg-on-solid shadow-xs",
+          "pointer-events-none block size-4 rounded-full bg-on-solid",
           "transition-transform duration-150 ease-out",
           "data-[state=checked]:translate-x-4",
         )}

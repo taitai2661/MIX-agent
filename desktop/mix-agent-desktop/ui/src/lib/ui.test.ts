@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  SURFACE_MODES, defaultModeForSurface, useUi,
+  SURFACE_MODES, defaultModeForSurface, surfaceForMode, useUi,
   type RunMode, type Surface, type ThreadFilter,
 } from "./ui";
 
@@ -17,6 +17,8 @@ function resetStore() {
     surface: "chat",
     mode: "chat",
     threadFilter: "all",
+    paletteOpen: false,
+    shortcutsOpen: false,
   });
 }
 
@@ -84,6 +86,30 @@ describe("useUi surface state", () => {
     useUi.getState().setThreadFilter("desktop-agent");
     expect(useUi.getState().threadFilter).toBe<ThreadFilter>("desktop-agent");
     expect(localStorage.getItem(THREAD_FILTER_KEY)).toBe("desktop-agent");
+  });
+
+  it("surfaceForMode maps every run mode to the surface that owns it", () => {
+    // The inverse of SURFACE_MODES: each surface's modes must map back to it,
+    // and no mode may map to the wrong side.
+    for (const [surface, modes] of Object.entries(SURFACE_MODES) as [
+      Surface,
+      RunMode[],
+    ][]) {
+      for (const mode of modes) {
+        expect(surfaceForMode(mode)).toBe(surface);
+      }
+    }
+    // An unknown mode is treated as a plain chat rather than the agent surface,
+    // so a legacy or future mode can never leak into the agent-only filter.
+    expect(surfaceForMode("something-else")).toBe("chat");
+  });
+
+  it("shortcut sheet is closed by default and opens in memory only", () => {
+    expect(useUi.getState().shortcutsOpen).toBe(false);
+    useUi.getState().setShortcutsOpen(true);
+    expect(useUi.getState().shortcutsOpen).toBe(true);
+    // Session-only: it is not a persisted preference.
+    expect(localStorage.getItem("mix-agent-shortcuts")).toBeNull();
   });
 
   it("rejects an invalid stored surface on boot", () => {

@@ -30,11 +30,19 @@ const segmentedVariants = cva(
   "inline-flex h-row items-center gap-0.5 rounded-lg bg-inset p-0.5",
 );
 
-export const Segmented = forwardRef<HTMLDivElement, React.ComponentProps<"div">>(
-  function Segmented({ className, ...props }, ref) {
-    return <div ref={ref} role="radiogroup" className={cn(segmentedVariants(), className)} {...props} />;
-  },
-);
+export const Segmented = forwardRef<
+  HTMLDivElement,
+  React.ComponentProps<"div">
+>(function Segmented({ className, ...props }, ref) {
+  return (
+    <div
+      ref={ref}
+      role="radiogroup"
+      className={cn(segmentedVariants(), className)}
+      {...props}
+    />
+  );
+});
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -61,7 +69,8 @@ export function SegmentedOption<T extends string>({
   value: T;
   selected: boolean;
   onSelect: (value: T) => void;
-} & SegmentedOption<T> & Omit<React.ComponentProps<"button">, "value" | "onSelect" | "aria-checked">) {
+} & SegmentedOption<T> &
+  Omit<React.ComponentProps<"button">, "value" | "onSelect" | "aria-checked">) {
   return (
     <button
       type="button"
@@ -74,12 +83,18 @@ export function SegmentedOption<T extends string>({
       className={cn(
         "flex h-full min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2",
         "text-xs font-medium whitespace-nowrap transition-colors duration-100",
-        selected ? "bg-surface text-fg shadow-xs" : "text-muted hover:text-fg",
+        selected ? "bg-surface text-fg" : "text-muted hover:text-fg",
       )}
       {...props}
     >
-      <span className="truncate">{children}</span>
-      {trailing != null && <span className="shrink-0 font-mono text-2xs">{trailing}</span>}
+      {/* `min-w-0` on the label is what lets it reach the ellipsis: without
+          it the label keeps its `min-content` width, the option cannot shrink,
+          and a group of three Japanese labels pushed a whole side panel past
+          the window edge. */}
+      <span className="min-w-0 truncate">{children}</span>
+      {trailing != null && (
+        <span className="shrink-0 font-mono text-2xs">{trailing}</span>
+      )}
     </button>
   );
 }

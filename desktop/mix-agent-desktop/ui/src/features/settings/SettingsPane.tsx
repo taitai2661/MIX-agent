@@ -142,12 +142,15 @@ export function SettingsPane() {
         ))}
       </aside>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex h-titlebar shrink-0 items-center justify-between gap-3 border-b border-line px-6">
-          <h2 className="text-lg font-semibold tracking-tight text-fg">
+      {/* `min-w-0` is load-bearing: without it this column refuses to shrink
+          below its content's min-content width, so a wide DataTable (providers,
+          models, tools, MCP) pushed the whole pane past the window edge. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-bg/80 px-6 py-3.5 backdrop-blur">
+          <h1 className="truncate text-lg font-semibold tracking-tight text-fg">
             {t(ALL_TABS.find((tab) => tab.id === activeTab)?.label ?? "設定")}
-          </h2>
-          <div className="flex items-center gap-2">
+          </h1>
+          <div className="flex shrink-0 items-center gap-2">
             {showSave && update.isSuccess && !update.isError && (
               <Badge tone="success">{t("保存しました")}</Badge>
             )}
@@ -161,7 +164,7 @@ export function SettingsPane() {
               </Button>
             )}
           </div>
-        </div>
+        </header>
 
         {/* Same content measure as every other top-level pane. This body used
             to be full-bleed, so settings cards were the only thing in the app

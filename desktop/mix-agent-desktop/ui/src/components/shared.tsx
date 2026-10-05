@@ -67,7 +67,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line px-6 py-10 text-center",
+        "flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line px-6 py-12 text-center",
         className,
       )}
     >
@@ -103,7 +103,7 @@ export function TableSkeleton({ rows = 4, className }: { rows?: number; classNam
   return (
     <div
       aria-hidden
-      className={cn("overflow-hidden rounded-lg border border-line", className)}
+      className={cn("overflow-hidden rounded-xl border border-line", className)}
     >
       <div className="border-b border-line bg-inset px-3 py-1.5">
         <Skeleton className="h-3 w-24" />
@@ -130,7 +130,7 @@ export function ListSkeleton({ rows = 3, className }: { rows?: number; className
   return (
     <div aria-hidden className={cn("flex flex-col gap-3", className)}>
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="rounded-lg border border-line p-3">
+        <div key={i} className="rounded-xl border border-line p-3">
           <Skeleton className="h-3.5 w-1/3" />
           <Skeleton className="mt-2 h-3 w-2/3" />
         </div>

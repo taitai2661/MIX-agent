@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { ChevronRight, Download, FileCode, Sparkles, Trash2, Upload } from "lucide-react";
+import {
+  ChevronRight,
+  Download,
+  FileCode,
+  Sparkles,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
@@ -35,13 +42,23 @@ export function SkillsPane() {
   const { confirm, dialog } = useConfirm();
   const [selected, setSelected] = useState<string | null>(null);
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["skills"] });
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["skills"] });
 
   const importPaste = useMutation({
-    mutationFn: () => api.importSkill({
-      source: "paste", payload: paste, path: null, name: null,
-    }),
-    onSuccess: () => { setPaste(""); setNotice(null); setError(null); void invalidate(); },
+    mutationFn: () =>
+      api.importSkill({
+        source: "paste",
+        payload: paste,
+        path: null,
+        name: null,
+      }),
+    onSuccess: () => {
+      setPaste("");
+      setNotice(null);
+      setError(null);
+      void invalidate();
+    },
     onError: (e) => setError(errorMessage(e)),
   });
 
@@ -51,18 +68,34 @@ export function SkillsPane() {
       // to the WebView); it returns the base64 payload importSkill expects.
       const payload = await api.readAttachment(path);
       return api.importSkill({
-        source: "zip", payload: payload.data_base64, path, name: null,
+        source: "zip",
+        payload: payload.data_base64,
+        path,
+        name: null,
       });
     },
-    onSuccess: () => { setNotice(null); setError(null); void invalidate(); },
+    onSuccess: () => {
+      setNotice(null);
+      setError(null);
+      void invalidate();
+    },
     onError: (e) => setError(errorMessage(e)),
   });
 
   const importDirectory = useMutation({
-    mutationFn: (path: string) => api.importSkill({
-      source: "directory", payload: null, path, name: null,
-    }),
-    onSuccess: () => { setDirectory(""); setNotice(null); setError(null); void invalidate(); },
+    mutationFn: (path: string) =>
+      api.importSkill({
+        source: "directory",
+        payload: null,
+        path,
+        name: null,
+      }),
+    onSuccess: () => {
+      setDirectory("");
+      setNotice(null);
+      setError(null);
+      void invalidate();
+    },
     onError: (e) => setError(errorMessage(e)),
   });
 
@@ -91,7 +124,10 @@ export function SkillsPane() {
   return (
     <Section>
       <Card title={t("取り込む")} icon={<Upload size={13} />}>
-        <Segmented aria-label={t("取り込み元")} className="w-fit">
+        <Segmented
+          aria-label={t("取り込み元")}
+          className="w-fit min-w-0 max-w-full"
+        >
           {(["paste", "zip", "directory"] as Source[]).map((s) => (
             <SegmentedOption
               key={s}
@@ -110,7 +146,9 @@ export function SkillsPane() {
             <Textarea
               className="font-mono"
               rows={8}
-              placeholder={"---\nname: my-skill        # lowercase, digits, single hyphens\ndescription: what it does  # required\n---\n\n# Instructions…"}
+              placeholder={
+                "---\nname: my-skill        # lowercase, digits, single hyphens\ndescription: what it does  # required\n---\n\n# Instructions…"
+              }
               value={paste}
               onChange={(e) => setPaste(e.target.value)}
             />
@@ -181,7 +219,10 @@ export function SkillsPane() {
       {skills.isPending ? (
         <ListSkeleton />
       ) : list.length === 0 ? (
-        <EmptyState icon={<Sparkles size={22} />} title={t("まだ Skill はありません。")} />
+        <EmptyState
+          icon={<Sparkles size={22} />}
+          title={t("まだ Skill はありません。")}
+        />
       ) : (
         list.map((s: SkillView) => (
           <Card key={s.name}>
@@ -192,7 +233,9 @@ export function SkillsPane() {
               <Row className="flex-nowrap gap-1">
                 <Button
                   size="sm"
-                  onClick={() => setSelected(selected === s.name ? null : s.name)}
+                  onClick={() =>
+                    setSelected(selected === s.name ? null : s.name)
+                  }
                 >
                   <FileCode size={12} /> {t("resources")}
                 </Button>
@@ -210,12 +253,14 @@ export function SkillsPane() {
                   title={t("削除")}
                   aria-label={t("削除")}
                   onClick={async () => {
-                    if (await confirm({
-                      title: t("Skill を削除しますか？"),
-                      description: s.name,
-                      confirmLabel: t("削除"),
-                      tone: "danger",
-                    })) {
+                    if (
+                      await confirm({
+                        title: t("Skill を削除しますか？"),
+                        description: s.name,
+                        confirmLabel: t("削除"),
+                        tone: "danger",
+                      })
+                    ) {
                       remove.mutate(s.name);
                     }
                   }}
@@ -265,7 +310,9 @@ function ResourceList({ name }: { name: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       {resources.length === 0 && (
-        <p className="m-0 text-xs text-faint">{t("同梱リソースはありません。")}</p>
+        <p className="m-0 text-xs text-faint">
+          {t("同梱リソースはありません。")}
+        </p>
       )}
       {resources.map((r) => (
         <details key={r.path} className="group">

@@ -1,8 +1,16 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ChevronDown, ChevronRight, Eye, EyeOff, File, FileText, Folder, FolderOpen,
-  FolderTree, RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  File,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderTree,
+  RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -16,14 +24,45 @@ import { GitStatusBadge } from "@/components/ui/status";
 import { ErrorAlert } from "@/components/shared";
 import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 import { ResizableHandle } from "@/features/shell/ResizableHandle";
+import { panelStyle, panelWidth } from "@/features/shell/usePanelCap";
 import { usePanelWidth } from "@/features/shell/usePanelWidth";
 
 const TEXT_EXTS = new Set([
-  "txt", "md", "rst", "json", "yaml", "yml", "toml", "ini", "cfg", "csv", "tsv",
-  "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "h", "cpp", "hpp",
-  "css", "scss", "html", "svg", "sh", "bash", "zsh", "sql", "xml", "env", "lock",
+  "txt",
+  "md",
+  "rst",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "csv",
+  "tsv",
+  "rs",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "py",
+  "go",
+  "java",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "css",
+  "scss",
+  "html",
+  "svg",
+  "sh",
+  "bash",
+  "zsh",
+  "sql",
+  "xml",
+  "env",
+  "lock",
 ]);
-
 
 function isTextFile(name: string): boolean {
   const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
@@ -38,7 +77,7 @@ function isTextFile(name: string): boolean {
  * `h-8`.
  */
 const rowClass = [
-  "flex h-row w-full cursor-pointer items-center gap-1.5 rounded-md",
+  "flex h-row w-full cursor-pointer items-center gap-1.5 rounded-lg",
   "pe-1.5 ps-1.5 text-start text-xs text-muted",
   "transition-colors duration-75 hover:bg-hover hover:text-fg",
 ].join(" ");
@@ -52,7 +91,15 @@ interface TreeContext {
   onOpenFile: (path: string) => void;
 }
 
-function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeContext }) {
+function DirRows({
+  path,
+  depth,
+  ctx,
+}: {
+  path: string;
+  depth: number;
+  ctx: TreeContext;
+}) {
   const query = useQuery({
     queryKey: ["dir", ctx.root, path],
     queryFn: () => api.listDir(ctx.root, path),
@@ -64,7 +111,7 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
   // which made a loading row look clickable.
   const placeholder = (text: string) => (
     <div
-      className="flex h-row w-full items-center gap-1.5 rounded-md ps-1.5 pe-1.5 text-xs"
+      className="flex h-row w-full items-center gap-1.5 rounded-lg ps-1.5 pe-1.5 text-xs"
       style={{ paddingLeft: `${8 + depth * 14}px` }}
     >
       <span className="truncate text-faint">{text}</span>
@@ -72,9 +119,12 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
   );
 
   if (query.isPending) return placeholder(t("読み込み中…"));
-  if (query.isError) return placeholder(errorMessage(query.error) || t("エラー"));
+  if (query.isError)
+    return placeholder(errorMessage(query.error) || t("エラー"));
 
-  const entries = (query.data ?? []).filter((entry) => ctx.showHidden || !entry.hidden);
+  const entries = (query.data ?? []).filter(
+    (entry) => ctx.showHidden || !entry.hidden,
+  );
   if (entries.length === 0) return placeholder(t("（空）"));
 
   return (
@@ -94,12 +144,16 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
                 aria-expanded={open}
                 onClick={() => ctx.toggle(childPath)}
               >
-                {open
-                  ? <ChevronDown size={12} className="shrink-0" />
-                  : <ChevronRight size={12} className="shrink-0" />}
-                {open
-                  ? <FolderOpen size={13} className="shrink-0 text-faint" />
-                  : <Folder size={13} className="shrink-0 text-faint" />}
+                {open ? (
+                  <ChevronDown size={12} className="shrink-0" />
+                ) : (
+                  <ChevronRight size={12} className="shrink-0" />
+                )}
+                {open ? (
+                  <FolderOpen size={13} className="shrink-0 text-faint" />
+                ) : (
+                  <Folder size={13} className="shrink-0 text-faint" />
+                )}
                 <span className="truncate">{entry.name}</span>
               </button>
               {open && <DirRows path={childPath} depth={depth + 1} ctx={ctx} />}
@@ -108,9 +162,11 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
         }
 
         const status = ctx.gitMap.get(childPath);
-        const icon = isTextFile(entry.name)
-          ? <File size={13} className="shrink-0 text-faint" />
-          : <FileText size={13} className="shrink-0 text-faint" />;
+        const icon = isTextFile(entry.name) ? (
+          <File size={13} className="shrink-0 text-faint" />
+        ) : (
+          <FileText size={13} className="shrink-0 text-faint" />
+        );
         return (
           <button
             key={childPath}
@@ -118,7 +174,9 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
             className={rowClass}
             style={indent}
             onClick={() => ctx.onOpenFile(childPath)}
-            title={status ? `${entry.name} — ${gitStatusLabel(status)}` : entry.name}
+            title={
+              status ? `${entry.name} — ${gitStatusLabel(status)}` : entry.name
+            }
           >
             <span className="w-3 shrink-0" />
             {icon}
@@ -137,24 +195,30 @@ function DirRows({ path, depth, ctx }: { path: string; depth: number; ctx: TreeC
   );
 }
 
-export function FileTreePane() {
+export function FileTreePane({ cap = null }: { cap?: number | null }) {
   const project = useActiveProject();
   const root = project?.rootPath ?? null;
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const openFilePreview = useUi((s) => s.openFilePreview);
   const setView = useUi((s) => s.setView);
   const queryClient = useQueryClient();
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [showHidden, setShowHidden] = useState(false);
   const { width, setWidth, commitWidth } = usePanelWidth(
-    "mix-agent-file-tree-width", 240, 180, 480,
+    "mix-agent-file-tree-width",
+    240,
+    180,
+    480,
   );
 
   const git = useGitStatus(root);
 
   const gitMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const entry of git.data?.entries ?? []) map.set(entry.path, entry.status);
+    for (const entry of git.data?.entries ?? [])
+      map.set(entry.path, entry.status);
     return map;
   }, [git.data]);
 
@@ -183,65 +247,82 @@ export function FileTreePane() {
     <>
       <aside
         aria-label={t("ファイルツリー")}
-        style={{ width }}
-        className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-inset"
+        data-side-panel=""
+        style={panelStyle(width, cap)}
+        className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-sidebar"
       >
-      <PanelHeader
-        className="px-2.5"
-        icon={<FolderTree size={13} />}
-        title={project ? project.name : t("プロジェクト")}
-        titleClass="text-xs font-semibold"
-        onClose={toggleFileTree}
-        trailing={
-          <>
-            {git.data?.available && git.data.branch && (
-              <Badge tone="neutral" size="sm" className="shrink-0 font-mono">
-                {git.data.branch}
-              </Badge>
-            )}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title={showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")}
-              aria-label={showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")}
-              onClick={() => setShowHidden((v) => !v)}
-            >
-              {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title={t("更新")}
-              aria-label={t("更新")}
-              onClick={refresh}
-            >
-              <RefreshCw size={12} />
-            </Button>
-          </>
-        }
-      />
+        <PanelHeader
+          className="px-2.5"
+          icon={<FolderTree size={13} />}
+          title={project ? project.name : t("プロジェクト")}
+          titleClass="text-xs font-semibold"
+          onClose={toggleFileTree}
+          trailing={
+            <>
+              {git.data?.available && git.data.branch && (
+                // Branch names are as long as the team wants them to be, and the
+                // title next to them only has `flex-1`. `shrink-0` with no width
+                // of its own meant a long branch pushed the header — and the
+                // panel's right edge — out of the window, so the badge gives up
+                // width instead and the name goes to an ellipsis.
+                <Badge
+                  tone="neutral"
+                  size="sm"
+                  className="min-w-0 max-w-28 shrink font-mono"
+                  title={git.data.branch}
+                >
+                  <span className="min-w-0 truncate">{git.data.branch}</span>
+                </Badge>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={
+                  showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
+                }
+                aria-label={
+                  showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
+                }
+                onClick={() => setShowHidden((v) => !v)}
+              >
+                {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={t("更新")}
+                aria-label={t("更新")}
+                onClick={refresh}
+              >
+                <RefreshCw size={12} />
+              </Button>
+            </>
+          }
+        />
 
-      {root ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
-          <DirRows path="" depth={0} ctx={ctx} />
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
-          <p className="m-0 text-xs text-faint">{t("プロジェクトにフォルダを設定してください")}</p>
-          <Button size="sm" onClick={() => setView("projects")}>
-            {t("プロジェクト")}
-          </Button>
-        </div>
-      )}
+        {root ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
+            <DirRows path="" depth={0} ctx={ctx} />
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
+            <p className="m-0 text-xs text-faint">
+              {t("プロジェクトにフォルダを設定してください")}
+            </p>
+            <Button size="sm" onClick={() => setView("projects")}>
+              {t("プロジェクト")}
+            </Button>
+          </div>
+        )}
 
-      {root && git.isError && (
-        <div className="p-2">
-          <ErrorAlert error={t("git を利用できません")} />
-        </div>
-      )}
+        {root && git.isError && (
+          <div className="p-2">
+            <ErrorAlert error={t("git を利用できません")} />
+          </div>
+        )}
       </aside>
       <ResizableHandle
-        value={width}
+        value={panelWidth(width, cap)}
         min={180}
         max={480}
         label={t("ファイルツリーの幅")}

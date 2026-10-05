@@ -55,7 +55,9 @@ pnpm install
 pnpm tauri dev
 ```
 
-初回起動時は Tauri が Cargo workspace をビルドするため数分かかります。`tauri.conf.json` の `beforeDevCommand` で `pnpm --filter mix-agent-desktop-ui dev` が走り、Vite dev サーバー（http://localhost:5173、`--strictPort`）に Tauri WebView が接続します。
+初回起動時は Tauri が Cargo workspace をビルドするため数分かかります。`tauri.conf.json` の `beforeDevCommand` で `node scripts/ensure-chromium-dir.mjs` の後に `pnpm --filter mix-agent-desktop-ui dev` が走り、Vite dev サーバー（http://localhost:5173、`--strictPort`）に Tauri WebView が接続します。
+
+`ensure-chromium-dir.mjs` は `bundle.resources` に宣言された `app/resources/chromium/` が無い場合に空ディレクトリを作成します。`tauri-build` は宣言されたリソースの欠落をビルドエラーにするため、`.gitignore` 対象のこのディレクトリが無いクリーンなチェックアウトでは `tauri dev` が通りません。dev では同梱 Chromium（約 370 MB）を取得せず、実行時にシステム Chromium へフォールバックします。
 
 ## ビルド
 
@@ -201,7 +203,7 @@ checkpoint 間隔（既定 10 ステップ）や停滞判定・検証などの�
 ### テスト
 
 `cargo test --workspace`（Rust）と `pnpm ui:test`（UI / vitest）で実行します。現在の件数は
-**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 185 ケース / 20 ファイル**です。
+**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 187 ケース / 20 ファイル**です。
 テストは継続的に追加されているため、数値はテストの追加・削除に合わせて更新してください。
 
 Rust 側は workspace 内に 7 つの `tests/` ディレクトリを持ちます。

@@ -15,8 +15,8 @@ interface SurfaceMeta {
 }
 
 const SURFACES: SurfaceMeta[] = [
-  { id: "chat", label: "chat", hint: "作成、学習、探索", Icon: MessageSquare },
-  { id: "desktop-agent", label: "desktop-agent", hint: "ビルド、デバッグ、リリース", Icon: Bot },
+  { id: "chat", label: "チャット", hint: "作成、学習、探索", Icon: MessageSquare },
+  { id: "desktop-agent", label: "エージェント", hint: "ビルド、デバッグ、リリース", Icon: Bot },
 ];
 
 export function SurfaceSwitcher() {

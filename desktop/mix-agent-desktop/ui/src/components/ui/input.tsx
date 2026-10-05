@@ -11,7 +11,7 @@ const control = [
   // The border carries focus, not a ring: a `focus:` rule (rather than
   // `focus-visible:`) is deliberate here because clicking into a field has to
   // say "you are in here" too. The token is the app's single focus colour.
-  "focus:border-brand focus:outline-none",
+  "focus:border-brand focus:ring-2 focus:ring-brand/15 focus:outline-none",
   "disabled:opacity-45 disabled:cursor-not-allowed",
 ].join(" ");
 
@@ -62,7 +62,7 @@ export const SearchField = forwardRef<
         "flex h-control items-center gap-2 rounded-md border border-line bg-surface px-2.5",
         "transition-colors duration-100 ease-out hover:border-line-strong",
         // The wrapper is what shows focus, since the input inside is borderless.
-        "focus-within:border-brand",
+        "focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15",
       )}
     >
       {icon && <span className="shrink-0 text-faint">{icon}</span>}

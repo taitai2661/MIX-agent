@@ -18,7 +18,8 @@ export const DropdownMenuContent = forwardRef<
         sideOffset={sideOffset}
         collisionPadding={8}
         className={cn(
-          "z-50 min-w-44 rounded-lg border border-line bg-surface p-1 shadow-md",
+          "z-50 min-w-44 overflow-hidden rounded-xl border border-line bg-elevated p-1 shadow-md",
+          "animate-fade",
           className,
         )}
         {...props}
@@ -43,10 +44,17 @@ export const DropdownMenuItem = forwardRef<
      *  stacking with `flex-col items-start gap-0 py-1.5`. */
     description?: React.ReactNode;
   }
->(function DropdownMenuItem({ className, description, children, ...props }, ref) {
+>(function DropdownMenuItem(
+  { className, description, children, ...props },
+  ref,
+) {
   if (description == null) {
     return (
-      <DropdownMenuPrimitive.Item ref={ref} className={cn(itemClass, className)} {...props}>
+      <DropdownMenuPrimitive.Item
+        ref={ref}
+        className={cn(itemClass, className)}
+        {...props}
+      >
         {children}
       </DropdownMenuPrimitive.Item>
     );
@@ -99,14 +107,17 @@ export const DropdownMenuSeparator = forwardRef<
 export const DropdownMenuTriggerButton = forwardRef<
   HTMLButtonElement,
   React.ComponentPropsWithoutRef<"button"> & { asChild?: boolean }
->(function DropdownMenuTriggerButton({ className, children, asChild, ...props }, ref) {
+>(function DropdownMenuTriggerButton(
+  { className, children, asChild, ...props },
+  ref,
+) {
   const Comp = asChild ? Slot : "button";
   return (
     <Comp
       ref={ref}
       type="button"
       className={cn(
-        "inline-flex h-control max-w-56 items-center gap-1.5 rounded-md border border-line",
+        "inline-flex h-control max-w-56 min-w-0 items-center gap-1.5 rounded-md border border-line",
         "bg-surface px-2.5 text-xs font-medium text-fg",
         "transition-colors duration-100 hover:bg-hover",
         "data-[state=open]:border-line-strong",
@@ -115,7 +126,11 @@ export const DropdownMenuTriggerButton = forwardRef<
       {...props}
     >
       {children}
-      <ChevronDown size={11} className="shrink-0 text-muted" aria-hidden="true" />
+      <ChevronDown
+        size={11}
+        className="shrink-0 text-muted"
+        aria-hidden="true"
+      />
     </Comp>
   );
 });

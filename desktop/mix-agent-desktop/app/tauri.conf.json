@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "io.github.taitai2661.mix-agent-desktop",
   "build": {
-    "beforeDevCommand": "pnpm --filter mix-agent-desktop-ui dev",
+    "beforeDevCommand": "node scripts/ensure-chromium-dir.mjs && pnpm --filter mix-agent-desktop-ui dev",
     "beforeBuildCommand": "pnpm --filter mix-agent-desktop-ui build && node scripts/fetch-chromium.mjs",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../ui/dist"

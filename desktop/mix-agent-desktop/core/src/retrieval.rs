@@ -224,11 +224,11 @@ fn flush_word(word: &mut String, tokens: &mut Vec<String>) {
 }
 
 fn flush_cjk(cjk: &mut Vec<char>, tokens: &mut Vec<String>) {
-    for i in 0..cjk.len() {
-        tokens.push(cjk[i].to_string());
-        if i + 1 < cjk.len() {
-            tokens.push(format!("{}{}", cjk[i], cjk[i + 1]));
-        }
+    for ch in cjk.iter() {
+        tokens.push(ch.to_string());
+    }
+    for pair in cjk.windows(2) {
+        tokens.push(format!("{}{}", pair[0], pair[1]));
     }
     cjk.clear();
 }

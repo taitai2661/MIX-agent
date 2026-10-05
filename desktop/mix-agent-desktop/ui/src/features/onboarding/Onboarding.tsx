@@ -67,8 +67,12 @@ export function Onboarding({
         </Button>
       </header>
 
-      <main className="flex min-h-0 flex-1 justify-center overflow-y-auto px-6 py-8">
-        <div className="w-full max-w-xl">
+      <main className="relative flex min-h-0 flex-1 justify-center overflow-y-auto px-6 py-10">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1/2 top-0 size-[36rem] -translate-x-1/2 rounded-full bg-brand/[0.07] blur-3xl"
+        />
+        <div className="relative w-full max-w-xl">
           {step === WELCOME && <StepWelcome onDone={() => setStep(0)} />}
 
           {step === 0 && <StepProvider onDone={() => setStep(1)} />}

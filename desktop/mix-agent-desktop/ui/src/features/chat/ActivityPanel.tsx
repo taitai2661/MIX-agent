@@ -1,8 +1,23 @@
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CheckCircle2, ChevronDown, ChevronRight, CircleAlert, ClipboardList, Clock3, FileText,
-  Globe2, History, ListChecks, Loader2, Pencil, RotateCcw, Search, ShieldAlert, Terminal, Wrench,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  ClipboardList,
+  Clock3,
+  FileText,
+  Globe2,
+  History,
+  ListChecks,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Search,
+  ShieldAlert,
+  Terminal,
+  Wrench,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -10,7 +25,11 @@ import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { formatDuration, shortId } from "@/lib/format";
 import {
-  describeToolCall, isFileWrite, reduceRunEvents, type TodoItem, type ToolActivity,
+  describeToolCall,
+  isFileWrite,
+  reduceRunEvents,
+  type TodoItem,
+  type ToolActivity,
 } from "@/lib/runEvents";
 import { useRunEvents } from "@/lib/runStore";
 import { Card, PanelHeader } from "@/components/layout";
@@ -63,17 +82,21 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
   // the diff was nonsense. Hand the anchor and its replacement over instead and
   // let the backend apply them to the file on disk.
   const a = (args ?? {}) as Record<string, unknown>;
-  const writeInfo: { path: string; content: string; oldString?: string; newString?: string } | null =
-    isFileWrite(tool)
-      ? tool.name === "edit"
-        ? {
-            path: String(a.path),
-            content: "",
-            oldString: typeof a.old_string === "string" ? a.old_string : "",
-            newString: typeof a.new_string === "string" ? a.new_string : "",
-          }
-        : { path: String(a.path), content: String(a.content) }
-      : null;
+  const writeInfo: {
+    path: string;
+    content: string;
+    oldString?: string;
+    newString?: string;
+  } | null = isFileWrite(tool)
+    ? tool.name === "edit"
+      ? {
+          path: String(a.path),
+          content: "",
+          oldString: typeof a.old_string === "string" ? a.old_string : "",
+          newString: typeof a.new_string === "string" ? a.new_string : "",
+        }
+      : { path: String(a.path), content: String(a.content) }
+    : null;
 
   // One call for both the tooltip and the body: it formats every argument of
   // the call, and it was being run twice per row on every render.
@@ -84,11 +107,17 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
       <Icon size={14} className="mt-0.5 shrink-0 text-faint" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-mono text-xs font-medium text-fg" title={description}>
+          <span
+            className="truncate font-mono text-xs font-medium text-fg"
+            title={description}
+          >
             {tool.name}
           </span>
           <Badge tone={status.tone} size="sm" className="shrink-0">
-            <StatusIcon size={10} className={status.spin ? "animate-spin" : undefined} />
+            <StatusIcon
+              size={10}
+              className={status.spin ? "animate-spin" : undefined}
+            />
             {status.label}
           </Badge>
         </div>
@@ -100,7 +129,11 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
           <button
             type="button"
             onClick={() =>
-              openDiff({ path: writeInfo.path, content: writeInfo.content, label: writeInfo.path })
+              openDiff({
+                path: writeInfo.path,
+                content: writeInfo.content,
+                label: writeInfo.path,
+              })
             }
             className={cn(
               "mt-0.5 inline-flex w-fit max-w-full items-center gap-1 rounded-md border border-line",
@@ -171,7 +204,9 @@ function TodoList({ items }: { items: TodoItem[] }) {
             key={item.id}
             className={cn(
               "flex items-start gap-2 text-xs leading-5",
-              item.status === "completed" ? "text-faint line-through" : "text-fg",
+              item.status === "completed"
+                ? "text-faint line-through"
+                : "text-fg",
             )}
           >
             <span className="mt-0.5 shrink-0">
@@ -197,7 +232,9 @@ function safeJson(value: unknown): string {
 }
 
 /** Right-panel activity view: live run or a historical run's replayed events. */
-export function ActivityPanel() {
+export function ActivityPanel({
+  embedded = false,
+}: { embedded?: boolean } = {}) {
   const liveRunId = useRunEvents((s) => s.liveRunId);
   const liveTimeline = useRunEvents((s) => s.timeline);
   const activityRunId = useUi((s) => s.activityRunId);
@@ -237,27 +274,38 @@ export function ActivityPanel() {
 
   return (
     <>
-      <PanelHeader
-        icon={<Wrench size={14} />}
-        title={t("このRunのアクティビティ")}
-        titleClass="text-sm font-medium"
-        trailing={runId ? <Badge size="sm">{shortId(runId)}</Badge> : null}
-        onClose={() => {
-          setActivityRunId(null);
-          setRightPanel("none");
-        }}
-      />
+      {!embedded && (
+        <PanelHeader
+          icon={<Wrench size={14} />}
+          title={t("このRunのアクティビティ")}
+          titleClass="text-sm font-medium"
+          trailing={runId ? <Badge size="sm">{shortId(runId)}</Badge> : null}
+          onClose={() => {
+            setActivityRunId(null);
+            setRightPanel("none");
+          }}
+        />
+      )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+      {/* `[&>*]:shrink-0` is load-bearing. This column has a definite height (it
+          scrolls), so its children are flex items that shrink to fit it — and a
+          child with `overflow: hidden`, which every `Card` has, has no automatic
+          minimum size to fall back on. The cards were silently squashed and cut
+          off instead of the column scrolling. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 [&>*]:shrink-0">
         {empty && (
-          <p className="px-2 py-6 text-center text-xs text-faint">{t("アクティビティはありません")}</p>
+          <p className="px-2 py-6 text-center text-xs text-faint">
+            {t("アクティビティはありません")}
+          </p>
         )}
         {runId && history.isError && (
           <p role="alert" className="px-2 py-6 text-center text-xs text-danger">
             {errorMessage(history.error) || t("エラー")}
           </p>
         )}
-        {runId && !history.isError && !timeline && <Skeleton className="h-16 w-full" />}
+        {runId && !history.isError && !timeline && (
+          <Skeleton className="h-16 w-full" />
+        )}
 
         {runId && timeline && timeline.tools.length > 0 && (
           <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
@@ -278,7 +326,9 @@ export function ActivityPanel() {
             icon={<ShieldAlert size={13} className="text-danger" />}
             bodyClassName="p-2.5"
           >
-            <p className="m-0 text-xs text-muted">{timeline.verificationFailed}</p>
+            <p className="m-0 text-xs text-muted">
+              {timeline.verificationFailed}
+            </p>
           </Card>
         )}
 
@@ -302,7 +352,10 @@ export function ActivityPanel() {
           >
             <ul className="flex flex-col divide-y divide-line">
               {(checkpoints.data ?? []).map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-2 px-2.5 py-1.5"
+                >
                   <span className="flex items-center gap-1.5 text-xs text-muted">
                     <Clock3 size={11} /> {t("ステップ")} {c.step_index}
                   </span>
@@ -310,7 +363,11 @@ export function ActivityPanel() {
                     size="sm"
                     onClick={() => {
                       void api
-                        .resumeRun({ id: runId, from_checkpoint: c.id, unknown_actions: [] })
+                        .resumeRun({
+                          id: runId,
+                          from_checkpoint: c.id,
+                          unknown_actions: [],
+                        })
                         .then(() => {
                           // Track the resumed run. Without this every event it
                           // emitted was dropped (`run_id !== liveRunId`) and the

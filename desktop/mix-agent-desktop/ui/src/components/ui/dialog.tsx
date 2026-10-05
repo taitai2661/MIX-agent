@@ -22,12 +22,12 @@ export const DialogContent = forwardRef<
 >(function DialogContent({ className, children, ...props }, ref) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-fg/45 backdrop-blur-[1px]" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-fg/40 backdrop-blur-sm animate-fade" />
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2",
-          "rounded-xl border border-line bg-surface p-4 shadow-lg",
+          "rounded-2xl border border-line bg-elevated p-5 shadow-md animate-rise",
           className,
         )}
         {...props}

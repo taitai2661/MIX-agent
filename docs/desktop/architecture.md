@@ -331,6 +331,32 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 - `browser` の `evaluate` はページ内 `fetch` でローカル資源に到達し得る。`navigate` の
   egress は塞いだが、完全な隔離ではない。
 
+## UI/UX の改善（2026-10-05 追記）
+
+- **スレッドのサーフェス絞り込み**（`ui/src/features/shell/Sidebar.tsx`）。store には
+  `threadFilter` / `setThreadFilter` が以前からありテストもあったが、UI が無く死んだ状態
+  だった。サイドバー上部に `Segmented` を置き、会話の `mode` から所属サーフェスを引く
+  `surfaceForMode()`（`ui/src/lib/ui.ts`）で「すべて / チャット / エージェント」を切り替える。
+- **スレッド一覧のキーボード移動**。`↑` / `↓` / `Home` / `End` でタイトル間を移動する。
+  rename 入力中は `[data-thread-open]` ガードで文字カーソル移動を妨げない。
+- **ショートカット一覧**（`ui/src/features/shell/ShortcutHelp.tsx`）。`?` またはコマンド
+  パレットから開き、`useAppShortcuts` のバインドを列挙する。入力欄にフォーカスがあるときは
+  `?` を文字として通す（`e.target` が Element でない場合も含めてガード）。
+- **失敗の可視化**。スレッドの Markdown エクスポートとアップデートのインストールは、失敗して
+  も何も表示されない unhandled rejection だった。サイドバー / 更新バナーに `Alert` を出す。
+- **ストリーミング時のレイアウト再計算**（`ui/src/features/shell/usePanelCap.ts`）。パネル幅の
+  キャップを測る `MutationObserver` が、ストリーミング中に増えるノードごとに
+  `getBoundingClientRect` を呼んでいた。1 フレームに 1 回へ間引く。
+
+### 確認した項目
+
+- `pnpm ui:typecheck` / `pnpm ui:lint`（`--max-warnings 0`）/ `pnpm ui:test`
+  （20 ファイル 187 ケース）が成功。
+- モック IPC で Tauri を介さず dev プレビューを起動し、フィルター切替でエージェント 2 件 /
+  チャット 4 件に絞られること、`?` で一覧が開き入力欄では開かないこと、
+  1440 / 1024 / 820px で横スクロールが出ないことを DOM で確認。
+- 実機（Tauri / WebView）での目視とスクリーンリーダーは未確認。
+
 ## 既知の残タスク
 
 - 署名鍵の生成と `latest.json` 発行基盤（auto-update を有効化する前作業）。

@@ -49,6 +49,8 @@ export const en: Record<string, string> = {
   // Shell / sidebar
   "新規スレッド": "New thread",
   "スレッドを検索": "Search threads",
+  "スレッドを絞り込む": "Filter threads",
+  "すべて": "All",
   "スレッドがありません": "No threads yet",
   "一致するスレッドがありません": "No threads match your search",
   "新しい会話を始めましょう": "Start a new conversation",
@@ -59,7 +61,6 @@ export const en: Record<string, string> = {
   "ワークスペース": "Workspace",
   "設定": "Configure",
   "ナレッジ": "Knowledge",
-  "システム": "System",
   "チャット": "Chat",
   "プロバイダー": "Providers",
   "モデル": "Models",
@@ -153,6 +154,7 @@ export const en: Record<string, string> = {
 
   // Tool activity
   "このRunのアクティビティ": "Run activity",
+  "アクティビティ": "Activity",
   "アクティビティはありません": "No activity",
   "実行中": "Running",
   "成功": "Success",
@@ -231,7 +233,6 @@ export const en: Record<string, string> = {
   "を検出すると自動で読み込みます": "is picked up automatically when present",
   "プロジェクトへの指示…": "Instructions for this project…",
   "資料テキストを貼り付け…": "Paste reference text…",
-  "プロジェクトフィルタを解除": "Clear project filter",
   "プロジェクト単位の資料と指示を管理します。": "Group chats, instructions and reference texts by project.",
   "（空）": "(empty)",
 
@@ -250,8 +251,6 @@ export const en: Record<string, string> = {
   "作成、学習、探索": "Create, learn, explore",
   "ビルド、デバッグ、リリース": "Build, debug, release",
   "サーフェスを切り替え": "Switch surface",
-  "すべてのスレッド": "All threads",
-  "サーフェスで絞り込み": "Filter by surface",
 
   // Keys referenced from files owned elsewhere (App.tsx, LocalDiscoveryCard,
   // ProvidersPane, McpPane, …) — registered here so English never falls back
@@ -427,6 +426,16 @@ export const en: Record<string, string> = {
   // Command palette
   "一致する項目がありません": "No matching commands",
 
+  // Keyboard shortcut cheat sheet
+  "キーボードショートカット": "Keyboard shortcuts",
+  "ショートカット一覧": "Show keyboard shortcuts",
+  "移動": "Navigate",
+  "入力": "Compose",
+  "チャットサーフェスへ": "Go to the chat surface",
+  "エージェントサーフェスへ": "Go to the agent surface",
+  "この一覧を表示": "Show this list",
+  "ダイアログを閉じる": "Close the dialog",
+
   // Settings: quick prompts, network, updates, mode select
   "Egress 許可リスト": "Egress allowlist",
   "未設定時は Tool がすべての公開ドメインへ到達可能。ワイルドカード (*) と完全一致ドメインを混在可。": "With no list, tools can reach any public domain. Wildcard (*) and exact hosts can be mixed.",
@@ -435,6 +444,7 @@ export const en: Record<string, string> = {
 
   // Backup / restore, MCP OAuth, skills export, sidebar landmark
   "サイドバー": "Sidebar",
+  "サイドパネル": "Side panel",
   "バックアップ / 復元": "Backup / restore",
   "データベース全体をスナップショットし、圧縮・暗号化します (Argon2id + AES-256-GCM)。API キーは OS キーチェーンに残るため含まれません。":
     "The whole database is snapshotted, compressed and encrypted (Argon2id + AES-256-GCM). API keys stay in the OS Keychain and are not included.",

@@ -160,15 +160,20 @@ export function useAppShortcuts() {
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const setSurface = useUi((s) => s.setSurface);
-  const setters = useRef({ setPaletteOpen, toggleFileTree, setSurface });
+  const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
+  const setters = useRef({ setPaletteOpen, toggleFileTree, setSurface, setShortcutsOpen });
   useEffect(() => {
-    setters.current = { setPaletteOpen, toggleFileTree, setSurface };
+    setters.current = { setPaletteOpen, toggleFileTree, setSurface, setShortcutsOpen };
   });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const { setPaletteOpen: palette, toggleFileTree: tree, setSurface: surface } =
-        setters.current;
+      const {
+        setPaletteOpen: palette,
+        toggleFileTree: tree,
+        setSurface: surface,
+        setShortcutsOpen: shortcuts,
+      } = setters.current;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         palette(true);
@@ -187,6 +192,21 @@ export function useAppShortcuts() {
           e.preventDefault();
           surface("desktop-agent");
         }
+      }
+      // `?` (Shift+/) — only when the user is not typing into a field, so a
+      // question mark can still be typed into a prompt. `e.target` is not
+      // always an Element (a key on the window/document is possible), and only
+      // Elements have `closest`.
+      if (e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const target = e.target;
+        if (
+          target instanceof Element &&
+          target.closest("input, textarea, select, [contenteditable='true']")
+        ) {
+          return;
+        }
+        e.preventDefault();
+        shortcuts(true);
       }
     };
     window.addEventListener("keydown", onKey);

@@ -51,12 +51,14 @@ export function CopyButton({
 /** Fenced-code renderer body: header with language + copy button. */
 export function CodeBlock({ language, code }: { language: string; code: string }) {
   return (
-    <div className="my-2.5 overflow-hidden rounded-lg border border-line bg-inset">
-      <div className="flex items-center justify-between border-b border-line px-3 py-1">
-        <span className="font-mono text-xs text-faint">{language || "text"}</span>
+    <div className="my-2.5 overflow-hidden rounded-xl border border-line bg-inset">
+      <div className="flex items-center justify-between border-b border-line bg-surface/50 px-3 py-1.5">
+        <span className="font-mono text-2xs tracking-wide text-faint uppercase">
+          {language || "text"}
+        </span>
         <CopyButton value={code} label={t("Copy")} />
       </div>
-      <pre className="overflow-x-auto px-3 py-2.5">
+      <pre className="overflow-x-auto px-3.5 py-3">
         <code className="font-mono text-xs leading-5 text-fg">{code}</code>
       </pre>
     </div>

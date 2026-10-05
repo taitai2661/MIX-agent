@@ -1,10 +1,12 @@
 /* ============================================================================
    MIX-agent Desktop — design tokens
-   ----------------------------------------------------------------------------
-   Codex-inspired: a neutral grayscale carrying all the structure, plus exactly
-   one brand hue reserved for focus, active state and primary actions. Anything
-   that reads as "status" (success / warning / danger / info) is semantic and
-   deliberately not the brand hue, so a colored element always means something.
+
+   A coding-agent workspace in the spirit of Codex / Cursor: near-neutral
+   grayscale carries all the structure, depth is built from a small, consistent
+   elevation ramp, and exactly one accent hue is reserved for focus, active
+   state and primary actions. Anything that reads as "status" (success /
+   warning / danger / info) is semantic and deliberately not the accent, so a
+   coloured element always means something.
 
    Layering:
      @theme          → light values, emits both utilities and CSS variables
@@ -19,25 +21,33 @@
 
 @theme {
   /* ------------------------------------------------------------- palette */
-  --color-bg: #ffffff;
+  /* A warm, low-contrast neutral ramp: the app should read as calm rather than
+     as a high-contrast terminal. Pure black on pure white is what made the old
+     shell feel rigid. */
+  --color-bg: #f7f6f4;
   --color-surface: #ffffff;
-  --color-inset: #f7f7f8;
-  --color-sidebar: #f4f4f5;
-  --color-hover: rgba(13, 13, 13, 0.05);
-  --color-active: rgba(13, 13, 13, 0.08);
+  --color-elevated: #ffffff;
+  --color-inset: #f1efec;
+  --color-sidebar: #f2f0ed;
+  --color-hover: rgba(28, 25, 23, 0.05);
+  --color-active: rgba(28, 25, 23, 0.085);
 
-  --color-fg: #0d0d0d;
-  --color-muted: #62666d;
-  --color-faint: #8f949c;
+  --color-fg: #232529;
+  --color-muted: #63666c;
+  --color-faint: #94979d;
 
-  --color-line: rgba(13, 13, 13, 0.1);
-  --color-line-strong: rgba(13, 13, 13, 0.18);
+  --color-line: rgba(28, 25, 23, 0.08);
+  --color-line-strong: rgba(28, 25, 23, 0.15);
 
-  --color-brand: #1f5fd0;
+  /* One accent, used only for focus / active / primary. */
+  --color-brand: #3b6ef0;
   --color-brand-fg: #ffffff;
-  --color-brand-hover: #1a52b4;
-  --color-brand-soft: rgba(31, 95, 208, 0.09);
-  --color-focus: rgba(31, 95, 208, 0.35);
+  --color-brand-hover: #2f5fdc;
+  --color-brand-strong: #2749a8;
+  --color-brand-soft: rgba(59, 110, 240, 0.1);
+  --color-focus: rgba(59, 110, 240, 0.35);
+  /* Alias kept so a stray `text-accent` still resolves. */
+  --color-accent: #3b6ef0;
 
   /* Text drawn *on top of* a saturated fill — primary buttons, danger buttons,
      the "done" check in the onboarding rail. Kept apart from `--color-brand-fg`
@@ -83,80 +93,86 @@
   --text-2xl--line-height: 31px;
 
   /* -------------------------------------------------------------- radius */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 13px;
+  --radius-xl: 17px;
+  --radius-2xl: 22px;
+  --radius-3xl: 28px;
 
   /* -------------------------------------------------------------- motion */
-  /* `--animate-*` emits the `animate-*` utility, so the recording pulse is a
-     class like any other instead of an inline `animation:` string. Spinner
-     speed is the built-in `animate-spin` and nothing else — the second, faster
-     keyframe that used to live here meant two spinners ran at different speeds
-     in the same view. */
   --animate-mix-pulse: mix-pulse 1.2s ease-out infinite;
+  --animate-rise: rise 0.18s ease-out;
+  --animate-fade: fade 0.14s ease-out;
 
   /* ------------------------------------------------------------- shadows */
-  --shadow-xs: 0 1px 2px rgba(13, 13, 13, 0.05);
-  --shadow-md: 0 6px 20px rgba(13, 13, 13, 0.1);
-  --shadow-lg: 0 16px 48px rgba(13, 13, 13, 0.16);
+  /* A single, soft elevation ramp. Diffuse and low-contrast so surfaces lift
+     gently instead of being outlined by hard borders. */
+  --shadow-xs: 0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow-sm:
+    0 2px 6px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow-md:
+    0 8px 24px rgba(28, 25, 23, 0.08), 0 2px 8px rgba(28, 25, 23, 0.05);
+  --shadow-pop:
+    0 16px 44px rgba(28, 25, 23, 0.13), 0 3px 10px rgba(28, 25, 23, 0.07);
+  --shadow-lg: 0 28px 72px rgba(28, 25, 23, 0.18);
 
   /* -------------------------------------------------------------- layout */
-  /* The shell's three fixed measurements. They used to be `h-11` / `h-7` /
-     `max-w-[820px]` written at each site, which is how the same header ended
-     up at three different heights. Named tokens make a mismatch a type error
-     in intent rather than something you have to spot by eye. */
-  --container-content: 820px;
-  --spacing-titlebar: 44px;
-  --spacing-control: 32px;
-  --spacing-row: 28px;
+  --container-content: 800px;
+  --spacing-titlebar: 50px;
+  --spacing-control: 34px;
+  --spacing-row: 30px;
 }
 
 [data-theme="dark"] {
-  --color-bg: #1b1c1f;
-  --color-surface: #1b1c1f;
-  --color-inset: #141517;
+  --color-bg: #141518;
+  --color-surface: #1b1d21;
+  --color-elevated: #24262b;
+  --color-inset: #101114;
   /* Deliberately darker than --color-bg: in dark mode the panes are separated
      by luminance, and an inset that merely matched --bg collapses the 3-pane
      layout into one undifferentiated surface. */
-  --color-sidebar: #101113;
+  --color-sidebar: #101114;
   --color-hover: rgba(255, 255, 255, 0.06);
   --color-active: rgba(255, 255, 255, 0.1);
 
-  --color-fg: #ececee;
-  --color-muted: #a2a6ad;
-  --color-faint: #7a7f87;
+  --color-fg: #e7e8ea;
+  --color-muted: #a1a4aa;
+  --color-faint: #75787e;
 
-  --color-line: rgba(255, 255, 255, 0.1);
-  --color-line-strong: rgba(255, 255, 255, 0.18);
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-line-strong: rgba(255, 255, 255, 0.15);
 
-  --color-brand: #6f9bff;
+  --color-brand: #6f96ff;
   --color-brand-fg: #0b1020;
-  --color-brand-hover: #85adff;
-  --color-brand-soft: rgba(111, 155, 255, 0.14);
-  --color-focus: rgba(111, 155, 255, 0.45);
+  --color-brand-hover: #8aa9ff;
+  --color-brand-strong: #9db8ff;
+  --color-brand-soft: rgba(111, 150, 255, 0.16);
+  --color-focus: rgba(111, 150, 255, 0.45);
+  --color-accent: #6f96ff;
 
   /* Dark-on-tint, not white: every solid fill in this theme is a light colour. */
   --color-on-solid: #0b1020;
 
-  --color-success: #4ade80;
-  --color-success-soft: rgba(74, 222, 128, 0.12);
-  --color-warning: #fbbf24;
-  --color-warning-soft: rgba(251, 191, 36, 0.12);
-  --color-danger: #f87171;
-  --color-danger-soft: rgba(248, 113, 113, 0.12);
-  --color-info: #67e8f9;
-  --color-info-soft: rgba(103, 232, 249, 0.12);
+  --color-success: #5ee08f;
+  --color-success-soft: rgba(94, 224, 143, 0.13);
+  --color-warning: #fcc94f;
+  --color-warning-soft: rgba(252, 201, 79, 0.13);
+  --color-danger: #fb8b8b;
+  --color-danger-soft: rgba(251, 139, 139, 0.13);
+  --color-info: #74e5f2;
+  --color-info-soft: rgba(116, 229, 242, 0.13);
 
-  --color-diff-add: rgba(46, 160, 67, 0.16);
+  --color-diff-add: rgba(46, 160, 67, 0.18);
   --color-diff-add-fg: #7ee2a8;
-  --color-diff-del: rgba(248, 81, 73, 0.14);
+  --color-diff-del: rgba(248, 81, 73, 0.16);
   --color-diff-del-fg: #ffa198;
 
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.62);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.42);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 16px 44px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 28px 76px rgba(0, 0, 0, 0.62);
 }
 
 :root {
@@ -185,6 +201,11 @@ body {
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Theme flips are animated, but only the two surface colours — animating
+     every element's colour on a theme switch reads as a flicker. */
+  transition:
+    background-color 0.18s ease-out,
+    color 0.18s ease-out;
 }
 
 button,
@@ -220,21 +241,14 @@ a:hover {
   text-decoration: underline;
 }
 
-/* A real color, not the translucent focus ring — the old value painted a 40%
-   blue haze over whatever it landed on and left the text color untouched. */
 ::selection {
   background: var(--color-brand-soft);
   color: inherit;
 }
 
-/* The single focus ring for the whole app.
-   This used to also be pasted by hand onto a dozen interactive elements as
-   `focus-visible:outline-2 focus-visible:outline-offset-1
-   focus-visible:outline-focus`, two of which disagreed on the offset. Every
-   natively focusable element matches this rule on its own, so the only reason
-   to restate it is to *remove* it — which is what the few elements with their
-   own focus treatment (the composer textarea, the palette input, the resize
-   handle) do by opting out with `outline-none`. */
+/* The single focus ring for the whole app. Every natively focusable element
+   matches this rule on its own; the few elements with their own focus
+   treatment opt out with `outline-none`. */
 :focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 1px;
@@ -246,19 +260,27 @@ a:hover {
 }
 
 .app-titlebar button,
-.app-titlebar [role="button"] {
+.app-titlebar [role="button"],
+.app-titlebar input {
   -webkit-app-region: no-drag;
 }
 
 :root[data-platform="macos"] .app-titlebar {
-  padding-left: 82px;
-  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
-  backdrop-filter: blur(18px);
+  padding-left: 80px;
+  background: color-mix(in srgb, var(--color-bg) 86%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+}
+
+/* --------------------------------------------------------------- scrollbars */
+/* Overlay-style: the track is invisible until the pointer is over the pane. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 
 ::-webkit-scrollbar-track {
@@ -267,7 +289,7 @@ a:hover {
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-line-strong);
-  border: 3px solid transparent;
+  border: 4px solid transparent;
   background-clip: content-box;
   border-radius: 999px;
 }
@@ -275,6 +297,10 @@ a:hover {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-faint);
   background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Consumed through `--animate-mix-pulse` above, so it reaches the tree as the
@@ -288,6 +314,26 @@ a:hover {
   to {
     transform: scale(1.45);
     opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -308,6 +354,11 @@ a:hover {
 @layer components {
   .markdown-body {
     @apply text-sm leading-6;
+    /* Model output is full of tokens with no break opportunity in them: bare
+       URLs, commit hashes, long paths. `overflow-wrap: anywhere` is what keeps
+       one of those from pushing the message — and everything beside it — out
+       of the transcript's right edge. */
+    overflow-wrap: anywhere;
   }
 
   .markdown-body > * + * {
@@ -359,8 +410,13 @@ a:hover {
     @apply my-4 border-t border-line;
   }
 
+  /* react-markdown emits a bare `<table>`, and `overflow` does nothing on a
+     table box — a wide table simply stretched its container until the message
+     ran off the pane. Blockifying it turns it into a shrink-to-fit scroll box:
+     `w-max` sizes it to the columns, `max-w-full` stops that at the pane's
+     width, and anything wider scrolls sideways instead of spilling. */
   .markdown-body table {
-    @apply my-3 w-full border-collapse overflow-hidden text-xs;
+    @apply my-3 block w-max max-w-full overflow-x-auto text-xs;
   }
 
   .markdown-body th,
@@ -374,5 +430,9 @@ a:hover {
 
   .markdown-body :not(pre) > code {
     @apply rounded-sm bg-inset px-1 py-0.5 font-mono text-xs text-fg;
+  }
+
+  .markdown-body pre {
+    @apply overflow-x-auto rounded-lg border border-line bg-inset p-3 font-mono text-xs leading-5;
   }
 }
