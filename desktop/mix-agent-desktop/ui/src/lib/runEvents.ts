@@ -47,6 +47,8 @@ export interface RunTimeline {
   /** Set when the run gave up on verifying an unconfirmed change. */
   verificationFailed: string | null;
   approval: PendingApproval | null;
+  /** Terminal error text when the Run failed, so the user sees why. */
+  error: string | null;
   /** The agent's own checklist, most recent state. */
   todos: TodoItem[];
 }
@@ -70,6 +72,7 @@ export function createTimeline(runId: string): RunTimeline {
     verification: null,
     verificationFailed: null,
     approval: null,
+    error: null,
     todos: [],
   };
 }
@@ -126,13 +129,18 @@ export function applyRunEvent(timeline: RunTimeline, event: RunEventPayload): Ru
     case "status": {
       const status = optString(d.status);
       if (status) next.status = status;
+      const err = optString(d.error);
+      if (err) next.error = err;
       break;
     }
-    case "error":
-      if (!next.text && optString(d.error)) {
-        next.status = "failed";
-      }
+    case "error": {
+      // The engine only emits `error` on a terminal failure, so this is
+      // authoritative even if some text had already streamed.
+      const err = optString(d.error);
+      if (err) next.error = err;
+      next.status = "failed";
       break;
+    }
     case "tool_started": {
       const id = optString(d.tool_call_id) ?? "";
       if (id && !next.tools.some((tool) => tool.id === id)) {

@@ -21,6 +21,14 @@ describe("display language", () => {
     expect(t("初期セットアップ")).toBe("初期セットアップ");
   });
 
+  it("translates greeting suggestion prompts too", () => {
+    // 提案ラベルだけでなく、送信欄へ差し込む本文も翻訳キーであることを固定します。
+    setLanguage("en");
+    expect(t("MIX agent の使い方を、実際の場面で教えてください。")).toBe(
+      "Show me how MIX agent works, using a realistic situation.",
+    );
+  });
+
   it("renders administrator creation in English", () => {
     setLanguage("en");
     const html = renderToStaticMarkup(createElement(Auth, { setup: true, onDone: () => {} }));

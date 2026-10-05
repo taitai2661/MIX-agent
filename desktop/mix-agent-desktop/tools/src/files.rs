@@ -443,6 +443,17 @@ impl FilesTool {
                     .map_err(|e| anyhow::anyhow!("invalid regex {pattern:?}: {e}"))?;
                 let mut hits = Vec::new();
                 let mut truncated = false;
+                // Long lines (minified bundles, generated files) must not each
+                // inject kilobytes into the model context.
+                let clip = |s: &str| -> String {
+                    if s.chars().count() <= 500 {
+                        s.to_string()
+                    } else {
+                        let mut out: String = s.chars().take(500).collect();
+                        out.push('…');
+                        out
+                    }
+                };
                 if resolved.is_dir() {
                     'outer: for entry in super::search::workspace_entries(&resolved) {
                         if entry
@@ -469,7 +480,7 @@ impl FilesTool {
                                 hits.push(serde_json::json!({
                                     "path": relative,
                                     "line": idx + 1,
-                                    "text": line,
+                                    "text": clip(line),
                                 }));
                                 if hits.len() >= 200 {
                                     truncated = true;

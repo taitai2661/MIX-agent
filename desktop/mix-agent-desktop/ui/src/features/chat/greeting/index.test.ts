@@ -167,6 +167,15 @@ describe("文面の組み立て", () => {
     );
     expect(welcome.title.join("")).toContain("こどもの日です。");
   });
+
+  it("英語表示では日本の祝日の文を出さない", () => {
+    setLanguage("en");
+    for (let i = 0; i < 20; i++) {
+      const welcome = welcomeFrom(signals({ now: new Date(2026, 4, 5, 9, 0) }), [], () => i / 20);
+      expect(welcome.titleIds).not.toContain("hl-9"); // こどもの日
+      expect(welcome.title.join("")).not.toContain("こどもの日です。");
+    }
+  });
 });
 
 describe("言語ごとの結合", () => {
@@ -217,6 +226,16 @@ describe("送信欄への差込み", () => {
       text: "p",
       mode: "thinking",
     });
+  });
+
+  it("英語表示では差し込む本文も翻訳する", () => {
+    setLanguage("en");
+    const detail = promptDetail({
+      id: "sg-explain",
+      label: "このコードの意図と動作を、日本語で要約して",
+      prompt: "このコードの意図と動作を、日本語で要約して",
+    });
+    expect(detail.text).toBe("Summarise what this code does and why, in Japanese");
   });
 });
 

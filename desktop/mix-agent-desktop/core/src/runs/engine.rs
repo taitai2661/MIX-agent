@@ -614,6 +614,10 @@ fn run_view_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<RunView> {
             .unwrap_or_default()
             .to_string(),
         budget: data.get("budget").cloned().unwrap_or_default(),
+        error: data
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }
 
@@ -759,6 +763,10 @@ pub fn wire_model_for<'a>(model_id: &'a str, provider_id: &str) -> &'a str {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointSnapshot {
     pub step_index: u32,
+    /// Tool calls completed before this checkpoint, so a resumed Run continues
+    /// its budget instead of starting the allowance over.
+    #[serde(default)]
+    pub tool_calls: u32,
     pub messages: Vec<HistoryMessage>,
 }
 
@@ -897,8 +905,16 @@ impl RunEngine {
         )
         .await;
 
-        let mut steps: u32 = 0;
-        let mut total_tool_calls: u32 = 0;
+        let mut steps: u32 = request
+            .resume_from
+            .as_ref()
+            .map(|s| s.step_index)
+            .unwrap_or(0);
+        let mut total_tool_calls: u32 = request
+            .resume_from
+            .as_ref()
+            .map(|s| s.tool_calls)
+            .unwrap_or(0);
         let mut all_tool_calls: Vec<RunToolCall> = Vec::new();
         let mut final_text = String::new();
         let mut final_reasoning = String::new();
@@ -1042,11 +1058,11 @@ impl RunEngine {
             let (head, checklist) = {
                 let tools = self.tools.read().await;
                 let head = if self.policy.context_tiered_summary {
-                    render_head(&task_state, &tools.todos).await
+                    render_head(&task_state, &tools.todos, run_id).await
                 } else {
                     String::new()
                 };
-                (head, tools.todos.snapshot().await)
+                (head, tools.todos.snapshot(run_id).await)
             };
             // Surface the checklist to the UI, not just to the model: a plan the
             // user cannot see is a plan they cannot correct.
@@ -1118,6 +1134,28 @@ impl RunEngine {
             let turn = self
                 .run_turn(run_id, provider.as_ref(), &request, current, &system)
                 .await?;
+
+            // A cancellation observed mid-stream comes back as `turn.error`;
+            // report it as Cancelled rather than as a failure.
+            if cancellation.is_cancelled() {
+                return self
+                    .finish_run(
+                        run_id,
+                        RunStatus::Cancelled,
+                        serde_json::json!({}),
+                        serde_json::json!({ "status": "cancelled" }),
+                        RunOutcome {
+                            status: RunStatus::Cancelled,
+                            text: final_text,
+                            reasoning: final_reasoning,
+                            tool_calls: all_tool_calls,
+                            usage: last_usage,
+                            finish_reason: last_finish,
+                            steps,
+                        },
+                    )
+                    .await;
+            }
 
             if let Some(err) = turn.error {
                 self.emit(run_id, "error", serde_json::json!({ "error": err }))
@@ -1305,8 +1343,12 @@ impl RunEngine {
                 })
                 .collect();
 
+            let cancellation = self.cancellation_of(run_id).await;
             let mut tool_messages: Vec<Message> = Vec::new();
             for (call, args) in turn.tool_calls.iter().zip(call_args.iter()) {
+                if cancellation.is_cancelled() {
+                    break;
+                }
                 total_tool_calls += 1;
                 if crate::runs::stagnation::is_read_only(&call.function.name, args)
                     && stagnation
@@ -1314,14 +1356,41 @@ impl RunEngine {
                 {
                     signals.push(crate::runs::stagnation::TurnSignal::RepeatedRead);
                 }
-                let result = self.dispatch_tool(run_id, &request, call, args).await;
+                // Register the destructive effect *before* dispatch so a read
+                // that follows it in the same turn can clear it. Doing this
+                // after the loop meant a `write` then `read` in one assistant
+                // turn left the gate open even though the read had confirmed it.
+                let destructive = destructive_reason(&call.function.name, args);
+                if self.policy.strict_verification && destructive.is_some() {
+                    verification.requires_confirmation(&call.function.name, args);
+                    self.emit(
+                        run_id,
+                        "destructive_tool_called",
+                        serde_json::json!({
+                            "tool": call.function.name,
+                            "arguments": args,
+                            "reason": destructive.clone().unwrap_or_default(),
+                        }),
+                    )
+                    .await;
+                }
+                // A `terminal` call or a slow fetch must not make the Run
+                // uncancellable: race the dispatch against the cancellation
+                // signal and stop as soon as the user asks to.
+                let result = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled_signal() => {
+                        tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
+                        break;
+                    }
+                    result = self.dispatch_tool(run_id, &request, call, args) => result,
+                };
                 all_tool_calls.push(result.clone());
                 let is_error = result.error.is_some();
-                // Only a read that actually succeeded closes the gate. Doing
-                // this before dispatch let a refused or failing read clear it,
-                // and letting `files.write` clear it defeated the gate entirely.
-                if !is_error && destructive_reason(&call.function.name, args).is_none() {
-                    verification.confirm(&call.function.name);
+                // Only a read that actually succeeded closes the gate, and only
+                // for the target it confirms.
+                if !is_error && destructive.is_none() {
+                    verification.confirm(&call.function.name, args);
                 }
                 let content = match &result.error {
                     Some(err) => format!("Error: {}", err),
@@ -1337,6 +1406,15 @@ impl RunEngine {
                 signals.push(classify_tool_call(&call.function.name, args, is_error));
                 tool_messages.push(Message::tool_result(call, content, is_error));
             }
+            // If we stopped early on cancellation, the assistant turn already
+            // declared every tool call; give the remaining ones a terminal
+            // result so the persisted transcript stays valid for the next turn
+            // (a dangling `tool_calls` turn is rejected by every provider).
+            if cancellation.is_cancelled() && tool_messages.len() < turn.tool_calls.len() {
+                for call in turn.tool_calls.iter().skip(tool_messages.len()) {
+                    tool_messages.push(Message::tool_result(call, "Error: run cancelled", true));
+                }
+            }
             for message in &tool_messages {
                 self.append_message(
                     request.conversation_id,
@@ -1348,30 +1426,18 @@ impl RunEngine {
             }
             messages.extend(tool_messages);
 
-            // Strict verification: note the destructive calls in this turn so
-            // the concluding turn above knows they need a confirming read.
-            if self.policy.strict_verification {
-                for (call, args) in turn.tool_calls.iter().zip(call_args.iter()) {
-                    let name = call.function.name.as_str();
-                    if verification.requires_confirmation(name, args) {
-                        self.emit(
-                            run_id,
-                            "destructive_tool_called",
-                            serde_json::json!({
-                                "tool": name,
-                                "arguments": args,
-                                "reason": verification.last_reason().unwrap_or_default(),
-                            }),
-                        )
-                        .await;
-                    }
-                }
+            // A run that has actually verified its effects earns its repair
+            // allowance back, so strict verification cannot permanently cap a
+            // long multi-file run after two unconfirmed turns.
+            if !verification.is_blocked() {
+                unverified_repair_turns = 0;
             }
 
             // Intermediate checkpointing.
             if self.policy.checkpointing && steps % self.policy.checkpoint_every_steps == 0 {
                 let snapshot = CheckpointSnapshot {
                     step_index: steps,
+                    tool_calls: total_tool_calls,
                     messages: messages.iter().map(message_to_history).collect(),
                 };
                 let id = self
@@ -1630,7 +1696,14 @@ impl RunEngine {
                 .await;
             let prompt = self
                 .executor
-                .request_approval(run_id, &tool_call_id, &tool_name, arguments.clone())
+                .request_approval(
+                    run_id,
+                    &tool_call_id,
+                    &tool_name,
+                    arguments.clone(),
+                    Some(request.workspace_id),
+                    pattern_target.clone(),
+                )
                 .await;
             let Ok((rx, expires_at)) = prompt else {
                 return self
@@ -1888,7 +1961,22 @@ impl RunEngine {
         let mut pending: HashMap<String, (String, String)> = HashMap::new();
         let mut order: Vec<String> = Vec::new();
 
-        while let Some(ev) = futures_util::StreamExt::next(&mut s).await {
+        // `cancelled_signal` is polled alongside the stream so a Run cancelled
+        // while the provider is generating stops promptly instead of after the
+        // whole response has arrived.
+        let cancellation = self.cancellation_of(run_id).await;
+        loop {
+            let next = tokio::select! {
+                biased;
+                _ = cancellation.cancelled_signal() => {
+                    error = Some("run cancelled".to_string());
+                    break;
+                }
+                ev = futures_util::StreamExt::next(&mut s) => ev,
+            };
+            let Some(ev) = next else {
+                break;
+            };
             match ev {
                 StreamEvent::TextDelta(delta) => {
                     text.push_str(&delta);
@@ -2073,9 +2161,10 @@ fn history_to_message(h: &HistoryMessage) -> Message {
 async fn render_head(
     task_state: &crate::context::TaskState,
     todos: &mixd_tools::todo::TodoStore,
+    run_id: RunId,
 ) -> String {
     let mut head = task_state.render();
-    let checklist = todos.render().await;
+    let checklist = todos.render(run_id).await;
     if !checklist.is_empty() {
         head.push('\n');
         head.push_str(&checklist);

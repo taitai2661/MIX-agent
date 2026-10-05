@@ -7,11 +7,12 @@
 //! The list is per-run and lives in memory: it is derived state, and the
 //! authoritative record is the run transcript.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use super::{Tool, ToolContext, ToolResult};
 
@@ -34,21 +35,16 @@ pub struct TodoItem {
     pub status: TodoStatus,
 }
 
-/// Per-run checklist, shared with the engine so it can re-render the list.
-#[derive(Clone)]
+/// Checklist shared with the engine so it can re-render the list each turn.
+///
+/// The store is keyed by `run_id`: one process-global list meant a scheduled
+/// run or an `agent` sub-run overwrote the parent's plan, and a new Run
+/// inherited the previous one's checklist.
+#[derive(Clone, Default)]
 pub struct TodoStore {
-    items: Arc<Mutex<BTreeMap<usize, TodoItem>>>,
+    runs: Arc<Mutex<HashMap<Uuid, BTreeMap<usize, TodoItem>>>>,
     /// Ids are 1-based so that `0` can mean "not supplied" in tool arguments.
-    next_id: Arc<Mutex<usize>>,
-}
-
-impl Default for TodoStore {
-    fn default() -> Self {
-        Self {
-            items: Arc::new(Mutex::new(BTreeMap::new())),
-            next_id: Arc::new(Mutex::new(1)),
-        }
-    }
+    next_ids: Arc<Mutex<HashMap<Uuid, usize>>>,
 }
 
 impl TodoStore {
@@ -56,12 +52,17 @@ impl TodoStore {
         Self::default()
     }
 
-    pub async fn snapshot(&self) -> Vec<TodoItem> {
-        self.items.lock().await.values().cloned().collect()
+    pub async fn snapshot(&self, run_id: Uuid) -> Vec<TodoItem> {
+        self.runs
+            .lock()
+            .await
+            .get(&run_id)
+            .map(|items| items.values().cloned().collect())
+            .unwrap_or_default()
     }
 
-    pub async fn render(&self) -> String {
-        let items = self.snapshot().await;
+    pub async fn render(&self, run_id: Uuid) -> String {
+        let items = self.snapshot(run_id).await;
         if items.is_empty() {
             return String::new();
         }
@@ -83,8 +84,9 @@ impl TodoStore {
         out
     }
 
-    pub async fn clear(&self) {
-        self.items.lock().await.clear();
+    pub async fn clear(&self, run_id: Uuid) {
+        self.runs.lock().await.remove(&run_id);
+        self.next_ids.lock().await.remove(&run_id);
     }
 }
 
@@ -142,9 +144,10 @@ impl Tool for TodoTool {
 
     async fn invoke(
         &self,
-        _ctx: ToolContext,
+        ctx: ToolContext,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
+        let run_id = ctx.run_id;
         let entries = args
             .get("todos")
             .and_then(|v| v.as_array())
@@ -156,7 +159,10 @@ impl Tool for TodoTool {
             )));
         }
 
-        let mut next_id = self.store.next_id.lock().await;
+        let mut next_id = {
+            let guard = self.store.next_ids.lock().await;
+            *guard.get(&run_id).unwrap_or(&1)
+        };
         let mut items = BTreeMap::new();
         for entry in entries {
             let content = entry
@@ -173,12 +179,12 @@ impl Tool for TodoTool {
             let id = match entry.get("id").and_then(|v| v.as_u64()) {
                 Some(raw) if raw > 0 => {
                     let id = raw as usize;
-                    *next_id = (*next_id).max(id + 1);
+                    next_id = next_id.max(id + 1);
                     id
                 }
                 _ => {
-                    let id = *next_id;
-                    *next_id += 1;
+                    let id = next_id;
+                    next_id += 1;
                     id
                 }
             };
@@ -206,9 +212,10 @@ impl Tool for TodoTool {
         }
         let normalised: Vec<TodoItem> = items.values().cloned().collect();
         if normalised.is_empty() {
-            self.store.clear().await;
+            self.store.clear(run_id).await;
         } else {
-            *self.store.items.lock().await = items;
+            self.store.next_ids.lock().await.insert(run_id, next_id);
+            self.store.runs.lock().await.insert(run_id, items);
         }
 
         let remaining = normalised
@@ -228,8 +235,9 @@ mod tests {
     use super::*;
 
     fn ctx() -> ToolContext {
+        static RUN: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
         ToolContext {
-            run_id: uuid::Uuid::new_v4(),
+            run_id: *RUN.get_or_init(uuid::Uuid::new_v4),
             workspace_id: uuid::Uuid::new_v4(),
             root_path: None,
             additional_paths: Vec::new(),
@@ -252,7 +260,7 @@ mod tests {
             .expect("invoke");
         assert!(result.ok);
         assert_eq!(result.content["remaining"], 1);
-        let items = tool.store.snapshot().await;
+        let items = tool.store.snapshot(ctx().run_id).await;
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].status, TodoStatus::Completed);
         assert_eq!(items[1].id, 2, "ids are allocated sequentially");
@@ -267,7 +275,7 @@ mod tests {
         let second =
             serde_json::json!({ "todos": [{ "id": 1, "content": "a", "status": "completed" }] });
         tool.invoke(ctx(), second).await.expect("invoke");
-        let items = tool.store.snapshot().await;
+        let items = tool.store.snapshot(ctx().run_id).await;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, 1);
         assert_eq!(items[0].status, TodoStatus::Completed);
@@ -285,7 +293,7 @@ mod tests {
         )
         .await
         .expect("invoke");
-        let items = tool.store.snapshot().await;
+        let items = tool.store.snapshot(ctx().run_id).await;
         assert_eq!(
             items
                 .iter()
@@ -304,12 +312,12 @@ mod tests {
         )
         .await
         .expect("invoke");
-        assert!(!tool.store.snapshot().await.is_empty());
+        assert!(!tool.store.snapshot(ctx().run_id).await.is_empty());
         tool.invoke(ctx(), serde_json::json!({ "todos": [] }))
             .await
             .expect("invoke");
-        assert!(tool.store.snapshot().await.is_empty());
-        assert_eq!(tool.store.render().await, "");
+        assert!(tool.store.snapshot(ctx().run_id).await.is_empty());
+        assert_eq!(tool.store.render(ctx().run_id).await, "");
     }
 
     #[tokio::test]
@@ -339,7 +347,7 @@ mod tests {
         )
         .await
         .expect("invoke");
-        let rendered = tool.store.render().await;
+        let rendered = tool.store.render(ctx().run_id).await;
         assert!(rendered.contains("[x] 1: done"));
         assert!(rendered.contains("[~] 2: busy"));
         assert!(rendered.contains("[ ] 3: next"));

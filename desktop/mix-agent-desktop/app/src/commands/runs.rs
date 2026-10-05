@@ -141,15 +141,17 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     }
 
     // Load the Run's original request parameters so the loop can restart.
-    let row: Option<(String, String, String)> = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT conversation_id, json_extract(data, '$.modelId'), json_extract(data, '$.mode') \
-         FROM runs WHERE id = ?",
-    )
-    .bind(run_id.to_string())
-    .fetch_optional(state.storage.pool())
-    .await
-    .map_err(crate::error::cmd_err)?;
-    let (conversation_id, model_id, mode_str) = row.ok_or("run not found")?;
+    let row: Option<(String, String, String, Option<String>)> =
+        sqlx::query_as::<_, (String, String, String, Option<String>)>(
+            "SELECT conversation_id, json_extract(data, '$.modelId'), \
+             json_extract(data, '$.mode'), json_extract(data, '$.workspaceId') \
+             FROM runs WHERE id = ?",
+        )
+        .bind(run_id.to_string())
+        .fetch_optional(state.storage.pool())
+        .await
+        .map_err(crate::error::cmd_err)?;
+    let (conversation_id, model_id, mode_str, workspace_id) = row.ok_or("run not found")?;
     let mode = mixd_core::Mode::parse(&mode_str).ok_or("invalid mode")?;
     // Resolved from the run's own `modelId`, which is `<provider_id>:<model>`.
     // This used to be `providers.list().first().unwrap_or_default()`, i.e. an
@@ -177,7 +179,12 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     let request = mixd_core::runs::engine::RunRequest {
         run_id,
         conversation_id: Uuid::parse_str(&conversation_id).map_err(crate::error::cmd_err)?,
-        workspace_id: Uuid::new_v4(),
+        // Reuse the Run's original workspace so its browser profile,
+        // workspace-scoped permission rules and terminal session stay the same
+        // across the interruption. Only a pre-workspace Run mints a new one.
+        workspace_id: workspace_id
+            .and_then(|w| Uuid::parse_str(&w).ok())
+            .unwrap_or_else(Uuid::new_v4),
         root_path: project.root_path,
         additional_paths: project.additional_paths,
         mode,

@@ -124,6 +124,8 @@ app コマンド層（`app/src/commands/conversations.rs:487-492`）で行われ
 
 権限はツール単位ではなく**呼び出し単位**で決まります。保存済みルールがあれば常にそれが優先し、無い場合の既定値は「読み取りは allow、書き込み・シェル・ネットワークは ask」です。
 
+承認カードの「常に許可」は、そのツール全体ではなく**その呼び出しの範囲**（Run の workspace と、ツールが公開する対象＝パス・コマンド・URL・browser の action・MCP 接続 ID）に絞ったルールを保存します。`terminal` の 1 コマンドを許可しても、別のコマンドや別の workspace、`files` の削除、`browser` の `evaluate` は引き続き確認されます。ツールに対象が無い場合は workspace 単位の許可になります。
+
 > `browser` と `mcp__<conn>__<tool>` は Tool Registry に登録されず dispatch フック経由で
 > 実行されるため、判定は「未知のツール」として `ask` にフォールバックします
 > （`tools/src/registry.rs:238-260`）。他の行のような保存ルールの明示一致ではありません。
@@ -150,15 +152,19 @@ auto-update は基盤（`updater.rs`、署名付きアーティファクト設�
 
 スレッドが空のとき、見出しは時間帯・曜日・季節の行事・二十四節気・日本の祝日・
 スレッド数・最終活動・訪問間隔・サーフェス・プロジェクト有無から文を合成して表示します
-（`ui/src/features/chat/greeting/`）。部品は250文で、「挨拶＋状況節＋締め」の3層を
+（`ui/src/features/chat/greeting/`）。部品は約250文で、「挨拶＋状況節＋締め」の3層を
 文体タグと文形タグで互換判定してから連結します。見出しの直下には補足の1文と、
 文脈から選ぶ開始提案が3枚並びます。提案は送信欄へ差し込むだけなので、自動送信はしません。
+
+英訳は日本語原文ではなく部品 ID で引くため（`greeting/translations.ts`）、
+原文の言い回しを直しても英語表示は壊れません。祝日・二十四節気・季節の行事は
+日本の暦に基づくため、表示言語が日本語のときだけ状況節として使います。
 
 `localStorage`（`mix-agent-welcome`）に訪問間隔と直近24件の部品 ID を保持し、
 同じ文面の連続を避けます。
 
 ```sh
-cd ui && pnpm ui:test      # greeting/ を含む 182 ケース
+cd ui && pnpm ui:test      # greeting/ を含む 185 ケース
 ```
 
 Docker 版も同じ方式で実装していますが、両者は [`docs/desktop/architecture.md`](../docs/desktop/architecture.md)
@@ -195,7 +201,7 @@ checkpoint 間隔（既定 10 ステップ）や停滞判定・検証などの�
 ### テスト
 
 `cargo test --workspace`（Rust）と `pnpm ui:test`（UI / vitest）で実行します。現在の件数は
-**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 182 ケース / 20 ファイル**です。
+**Rust 403 件**（`#[test]` / `#[tokio::test]`）と **UI 185 ケース / 20 ファイル**です。
 テストは継続的に追加されているため、数値はテストの追加・削除に合わせて更新してください。
 
 Rust 側は workspace 内に 7 つの `tests/` ディレクトリを持ちます。

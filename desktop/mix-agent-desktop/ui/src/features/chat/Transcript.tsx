@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown, Brain, ChevronRight, CornerDownLeft, FileText, MessageSquare, ShieldAlert, ShieldCheck, Sparkles,
 } from "lucide-react";
@@ -10,7 +10,7 @@ import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
 import { isBusy, type RunTimeline } from "@/lib/runEvents";
-import { promptDetail, welcomeTitle, type Suggestion, type Welcome } from "./greeting";
+import { promptDetail, welcomeTitle, welcomeNote, greetingText, suggestionLabelId, type Suggestion, type Welcome } from "./greeting";
 import type { MessageView, RunView } from "@/lib/types";
 import { useUi } from "@/lib/ui";
 import { Alert, Skeleton } from "@/components/ui/alert";
@@ -58,6 +58,34 @@ export function Transcript({
   const livePersisted =
     !!liveRunId && messages.some((m) => m.run_id === liveRunId && m.role === "assistant");
   const showLive = !!live && !livePersisted;
+
+  // The last assistant message of each Run: its error is rendered under that
+  // one row so a Run with several tool-call turns does not repeat the failure.
+  const lastAssistantByRun = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of messages) {
+      if (m.role === "assistant" && m.run_id) map.set(m.run_id, m.id);
+    }
+    return map;
+  }, [messages]);
+
+  // A failed Run with no assistant message has nothing to attach its error to
+  // on the assistant side, so it is attached to the user turn that started it.
+  // Without this a provider error before any text streamed left the transcript
+  // completely blank.
+  const orphanRunIds = useMemo(() => {
+    const linked = new Set(
+      messages
+        .filter((m) => m.role === "assistant" && m.run_id)
+        .map((m) => m.run_id as string),
+    );
+    return new Set(
+      [...runs.values()]
+        .filter((run) => !!run.error && !linked.has(run.id) && run.id !== liveRunId)
+        .map((run) => run.id),
+    );
+  }, [runs, messages, liveRunId]);
+
   const isEmpty = messages.length === 0 && !showLive;
 
   return (
@@ -78,7 +106,16 @@ export function Transcript({
             <Skeleton className="h-16 w-full" />
           )}
           {messages.map((message) => (
-            <MessageItem key={message.id} message={message} runs={runs} />
+            <MessageItem
+              key={message.id}
+              message={message}
+              runs={runs}
+              showRunError={
+                message.role === "assistant"
+                  ? lastAssistantByRun.get(message.run_id ?? "") === message.id
+                  : orphanRunIds.has(message.run_id ?? "")
+              }
+            />
           ))}
           {showLive && live && <LiveBlock live={live} />}
         </div>
@@ -121,7 +158,7 @@ function Welcome({ welcome }: { welcome: Welcome | null }) {
         {welcome && (
           <p className="mx-auto flex max-w-md items-center justify-center gap-1.5 text-xs text-faint">
             <ShieldCheck size={13} aria-hidden="true" />
-            {t(welcome.note)}
+            {welcomeNote(welcome)}
           </p>
         )}
       </div>
@@ -171,7 +208,7 @@ function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[
           <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
             <CornerDownLeft size={12} aria-hidden="true" />
           </span>
-          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{t(suggestion.label)}</span>
+          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{greetingText(suggestionLabelId(suggestion.id), suggestion.label)}</span>
         </Button>
       ))}
     </div>
@@ -183,12 +220,16 @@ function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[
 const MessageItem = memo(function MessageItem({
   message,
   runs,
+  showRunError = false,
 }: {
   message: MessageView;
   runs: Map<string, RunView>;
+  /** Render this Run's failure under this (its last assistant) message. */
+  showRunError?: boolean;
 }) {
   const setActivityRunId = useUi((s) => s.setActivityRunId);
   const setRightPanel = useUi((s) => s.setRightPanel);
+  const run = message.run_id ? runs.get(message.run_id) : undefined;
 
   if (message.role === "user") {
     return (
@@ -210,11 +251,16 @@ const MessageItem = memo(function MessageItem({
           {message.content}
         </div>
         <div className="px-1 text-xs text-faint">{relativeTime(message.created_at)}</div>
+        {showRunError && run?.error && (
+          <Alert tone="danger" className="w-full">
+            <strong className="block font-medium">{t("実行に失敗しました")}</strong>
+            <span className="whitespace-pre-wrap break-words">{run.error}</span>
+          </Alert>
+        )}
       </div>
     );
   }
 
-  const run = message.run_id ? runs.get(message.run_id) : undefined;
   return (
     <div className="flex flex-col gap-1.5">
       <div
@@ -253,6 +299,12 @@ const MessageItem = memo(function MessageItem({
       <div className="text-sm text-fg">
         <Markdown>{message.content}</Markdown>
       </div>
+      {showRunError && run?.error && (
+        <Alert tone="danger">
+          <strong className="block font-medium">{t("実行に失敗しました")}</strong>
+          <span className="whitespace-pre-wrap break-words">{run.error}</span>
+        </Alert>
+      )}
     </div>
   );
 });
@@ -292,6 +344,12 @@ function LiveBlock({ live }: { live: RunTimeline }) {
   const busy = isBusy(live.status);
   return (
     <div className="flex flex-col gap-1.5">
+      {live.error && (
+        <Alert tone="danger">
+          <strong className="block font-medium">{t("実行に失敗しました")}</strong>
+          <span className="whitespace-pre-wrap break-words">{live.error}</span>
+        </Alert>
+      )}
       {live.stagnation && (
         <Alert tone="warning">
           <strong className="block font-medium">{t("停滞を検出しました")}</strong>

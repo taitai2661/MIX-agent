@@ -1,3 +1,4 @@
+import { getLanguage } from "@/app/i18n";
 import { workloadOf } from "./signals";
 import type { Signals, Suggestion } from "./types";
 
@@ -78,7 +79,8 @@ function buildCandidates(signals: Signals): Candidate[] {
       weight: 3,
     });
 
-  if (signals.holiday || signals.event || signals.solarTerm)
+  // 季節の提案も日本の暦に依存するため、日本語表示のときだけ出します。
+  if (getLanguage() === "ja" && (signals.holiday || signals.event || signals.solarTerm))
     candidates.push({
       id: "sg-season",
       label: "季節の予定を整理する",

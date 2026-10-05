@@ -170,7 +170,7 @@ export const seasonContexts: Record<Season, readonly Fragment[]> = {
   ],
   winter: [
     sentence("wi-1", "冬は、一年の締めの時間です。"),
-    sentence("wi-2", "寒手のあいだは、まとめて片づけやすい期間です。"),
+    sentence("wi-2", "寒いあいだは、まとめて片づけやすい期間です。"),
     sentence("wi-3", "静かな季節です。", "calm"),
   ],
 };
@@ -348,7 +348,7 @@ export const offerClosings: readonly Fragment[] = [
   sentence("oc-5", "気が向くところからでかまいません。", "calm"),
   sentence("oc-6", "まったく別の話でもかまいません。", "calm"),
   sentence("oc-7", "準備ができたら教えてください。"),
-  sentence("oc-8", "ひとこと动机があれば、そこから始められます。"),
+  sentence("oc-8", "ひとこと動機があれば、そこから始められます。"),
 ];
 
 export const togetherClosings: readonly Fragment[] = [
@@ -417,14 +417,4 @@ export const noProjectContexts: readonly Fragment[] = [
   sentence("np-1", "プロジェクトは未設定です。"),
   sentence("np-2", "フォルダを決めれば、対象を絞れます。"),
   sentence("np-3", "任意のフォルダから始められます。"),
-];
-
-export const changesContexts: readonly Fragment[] = [
-  sentence("ch-1", "直前の変更が残っているかもしれません。"),
-  sentence("ch-2", "差分は、あとから確認できます。"),
-];
-
-export const folderContexts: readonly Fragment[] = [
-  sentence("fd-1", "ローカルで開いているフォルダが対象です。"),
-  sentence("fd-2", "手元のファイルなので、確認しながら進められます。", "calm"),
 ];

@@ -141,14 +141,20 @@ export const Composer = memo(function Composer({
     const onInsert = (event: Event) => {
       const detail = (event as CustomEvent<{ text?: string; mode?: typeof mode }>).detail;
       if (typeof detail?.text === "string") setDraft(detail.text);
-      if (detail?.mode && (detail.mode === "chat" || detail.mode === "thinking" || detail.mode === "agent")) {
-        setMode(detail.mode);
+      // A greeting picked on one surface may name a mode the current surface
+      // does not expose (e.g. "thinking" after switching to Desktop-Agent), so
+      // only apply a mode that is actually allowed here.
+      if (detail?.mode) {
+        const allowed = allowedModes && allowedModes.length > 0
+          ? allowedModes
+          : ALL_MODES.map((m) => m.id);
+        if ((allowed as readonly string[]).includes(detail.mode)) setMode(detail.mode);
       }
       window.requestAnimationFrame(() => textareaRef.current?.focus());
     };
     window.addEventListener("mix:insert-prompt", onInsert);
     return () => window.removeEventListener("mix:insert-prompt", onInsert);
-  }, [setMode]);
+  }, [setMode, allowedModes]);
 
   const toggleVoiceInput = () => {
     if (speechRef.current) {

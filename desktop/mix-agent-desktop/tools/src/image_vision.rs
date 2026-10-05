@@ -46,14 +46,26 @@ impl Tool for ImageVisionTool {
             .get("data_base64")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        // Reject an oversized payload *before* decoding it: `decode` allocates
+        // the whole output buffer, so a caller-supplied gigabyte of base64 would
+        // be materialised before the size check below could run. Base64 expands
+        // to at most 3/4 of the encoded length (padding only makes it smaller).
+        if data.len() / 4 * 3 > MAX_BYTES {
+            anyhow::bail!("image exceeds 20 MiB limit");
+        }
         let decoded = base64::engine::general_purpose::STANDARD.decode(data.as_bytes())?;
         if decoded.len() > MAX_BYTES {
             anyhow::bail!("image exceeds 20 MiB limit");
         }
+        // `data` is model-controlled and only guaranteed to be UTF-8: slicing
+        // it by byte length panicked whenever byte 64 fell inside a multi-byte
+        // character. Taking characters cannot split one, and the preview is
+        // informational rather than a decodable data URL either way.
+        let preview_prefix: String = data.chars().take(64).collect();
         Ok(ToolResult::ok(serde_json::json!({
             "mime_type": mime,
             "bytes": decoded.len(),
-            "preview": format!("data:{};base64,{}", mime, &data[..data.len().min(64)]),
+            "preview": format!("data:{};base64,{}", mime, preview_prefix),
         })))
     }
 }

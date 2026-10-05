@@ -85,6 +85,7 @@ export interface ConversationSummary {
   preview: string | null;
   message_count: number;
   project_id: string | null;
+  workspace_id: string | null;
 }
 
 export interface MessageAttachmentView {
@@ -278,6 +279,7 @@ export interface RunView {
   updated_at: string;
   summary: string;
   budget: unknown;
+  error: string | null;
 }
 
 export interface BrowserStatus {

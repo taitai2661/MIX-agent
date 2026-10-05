@@ -1,3 +1,4 @@
+import { getLanguage } from "@/lib/i18n";
 import {
   activityContexts,
   eventContexts,
@@ -29,6 +30,7 @@ import {
   yearEndContexts,
   yearStartContexts,
 } from "./pools";
+import { workloadOf } from "./signals";
 import type { Fragment, Signals, Tone } from "./types";
 
 const MAX_ATTEMPTS = 40;
@@ -77,13 +79,6 @@ export function compatible(
   return true;
 }
 
-function workloadOf(signals: Signals): "empty" | "light" | "steady" | "heavy" {
-  if (signals.conversationCount <= 0) return "empty";
-  if (signals.conversationCount <= 4) return "light";
-  if (signals.conversationCount <= 19) return "steady";
-  return "heavy";
-}
-
 export function openingCandidates(signals: Signals): readonly Fragment[] {
   // 初めての訪問でははじめましてだけを使います。時間帯の挨拶と混ぜると
   // 最初の一印象が二者択一になり、どちらかが消えてしまいます。
@@ -117,10 +112,13 @@ function partOfDayContexts(signals: Signals): readonly Fragment[] {
 
 /** より具体的な状況ほど重みを上げ、時刻だけの文へ落ちないようにします。 */
 export function contextCandidates(signals: Signals): readonly Fragment[] {
+  // 祝日・行事・二十四節気は日本の暦に基づくため、表示言語が日本語のときだけ
+  // 状況節に使います。英語 UI で日本の祝日を断定すると文脈がずれます。
+  const japaneseCalendar = getLanguage() === "ja";
   const specific: readonly Fragment[] = [
-    ...(signals.holiday && holidayContexts[signals.holiday] ? [holidayContexts[signals.holiday]] : []),
-    ...(signals.event && eventContexts[signals.event] ? [eventContexts[signals.event]] : []),
-    ...(signals.solarTerm && solarTermContexts[signals.solarTerm] ? [solarTermContexts[signals.solarTerm]] : []),
+    ...(japaneseCalendar && signals.holiday && holidayContexts[signals.holiday] ? [holidayContexts[signals.holiday]] : []),
+    ...(japaneseCalendar && signals.event && eventContexts[signals.event] ? [eventContexts[signals.event]] : []),
+    ...(japaneseCalendar && signals.solarTerm && solarTermContexts[signals.solarTerm] ? [solarTermContexts[signals.solarTerm]] : []),
     ...(signals.yearProgress === "start" ? yearStartContexts : []),
     ...(signals.yearProgress === "end" ? yearEndContexts : []),
   ];
@@ -132,20 +130,21 @@ export function contextCandidates(signals: Signals): readonly Fragment[] {
     ...withWeight(partOfDayContexts(signals), 1),
     ...withWeight(activityContexts[signals.activity] ?? [], 1),
     ...withWeight(gapContexts[signals.gap] ?? [], 1),
-    ...withWeight(workloadContexts[workloadOf(signals)] ?? [], 1),
+    ...withWeight(workloadContexts[workloadOf(signals.conversationCount)] ?? [], 1),
     ...withWeight(seasonContexts[signals.season] ?? [], 1),
   ];
   return [...withWeight(specific, 4), ...desktop, ...general];
 }
 
 export function closingCandidates(signals: Signals): readonly Fragment[] {
+  const japaneseCalendar = getLanguage() === "ja";
   if (signals.activity === "yesterday" || signals.activity === "today")
     return [...resumeClosings, ...questionClosings, ...offerClosings];
   if (signals.partOfDay === "lateNight" || signals.partOfDay === "earlyMorning")
     return [...offerClosings, ...togetherClosings, ...questionClosings];
   if (signals.dayKind === "weekend" || signals.dayKind === "sunday")
     return [...togetherClosings, ...offerClosings, ...questionClosings];
-  if (signals.holiday || signals.event)
+  if (japaneseCalendar && (signals.holiday || signals.event))
     return [...offerClosings, ...questionClosings, ...togetherClosings];
   return [...questionClosings, ...offerClosings, ...togetherClosings];
 }
@@ -158,7 +157,7 @@ export function noteCandidates(signals: Signals): readonly Fragment[] {
   // Desktop-Agent はファイルを書き換えられるので、補足は実行モデルを訴える。
   if (signals.surface === "desktop-agent") groups.push(withWeight(notes.agent, 4));
   if (signals.projectActive) groups.push(withWeight(notes.project, 3));
-  if (workloadOf(signals) === "heavy") groups.push(withWeight(notes.heavy, 3));
+  if (workloadOf(signals.conversationCount) === "heavy") groups.push(withWeight(notes.heavy, 3));
   if (signals.conversationCount === 0) groups.push(withWeight(notes.empty, 2));
   groups.push(notes.default);
   return groups.flat();
@@ -166,6 +165,8 @@ export function noteCandidates(signals: Signals): readonly Fragment[] {
 
 export interface Composed {
   title: string[];
+  /** `title` と同じ並びの部品 ID。表示言語への翻訳はこの ID で引く。 */
+  titleIds: string[];
   note: Fragment;
   used: string[];
 }
@@ -188,12 +189,15 @@ export function compose(
   let closing = pickFragment(closingPool, seen, random) ?? closingPool[0];
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (compatible(opening, context, closing))
+    if (compatible(opening, context, closing)) {
+      const parts = context ? [opening, context, closing] : [opening, closing];
       return {
-        title: (context ? [opening, context, closing] : [opening, closing]).map((fragment) => fragment.text),
+        title: parts.map((fragment) => fragment.text),
+        titleIds: parts.map((fragment) => fragment.id),
         note,
-        used: [opening.id, ...(context ? [context.id] : []), closing.id, note.id],
+        used: [...parts.map((fragment) => fragment.id), note.id],
       };
+    }
     // 文体が合わないときはまず状況節を捨て、
     // それでも合わなければ締めだけを差し替えます。
     if (context) {
@@ -219,6 +223,7 @@ export function compose(
             : [opening, candidateClosing];
           return {
             title: parts.map((fragment) => fragment.text),
+            titleIds: parts.map((fragment) => fragment.id),
             note,
             used: [...parts.map((fragment) => fragment.id), note.id],
           };
@@ -229,5 +234,10 @@ export function compose(
 
   // ここまで来るのは文体タグが全て外れた場合のみ。最後の一文に落とす。
   const fallback = sentence("compose-fallback", "進めたいことを教えてください。", "calm");
-  return { title: [opening.text, fallback.text], note, used: [opening.id, fallback.id, note.id] };
+  return {
+    title: [opening.text, fallback.text],
+    titleIds: [opening.id, fallback.id],
+    note,
+    used: [opening.id, fallback.id, note.id],
+  };
 }

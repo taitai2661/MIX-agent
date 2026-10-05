@@ -44,6 +44,52 @@ fn client_for(target: &ResolvedTarget) -> anyhow::Result<reqwest::Client> {
 /// Redirect hops followed before giving up; matches reqwest's own default.
 const MAX_REDIRECTS: u8 = 10;
 
+/// Largest response body kept. A 30 s timeout bounds time, not bytes: a fast
+/// server can still stream hundreds of MB into memory and into the model
+/// context without this.
+const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// Headers that must not follow a redirect to a different origin.
+const SENSITIVE_HEADERS: &[&str] = &["authorization", "cookie", "proxy-authorization"];
+
+fn origin_of(url: &str) -> Option<(String, Option<String>, Option<u16>)> {
+    let parsed = url::Url::parse(url).ok()?;
+    Some((
+        parsed.scheme().to_string(),
+        parsed.host_str().map(|h| h.to_string()),
+        parsed.port_or_known_default(),
+    ))
+}
+
+/// Read a body up to `limit` bytes, returning whether it was truncated.
+async fn read_body_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> anyhow::Result<(String, bool)> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    while let Some(chunk) = response.chunk().await? {
+        if buf.len() + chunk.len() > limit {
+            let take = limit.saturating_sub(buf.len());
+            buf.extend_from_slice(&chunk[..take]);
+            truncated = true;
+            break;
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok((String::from_utf8_lossy(&buf).to_string(), truncated))
+}
+
+/// Char-boundary-safe truncation for tool output.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut clipped: String = text.chars().take(max).collect();
+    clipped.push('…');
+    clipped
+}
+
 impl NetworkTool {
     pub fn new(egress: EgressPolicy) -> Self {
         Self { egress }
@@ -93,7 +139,7 @@ impl Tool for NetworkTool {
             .unwrap_or("GET")
             .parse::<reqwest::Method>()
             .unwrap_or(reqwest::Method::GET);
-        let headers = args
+        let mut headers = args
             .get("headers")
             .cloned()
             .unwrap_or(serde_json::json!({}));
@@ -144,10 +190,28 @@ impl Tool for NetworkTool {
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| anyhow::anyhow!("redirect without a Location header"))?;
-            url = url::Url::parse(&url)
+            let next_url = url::Url::parse(&url)
                 .and_then(|base| base.join(location))
                 .map_err(|e| anyhow::anyhow!("bad redirect target: {}", e))?
                 .to_string();
+            // Credentials must not follow a cross-origin redirect: a permitted
+            // host could otherwise 302 to an attacker and harvest the
+            // Authorization / Cookie header the caller supplied.
+            if origin_of(&next_url) != origin_of(&url) {
+                if let Some(obj) = headers.as_object_mut() {
+                    for sensitive in SENSITIVE_HEADERS {
+                        let stale: Vec<String> = obj
+                            .keys()
+                            .filter(|k| k.to_ascii_lowercase() == *sensitive)
+                            .cloned()
+                            .collect();
+                        for key in stale {
+                            obj.remove(&key);
+                        }
+                    }
+                }
+            }
+            url = next_url;
             if status == reqwest::StatusCode::SEE_OTHER
                 || ((status == reqwest::StatusCode::MOVED_PERMANENTLY
                     || status == reqwest::StatusCode::FOUND)
@@ -158,10 +222,10 @@ impl Tool for NetworkTool {
             }
         };
         let status = response.status().as_u16();
-        let text = response.text().await?;
+        let (text, truncated) = read_body_limited(response, MAX_BODY_BYTES).await?;
         Ok(ToolResult {
             ok: status < 400,
-            content: serde_json::json!({ "status": status, "body": text }),
+            content: serde_json::json!({ "status": status, "body": text, "truncated": truncated }),
             error: if status >= 400 {
                 Some(format!("HTTP {}", status))
             } else {
@@ -213,7 +277,8 @@ impl Tool for WebSearchTool {
         let max = args
             .get("max_results")
             .and_then(|v| v.as_u64())
-            .unwrap_or(6);
+            .unwrap_or(6)
+            .clamp(1, 20);
         let ddgs = ddgs::Ddgs::new().map_err(|e| anyhow::anyhow!("ddgs init: {}", e))?;
         let results = ddgs
             .text(query)
@@ -221,7 +286,13 @@ impl Tool for WebSearchTool {
             .map_err(|e| anyhow::anyhow!("ddgs search: {}", e))?
             .into_iter()
             .take(max as usize)
-            .map(|r| serde_json::json!({ "title": r.title, "url": r.href, "snippet": r.body }))
+            .map(|r| {
+                serde_json::json!({
+                    "title": clip(&r.title, 300),
+                    "url": r.href,
+                    "snippet": clip(&r.body, 600)
+                })
+            })
             .collect::<Vec<_>>();
         Ok(ToolResult::ok(serde_json::json!(results)))
     }

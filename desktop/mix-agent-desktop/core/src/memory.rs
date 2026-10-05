@@ -291,6 +291,11 @@ impl MemoryService {
         let data: serde_json::Value = row
             .and_then(|(raw,)| serde_json::from_str(&raw).ok())
             .ok_or_else(|| anyhow::anyhow!("revision not found"))?;
+        // The revision must belong to this memory. Without this check any
+        // revision id could overwrite any memory with another memory's content.
+        if data.get("memoryId").and_then(|v| v.as_str()) != Some(memory_id) {
+            anyhow::bail!("revision does not belong to this memory");
+        }
         let title = data
             .get("title")
             .and_then(|v| v.as_str())

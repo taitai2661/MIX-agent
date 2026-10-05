@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/api";
@@ -31,6 +31,7 @@ export function ChatPane() {
   const setModelId = useUi((s) => s.setModelId);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const setActiveProjectId = useUi((s) => s.setActiveProjectId);
+  const setWorkspaceId = useUi((s) => s.setWorkspaceId);
   const surface = useUi((s) => s.surface);
   const allowedModes = SURFACE_MODES[surface];
   const queryClient = useQueryClient();
@@ -121,6 +122,12 @@ export function ChatPane() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConversation?.project_id]);
 
+  // Keep the ui-store workspace in step with the active conversation so the
+  // Browser pane defaults to the same profile the agent uses.
+  useEffect(() => {
+    setWorkspaceId(activeConversation?.workspace_id ?? null);
+  }, [activeConversation?.workspace_id, setWorkspaceId]);
+
   const sendMessage = useMutation({
     mutationFn: async ({ content, attachments }: { content: string; attachments: DraftAttachment[] }) => {
       let target = activeConversationId;
@@ -204,8 +211,13 @@ export function ChatPane() {
   // snapshot. While the thread list is still in flight the Transcript falls
   // back to the brand line, so the greeting never re-picks mid-session.
   const [welcome, setWelcome] = useState<Welcome | null>(null);
+  // `nextVisit` advances the stored visit count, so guard against React
+  // StrictMode's double-invoked effect: without this the count (and the recent
+  // fragment list) would be bumped twice per mount.
+  const welcomePicked = useRef(false);
   useEffect(() => {
-    if (welcome || conversations.data === undefined) return;
+    if (welcomePicked.current || conversations.data === undefined) return;
+    welcomePicked.current = true;
     const rows = conversations.data;
     const stamps = rows
       .map((row) => Date.parse(row.updated_at))
@@ -220,7 +232,7 @@ export function ChatPane() {
         projectActive: !!activeProjectId,
       }).welcome,
     );
-  }, [activeProjectId, conversations.data, projects.data, surface, welcome]);
+  }, [activeProjectId, conversations.data, projects.data, surface]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

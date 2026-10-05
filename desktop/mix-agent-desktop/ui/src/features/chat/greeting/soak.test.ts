@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { dictionary } from "@/lib/i18n";
+import { beforeEach, describe, expect, it } from "vitest";
+import { setLanguage } from "@/lib/i18n";
+import { greetingEn } from "./translations";
 import { welcomeFrom } from "./index";
 import { buildSignals } from "./signals";
+
+// 全日程の組み合わせを検証するため、日本の暦を含む日本語表示に固定する。
+beforeEach(() => setLanguage("ja"));
 
 function signalsFor(now: Date, overrides = {}) {
   return buildSignals({
@@ -67,13 +71,13 @@ describe("全日程を通した合成", () => {
   }, 60_000);
 
   it("見出しの各文に英語訳がある", () => {
-    const keys = new Set(Object.keys(dictionary));
+    const keys = greetingEn;
     const random = seeded(7);
     for (let day = 0; day < 365; day++) {
       for (const hour of [9, 20]) {
         const welcome = welcomeFrom(signalsFor(new Date(2026, 0, 1 + day, hour, 3)), [], random);
-        for (const sentence of welcome.title) expect(keys, sentence).toContain(sentence);
-        expect(keys, welcome.note).toContain(welcome.note);
+        for (const id of welcome.titleIds) expect(keys[id], id).toBeTruthy();
+        expect(keys[welcome.noteId], welcome.noteId).toBeTruthy();
       }
     }
   }, 60_000);

@@ -63,7 +63,11 @@ export interface Suggestion {
 export interface Welcome {
   id: string;
   title: string[];
+  /** `title` と同じ並びの部品 ID。翻訳はこの ID で引く。 */
+  titleIds: string[];
   note: string;
+  /** 補足文の部品 ID。翻訳はこの ID で引く。 */
+  noteId: string;
   suggestions: Suggestion[];
   /** 直近の文面で使った部品の ID。次回の抽選で除外します。 */
   used: string[];

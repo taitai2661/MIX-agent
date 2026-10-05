@@ -27,6 +27,10 @@ use tokio::sync::Mutex;
 use super::{Tool, ToolContext, ToolResult};
 
 const DEFAULT_MAX_WALL_CLOCK_MS: u64 = 30_000;
+/// Hard ceiling on a single `terminal` call. Without it the model could ask for
+/// `max_wall_clock_ms: 999999999` and park the Run (and its cancellation) for
+/// days.
+const MAX_WALL_CLOCK_MS: u64 = 600_000;
 /// How much output to return. A runaway `yes` must not fill the context window.
 const MAX_OUTPUT_BYTES: usize = 200 * 1024;
 
@@ -365,7 +369,8 @@ impl Tool for TerminalTool {
                 self.max_wall_clock_ms
             } else {
                 DEFAULT_MAX_WALL_CLOCK_MS
-            });
+            })
+            .min(MAX_WALL_CLOCK_MS);
         let workdir = match ctx.root_path.as_deref() {
             Some(root) => std::path::PathBuf::from(root),
             None => std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),

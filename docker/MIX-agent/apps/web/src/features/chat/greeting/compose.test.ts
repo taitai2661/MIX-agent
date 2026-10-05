@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { setLanguage } from "@/app/i18n";
 import { compatible, compose, contextCandidates, noteCandidates, openingCandidates, pickFragment } from "./compose";
 import { openings } from "./pools";
 import { buildSignals } from "./signals";
 import type { Fragment, Signals } from "./types";
+
+// 祝日・行事の候補は表示言語に依存するため、このファイルは日本語に固定する。
+beforeEach(() => setLanguage("ja"));
 
 function signals(overrides: Partial<Parameters<typeof buildSignals>[0]> = {}): Signals {
   const now = overrides.now ?? new Date(2026, 5, 10, 14, 0);

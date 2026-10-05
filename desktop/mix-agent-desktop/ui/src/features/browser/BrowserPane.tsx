@@ -6,6 +6,7 @@ import {
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { useUi } from "@/lib/ui";
 import { Card, Field, Row, Section } from "@/components/layout";
 import { EmptyState } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +46,12 @@ let nextId = 0;
 export function BrowserPane() {
   const [status, setStatus] = useState<BrowserStatus | null>(null);
   const [profiles, setProfiles] = useState<BrowserProfileView[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string>(() => crypto.randomUUID());
+  // Default to the active conversation's workspace so a manual sign-in lands in
+  // the profile the agent will later browse with.
+  const activeWorkspace = useUi((s) => s.workspaceId);
+  const [workspaceId, setWorkspaceId] = useState<string>(
+    () => activeWorkspace ?? crypto.randomUUID(),
+  );
   const [action, setAction] = useState<Action>("info");
   const [url, setUrl] = useState("");
   const [selector, setSelector] = useState("");
@@ -66,14 +72,18 @@ export function BrowserPane() {
       setStatus(s);
       setProfiles(p);
       if (p.length > 0 && !p.some((x) => x.workspace_id === workspaceId)) {
-        setWorkspaceId(p[0].workspace_id);
+        const preferred =
+          activeWorkspace && p.some((x) => x.workspace_id === activeWorkspace)
+            ? activeWorkspace
+            : p[0].workspace_id;
+        setWorkspaceId(preferred);
       }
     } catch (e) {
       setLog((l) => [...l, { id: nextId++, action: "info", ok: false, summary: String(e) }]);
     } finally {
       setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, activeWorkspace]);
 
   useEffect(() => {
     void refresh();

@@ -4,13 +4,13 @@
 //! concludes anything. This module records which operations left an unconfirmed
 //! effect and decides whether a confirming read is still outstanding.
 //!
-//! Earlier this ledger was write-only: `requires_confirmation` inserted into a
-//! set that `is_blocked` and `confirm` never read from, so the `verification_required`
-//! event fired and nothing ever acted on it. The tool list also still referenced
-//! `delete_file` / `write_file`, which no longer exist, so only two of the
-//! destructive paths were even recognised.
+//! The ledger is keyed by the *target* of the effect (a path, or a shell
+//! command), not by the tool name. Keying on the tool meant editing `a.rs` and
+//! `b.rs` left a single `edit` entry, so reading `a.rs` back cleared the gate
+//! for `b.rs` too. A confirming read now clears only the targets it actually
+//! covers.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,33 +20,29 @@ pub struct VerificationGate {
     pub required_tools: Vec<String>,
 }
 
-/// Tools whose effects must be confirmed by a follow-up read.
-const DESTRUCTIVE_TOOLS: &[&str] = &["files", "edit", "terminal"];
+/// Commands whose bare name makes a `terminal` call destructive.
+const DESTRUCTIVE_COMMANDS: &[&str] = &[
+    "rm", "rmdir", "mv", "dd", "mkfs", "chmod", "chown", "chgrp", "kill", "pkill", "killall",
+    "truncate", "shred", "tee", "unlink",
+];
 
-/// Shell fragments that make a `terminal` call destructive. Kept as substrings
-/// because a full parse would need to model quoting, chaining and substitution,
-/// and the failure mode of a miss is a missed warning, not a wrong action.
-const DESTRUCTIVE_SHELL_FRAGMENTS: &[&str] = &[
-    "rm ",
-    "rm\t",
-    "rm -",
-    "mv ",
-    "dd ",
-    "> ",
-    ">>",
-    "mkfs",
-    "chmod",
-    "chown",
-    "kill",
-    "truncate",
+/// Multi-word fixtures that a token walk would miss.
+const DESTRUCTIVE_GIT: &[&str] = &[
     "git reset",
     "git clean",
     "git checkout",
+    "git restore",
+    "git branch -d",
+    "git branch -D",
+    "git push --force",
+    "git push -f",
 ];
 
 #[derive(Default)]
 pub struct VerificationLedger {
-    outstanding: HashSet<String>,
+    /// Outstanding effects, each mapped to the human-readable reason the effect
+    /// is destructive. Keyed by target so unrelated paths stay independent.
+    outstanding: HashMap<String, String>,
     last_reason: Option<String>,
 }
 
@@ -57,15 +53,32 @@ impl VerificationLedger {
         let Some(reason) = destructive_reason(tool, args) else {
             return false;
         };
-        self.outstanding.insert(tool.to_string());
+        self.outstanding.insert(effect_key(tool, args), reason.clone());
         self.last_reason = Some(reason);
         true
     }
 
-    /// A confirming read clears the outstanding gate.
-    pub fn confirm(&mut self, tool: &str) {
-        if is_read_tool(tool) {
-            self.outstanding.clear();
+    /// A confirming read clears the target(s) it actually covers.
+    pub fn confirm(&mut self, tool: &str, args: &serde_json::Value) {
+        match tool {
+            "files" => {
+                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                if action == "read" || action == "list" {
+                    match path_arg(args) {
+                        Some(path) => {
+                            self.outstanding.remove(&format!("path:{path}"));
+                        }
+                        // A bare listing confirms the whole tree.
+                        None => self.outstanding.clear(),
+                    }
+                }
+            }
+            // Broad searches and fetches are not path-specific; treat them as
+            // confirming the outstanding set rather than pinning the agent.
+            "glob" | "grep" | "web_fetch" | "web_search" | "network" | "image_vision" => {
+                self.outstanding.clear();
+            }
+            _ => {}
         }
     }
 
@@ -74,7 +87,7 @@ impl VerificationLedger {
     }
 
     pub fn outstanding(&self) -> Vec<String> {
-        let mut out: Vec<String> = self.outstanding.iter().cloned().collect();
+        let mut out: Vec<String> = self.outstanding.keys().cloned().collect();
         out.sort();
         out
     }
@@ -84,11 +97,24 @@ impl VerificationLedger {
     }
 }
 
+fn path_arg(args: &serde_json::Value) -> Option<&str> {
+    args.get("path").and_then(|v| v.as_str())
+}
+
+fn command_arg(args: &serde_json::Value) -> Option<&str> {
+    args.get("command").and_then(|v| v.as_str())
+}
+
+/// A stable key for the effect a destructive call leaves behind.
+fn effect_key(tool: &str, args: &serde_json::Value) -> String {
+    match tool {
+        "terminal" => format!("cmd:{}", command_arg(args).unwrap_or_default()),
+        _ => format!("path:{}", path_arg(args).unwrap_or_default()),
+    }
+}
+
 /// Human-readable reason a call is destructive, or `None` when it is not.
 pub fn destructive_reason(tool: &str, args: &serde_json::Value) -> Option<String> {
-    if !DESTRUCTIVE_TOOLS.contains(&tool) {
-        return None;
-    }
     match tool {
         "files" => match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
             "delete" => Some("files.delete removed content".to_string()),
@@ -96,15 +122,40 @@ pub fn destructive_reason(tool: &str, args: &serde_json::Value) -> Option<String
             _ => None,
         },
         "edit" => Some("edit changed a file on disk".to_string()),
-        "terminal" => {
-            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            DESTRUCTIVE_SHELL_FRAGMENTS
-                .iter()
-                .find(|fragment| command.contains(**fragment))
-                .map(|fragment| format!("terminal ran a destructive command ({fragment:?})"))
-        }
+        "terminal" => shell_destructive_reason(command_arg(args).unwrap_or("")),
         _ => None,
     }
+}
+
+/// Detect a destructive shell command without the substring false positives of
+/// the previous fragment list (where `"rm "` matched `"confirm "`).
+pub fn shell_destructive_reason(command: &str) -> Option<String> {
+    // File-descriptor duplication (`2>&1`, `&>`) is the common redirection that
+    // is *not* a write to a file, so scrub it before looking for `>`.
+    let scrubbed = command.replace("2>&1", " ").replace("&>", " ");
+    if scrubbed.contains(">>") || scrubbed.contains('>') {
+        return Some("shell output redirection".to_string());
+    }
+    for pattern in DESTRUCTIVE_GIT {
+        if command.contains(pattern) {
+            return Some(format!("destructive git command ({pattern})"));
+        }
+    }
+    for raw in scrubbed.split(|c: char| {
+        c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '{' | '}')
+    }) {
+        let token = raw.trim_matches(|c: char| matches!(c, '\'' | '"' | '`' | '$' | '(' | ')'));
+        if token.is_empty() {
+            continue;
+        }
+        if DESTRUCTIVE_COMMANDS.contains(&token) {
+            return Some(format!("destructive command ({token})"));
+        }
+        if token == "-delete" || token == "--delete" {
+            return Some("find -delete".to_string());
+        }
+    }
+    None
 }
 
 /// Tools that can serve as the confirming read.
@@ -128,7 +179,7 @@ mod tests {
         let mut ledger = VerificationLedger::default();
         assert!(ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"}))));
         assert!(ledger.is_blocked());
-        assert_eq!(ledger.outstanding(), vec!["edit".to_string()]);
+        assert_eq!(ledger.outstanding(), vec!["path:a.rs".to_string()]);
     }
 
     #[test]
@@ -154,24 +205,38 @@ mod tests {
 
     #[test]
     fn a_destructive_shell_command_is_flagged() {
-        let mut ledger = VerificationLedger::default();
-        assert!(ledger.requires_confirmation(
-            "terminal",
-            &args(serde_json::json!({"command": "rm -rf build"}))
-        ));
-        assert!(ledger
-            .last_reason()
-            .expect("reason")
-            .contains("destructive command"));
+        assert!(shell_destructive_reason("rm -rf build").is_some());
+        assert!(shell_destructive_reason("git reset --hard HEAD~5").is_some());
+        assert!(shell_destructive_reason("cargo test --workspace > out.log").is_some());
+        assert!(shell_destructive_reason("find . -name '*.tmp' -delete").is_some());
     }
 
     #[test]
     fn a_benign_shell_command_is_not_flagged() {
+        assert!(shell_destructive_reason("cargo test --workspace").is_none());
+        assert!(shell_destructive_reason("git status").is_none());
+        // The old substring list flagged `confirm`, `form`, `perform` as `rm`.
+        assert!(shell_destructive_reason("confirm the deployment").is_none());
+        assert!(shell_destructive_reason("./perform_checks.sh").is_none());
+        // fd duplication is not a file write.
+        assert!(shell_destructive_reason("make 2>&1 | tail -n 20").is_none());
+    }
+
+    #[test]
+    fn a_confirming_read_clears_only_its_own_target() {
         let mut ledger = VerificationLedger::default();
-        assert!(!ledger.requires_confirmation(
-            "terminal",
-            &args(serde_json::json!({"command": "cargo test --workspace"}))
-        ));
+        ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
+        ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "b.rs"})));
+        assert_eq!(ledger.outstanding().len(), 2);
+
+        ledger.confirm("files", &args(serde_json::json!({"action": "read", "path": "a.rs"})));
+        assert_eq!(
+            ledger.outstanding(),
+            vec!["path:b.rs".to_string()],
+            "reading a.rs must not clear the gate for b.rs"
+        );
+
+        ledger.confirm("files", &args(serde_json::json!({"action": "read", "path": "b.rs"})));
         assert!(!ledger.is_blocked());
     }
 
@@ -180,22 +245,16 @@ mod tests {
         let mut ledger = VerificationLedger::default();
         ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
         assert!(ledger.is_blocked());
-        ledger.confirm("files");
-        assert!(
-            !ledger.is_blocked(),
-            "the read must actually clear the gate"
-        );
+        ledger.confirm("files", &args(serde_json::json!({"action": "read", "path": "a.rs"})));
+        assert!(!ledger.is_blocked(), "the read must actually clear the gate");
     }
 
     #[test]
     fn a_write_does_not_clear_the_gate() {
         let mut ledger = VerificationLedger::default();
         ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
-        ledger.confirm("edit");
-        assert!(
-            ledger.is_blocked(),
-            "another write is not a confirming read"
-        );
+        ledger.confirm("edit", &args(serde_json::json!({"path": "a.rs"})));
+        assert!(ledger.is_blocked(), "another write is not a confirming read");
     }
 
     #[test]

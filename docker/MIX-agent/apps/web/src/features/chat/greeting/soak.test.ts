@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { en } from "@/app/i18n";
+import { beforeEach, describe, expect, it } from "vitest";
+import { setLanguage } from "@/app/i18n";
+import { greetingEn } from "./translations";
 import { welcomeFrom } from "./index";
 import { buildSignals } from "./signals";
+
+// 全日程の組み合わせを検証するため、日本の暦を含む日本語表示に固定する。
+beforeEach(() => setLanguage("ja"));
 
 function signalsFor(now: Date, overrides = {}) {
   return buildSignals({
@@ -57,8 +61,8 @@ describe("全日程を通した合成", () => {
     for (let day = 0; day < 365; day++) {
       for (const hour of [9, 20]) {
         const welcome = welcomeFrom(signalsFor(new Date(2026, 0, 1 + day, hour, 3)), [], random);
-        for (const sentence of welcome.title) expect(Object.keys(en), sentence).toContain(sentence);
-        expect(Object.keys(en), welcome.note).toContain(welcome.note);
+        for (const id of welcome.titleIds) expect(greetingEn[id], id).toBeTruthy();
+        expect(greetingEn[welcome.noteId], welcome.noteId).toBeTruthy();
       }
     }
   }, 60_000);

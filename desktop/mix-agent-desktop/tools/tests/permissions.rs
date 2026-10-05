@@ -4,7 +4,7 @@
 use mixd_storage::{SecretStore, Storage};
 use mixd_tools::approval::ApprovalOutcome;
 use mixd_tools::execute::{PermissionContext, ToolExecutor};
-use mixd_tools::permission::PermissionDecision;
+use mixd_tools::permission::{PermissionDecision, RuleScope};
 use std::env;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -89,7 +89,7 @@ async fn falls_back_to_the_tool_default_when_no_rule_exists() {
 async fn stored_rule_overrides_the_default() {
     let (executor, _dir) = executor().await;
     executor
-        .remember_rule(TOOL, PermissionDecision::Deny)
+        .remember_rule(TOOL, PermissionDecision::Deny, RuleScope::Global, None, None)
         .await
         .expect("write rule");
     assert_eq!(
@@ -112,7 +112,7 @@ async fn stored_rule_overrides_the_default() {
 async fn a_later_settings_edit_beats_an_older_always_allow() {
     let (executor, _dir) = executor().await;
     executor
-        .remember_rule(TOOL, PermissionDecision::Allow)
+        .remember_rule(TOOL, PermissionDecision::Allow, RuleScope::Global, None, None)
         .await
         .expect("always allow");
     // The user then changes the same tool to `deny` in Settings, which writes a
@@ -151,7 +151,14 @@ async fn pending_prompt_blocks_until_answered() {
     let (executor, _dir) = executor().await;
     let run_id = seed_call(&executor, "call-1").await;
     let (rx, _expires) = executor
-        .request_approval(run_id, "call-1", TOOL, serde_json::json!({"cmd": "ls"}))
+        .request_approval(
+            run_id,
+            "call-1",
+            TOOL,
+            serde_json::json!({"cmd": "ls"}),
+            None,
+            None,
+        )
         .await
         .expect("prompt");
 
@@ -185,12 +192,86 @@ async fn pending_prompt_blocks_until_answered() {
     );
 }
 
+/// "Always Allow" must remember the *call* it was shown for, not the whole
+/// tool. A prompt opened for one workspace and one command must not silently
+/// permit a different target or a different workspace.
+#[tokio::test]
+async fn always_allow_is_scoped_to_the_prompted_call() {
+    let (executor, _dir) = executor().await;
+    let workspace = Uuid::new_v4();
+    let run_id = seed_call(&executor, "call-scoped").await;
+    let (rx, _expires) = executor
+        .request_approval(
+            run_id,
+            "call-scoped",
+            TOOL,
+            serde_json::json!({"command": "ls -la"}),
+            Some(workspace),
+            Some("ls -la".to_string()),
+        )
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+    executor
+        .resolve_approval(
+            &approval_id,
+            TOOL,
+            ApprovalOutcome::Approve { remember: true },
+        )
+        .await
+        .expect("resolve");
+    rx.await.expect("outcome delivered");
+
+    let same_call = PermissionContext {
+        workspace_id: Some(workspace),
+        pattern_target: Some("ls -la"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &same_call, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Allow,
+        "the prompted call must be remembered"
+    );
+
+    let other_command = PermissionContext {
+        workspace_id: Some(workspace),
+        pattern_target: Some("rm -rf /"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &other_command, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask,
+        "a different command must still prompt"
+    );
+
+    let other_workspace = PermissionContext {
+        workspace_id: Some(Uuid::new_v4()),
+        pattern_target: Some("ls -la"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &other_workspace, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask,
+        "another workspace must not inherit the allow"
+    );
+}
+
 #[tokio::test]
 async fn deny_wakes_the_run_without_creating_a_rule() {
     let (executor, _dir) = executor().await;
     let run_id = seed_call(&executor, "call-2").await;
     let (rx, _expires) = executor
-        .request_approval(run_id, "call-2", TOOL, serde_json::json!({}))
+        .request_approval(
+            run_id,
+            "call-2",
+            TOOL,
+            serde_json::json!({}),
+            None,
+            None,
+        )
         .await
         .expect("prompt");
     let approval_id = executor.list_pending().await[0].approval_id.clone();
@@ -215,7 +296,14 @@ async fn expired_prompts_are_not_listed() {
     let (executor, _dir) = executor().await;
     let run_id = seed_call(&executor, "call-3").await;
     executor
-        .request_approval(run_id, "call-3", TOOL, serde_json::json!({}))
+        .request_approval(
+            run_id,
+            "call-3",
+            TOOL,
+            serde_json::json!({}),
+            None,
+            None,
+        )
         .await
         .expect("prompt");
     // Force the prompt to look stale.
@@ -237,6 +325,8 @@ async fn an_expired_prompt_is_reclaimed_from_the_map_and_the_database() {
             "call-expired",
             TOOL,
             serde_json::json!({"cmd": "rm -rf"}),
+            None,
+            None,
         )
         .await
         .expect("prompt");
@@ -284,7 +374,14 @@ async fn resolving_a_prompt_clears_the_waiter_and_the_row() {
     let (executor, _dir) = executor().await;
     let run_id = seed_call(&executor, "call-resolved").await;
     let (rx, _expires) = executor
-        .request_approval(run_id, "call-resolved", TOOL, serde_json::json!({}))
+        .request_approval(
+            run_id,
+            "call-resolved",
+            TOOL,
+            serde_json::json!({}),
+            None,
+            None,
+        )
         .await
         .expect("prompt");
     let approval_id = executor.list_pending().await[0].approval_id.clone();
@@ -311,7 +408,14 @@ async fn tool_name_is_recoverable_after_the_prompt_is_gone() {
     let (executor, _dir) = executor().await;
     let run_id = seed_call(&executor, "call-4").await;
     let (rx, _expires) = executor
-        .request_approval(run_id, "call-4", "browser_action", serde_json::json!({}))
+        .request_approval(
+            run_id,
+            "call-4",
+            "browser_action",
+            serde_json::json!({}),
+            None,
+            None,
+        )
         .await
         .expect("prompt");
     let approval_id = executor.list_pending().await[0].approval_id.clone();

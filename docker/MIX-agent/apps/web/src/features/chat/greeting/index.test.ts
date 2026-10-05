@@ -15,7 +15,7 @@ const workspace = {
   lastMessageAt: new Date(now.getTime() - 3_600_000).getTime(),
 };
 
-/** localStorage の代わりに使う、保存ceedingが例外を投げるメモリ実装。 */
+/** localStorage の代わりに使う、保存処理が例外を投げるメモリ実装。 */
 function fakeStorage(value: string | null = null, fail = false): Storage {
   const store = new Map<string, string>();
   if (value !== null) store.set("mix-agent-welcome", value);
@@ -136,6 +136,26 @@ describe("文面の組み立て", () => {
       () => 0.1,
     );
     expect(welcome.title.join("")).toContain("こどもの日です。");
+  });
+
+  it("英語表示では日本の祝日の文を出さない", () => {
+    setLanguage("en");
+    const holidaySignals = buildSignals({
+      now: new Date(2026, 4, 5, 9, 0),
+      conversationCount: 0,
+      pinnedCount: 0,
+      projectCount: 0,
+      agentCount: 0,
+      lastMessageAt: null,
+      lastVisitAt: new Date(2026, 4, 3, 9, 0).getTime(),
+      firstSeenTodayAt: new Date(2026, 4, 3, 9, 0).getTime(),
+      visits: 2,
+    });
+    for (let i = 0; i < 20; i++) {
+      const welcome = welcomeFrom(holidaySignals, [], () => i / 20);
+      expect(welcome.titleIds).not.toContain("hl-9"); // こどもの日
+      expect(welcome.title.join("")).not.toContain("こどもの日です。");
+    }
   });
 });
 

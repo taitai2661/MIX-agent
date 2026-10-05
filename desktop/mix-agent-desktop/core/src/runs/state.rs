@@ -64,6 +64,11 @@ pub struct RunView {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub summary: String,
     pub budget: serde_json::Value,
+    /// Terminal error text when the Run failed (provider error, context
+    /// overflow, …). `None` for a Run that did not fail. Surfaced so the UI can
+    /// explain why a Run stopped instead of leaving a silent spinner.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 pub type RunState = RunView;

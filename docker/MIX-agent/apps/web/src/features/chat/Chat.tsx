@@ -44,7 +44,16 @@ import {
   CheckpointsPanel,
   StagnationPanel,
 } from "./AgentLoop";
-import { nextVisit, welcomeTitle, type Welcome, type WorkspaceSnapshot } from "./greeting";
+import {
+  nextVisit,
+  welcomeTitle,
+  welcomeNote,
+  greetingText,
+  suggestionLabelId,
+  suggestionPromptId,
+  type Welcome,
+  type WorkspaceSnapshot,
+} from "./greeting";
 import {
   liveToolCalls,
   parseRunEvent,
@@ -93,6 +102,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     [events, setEvents] = useState<RunEvent[]>([]),
     [streamConnected, setStreamConnected] = useState(false);
   const [welcome, setWelcome] = useState<Welcome | null>(null);
+  // `nextVisit` advances the stored visit count, so guard against React
+  // StrictMode's double-invoked effect: without this the count (and the recent
+  // fragment list) would be bumped twice per mount.
+  const welcomePicked = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null),
     composer = useRef<HTMLTextAreaElement>(null),
     bottom = useRef<HTMLDivElement>(null);
@@ -111,7 +124,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   });
   useEffect(() => { if (projectId) setSelectedProject(projectId); }, [projectId]);
   useEffect(() => {
-    if (welcome || !workspace) return;
+    if (welcomePicked.current || !workspace) return;
+    welcomePicked.current = true;
     setWelcome(
       nextVisit({
         ...workspace,
@@ -119,7 +133,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
         agentCount: agents.data?.length ?? 0,
       }).welcome,
     );
-  }, [agents.data, projects.data, welcome, workspace]);
+  }, [agents.data, projects.data, workspace]);
   const run = useQuery<Run>({
     queryKey: ["run", runId],
     queryFn: () => api("/runs/" + runId),
@@ -355,18 +369,18 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
               <p className="eyebrow">MIX</p>
               <h1>{welcomeTitle(welcome)}</h1>
               <div className="welcome-note">
-                <ShieldCheck size={14} /> {t(welcome.note)}
+                <ShieldCheck size={14} /> {welcomeNote(welcome)}
               </div>
               <div className="suggestions">
                 {welcome.suggestions.map((suggestion) => (
                   <button
                     key={suggestion.id}
                     onClick={() => {
-                      setText(suggestion.prompt);
+                      setText(greetingText(suggestionPromptId(suggestion.id), suggestion.prompt));
                       composer.current?.focus();
                     }}
                   >
-                    <b>{t(suggestion.label)}</b>
+                    <b>{greetingText(suggestionLabelId(suggestion.id), suggestion.label)}</b>
                     <CornerDownLeft size={15} />
                   </button>
                 ))}

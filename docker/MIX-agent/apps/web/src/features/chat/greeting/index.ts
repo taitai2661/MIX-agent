@@ -1,8 +1,9 @@
-import { getLanguage, t } from "@/app/i18n";
+import { getLanguage } from "@/app/i18n";
 import { compose } from "./compose";
 import { readHistory, remember, writeHistory } from "./history";
 import { buildSignals } from "./signals";
 import { suggestionsFor } from "./suggestions";
+import { greetingText } from "./translate";
 import type { Signals, Welcome } from "./types";
 
 export { activityOf, buildSignals, dayKind, dayOfYear, gapOf, partOfDay, seasonOf, workloadOf } from "./signals";
@@ -17,6 +18,7 @@ export {
 export { emptyHistory, readHistory, writeHistory, remember, type WelcomeHistory } from "./history";
 export { compatible, pickFragment } from "./compose";
 export { suggestionsFor } from "./suggestions";
+export { greetingText, suggestionLabelId, suggestionPromptId } from "./translate";
 export type {
   Activity,
   DayKind,
@@ -75,7 +77,9 @@ export function welcomeFrom(
   return {
     id: composed.used.join("/"),
     title: composed.title,
+    titleIds: composed.titleIds,
     note: composed.note.text,
+    noteId: composed.note.id,
     suggestions,
     used: [...composed.used, ...suggestions.map((suggestion) => suggestion.id)],
   };
@@ -84,11 +88,18 @@ export function welcomeFrom(
 /**
  * 文単位に分解した日本語の文を、表示言語で 1 文へまとめます。
  * 日本語は間なしで連結し、英語は各文が終止符を持つため空白で連結します。
+ * 翻訳は日本語原文ではなく部品 ID で引くため、原文を直しても英語は壊れません。
  */
 export function welcomeTitle(welcome: Welcome): string {
-  return getLanguage() === "ja"
-    ? welcome.title.join("")
-    : welcome.title.map((part) => t(part)).join(" ");
+  if (getLanguage() === "ja") return welcome.title.join("");
+  return welcome.title
+    .map((text, index) => greetingText(welcome.titleIds[index] ?? "", text))
+    .join(" ");
+}
+
+/** 補足の 1 文を表示言語で返します。 */
+export function welcomeNote(welcome: Welcome): string {
+  return greetingText(welcome.noteId, welcome.note);
 }
 
 export interface VisitResult {

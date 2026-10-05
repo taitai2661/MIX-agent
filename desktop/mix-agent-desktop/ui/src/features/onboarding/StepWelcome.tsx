@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
  * scope: a module-level `t()` captures the language that happened to be active
  * when the bundle was first evaluated and never updates. */
 const CAPABILITIES = [
-  { Icon: MessageSquare, title: "チャット", body: "質問、对談、アイデア出し" },
+  { Icon: MessageSquare, title: "チャット", body: "質問、対談、アイデア出し" },
   { Icon: Sparkles, title: "思考モード", body: "長い推論の過程をテーブルで" },
   { Icon: FolderTree, title: "エージェント", body: "フォルダの中のファイルを読み書き" },
   { Icon: Globe, title: "ブラウザ操作", body: "実際にブラウザを操作して検証" },

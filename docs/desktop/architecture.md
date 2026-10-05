@@ -291,13 +291,53 @@ Desktop が実際に持つ機能（差分・テスト・ブラウザ・プロジ
   実行していません。
 - `localStorage` を保存できないプライベートモードでの実挙動は未確認です。
 
+## 自律性・記憶・ツール実行の強化（2026-10-05 追記）
+
+Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修正。
+
+- **検証ゲートをターゲット単位化**（`core/src/runs/verification.rs`）。台帳のキーをツール名から
+  効果対象（パス／コマンド）に変更し、`a.rs` を読んでも `b.rs` の未確認書き込みは解除されない。
+  登録は dispatch **前**に行い、同一ターン内の `write` → `read` で正しく閉じるようにした。
+  `unverified_repair_turns` は台帳が空になった時点でリセットされ、複数ファイル作業でも
+  2 回で打ち切られない。破壊的コマンド判定もトークン／リダイレクトベースに置き換え、
+  `"rm "` が `"confirm "` に一致する誤検知を解消し、`find -delete` / `git restore` などを追加。
+- **web ツールの重複検知**（`core/src/runs/stagnation.rs`）。`read_key` が `query` / `url` を
+  見るようにし、無関係な 2 回目の検索が ReadLoop と誤判定されない。
+- **todo の per-run 化**（`tools/src/todo.rs`）。`TodoStore` を `run_id` でキー化し、サブエージェントや
+  スケジュール実行が親のチェックリストを上書きしない。
+- **resume の状態保持**（`app/src/commands/runs.rs`, `core/src/runs/{engine,checkpoint_store}.rs`）。
+  Run に `workspaceId` を保存して再開時に再利用し、checkpoint に `tool_calls` を載せて
+  予算カウンタを引き継ぐ。
+- **キャンセル伝播**。ツール dispatch・provider ストリームを `cancelled_signal` と race させ、
+  途中キャンセルを `Cancelled` として終了。打ち切り時は残りの tool call に結果を補い、
+  transcript に dangling な `tool_calls` を残さない。`terminal` の `max_wall_clock_ms` は
+  10 分に上限。
+- **検索の改善**（`core/src/retrieval.rs`）。CJK を unigram/bigram に分割、Memory は関連度 0 を除外し
+  `active`/`candidate`/`established` のみ対象、取得した Memory を `reinforce`、Knowledge は
+  文書あたり 2 チャンク、出力は項目 1200 字・全体 8000 字で打ち切り、「データであって指示ではない」と明示。
+- **memory ツール**（`tools/src/memory.rs`, `app/src/lib.rs`）。エージェントが
+  `recall` / `remember` / `forget` / `search_knowledge` を実行できる（`MemoryDispatch` 経由）。
+- **revision 復元の所有チェック**（`core/src/memory.rs`）。
+- **ツール実行の安全策**（`tools/src/network.rs`, `registry.rs`, `files.rs`）。
+  HTTP 本文は 2 MiB で打ち切り、クロスオリジンリダイレクトで `Authorization`/`Cookie` を除去、
+  web_search の件数と snippet を制限、browser の `navigate` に egress を適用、
+  `files.search` の 1 行を 500 字に制限。
+
+### 今回も未実装のもの
+
+- **embedding 検索 / FTS5**。`Provider` trait に `embed` が無く、ベクトル列・インデックスも
+  未整備のため、意味検索は未着手。現状は CJK 対応の lexical 検索。
+- PTY の対話 terminal（stdin 送出）。timeout 上限のみ追加。
+- `browser` の `evaluate` はページ内 `fetch` でローカル資源に到達し得る。`navigate` の
+  egress は塞いだが、完全な隔離ではない。
+
 ## 既知の残タスク
 
 - 署名鍵の生成と `latest.json` 発行基盤（auto-update を有効化する前作業）。
 - `bundle.createUpdaterArtifacts` の有効化（未設定）。
-- Knowledge は lexical 検索のみ。embedding 検索は未実装。
-- Memory の自動生成（Run 後の抽出）は未実装。手動 CRUD + revision のみ。
-- シグナル / PTY ベースの対話 terminal（現在は timeout 付きの実行のみ）。
+- Knowledge は lexical 検索のみ。embedding 検索は未実装（上記参照）。
+- Memory の自動生成（Run 後の抽出）は未実装。手動 CRUD + revision + `memory` ツールのみ。
+- シグナル / PTY ベースの対話 terminal（現在は上限付きの実行のみ）。
 - OS プロセス sandbox（macOS / Windows / Linux とも未実装）。
 - Provider プリセットは Docker 版の 52 件中 50 件（`cloudflare` と
   `azure-ai-foundry` が未移植）。

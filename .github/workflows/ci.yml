@@ -52,6 +52,19 @@ jobs:
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
 
+  # `desktop/` and `docker/` intentionally share no code, so the chat greeting
+  # (pools + English dictionary) is duplicated by hand. This guards against the
+  # duplication drifting without a compiler or a shared test suite to notice.
+  greeting-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Greeting parity check
+        run: python3 scripts/check-greeting-parity.py
+
   desktop-rust:
     runs-on: ${{ matrix.os }}
     strategy:

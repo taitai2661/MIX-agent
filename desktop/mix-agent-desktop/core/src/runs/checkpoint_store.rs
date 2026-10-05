@@ -73,8 +73,8 @@ impl CheckpointStore {
         checkpoint_id: &str,
         storage: &Storage,
     ) -> Option<CheckpointSnapshot> {
-        let row: Option<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
-            "SELECT data, step FROM run_checkpoints WHERE id = ? AND run_id = ?",
+        let row: Option<(String, i64, i64)> = sqlx::query_as::<_, (String, i64, i64)>(
+            "SELECT data, step, tool_count FROM run_checkpoints WHERE id = ? AND run_id = ?",
         )
         .bind(checkpoint_id)
         .bind(run_id.to_string())
@@ -82,7 +82,7 @@ impl CheckpointStore {
         .await
         .unwrap_or(None);
 
-        let (raw, step) = row?;
+        let (raw, step, tool_count) = row?;
         let data: serde_json::Value = serde_json::from_str(&raw).ok()?;
         let history = data
             .get("history")
@@ -92,6 +92,7 @@ impl CheckpointStore {
             serde_json::from_value(history).unwrap_or_default();
         Some(CheckpointSnapshot {
             step_index: step as u32,
+            tool_calls: tool_count as u32,
             messages,
         })
     }

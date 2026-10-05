@@ -13,6 +13,7 @@ use crate::edit::EditTool;
 use crate::egress::EgressPolicy;
 use crate::files::FilesTool;
 use crate::image_vision::ImageVisionTool;
+use crate::memory::{MemoryDispatch, MemoryTool};
 use crate::network::{NetworkTool, WebSearchTool};
 use crate::search::{GlobTool, GrepTool};
 use crate::skill::{SkillSource, SkillTool};
@@ -114,6 +115,13 @@ impl ToolRegistry {
         let tool = Arc::new(AgentTool::new(source, runner));
         self.tools.insert("agent".to_string(), tool.clone());
         self.agent_tool = Some(tool);
+        self
+    }
+
+    /// Attach the Memory / Knowledge tool so the agent can recall and persist.
+    pub fn with_memory(mut self, dispatch: Arc<dyn MemoryDispatch>) -> Self {
+        self.tools
+            .insert("memory".to_string(), Arc::new(MemoryTool::new(dispatch)));
         self
     }
 
@@ -240,6 +248,12 @@ impl ToolRegistry {
                 return Err(anyhow::anyhow!("browser backend is not available"));
             };
             let action = browser_action(&args)?;
+            // The browser is a second execution channel that used to bypass the
+            // egress policy entirely. At minimum, gate direct navigation on the
+            // same allowlist + private-IP deny the HTTP tools use.
+            if let mixd_browser::BrowserAction::Navigate { url } = &action {
+                self.egress.resolve_async(url).await?;
+            }
             let response = operator
                 .invoke(mixd_browser::BrowserCall {
                     workspace_id: ctx.workspace_id,

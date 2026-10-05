@@ -19,6 +19,10 @@ pub struct ConversationSummary {
     pub message_count: i64,
     #[serde(rename = "project_id")]
     pub project_id: Option<String>,
+    /// Stable workspace the conversation is bound to. Agent Runs, the browser
+    /// profile and workspace-scoped permission rules all key on it, so it must
+    /// not change between messages.
+    pub workspace_id: Option<String>,
 }
 
 #[tauri::command]
@@ -41,7 +45,8 @@ pub async fn fetch_conversation_summaries(
           (SELECT substr(json_extract(m.data, '$.content'), 1, 140) FROM messages m \
             WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), \
           (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id), \
-          json_extract(c.data, '$.projectId') \
+          json_extract(c.data, '$.projectId'), \
+          json_extract(c.data, '$.workspaceId') \
           FROM conversations c ORDER BY json_extract(c.data, '$.updatedAt') DESC",
     )
     .fetch_all(pool)
@@ -50,7 +55,7 @@ pub async fn fetch_conversation_summaries(
     Ok(rows
         .into_iter()
         .map(
-            |(id, title, mode, model_id, updated_at, preview, message_count, project_id)| {
+            |(id, title, mode, model_id, updated_at, preview, message_count, project_id, workspace_id)| {
                 ConversationSummary {
                     id,
                     title,
@@ -60,6 +65,7 @@ pub async fn fetch_conversation_summaries(
                     preview,
                     message_count,
                     project_id,
+                    workspace_id,
                 }
             },
         )
@@ -75,9 +81,10 @@ type ConversationRow = (
     Option<String>,
     i64,
     Option<String>,
+    Option<String>,
 );
 
-type ConversationDispatchRow = (String, String, String, String, String);
+type ConversationDispatchRow = (String, String, String, String, String, Option<String>);
 
 fn parse_ts(value: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(value)
@@ -119,11 +126,19 @@ pub async fn create_conversation(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
     let title = input.title.unwrap_or_else(|| "新しい会話".to_string());
+    // The conversation owns its workspace from creation. The agent's browser
+    // profile and workspace-scoped permission rules key on it, so it must not
+    // be regenerated per message.
+    let workspace_id = input
+        .workspace_id
+        .clone()
+        .filter(|w| Uuid::parse_str(w).is_ok())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let data = serde_json::json!({
         "title": title,
         "mode": input.mode,
         "modelId": input.model_id,
-        "workspaceId": input.workspace_id,
+        "workspaceId": workspace_id.clone(),
         "projectId": project_id,
         "updatedAt": now.to_rfc3339(),
         "state": "active",
@@ -144,6 +159,7 @@ pub async fn create_conversation(
         preview: None,
         message_count: 0,
         project_id,
+        workspace_id: Some(workspace_id),
     })
 }
 
@@ -215,14 +231,15 @@ pub async fn dispatch_run(
     let pool = state.storage.pool();
     let row: Option<ConversationDispatchRow> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.mode'), json_extract(data, '$.modelId'), \
-          json_extract(data, '$.title'), json_extract(data, '$.updatedAt') \
+          json_extract(data, '$.title'), json_extract(data, '$.updatedAt'), \
+          json_extract(data, '$.workspaceId') \
           FROM conversations WHERE id = ?",
     )
     .bind(&input.conversation_id)
     .fetch_optional(pool)
     .await
     .map_err(crate::error::cmd_err)?;
-    let (_, stored_mode, stored_model, _, _) =
+    let (_, stored_mode, stored_model, _, _, stored_workspace) =
         row.ok_or_else(|| "conversation not found".to_string())?;
 
     // A mode passed by the caller (the composer's mode selector) overrides the
@@ -244,11 +261,30 @@ pub async fn dispatch_run(
     }
     let model_id = input.model_id.clone().unwrap_or(stored_model);
     let provider_id = resolve_provider_id(state, &model_id).await?;
-    let workspace_id = input
+    // Prefer an explicitly requested workspace, then the one the conversation
+    // already owns, and only mint a fresh id for a conversation created before
+    // workspaces were persisted. Regenerating it on every message (the old
+    // behaviour) silently gave the agent a new browser profile, terminal
+    // session and permission scope each turn.
+    let stored_workspace = stored_workspace.and_then(|w| Uuid::parse_str(&w).ok());
+    let requested_workspace = input
         .workspace_id
         .clone()
-        .and_then(|w| Uuid::parse_str(&w).ok())
+        .and_then(|w| Uuid::parse_str(&w).ok());
+    let workspace_id = requested_workspace
+        .or(stored_workspace)
         .unwrap_or_else(Uuid::new_v4);
+    if stored_workspace != Some(workspace_id) {
+        // Persist it back so the browser pane and later Runs resolve the same
+        // profile.
+        let _ = sqlx::query(
+            "UPDATE conversations SET data = json_set(data, '$.workspaceId', ?) WHERE id = ?",
+        )
+        .bind(workspace_id.to_string())
+        .bind(&input.conversation_id)
+        .execute(pool)
+        .await;
+    }
 
     let run_id = RunId::new_v4();
     let now = Utc::now();
@@ -270,6 +306,7 @@ pub async fn dispatch_run(
         serde_json::json!({
             "mode": mode.as_str(),
             "modelId": model_id,
+            "workspaceId": workspace_id.to_string(),
             "status": "queued",
             "stepCount": 0,
             "toolCallCount": 0,
@@ -378,19 +415,29 @@ pub async fn dispatch_run(
             }
             Err(err) => {
                 tracing::error!(?err, %run_id, "run failed");
+                let message = err.to_string();
+                // Persist the reason into `data` as well as the status column:
+                // `run_view_from_row` reads `$.error`, and without it the UI
+                // (and any later history read) could not explain the failure.
                 mixd_storage::log_write(
-                    sqlx::query("UPDATE runs SET status = 'failed' WHERE id = ?")
-                        .bind(run_id.to_string())
-                        .execute(&pool)
-                        .await,
+                    sqlx::query(
+                        "UPDATE runs SET status = 'failed', \
+                         data = json_set(data, '$.status', 'failed', '$.error', ?, \
+                                          '$.updatedAt', ?) \
+                         WHERE id = ?",
+                    )
+                    .bind(&message)
+                    .bind(Utc::now().to_rfc3339())
+                    .bind(run_id.to_string())
+                    .execute(&pool)
+                    .await,
                     "record failed run status",
                 );
                 // The engine bailed before emitting anything, so the UI has no
                 // terminal event to key `isTerminal()` on and the spinner would
-                // run until the window is reloaded.
-                let message = err.to_string();
+                // run until the window was reloaded.
                 engine
-                    .emit(run_id, "error", serde_json::json!({ "error": message }))
+                    .emit(run_id, "error", serde_json::json!({ "error": message.clone() }))
                     .await;
                 engine
                     .emit(

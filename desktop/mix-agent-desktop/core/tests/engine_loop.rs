@@ -463,8 +463,22 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         )
         .await;
     let _drain = spawn_event_drain(&engine);
+    let run_id = Uuid::new_v4();
+    // `set_run_state` UPDATEs an existing row, so the failure can only be read
+    // back if the run row is present — same as a real dispatch.
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+         VALUES (?, ?, '{}', ?, 'running', ?)",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(Uuid::new_v4().to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(storage.pool())
+    .await
+    .expect("insert run");
     let mut request = RunRequest {
-        run_id: Uuid::new_v4(),
+        run_id,
         conversation_id: Uuid::new_v4(),
         workspace_id: Uuid::new_v4(),
         root_path: None,
@@ -485,6 +499,14 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
     let outcome = engine.execute(request).await.expect("run");
     assert_eq!(outcome.status, RunStatus::Failed);
     assert!(outcome.text.is_empty());
+    // The reason must survive on the Run view, or the UI shows a silent stop.
+    let view = engine.run_state(run_id).await.expect("run row to read back");
+    assert_eq!(view.status, RunStatus::Failed);
+    assert_eq!(
+        view.error.as_deref(),
+        Some("upstream exploded"),
+        "the provider error must be surfaced on the Run"
+    );
 }
 
 #[tokio::test]
@@ -703,6 +725,7 @@ async fn checkpointing_trims_to_its_limit() {
     for step in 0..5u32 {
         let snapshot = CheckpointSnapshot {
             step_index: step,
+            tool_calls: 0,
             messages: vec![HistoryMessage {
                 role: "user".to_string(),
                 content: format!("step {step}"),
@@ -761,6 +784,7 @@ async fn a_history_message_round_trips_through_serde() {
 async fn resuming_replays_the_checkpointed_history() {
     let snapshot = CheckpointSnapshot {
         step_index: 3,
+        tool_calls: 0,
         messages: vec![
             HistoryMessage {
                 role: "user".to_string(),
@@ -811,6 +835,7 @@ async fn a_restored_history_reaches_the_provider_with_its_tool_calls() {
     };
     let snapshot = CheckpointSnapshot {
         step_index: 2,
+        tool_calls: 0,
         messages: vec![
             HistoryMessage {
                 role: "user".to_string(),

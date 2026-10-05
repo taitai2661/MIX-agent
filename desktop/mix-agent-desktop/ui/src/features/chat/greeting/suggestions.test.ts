@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dictionary } from "@/lib/i18n";
+import { greetingEn } from "./translations";
+import { suggestionLabelId, suggestionPromptId } from "./translate";
 import { suggestionsFor } from "./suggestions";
 import { buildSignals } from "./signals";
 
@@ -54,10 +55,9 @@ describe("提案の生成", () => {
   });
 
   it("ラベルとプロンプトに英語訳がある", () => {
-    const keys = new Set(Object.keys(dictionary));
     for (const item of suggestionsFor(signals(), [], 30, sequence([0.1, 0.9]))) {
-      expect(keys, item.id).toContain(item.label);
-      expect(keys, item.id).toContain(item.prompt);
+      expect(greetingEn[suggestionLabelId(item.id)], item.id).toBeTruthy();
+      expect(greetingEn[suggestionPromptId(item.id)], item.id).toBeTruthy();
     }
   });
 

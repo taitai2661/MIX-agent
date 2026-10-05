@@ -15,6 +15,7 @@ pub mod egress;
 pub mod execute;
 pub mod files;
 pub mod image_vision;
+pub mod memory;
 pub mod network;
 pub mod permission;
 pub mod registry;
@@ -122,5 +123,6 @@ pub trait Tool: Send + Sync {
 
 pub use egress::EgressPolicy;
 pub use execute::PermissionContext;
+pub use memory::MemoryDispatch;
 pub use permission::{PermissionDecision, PermissionRule, RuleScope};
 pub use registry::{McpDispatch, ToolRegistry};

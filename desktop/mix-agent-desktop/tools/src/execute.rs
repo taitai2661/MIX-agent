@@ -290,7 +290,14 @@ impl ToolExecutor {
         let remember = matches!(outcome, ApprovalOutcome::Approve { remember: true });
         let approved = matches!(outcome, ApprovalOutcome::Approve { .. });
         if remember {
-            self.remember_rule(tool_id, decision).await?;
+            let (workspace_id, pattern) = self.approval_scope(approval_id).await;
+            let scope = if workspace_id.is_some() {
+                RuleScope::Workspace
+            } else {
+                RuleScope::Global
+            };
+            self.remember_rule(tool_id, decision, scope, workspace_id, pattern.as_deref())
+                .await?;
         }
         sqlx::query(
             "UPDATE approvals SET status = ?1, data = json_set(data, '$.grantedAt', ?2) \
@@ -320,35 +327,90 @@ impl ToolExecutor {
 
     /// Write a durable permission rule for a Tool ("Always Allow" / "Never").
     ///
-    /// `Always Allow` from a prompt is stored as a global rule with no pattern
-    /// — the same behaviour as the previous "always" scope. Workspace-scoped
-    /// rules are written explicitly by [`crate::registry`] consumers.
+    /// The rule is scoped to the call that prompted it: the run's workspace and
+    /// the tool's pattern target (a path, command, URL, browser action, or MCP
+    /// connection id). Remembering a patternless *global* allow instead — which
+    /// is what this used to do — meant one click on a single `terminal`
+    /// command silently allowed every future `terminal` call, including
+    /// destructive ones, plus every future `files` delete and `browser`
+    /// `evaluate`. `scope` is normalised: a workspace rule without a workspace
+    /// id downgrades to global rather than becoming unmatchable.
     pub async fn remember_rule(
         &self,
         tool_id: &str,
         decision: PermissionDecision,
+        scope: RuleScope,
+        workspace_id: Option<Uuid>,
+        pattern: Option<&str>,
     ) -> anyhow::Result<()> {
+        let (scope, workspace_id) = match (scope, workspace_id) {
+            (RuleScope::Workspace, Some(ws)) => (RuleScope::Workspace, Some(ws)),
+            _ => (RuleScope::Global, None),
+        };
+        let pattern = pattern.map(str::trim).filter(|p| !p.is_empty());
         let rule = json!({
             "toolId": tool_id,
-            "scope": "global",
+            "scope": scope.as_str(),
             "decision": match decision {
                 PermissionDecision::Allow => "allow",
                 PermissionDecision::Ask => "ask",
                 PermissionDecision::Deny => "deny",
             },
-            "pattern": null,
+            "pattern": pattern,
+            "workspaceId": workspace_id.map(|w| w.to_string()),
             "updatedAt": Utc::now().to_rfc3339(),
         });
+        // Deterministic id so repeating "Always Allow" for the same target
+        // refreshes one row instead of accumulating duplicates. The `prompt:`
+        // prefix keeps these apart from the rule ids `set_permission_rule`
+        // writes, so a later Settings edit is never clobbered.
+        let rule_id = match (workspace_id, pattern) {
+            (Some(ws), Some(p)) => format!("prompt:{tool_id}:{ws}:{p}"),
+            (Some(ws), None) => format!("prompt:{tool_id}:{ws}"),
+            (None, Some(p)) => format!("prompt:{tool_id}::{p}"),
+            (None, None) => format!("prompt:{tool_id}"),
+        };
         sqlx::query(
             "INSERT INTO permission_rules (id, owner_id, data) VALUES (?1, ?2, ?3) \
              ON CONFLICT(id) DO UPDATE SET data = excluded.data",
         )
-        .bind(format!("global:{}", tool_id))
+        .bind(rule_id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
         .bind(rule.to_string())
         .execute(self.storage.pool())
         .await?;
         Ok(())
+    }
+
+    /// The workspace and pattern target a prompt was opened for, read from the
+    /// persisted `approvals` row.
+    ///
+    /// This is what lets "Always Allow" remember the *call* rather than the
+    /// tool: the in-memory prompt may already be gone by the time the user
+    /// answers, but the row still carries the scope the engine captured.
+    async fn approval_scope(&self, approval_id: &str) -> (Option<Uuid>, Option<String>) {
+        use sqlx::Row;
+        let row = sqlx::query("SELECT data FROM approvals WHERE id = ?")
+            .bind(approval_id)
+            .fetch_optional(self.storage.pool())
+            .await
+            .ok()
+            .flatten();
+        let Some(row) = row else {
+            return (None, None);
+        };
+        let raw: String = row.try_get("data").unwrap_or_default();
+        let data: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+        let workspace_id = data
+            .get("workspaceId")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok());
+        let pattern = data
+            .get("patternTarget")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+        (workspace_id, pattern)
     }
 
     /// Which Tool a pending prompt belongs to, so a "remember" decision can be
@@ -468,6 +530,8 @@ impl ToolExecutor {
         tool_call_id: &str,
         tool_name: &str,
         arguments: serde_json::Value,
+        workspace_id: Option<Uuid>,
+        pattern_target: Option<String>,
     ) -> anyhow::Result<(oneshot::Receiver<ApprovalOutcome>, chrono::DateTime<Utc>)> {
         let now = Utc::now();
         let approval = PendingApproval {
@@ -487,6 +551,8 @@ impl ToolExecutor {
             tool_name,
             approval.arguments.clone(),
             approval.expires_at,
+            workspace_id,
+            pattern_target,
         )
         .await?;
 
@@ -576,6 +642,7 @@ impl ToolExecutor {
     }
 
     /// Persist an approval row.
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_approval(
         &self,
         approval_id: &str,
@@ -584,12 +651,18 @@ impl ToolExecutor {
         tool_name: &str,
         arguments: serde_json::Value,
         expires: chrono::DateTime<Utc>,
+        workspace_id: Option<Uuid>,
+        pattern_target: Option<String>,
     ) -> anyhow::Result<()> {
         let data = json!({
             "toolName": tool_name,
             "arguments": arguments,
             "grantedAt": null,
             "remember": false,
+            // Captured at prompt time so "Always Allow" can scope the rule to
+            // this call instead of the whole tool.
+            "workspaceId": workspace_id.map(|w| w.to_string()),
+            "patternTarget": pattern_target,
         });
         sqlx::query(
             "INSERT INTO approvals (id, owner_id, data, run_id, tool_call_id, status, expires) \

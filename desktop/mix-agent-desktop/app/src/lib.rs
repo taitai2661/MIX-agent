@@ -50,6 +50,54 @@ impl mixd_tools::McpDispatch for McpBridge {
     }
 }
 
+/// Bridges the core Memory / Knowledge services into the `memory` Tool.
+struct CoreMemoryDispatch {
+    storage: Arc<Storage>,
+}
+
+#[async_trait_impl::async_trait]
+impl mixd_tools::memory::MemoryDispatch for CoreMemoryDispatch {
+    async fn recall(&self, query: &str, limit: usize) -> anyhow::Result<serde_json::Value> {
+        let hits = mixd_core::retrieval::retrieve_memories(&self.storage, query, limit).await?;
+        Ok(serde_json::json!({ "memories": hits }))
+    }
+
+    async fn remember(
+        &self,
+        title: &str,
+        content: &str,
+        scope: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let item = mixd_core::memory::MemoryService::create(
+            &self.storage,
+            mixd_core::memory::MemoryCreate {
+                title: title.to_string(),
+                content: content.to_string(),
+                role: "fact".to_string(),
+                scope: scope.to_string(),
+                source_kind: "agent".to_string(),
+                task_id: None,
+            },
+        )
+        .await?;
+        Ok(serde_json::json!(item))
+    }
+
+    async fn forget(&self, id: &str) -> anyhow::Result<serde_json::Value> {
+        mixd_core::memory::MemoryService::delete(&self.storage, id).await?;
+        Ok(serde_json::json!({ "deleted": id }))
+    }
+
+    async fn search_knowledge(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<serde_json::Value> {
+        let hits = mixd_core::retrieval::retrieve_knowledge(&self.storage, query, limit).await?;
+        Ok(serde_json::json!({ "knowledge": hits }))
+    }
+}
+
 /// Serves the skill catalogue to the `skill` Tool from the database.
 struct DbSkillSource {
     storage: Arc<Storage>,
@@ -332,6 +380,9 @@ pub(crate) fn build_registry(
             }),
             agent_runner.clone(),
         )
+        .with_memory(Arc::new(CoreMemoryDispatch {
+            storage: storage.clone(),
+        }))
 }
 
 pub async fn build_app_state(
@@ -394,6 +445,9 @@ pub async fn build_app_state(
     // model no provider could serve. Dropped once at launch so an existing
     // installation cleans itself up.
     prune_orphan_models(storage.as_ref()).await;
+    // Runs left in flight by a crash or force-quit can never advance: the
+    // cancellation and approval-waiter handles live in memory only.
+    reconcile_stale_runs(storage.as_ref()).await;
     Ok(AppState {
         storage,
         secrets,
@@ -424,6 +478,45 @@ pub(crate) async fn load_egress_policy(storage: &Storage) -> mixd_tools::EgressP
         .map(|settings| settings.egress_allowlist)
         .unwrap_or_default();
     mixd_tools::EgressPolicy::from_allowlist(allowlist)
+}
+
+/// Reconcile Runs left mid-flight by a crash or force-quit.
+///
+/// The engine keeps its cancellation and approval-waiter handles in memory, so
+/// after a restart nothing can advance a `running`, `waiting_approval` or
+/// `budget_extension_pending` row: it stays "active" forever, diagnostics
+/// counts it as a phantom active Run, and an orphaned approval can never be
+/// answered because the waiter that would wake it is gone. Mark them
+/// interrupted once at startup and expire their pending prompts.
+async fn reconcile_stale_runs(storage: &Storage) {
+    let now = chrono::Utc::now().to_rfc3339();
+    let runs = sqlx::query(
+        "UPDATE runs SET status = 'interrupted', \
+         data = json_set(data, '$.status', 'interrupted', '$.updatedAt', ?1) \
+         WHERE status IN ('queued','running','waiting_approval','budget_extension_pending')",
+    )
+    .bind(&now)
+    .execute(storage.pool())
+    .await;
+    match runs {
+        Ok(res) if res.rows_affected() > 0 => tracing::warn!(
+            rows = res.rows_affected(),
+            "marked runs left in flight by a previous session as interrupted"
+        ),
+        Ok(_) => {}
+        Err(err) => tracing::error!(%err, "reconciling stale runs failed"),
+    }
+    let approvals = sqlx::query("UPDATE approvals SET status = 'expired' WHERE status = 'pending'")
+        .execute(storage.pool())
+        .await;
+    match approvals {
+        Ok(res) if res.rows_affected() > 0 => tracing::warn!(
+            rows = res.rows_affected(),
+            "expired orphaned approvals from a previous session"
+        ),
+        Ok(_) => {}
+        Err(err) => tracing::error!(%err, "expiring orphaned approvals failed"),
+    }
 }
 
 /// Delete every `models` row whose provider no longer exists.

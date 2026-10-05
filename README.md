@@ -31,6 +31,21 @@
 | Docker 版 | v0.2.3 をリリース済み（既存機能）。変更内容は [`docker/MIX-agent/docs/release-notes-v0.2.3.md`](docker/MIX-agent/docs/release-notes-v0.2.3.md) |
 | Desktop 版 | Phase 0〜6 完了。Phase 7（macOS 完成 + Windows α + Linux α）は未着手。フェーズの内訳は [`desktop/README.md`](desktop/README.md) の「開発フェーズ」を参照 |
 
+## 挨拶プールの整合チェック
+
+空チャットの挨拶（`features/chat/greeting/`）は `desktop/` と `docker/` で
+コードを共有しない方針のため、文面プールと英訳辞書をそれぞれ手で持っています。
+片方だけ直して他方を忘れるドリフトを防ぐため、共有部品 ID の本文一致と
+英訳の網羅を確認します。
+
+```sh
+python3 scripts/check-greeting-parity.py
+```
+
+CI（`.github/workflows/ci.yml` の `greeting-parity`）でも毎回実行されます。
+語彙の違い（Desktop の「スレッド」と Docker の「会話」）はスクリプト内の
+`ALLOWED_DIVERGENCE` に明示しています。
+
 ## アイコンの再生成
 
 アプリ／favicon のアイコンは `scripts/generate-icons.py` が共通の幾何学マークから

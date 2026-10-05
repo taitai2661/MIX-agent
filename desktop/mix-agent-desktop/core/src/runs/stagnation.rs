@@ -199,7 +199,7 @@ pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "read" | "list"
         ),
-        "glob" | "grep" | "web_fetch" | "web_search" | "image_vision" => true,
+        "glob" | "grep" | "web_fetch" | "web_search" | "image_vision" | "network" => true,
         _ => false,
     }
 }
@@ -228,7 +228,17 @@ pub fn read_key(name: &str, args: &serde_json::Value) -> String {
             args.get("pattern").and_then(|v| v.as_str()).unwrap_or(""),
             args.get("path").and_then(|v| v.as_str()).unwrap_or("")
         ),
-        other => format!("{other}:{path}"),
+        other => {
+            // Web tools key on their URL / query; without this every search
+            // collapsed to `web_search:` and the second, unrelated search was
+            // flagged as a repeat of the first.
+            let target = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .or_else(|| args.get("url").and_then(|v| v.as_str()))
+                .unwrap_or(path);
+            format!("{other}:{target}")
+        }
     }
 }
 
@@ -325,6 +335,18 @@ mod tests {
         );
         assert_ne!(key(&a), key(&b));
         assert_ne!(key(&a), key(&c));
+    }
+
+    #[test]
+    fn distinct_web_calls_get_distinct_keys() {
+        // Every `web_search` used to collapse to `web_search:` because it has
+        // no `path`, so the second, unrelated search looked like a repeat.
+        let a = call("web_search", serde_json::json!({"query": "rust lifetimes"}));
+        let b = call("web_search", serde_json::json!({"query": "tokio select"}));
+        assert_ne!(key(&a), key(&b));
+        let f1 = call("web_fetch", serde_json::json!({"url": "https://a.example"}));
+        let f2 = call("web_fetch", serde_json::json!({"url": "https://b.example"}));
+        assert_ne!(key(&f1), key(&f2));
     }
 
     #[test]

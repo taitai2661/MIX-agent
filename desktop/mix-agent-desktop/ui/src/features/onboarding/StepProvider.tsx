@@ -63,7 +63,7 @@ function StepProviderLocal({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="m-0 text-xs text-muted">
-        {t("API キーは不要です。电脑上だけで 움직きます。")}
+        {t("API キーは不要です。この端末の上だけで動きます。")}
       </p>
       <LocalRuntimeScan
         intro={t("LM Studio や Ollama などが起動中か調べます。")}

@@ -52,6 +52,10 @@ interface UiState {
   openSettings: (tab?: SettingsTab) => void;
   conversationId: string | null;
   setConversationId: (id: string | null) => void;
+  /** Workspace the active conversation is bound to; drives the browser pane so
+   * a manual sign-in lands in the same profile the agent uses. */
+  workspaceId: string | null;
+  setWorkspaceId: (id: string | null) => void;
   runId: string | null;
   setRunId: (id: string | null) => void;
   modelId: string;
@@ -209,6 +213,8 @@ export const useUi = create<UiState>((set) => ({
     })),
   conversationId: null,
   setConversationId: (id) => set({ conversationId: id }),
+  workspaceId: null,
+  setWorkspaceId: (workspaceId) => set({ workspaceId }),
   runId: null,
   setRunId: (id) => set({ runId: id }),
   modelId: "",
