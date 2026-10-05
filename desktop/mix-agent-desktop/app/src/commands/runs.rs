@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::AppState;
 use mixd_core::runs::state::RunView;
 use serde::{Deserialize, Serialize};
@@ -168,7 +170,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     )
     .await
     .map_err(|err| err.to_string())?;
-    let tools: Vec<mixd_providers::ToolSpec> = state.engine.tool_specs().await;
+    let tools = Arc::new(state.engine.tool_specs().await);
 
     // Re-apply the project context so a resumed run keeps its folder scope and
     // instructions even if the original request predates the project feature.

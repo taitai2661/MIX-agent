@@ -230,7 +230,7 @@ impl Harness {
             temperature: None,
             reasoning: None,
             max_tokens: None,
-            tools: self.engine.tool_specs().await,
+            tools: std::sync::Arc::new(self.engine.tool_specs().await),
             history: Vec::new(),
             user_message: "do the thing".to_string(),
             resume_from: None,
@@ -490,12 +490,12 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         temperature: None,
         reasoning: None,
         max_tokens: None,
-        tools: Vec::new(),
+        tools: std::sync::Arc::new(Vec::new()),
         history: Vec::new(),
         user_message: "hello".to_string(),
         resume_from: None,
     };
-    request.tools = engine.tool_specs().await;
+    request.tools = std::sync::Arc::new(engine.tool_specs().await);
     let outcome = engine.execute(request).await.expect("run");
     assert_eq!(outcome.status, RunStatus::Failed);
     assert!(outcome.text.is_empty());

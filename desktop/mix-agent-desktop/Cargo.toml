@@ -19,7 +19,9 @@ license = "Apache-2.0"
 repository = "https://github.com/taitai2661/MIX-agent"
 
 [workspace.dependencies]
-serde = { version = "1.0", features = ["derive"] }
+# `rc` lets `ProviderRequest.tools` be an `Arc<Vec<ToolSpec>>`, so the Run Engine
+# hands the very same spec to every turn instead of deep-copying it each time.
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 tokio = { version = "1.41", features = ["full"] }
 thiserror = "2.0"

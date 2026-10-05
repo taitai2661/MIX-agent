@@ -4,6 +4,8 @@
 //! entry point that emits a stream of [`StreamEvent`] values. The Run Engine in
 //! [`mixd-core`] normalises those events into the shared SSE-equivalent contract.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -29,8 +31,10 @@ pub struct ProviderRequest {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub system: Option<String>,
+    /// Shared so a run's turns all point at one spec list; cloning the request
+    /// per turn no longer deep-copies every tool schema.
     #[serde(default)]
-    pub tools: Vec<ToolSpec>,
+    pub tools: Arc<Vec<ToolSpec>>,
     #[serde(default)]
     pub temperature: Option<f32>,
     #[serde(default)]

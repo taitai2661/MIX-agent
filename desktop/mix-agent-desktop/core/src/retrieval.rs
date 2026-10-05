@@ -256,48 +256,65 @@ async fn retrieve_memories_with(
     terms: &QueryTerms,
     limit: usize,
 ) -> anyhow::Result<Vec<MemoryHit>> {
+    use futures_util::TryStreamExt;
     use sqlx::Row;
-    let rows = sqlx::query(
+    // Rows are streamed, not `fetch_all`-ed: a large Memory table used to be
+    // materialised in full, alongside the scored hits, for the duration of every
+    // Run. The rows visited and the scoring are identical; only the peak
+    // allocation shrinks.
+    let mut rows = sqlx::query(
         "SELECT id, data, role, scope, salience, strength, confidence \
          FROM memories WHERE lifecycle_state IN ('active', 'candidate', 'established')",
     )
-    .fetch_all(storage.pool())
-    .await?;
+    .fetch(storage.pool());
 
-    let mut scored: Vec<MemoryHit> = rows
-        .into_iter()
-        .filter_map(|row| {
-            let data: serde_json::Value = row
-                .try_get::<String, _>("data")
-                .ok()
-                .and_then(|raw| serde_json::from_str(&raw).ok())?;
-            let title = data.get("title")?.as_str()?.to_string();
-            let content = data.get("content")?.as_str()?.to_string();
-            let relevance = terms.score_parts(&title, &content);
-            // Require an actual lexical match. The old `combined <= 0.0` check
-            // could never reject a row: the default salience and strength alone
-            // keep it positive, so unrelated memories padded every result set.
-            if relevance <= 0.0 {
-                return None;
-            }
-            let salience: f64 = row.try_get("salience").unwrap_or(0.5);
-            let strength: f64 = row.try_get("strength").unwrap_or(0.6);
-            let confidence: f64 = row.try_get("confidence").unwrap_or(0.7);
-            let combined = relevance * 0.6 + salience * 0.15 + strength * 0.15 + confidence * 0.1;
-            Some(MemoryHit {
-                id: row.try_get::<String, _>("id").unwrap_or_default(),
-                title,
-                content,
-                role: row
-                    .try_get::<String, _>("role")
-                    .unwrap_or_else(|_| "fact".into()),
-                scope: row
-                    .try_get::<String, _>("scope")
-                    .unwrap_or_else(|_| "user".into()),
-                score: combined,
-            })
-        })
-        .collect();
+    let mut scored: Vec<MemoryHit> = Vec::new();
+    while let Some(row) = rows.try_next().await? {
+        let Some(data) = row
+            .try_get::<String, _>("data")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        else {
+            continue;
+        };
+        let Some(title) = data
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(content) = data
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let relevance = terms.score_parts(&title, &content);
+        // Require an actual lexical match. The old `combined <= 0.0` check
+        // could never reject a row: the default salience and strength alone
+        // keep it positive, so unrelated memories padded every result set.
+        if relevance <= 0.0 {
+            continue;
+        }
+        let salience: f64 = row.try_get("salience").unwrap_or(0.5);
+        let strength: f64 = row.try_get("strength").unwrap_or(0.6);
+        let confidence: f64 = row.try_get("confidence").unwrap_or(0.7);
+        let combined = relevance * 0.6 + salience * 0.15 + strength * 0.15 + confidence * 0.1;
+        scored.push(MemoryHit {
+            id: row.try_get::<String, _>("id").unwrap_or_default(),
+            title,
+            content,
+            role: row
+                .try_get::<String, _>("role")
+                .unwrap_or_else(|_| "fact".into()),
+            scope: row
+                .try_get::<String, _>("scope")
+                .unwrap_or_else(|_| "user".into()),
+            score: combined,
+        });
+    }
 
     scored.sort_by(|a, b| {
         b.score
@@ -329,42 +346,50 @@ async fn retrieve_knowledge_with(
     terms: &QueryTerms,
     limit: usize,
 ) -> anyhow::Result<Vec<KnowledgeHit>> {
+    use futures_util::TryStreamExt;
     use sqlx::Row;
-    let rows = sqlx::query("SELECT id, data, created_at FROM knowledge")
-        .fetch_all(storage.pool())
-        .await?;
+    // Streamed for the same reason as Memory: no full-table materialisation per
+    // Run. Rows and scoring are unchanged.
+    let mut rows = sqlx::query("SELECT id, data, created_at FROM knowledge").fetch(storage.pool());
     let now = Utc::now();
     let _ = now;
-    let mut scored: Vec<KnowledgeHit> = rows
-        .into_iter()
-        .filter_map(|row| {
-            let data: serde_json::Value = row
-                .try_get::<String, _>("data")
-                .ok()
-                .and_then(|raw| serde_json::from_str(&raw).ok())?;
-            let text = data.get("text")?.as_str()?.to_string();
-            let filename = data
-                .get("filename")
+    let mut scored: Vec<KnowledgeHit> = Vec::new();
+    while let Some(row) = rows.try_next().await? {
+        let Some(data) = row
+            .try_get::<String, _>("data")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        else {
+            continue;
+        };
+        let Some(text) = data
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let filename = data
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or("document")
+            .to_string();
+        let s = terms.score(&text);
+        if s <= 0.0 {
+            continue;
+        }
+        scored.push(KnowledgeHit {
+            id: row.try_get::<String, _>("id").unwrap_or_default(),
+            doc_id: data
+                .get("docId")
                 .and_then(|v| v.as_str())
-                .unwrap_or("document")
-                .to_string();
-            let s = terms.score(&text);
-            if s <= 0.0 {
-                return None;
-            }
-            Some(KnowledgeHit {
-                id: row.try_get::<String, _>("id").unwrap_or_default(),
-                doc_id: data
-                    .get("docId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                filename,
-                text,
-                score: s,
-            })
-        })
-        .collect();
+                .unwrap_or_default()
+                .to_string(),
+            filename,
+            text,
+            score: s,
+        });
+    }
     scored.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)

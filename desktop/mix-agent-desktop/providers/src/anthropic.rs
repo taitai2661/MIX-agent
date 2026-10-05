@@ -656,7 +656,7 @@ mod tests {
             model: "claude".into(),
             messages,
             system: None,
-            tools: Vec::new(),
+            tools: std::sync::Arc::new(Vec::new()),
             temperature: None,
             top_p: None,
             max_tokens: None,

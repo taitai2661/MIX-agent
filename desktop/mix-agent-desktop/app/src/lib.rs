@@ -292,7 +292,7 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             temperature: None,
             reasoning: None,
             max_tokens: None,
-            tools: permitted,
+            tools: Arc::new(permitted),
             history: Vec::new(),
             // A blank user message keeps the persisted transcript distinguishable
             // from the parent's; the real instruction is the system prompt.

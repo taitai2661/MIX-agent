@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::AppState;
 use chrono::Utc;
 use mixd_core::runs::engine::{HistoryMessage, RunRequest};
@@ -363,7 +365,7 @@ pub async fn dispatch_run(
     // and the project folder → tool workspace root.
     let project = super::projects::load_project_runtime(pool, &input.conversation_id).await?;
 
-    let tools: Vec<ToolSpec> = build_tool_specs(state, mode.as_str()).await;
+    let tools = build_tool_specs(state, mode.as_str()).await;
     let reasoning = match input.reasoning.as_deref() {
         Some("low") => Some(ReasoningControl::Low),
         Some("medium") => Some(ReasoningControl::Medium),
@@ -531,12 +533,13 @@ async fn load_history(
         .collect())
 }
 
-async fn build_tool_specs(state: &AppState, mode: &str) -> Vec<ToolSpec> {
+async fn build_tool_specs(state: &AppState, mode: &str) -> Arc<Vec<ToolSpec>> {
     // Chat mode answers directly; Thinking and Agent may use Tools.
     if mode == "chat" {
-        return vec![];
+        return Arc::new(Vec::new());
     }
-    state.engine.tool_specs().await
+    // Shared by the run's turns rather than rebuilt per turn.
+    Arc::new(state.engine.tool_specs().await)
 }
 
 #[tauri::command]

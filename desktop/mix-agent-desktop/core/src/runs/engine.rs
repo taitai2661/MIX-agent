@@ -724,7 +724,8 @@ pub struct RunRequest {
     pub temperature: Option<f32>,
     pub reasoning: Option<ReasoningControl>,
     pub max_tokens: Option<u32>,
-    pub tools: Vec<ToolSpec>,
+    /// Shared across the run's turns, so `run_turn` never deep-copies the spec.
+    pub tools: Arc<Vec<ToolSpec>>,
     pub history: Vec<HistoryMessage>,
     pub user_message: String,
     pub resume_from: Option<CheckpointSnapshot>,
@@ -1919,7 +1920,7 @@ impl RunEngine {
             } else {
                 Some(system.to_string())
             },
-            tools: request.tools.clone(),
+            tools: Arc::clone(&request.tools),
             temperature: request.temperature,
             top_p: None,
             max_tokens: request.max_tokens,
@@ -2118,7 +2119,7 @@ async fn summarize_turns(
             ),
         )],
         system: Some("You compress conversation history without losing actionable detail.".into()),
-        tools: Vec::new(),
+        tools: Arc::new(Vec::new()),
         temperature: Some(0.2),
         top_p: None,
         max_tokens: Some(1200),
