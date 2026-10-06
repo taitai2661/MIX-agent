@@ -355,6 +355,25 @@ def _conversation_artifact_ids(messages, runs=None):
     return ids
 
 
+def _doomed_messages(db, conversation_id, from_message_id):
+    """Messages from `from_message_id` (inclusive) through the end of the thread.
+
+    Ordered by `(created_at, id)`: `created_at` alone is not unique, and an
+    unstable tie order would change which turns count as "after" the edit.
+    """
+    from mix_agent.db.models import Message
+
+    rows = list(
+        db.scalars(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at, Message.id)
+        )
+    )
+    cut = next((index for index, message in enumerate(rows) if message.id == from_message_id), len(rows))
+    return rows[cut:]
+
+
 def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()):
     """Delete a user turn and every turn after it, together with their Runs.
 
@@ -375,13 +394,7 @@ def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()
         ToolCall,
     )
 
-    rows = list(
-        db.scalars(
-            select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)
-        )
-    )
-    cut = next((index for index, message in enumerate(rows) if message.id == from_message_id), len(rows))
-    doomed = rows[cut:]
+    doomed = _doomed_messages(db, conversation.id, from_message_id)
     if not doomed:
         return
     message_ids = [message.id for message in doomed]
@@ -1936,11 +1949,20 @@ def _model_window_info(model, snapshot) -> dict:
 async def _build_history_payload(db, s, conversation, body, settings_row, agent, artifacts,
                                  mode, requested_model_id, requested_agent_id,
                                  model, provider, caps, reasoning, tool_ids, temporary_mode,
-                                 trigger="interactive"):
-    """Build the run snapshot and budget-aware prompt history via ContextBuilder."""
-    prior_messages = [] if temporary_mode else list(db.scalars(
-        select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)
-    ))
+                                 trigger="interactive", exclude_message_ids=frozenset()):
+    """Build the run snapshot and budget-aware prompt history via ContextBuilder.
+
+    `exclude_message_ids` hides turns that are being replaced by an edit before
+    they are physically deleted, so the regenerated Run is built from the
+    surviving prefix without the replaced tail.
+    """
+    prior_messages = [] if temporary_mode else [
+        message for message in db.scalars(
+            select(Message).where(Message.conversation_id == conversation.id)
+            .order_by(Message.created_at, Message.id)
+        )
+        if message.id not in exclude_message_ids
+    ]
     prior_content = [m.data.get("content", "") for m in prior_messages]
     available = registry(db, s.owner_id)
     # Mode restrictions are a server boundary, not merely model guidance or a
@@ -2159,6 +2181,22 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         if existing.data.get("request_hash") != request_hash:
             raise HTTPException(409, "同じIdempotency-Keyで異なる入力は送信できません")
         return {"run_id": existing.id}
+    run = await _create_message_run(db, s, key, conversation, body, request_key, request_hash)
+    launch(run.id)
+    return {"run_id": run.id}
+
+
+async def _create_message_run(db, s, key, conversation, body, request_key, request_hash,
+                              truncate_from_message_id=None, keep_artifact_ids=()):
+    """Resolve model/provider/tools and persist a new Run + user turn.
+
+    Shared by `send_message` and `edit_message`. With `truncate_from_message_id`
+    the replaced turn and everything after it are removed in the same final
+    commit as the new Run, so a failure while building the Run cannot leave the
+    conversation truncated with no replacement. The tail is excluded from the
+    prompt history before it is deleted, so the regenerated Run never sees the
+    turns it is replacing.
+    """
     settings = own(db, Settings, "settings", s.owner_id)
     temporary_mode = body.temporary_mode
     saved_selection = conversation.data.get("selection", {})
@@ -2188,9 +2226,19 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         re.IGNORECASE,
     ))
     tools_required = bool(tool_ids) and (mode == "agent" or artifact_requested)
-    prior_content = [] if temporary_mode else [m.data.get("content", "") for m in db.scalars(
-        select(Message).where(Message.conversation_id == key).order_by(Message.created_at)
-    )]
+    # Turns an edit is replacing are hidden from the prompt now, before they are
+    # deleted with the new Run, so history and auto-routing see only the prefix.
+    doomed_ids = (
+        {message.id for message in _doomed_messages(db, key, truncate_from_message_id)}
+        if truncate_from_message_id else set()
+    )
+    prior_content = [] if temporary_mode else [
+        message.data.get("content", "") for message in db.scalars(
+            select(Message).where(Message.conversation_id == key)
+            .order_by(Message.created_at, Message.id)
+        )
+        if message.id not in doomed_ids
+    ]
     auto_selection = None
     if requested_model_id == "auto":
         allowed_ids = settings.data.get("auto_model_ids", [])
@@ -2249,6 +2297,7 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         db, s, conversation, body, settings, agent, artifacts,
         mode, requested_model_id, requested_agent_id, model, provider, caps,
         reasoning, tool_ids, temporary_mode,
+        exclude_message_ids=doomed_ids,
     )
     auto_routing = ({
         "allowed_ids": allowed_ids,
@@ -2262,28 +2311,49 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
         "dynamic_switching": bool(settings.data.get("auto_dynamic_switching", True)),
         "priority": settings.data.get("auto_priority", "balanced"),
     } if requested_model_id == "auto" else None)
+    # Delete the replaced tail in the same transaction as the Run insert below:
+    # `_build_run_record` commits once, so either both happen or neither does.
+    if truncate_from_message_id:
+        _delete_message_tail(
+            db, conversation, truncate_from_message_id,
+            keep_artifact_ids=keep_artifact_ids,
+        )
     run = _build_run_record(
         db, s, conversation, key, body, request_key, request_hash,
         snapshot, history, artifacts, auto_selection, auto_routing,
         memory_trace_ids, temporary_mode, prior_content,
     )
-    launch(run.id)
-    return {"run_id": run.id}
+    return run
 
 
 @router.post("/conversations/{key}/messages/{message_id}/edit", response_model=SendMessageView)
 async def edit_message(key: str, message_id: str, body: MessageInput, request: Request, ctx=Depends(context)):
     """Replace a user turn and regenerate from it.
 
-    The edited turn and every turn after it are removed before the normal send
-    path runs, so the regenerated Run is built from the surviving prefix alone.
-    Keeping later replies would leave them answering wording the user never
-    actually sent.
+    The edited turn and every turn after it are removed together with the new
+    Run, so the regenerated Run is built from the surviving prefix alone and a
+    failure while building it leaves the original conversation intact. Keeping
+    later replies would leave them answering wording the user never sent.
     """
     db, s = ctx
     conversation = own(db, Conversation, key, s.owner_id)
     if conversation.data.get("deleted_at") or conversation.data.get("archived_at"):
         raise HTTPException(409, "アーカイブまたはごみ箱から復元してから続けてください")
+    request_key = request.headers.get("idempotency-key", "")
+    # Hash the request as received, before attachments are carried over from the
+    # replaced turn, so retrying the same edit is recognised as the same request.
+    request_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+    if not 8 <= len(request_key) <= 100:
+        raise HTTPException(422, "Idempotency-Keyが必要です")
+    existing = db.scalar(select(Run).where(Run.request_key == request_key))
+    if existing:
+        if existing.owner_id != s.owner_id or existing.conversation_id != key:
+            raise HTTPException(409)
+        if existing.data.get("request_hash") != request_hash:
+            raise HTTPException(409, "同じIdempotency-Keyで異なる入力は送信できません")
+        # A retry of an edit that already succeeded: the target turn is gone, so
+        # return the Run the first attempt created instead of deleting again.
+        return {"run_id": existing.id}
     message = own(db, Message, message_id, s.owner_id)
     if message.conversation_id != key or message.data.get("role") != "user":
         raise HTTPException(422, "ユーザーのメッセージのみ編集できます")
@@ -2299,11 +2369,13 @@ async def edit_message(key: str, message_id: str, body: MessageInput, request: R
     # so editing an image question does not silently drop the image.
     if not body.artifact_ids and message.data.get("artifact_ids"):
         body.artifact_ids = list(message.data["artifact_ids"])
-    _delete_message_tail(db, conversation, message_id, keep_artifact_ids=body.artifact_ids)
-    db.commit()
-    # Reuse the normal send path for model/provider resolution, history building
-    # and Run creation instead of forking it.
-    return await send_message(key, body, request, ctx)
+    run = await _create_message_run(
+        db, s, key, conversation, body, request_key, request_hash,
+        truncate_from_message_id=message_id,
+        keep_artifact_ids=list(body.artifact_ids),
+    )
+    launch(run.id)
+    return {"run_id": run.id}
 
 
 @router.put("/messages/{key}/feedback")

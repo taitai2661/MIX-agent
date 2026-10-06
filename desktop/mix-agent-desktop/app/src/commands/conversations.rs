@@ -506,29 +506,45 @@ pub async fn edit_message(
         return Err("ユーザーのメッセージのみ編集できます".to_string());
     }
 
+    // Attachments are not editable in the transcript yet, but dropping them
+    // because the text changed would silently turn an image question into a
+    // text question, so the originals are carried into the replacement turn.
+    let attachments: Vec<AttachmentInput> = match attachments_raw.as_deref() {
+        None => Vec::new(),
+        Some(raw) => match serde_json::from_str(raw) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                // A stored attachment that no longer parses would otherwise be
+                // dropped without a trace; log it so the loss is diagnosable.
+                tracing::warn!(
+                    %err,
+                    message_id = %input.message_id,
+                    "could not parse the edited message's attachments; carrying none"
+                );
+                Vec::new()
+            }
+        },
+    };
+
     // The engine appends assistant turns to a transcript this command is about
-    // to rewrite, so an in-flight Run must finish (or be cancelled) first.
+    // to rewrite, so an in-flight Run must finish (or be cancelled) first. The
+    // check and the truncation share one transaction so a Run cannot start in
+    // the window between them and have its transcript deleted under it.
+    let mut tx = pool.begin().await.map_err(crate::error::cmd_err)?;
     let active: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM runs WHERE conversation_id = ? AND status IN \
          ('queued','running','waiting_approval','budget_extension_pending')",
     )
     .bind(&input.conversation_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(crate::error::cmd_err)?;
     if active > 0 {
         return Err("実行中はメッセージを編集できません".to_string());
     }
 
-    truncate_messages_from(pool, &input.conversation_id, &created_at, rowid).await?;
-
-    // Attachments are not editable in the transcript yet, but dropping them
-    // because the text changed would silently turn an image question into a
-    // text question, so the originals are carried into the replacement turn.
-    let attachments: Vec<AttachmentInput> = attachments_raw
-        .as_deref()
-        .and_then(|raw| serde_json::from_str(raw).ok())
-        .unwrap_or_default();
+    truncate_messages_from(&mut tx, &input.conversation_id, &created_at, rowid).await?;
+    tx.commit().await.map_err(crate::error::cmd_err)?;
 
     dispatch_run(
         &state,
@@ -558,8 +574,12 @@ pub async fn edit_message(
 ///
 /// `pub` so integration tests can exercise the branch-and-regenerate
 /// truncation without standing up the full `AppState`.
+///
+/// Takes the caller's connection so the deletion runs inside a transaction the
+/// caller controls: a failure part-way through leaves the transcript untouched
+/// rather than half-deleted.
 pub async fn truncate_messages_from(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
+    conn: &mut sqlx::SqliteConnection,
     conversation_id: &str,
     created_at: &str,
     rowid: i64,
@@ -574,7 +594,7 @@ pub async fn truncate_messages_from(
     .bind(created_at)
     .bind(created_at)
     .bind(rowid)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(crate::error::cmd_err)?;
     for row in &rows {
@@ -589,7 +609,7 @@ pub async fn truncate_messages_from(
         ] {
             sqlx::query(&format!("DELETE FROM {table} WHERE {column} = ?"))
                 .bind(&run_id)
-                .execute(pool)
+                .execute(&mut *conn)
                 .await
                 .map_err(crate::error::cmd_err)?;
         }
@@ -602,7 +622,7 @@ pub async fn truncate_messages_from(
     .bind(created_at)
     .bind(created_at)
     .bind(rowid)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .map_err(crate::error::cmd_err)?;
     Ok(())

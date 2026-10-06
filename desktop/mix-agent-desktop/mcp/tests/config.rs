@@ -137,6 +137,7 @@ async fn a_remote_connection_without_an_endpoint_fails_before_any_request() {
         args: Vec::new(),
         url: None,
         headers: Default::default(),
+        http_timeout_secs: None,
     };
     let session = Session::new(cfg);
     let err = session

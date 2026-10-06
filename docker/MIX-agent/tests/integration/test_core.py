@@ -745,6 +745,45 @@ def test_edit_message_rejects_assistant_and_other_conversations(signed, monkeypa
     )
 
 
+def test_edit_message_failure_keeps_the_history(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    posted = signed.post(
+        url,
+        json={"model_id": model_id, "content": "keep me", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-fail-1"},
+    )
+    assert posted.status_code == 200, posted.text
+    with SessionLocal() as db:
+        db.get(Run, posted.json()["run_id"]).status = "completed"
+        db.commit()
+    target = signed.get(url).json()["messages"][0]["id"]
+    # A model that does not exist fails the send path. The truncation has to be
+    # part of that same failed transaction, so the original turn survives
+    # instead of the conversation being emptied with nothing to replace it.
+    failed = signed.post(
+        url + "/" + target + "/edit",
+        json={"model_id": "missing-model", "content": "edited", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-fail-2"},
+    )
+    assert failed.status_code == 404, failed.text
+    history = signed.get(url).json()
+    assert [message["data"]["content"] for message in history["messages"]] == ["keep me"]
+    assert len(history["runs"]) == 1
+
+
 def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monkeypatch):
     from mix_agent.api import routes
 

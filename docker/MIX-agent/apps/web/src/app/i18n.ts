@@ -385,4 +385,3 @@ export const en: Record<string, string> = {
 };
 
 export function t(value: string): string { return language === "en" ? en[value] ?? value : value; }
-

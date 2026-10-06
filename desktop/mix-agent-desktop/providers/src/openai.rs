@@ -243,7 +243,14 @@ impl Provider for OpenAiProvider {
                     }
                 };
                 let mut buf = buffer.lock().await;
-                let events = transport::parse_sse_lines(&mut buf, &bytes);
+                let events = match transport::parse_sse_lines(&mut buf, &bytes) {
+                    Ok(events) => events,
+                    Err(e) => {
+                        drop(buf);
+                        yield StreamEvent::Error(e);
+                        return;
+                    }
+                };
                 drop(buf);
                 for raw in events {
                     if transport::sse_done(&raw) {

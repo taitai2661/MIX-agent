@@ -26,11 +26,12 @@ use crate::error::McpError;
 /// MCP protocol revision this client advertises.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// Overall deadline for one Streamable-HTTP JSON-RPC exchange, headers and
-/// body together. A server that trickles bytes forever would otherwise hold a
-/// `tools/call` open indefinitely, since the shared HTTP client only bounds the
-/// gap between reads. Generous enough for genuinely slow tool work.
-const HTTP_CALL_TIMEOUT: Duration = Duration::from_secs(300);
+/// Default overall deadline for one Streamable-HTTP JSON-RPC exchange, headers
+/// and body together. A server that trickles bytes forever would otherwise hold
+/// a `tools/call` open indefinitely, since the shared HTTP client only bounds
+/// the gap between reads. Generous enough for genuinely slow tool work, and
+/// overridable per connection via [`ConnectionConfig::http_timeout_secs`].
+pub const DEFAULT_HTTP_CALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +49,11 @@ pub struct ConnectionConfig {
     pub args: Vec<String>,
     pub url: Option<String>,
     pub headers: HashMap<String, String>,
+    /// Per-connection deadline for one Streamable-HTTP exchange, in seconds.
+    /// Defaults to [`DEFAULT_HTTP_CALL_TIMEOUT`] when absent, so a server with
+    /// genuinely slow tool work can raise it without changing the global cap.
+    #[serde(default)]
+    pub http_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +189,12 @@ impl Session {
     /// bounded by an overall deadline so a misbehaving server cannot hang a
     /// tool call forever.
     async fn post_http(&self, body: &str) -> Result<Value, McpError> {
-        match timeout(HTTP_CALL_TIMEOUT, self.post_http_inner(body)).await {
+        let deadline = self
+            .config
+            .http_timeout_secs
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_HTTP_CALL_TIMEOUT);
+        match timeout(deadline, self.post_http_inner(body)).await {
             Ok(result) => result,
             Err(_) => Err(McpError::Timeout("streamable-http request".to_string())),
         }
@@ -631,6 +642,7 @@ pub fn config_from_json(id: &str, value: &Value) -> anyhow::Result<ConnectionCon
         args,
         url,
         headers,
+        http_timeout_secs: value.get("http_timeout_secs").and_then(|v| v.as_u64()),
     })
 }
 

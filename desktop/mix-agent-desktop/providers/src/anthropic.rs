@@ -281,7 +281,14 @@ fn an_sse_stream(
                 }
             };
             let mut buf = buffer.lock().await;
-            let events = transport::parse_sse_lines(&mut buf, &bytes);
+            let events = match transport::parse_sse_lines(&mut buf, &bytes) {
+                Ok(events) => events,
+                Err(e) => {
+                    drop(buf);
+                    yield StreamEvent::Error(e);
+                    return;
+                }
+            };
             drop(buf);
             for raw in events {
                 let event: AnthropicEvent = match serde_json::from_str(&raw) {

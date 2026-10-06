@@ -262,9 +262,11 @@ async fn truncate_messages_from_drops_the_turn_and_its_run() {
         .fetch_one(pool)
         .await
         .expect("target rowid");
-    truncate_messages_from(pool, "conv-edit", "2026-01-01T00:00:01.000Z", rowid)
+    let mut conn = pool.acquire().await.expect("acquire");
+    truncate_messages_from(&mut conn, "conv-edit", "2026-01-01T00:00:01.000Z", rowid)
         .await
         .expect("truncate");
+    drop(conn);
 
     let messages = fetch_messages(pool, "conv-edit", 100).await.expect("fetch");
     assert_eq!(messages.len(), 1);

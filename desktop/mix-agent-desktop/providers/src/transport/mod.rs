@@ -159,7 +159,7 @@ const MAX_SSE_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 /// multi-byte character. Decoding each chunk on its own would fail (and used to
 /// drop the whole chunk). Only complete lines — which always end on `b'\n'`,
 /// never inside a character — are decoded.
-pub fn parse_sse_lines(buffer: &mut Vec<u8>, chunk: &Bytes) -> Vec<String> {
+pub fn parse_sse_lines(buffer: &mut Vec<u8>, chunk: &Bytes) -> Result<Vec<String>, String> {
     buffer.extend_from_slice(chunk);
     let mut events = Vec::new();
     let mut start = 0usize;
@@ -180,13 +180,18 @@ pub fn parse_sse_lines(buffer: &mut Vec<u8>, chunk: &Bytes) -> Vec<String> {
         buffer.drain(..start);
     }
     // A peer that never terminates a line would otherwise grow this buffer
-    // without bound for the life of the stream. Complete events have already
-    // been returned above, so dropping the oversized partial line is safe.
+    // without bound for the life of the stream. Complete events from this chunk
+    // are returned only when the frame is well-formed; an oversized partial line
+    // means the peer is not framing events at all, so the stream is failed
+    // explicitly rather than silently dropping the data and continuing.
     if buffer.len() > MAX_SSE_BUFFER_BYTES {
-        tracing::warn!(len = buffer.len(), "dropping an oversized SSE line buffer");
+        let len = buffer.len();
         buffer.clear();
+        return Err(format!(
+            "SSE line exceeded {MAX_SSE_BUFFER_BYTES} bytes ({len}); the peer is not framing events"
+        ));
     }
-    events
+    Ok(events)
 }
 
 pub fn parse_sse_json<T: serde::de::DeserializeOwned>(data: &str) -> Option<T> {
@@ -244,10 +249,23 @@ mod tests {
         // A JSON payload split mid-line is the normal case for SSE; a parser
         // that only looks within one chunk drops events silently.
         let mut buffer = Vec::new();
-        let first = parse_sse_lines(&mut buffer, &Bytes::from_static(b"data: {\"a\""));
+        let first = parse_sse_lines(&mut buffer, &Bytes::from_static(b"data: {\"a\""))
+            .expect("under the cap");
         assert!(first.is_empty());
-        let second = parse_sse_lines(&mut buffer, &Bytes::from_static(b":1}\ndata: [DONE]\n"));
+        let second = parse_sse_lines(&mut buffer, &Bytes::from_static(b":1}\ndata: [DONE]\n"))
+            .expect("under the cap");
         assert_eq!(second, vec!["{\"a\":1}".to_string(), "[DONE]".to_string()]);
+    }
+
+    #[test]
+    fn an_oversized_unterminated_line_fails_the_stream() {
+        // A peer that never sends a newline must not grow the buffer forever, and
+        // the failure must be visible to the caller rather than a silent drop.
+        let mut buffer = Vec::new();
+        let chunk = Bytes::from(vec![b'x'; MAX_SSE_BUFFER_BYTES + 1]);
+        let err = parse_sse_lines(&mut buffer, &chunk).expect_err("over the cap");
+        assert!(err.contains("SSE line exceeded"));
+        assert!(buffer.is_empty());
     }
 
     #[test]
@@ -258,8 +276,11 @@ mod tests {
         let payload = "data: {\"text\":\"日本語\"}\n".as_bytes();
         let (head, tail) = payload.split_at(23);
         let mut buffer = Vec::new();
-        assert!(parse_sse_lines(&mut buffer, &Bytes::copy_from_slice(head)).is_empty());
-        let events = parse_sse_lines(&mut buffer, &Bytes::copy_from_slice(tail));
+        assert!(parse_sse_lines(&mut buffer, &Bytes::copy_from_slice(head))
+            .expect("under the cap")
+            .is_empty());
+        let events =
+            parse_sse_lines(&mut buffer, &Bytes::copy_from_slice(tail)).expect("under the cap");
         assert_eq!(events, vec!["{\"text\":\"日本語\"}".to_string()]);
         assert!(buffer.is_empty());
     }
@@ -270,14 +291,16 @@ mod tests {
         let events = parse_sse_lines(
             &mut buffer,
             &Bytes::from_static(b"\n: keepalive\ndata: x\n"),
-        );
+        )
+        .expect("under the cap");
         assert_eq!(events, vec!["x".to_string()]);
     }
 
     #[test]
     fn crlf_line_endings_are_handled() {
         let mut buffer = Vec::new();
-        let events = parse_sse_lines(&mut buffer, &Bytes::from_static(b"data: x\r\n"));
+        let events = parse_sse_lines(&mut buffer, &Bytes::from_static(b"data: x\r\n"))
+            .expect("under the cap");
         assert_eq!(events, vec!["x".to_string()]);
     }
 

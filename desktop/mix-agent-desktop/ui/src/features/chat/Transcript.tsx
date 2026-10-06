@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown, Brain, Check, ChevronRight, CircleAlert, FileText, MessageSquare, Pencil, ShieldAlert, ShieldCheck, Sparkles, Wrench,
+  ArrowDown, Brain, Check, ChevronRight, CircleAlert, CornerDownLeft, FileText, MessageSquare, Pencil, ShieldAlert, ShieldCheck, Sparkles, Wrench,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -10,7 +10,7 @@ import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/api";
 import { isBusy, describeToolCall, type RunTimeline, type ToolActivity } from "@/lib/runEvents";
-import { welcomeTitle, welcomeNote, type Welcome } from "./greeting";
+import { promptDetail, welcomeTitle, welcomeNote, greetingText, suggestionLabelId, type Suggestion, type Welcome } from "./greeting";
 import type { MessageView, RunView } from "@/lib/types";
 import { useUi } from "@/lib/ui";
 import { Alert, Skeleton } from "@/components/ui/alert";
@@ -178,6 +178,33 @@ function Welcome({ welcome }: { welcome: Welcome | null }) {
           {t("何でも質問してください。/ でコマンド、⌘K で検索。")}
         </p>
       )}
+      {welcome && <WelcomeSuggestions suggestions={welcome.suggestions} />}
+    </div>
+  );
+}
+
+/** Context-driven starters. Each one fills the composer, like the quick
+ * prompts it replaces, so nothing is sent without an explicit keystroke. */
+function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[] }) {
+  return (
+    <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+      {suggestions.map((suggestion) => (
+        <Button
+          key={suggestion.id}
+          variant="default"
+          onClick={() => {
+            window.dispatchEvent(
+              new CustomEvent("mix:insert-prompt", { detail: promptDetail(suggestion) }),
+            );
+          }}
+          className="group h-auto items-start justify-start gap-2.5 rounded-xl border-line px-3.5 py-3 text-start transition-colors hover:border-line-strong"
+        >
+          <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
+            <CornerDownLeft size={12} aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{greetingText(suggestionLabelId(suggestion.id), suggestion.label)}</span>
+        </Button>
+      ))}
     </div>
   );
 }

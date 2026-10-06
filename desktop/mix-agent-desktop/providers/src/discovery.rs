@@ -1018,8 +1018,9 @@ pub async fn probe_base_url(base_url: &str) -> anyhow::Result<DetectedRuntime> {
         runtime.error = Some("OpenAI 互換のモデル一覧を取得できませんでした".into());
     }
     // The install fields describe *this* machine, which is irrelevant to a URL
-    // that may well point at another one.
-    runtime.installed = true;
+    // that may well point at another one. Default to false since we cannot
+    // confirm local installation from a URL probe alone.
+    runtime.installed = false;
     runtime.install_hint = None;
     runtime.launcher = None;
     Ok(runtime)

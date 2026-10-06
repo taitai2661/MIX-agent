@@ -19,6 +19,10 @@ use super::{Tool, ToolContext, ToolResult};
 /// Cap the list so a runaway agent cannot turn its own prompt into noise.
 const MAX_ITEMS: usize = 60;
 const MAX_ACTIVE_ITEMS: usize = 1;
+/// Upper bound on a model-supplied todo id. Ids are used as the `next_id`
+/// counter seed, so an id near `usize::MAX` would make every later auto-assigned
+/// item collide on the same value. Larger ids fall back to auto-assignment.
+const MAX_TODO_ID: u64 = u32::MAX as u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -177,11 +181,11 @@ impl Tool for TodoTool {
                 _ => TodoStatus::Pending,
             };
             let id = match entry.get("id").and_then(|v| v.as_u64()) {
-                Some(raw) if raw > 0 => {
+                Some(raw) if raw > 0 && raw <= MAX_TODO_ID => {
                     // The id comes straight from model-authored tool arguments,
                     // so a huge value must not overflow the counter (a panic in
                     // debug builds, a silent wrap in release).
-                    let id = usize::try_from(raw).unwrap_or(usize::MAX);
+                    let id = raw as usize;
                     next_id = next_id.max(id.saturating_add(1));
                     id
                 }
