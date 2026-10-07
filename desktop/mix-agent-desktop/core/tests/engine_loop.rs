@@ -517,7 +517,10 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
     assert_eq!(outcome.status, RunStatus::Failed);
     assert!(outcome.text.is_empty());
     // The reason must survive on the Run view, or the UI shows a silent stop.
-    let view = engine.run_state(run_id).await.expect("run row to read back");
+    let view = engine
+        .run_state(run_id)
+        .await
+        .expect("run row to read back");
     assert_eq!(view.status, RunStatus::Failed);
     assert_eq!(
         view.error.as_deref(),
@@ -1433,6 +1436,60 @@ async fn the_skill_catalogue_reaches_the_system_prompt_scoped_to_the_project() {
 }
 
 #[tokio::test]
+async fn plan_mode_refuses_a_mutating_call_even_with_a_stored_allow_rule() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "c1",
+            "edit",
+            r#"{"action":"create","path":"a.txt","new_string":"x\n"}"#,
+        ),
+        text_turn("here is the plan"),
+    ])
+    .await;
+    // A stored allow rule is the strongest thing a user can grant, and it must
+    // still not open plan mode.
+    allow_tool(&harness, "edit").await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.mode = Mode::Plan;
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(tool_names(&outcome.tool_calls), vec!["edit"]);
+    let failure = outcome.tool_calls[0]
+        .error
+        .as_deref()
+        .expect("the refusal must be reported back to the model");
+    assert!(
+        failure.contains("plan mode"),
+        "the model has to be told why; got {failure}"
+    );
+    assert!(
+        !harness.workspace.join("a.txt").exists(),
+        "plan mode wrote to the workspace"
+    );
+}
+
+#[tokio::test]
+async fn plan_mode_still_allows_the_reads_it_needs_to_plan() {
+    let harness = Harness::new(vec![
+        tool_turn("c1", "glob", r#"{"pattern":"*.rs"}"#),
+        text_turn("here is the plan"),
+    ])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.mode = Mode::Plan;
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert!(
+        outcome.tool_calls[0].error.is_none(),
+        "a read-only call must still run in plan mode"
+    );
+}
+
+#[tokio::test]
 async fn an_agent_run_carries_the_built_in_procedure_in_its_system_prompt() {
     let harness = Harness::new(vec![text_turn("done")]).await;
     let _drain = spawn_event_drain(&harness.engine);
@@ -1478,9 +1535,10 @@ async fn a_change_without_the_project_check_blocks_the_conclusion() {
         "the run must be sent back instead of concluding; got {} turns",
         requests.len()
     );
-    let told = requests[2].messages.iter().any(|m| {
-        m.content.contains("[verification]") && m.content.contains("cargo test")
-    });
+    let told = requests[2]
+        .messages
+        .iter()
+        .any(|m| m.content.contains("[verification]") && m.content.contains("cargo test"));
     assert!(
         told,
         "the repair turn must run the configured command so the model can act on it"
@@ -1530,7 +1588,11 @@ async fn no_configured_check_leaves_a_change_unencumbered() {
     allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
 
-    let outcome = harness.engine.execute(harness.request().await).await.expect("run");
+    let outcome = harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
     assert_eq!(outcome.status, RunStatus::Completed);
 
     // The read-back gate still applies, and it is the one that fires here: an

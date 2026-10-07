@@ -57,7 +57,17 @@ pub async fn fetch_conversation_summaries(
     Ok(rows
         .into_iter()
         .map(
-            |(id, title, mode, model_id, updated_at, preview, message_count, project_id, workspace_id)| {
+            |(
+                id,
+                title,
+                mode,
+                model_id,
+                updated_at,
+                preview,
+                message_count,
+                project_id,
+                workspace_id,
+            )| {
                 ConversationSummary {
                     id,
                     title,
@@ -389,8 +399,13 @@ async fn dispatch(
     // the history read below run on one connection, so the uncommitted delete is
     // visible here; a rollback restores the tail intact.
     if let Some(tail) = truncate {
-        truncate_messages_from(&mut tx, &input.conversation_id, &tail.created_at, tail.rowid)
-            .await?;
+        truncate_messages_from(
+            &mut tx,
+            &input.conversation_id,
+            &tail.created_at,
+            tail.rowid,
+        )
+        .await?;
     }
 
     // Before the user turn is inserted. `load_history` selects every message,
@@ -501,7 +516,11 @@ async fn dispatch(
                 // terminal event to key `isTerminal()` on and the spinner would
                 // run until the window was reloaded.
                 engine
-                    .emit(run_id, "error", serde_json::json!({ "error": message.clone() }))
+                    .emit(
+                        run_id,
+                        "error",
+                        serde_json::json!({ "error": message.clone() }),
+                    )
                     .await;
                 engine
                     .emit(

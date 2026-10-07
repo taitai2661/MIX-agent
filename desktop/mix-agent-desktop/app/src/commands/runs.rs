@@ -178,8 +178,8 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         crate::commands::projects::load_project_runtime(state.storage.pool(), &conversation_id)
             .await?;
 
-    let context_window = crate::commands::projects::context_window_for(state.storage.pool(), &model_id)
-        .await;
+    let context_window =
+        crate::commands::projects::context_window_for(state.storage.pool(), &model_id).await;
 
     let request = mixd_core::runs::engine::RunRequest {
         run_id,

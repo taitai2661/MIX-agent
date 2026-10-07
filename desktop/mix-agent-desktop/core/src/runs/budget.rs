@@ -152,7 +152,9 @@ impl Budget {
     /// Record what a turn cost, so the token ceiling reflects the whole Run.
     pub fn record_usage(&mut self, input_tokens: u64, output_tokens: u64) {
         let spent = input_tokens.saturating_add(output_tokens);
-        self.tokens_used = self.tokens_used.saturating_add(spent.min(u32::MAX as u64) as u32);
+        self.tokens_used = self
+            .tokens_used
+            .saturating_add(spent.min(u32::MAX as u64) as u32);
     }
 
     pub async fn check(&mut self, steps: u32, tool_calls: u32) -> BudgetVerdict {
@@ -219,10 +221,7 @@ mod tests {
         b.token_limit = 1_000;
         b.record_usage(600, 400);
         assert_eq!(b.tokens_used, 1_000);
-        assert_eq!(
-            b.check(1, 1).await,
-            BudgetVerdict::Exhausted("token_limit")
-        );
+        assert_eq!(b.check(1, 1).await, BudgetVerdict::Exhausted("token_limit"));
     }
 
     #[tokio::test]

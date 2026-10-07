@@ -84,9 +84,8 @@ pub fn evict_tool_results(
             continue;
         }
         let len = message.content.chars().count();
-        let placeholder = format!(
-            "[tool result elided: {len} chars, re-run the call if you still need it]"
-        );
+        let placeholder =
+            format!("[tool result elided: {len} chars, re-run the call if you still need it]");
         let placeholder_len = placeholder.chars().count();
         if placeholder_len >= len {
             continue;

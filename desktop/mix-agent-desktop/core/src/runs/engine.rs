@@ -24,7 +24,9 @@ use crate::runs::checkpoint_store::CheckpointStore;
 use crate::runs::mode_policy::AgentModePolicy;
 use crate::runs::stagnation::{classify_tool_call, StagnationDetector};
 use crate::runs::state::{RunId, RunStatus, RunView};
-use crate::runs::verification::{destructive_reason, exit_code_of, mutated_paths, VerificationLedger};
+use crate::runs::verification::{
+    destructive_reason, exit_code_of, mutated_paths, VerificationLedger,
+};
 use mixd_providers::{
     AssistantToolCall, AssistantToolCallFn, Message, Provider, ProviderRequest, ReasoningControl,
     StreamEvent, ToolSpec, Usage,
@@ -1505,7 +1507,9 @@ impl RunEngine {
                             .and_then(exit_code_of)
                             .is_some_and(|code| code == 0);
                         verification.note_command(
-                            args.get("command").and_then(|v| v.as_str()).unwrap_or_default(),
+                            args.get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default(),
                             exit_ok,
                         );
                     }

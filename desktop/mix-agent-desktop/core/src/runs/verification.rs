@@ -117,7 +117,8 @@ impl VerificationLedger {
         let Some(reason) = destructive_reason(tool, args) else {
             return false;
         };
-        self.outstanding.insert(effect_key(tool, args), reason.clone());
+        self.outstanding
+            .insert(effect_key(tool, args), reason.clone());
         self.last_reason = Some(reason);
         true
     }
@@ -194,10 +195,9 @@ fn command_matches_variant(command: &str, configured: &str) -> bool {
     while let Some(offset) = command[from..].find(configured) {
         let start = from + offset;
         let end = start + configured.len();
-        let boundary = command[end..]
-            .chars()
-            .next()
-            .map_or(true, |c| c.is_whitespace() || matches!(c, ';' | '|' | '&' | ')' | '"' | '\''));
+        let boundary = command[end..].chars().next().map_or(true, |c| {
+            c.is_whitespace() || matches!(c, ';' | '|' | '&' | ')' | '"' | '\'')
+        });
         if boundary {
             return true;
         }
@@ -266,9 +266,9 @@ pub fn shell_destructive_reason(command: &str) -> Option<String> {
             return Some(format!("destructive git command ({pattern})"));
         }
     }
-    for raw in scrubbed.split(|c: char| {
-        c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '{' | '}')
-    }) {
+    for raw in scrubbed
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '{' | '}'))
+    {
         let token = raw.trim_matches(|c: char| matches!(c, '\'' | '"' | '`' | '$' | '(' | ')'));
         if token.is_empty() {
             continue;
@@ -294,9 +294,9 @@ const ESCALATION_COMMANDS: &[&str] = &["sudo", "doas", "pkexec", "su"];
 
 /// A privilege-escalation command inside `command`, if any.
 pub fn shell_escalation(command: &str) -> Option<String> {
-    for raw in command.split(|c: char| {
-        c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '{' | '}')
-    }) {
+    for raw in command
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '{' | '}'))
+    {
         let token = raw.trim_matches(|c: char| matches!(c, '\'' | '"' | '`' | '$'));
         if ESCALATION_COMMANDS.contains(&token) {
             return Some(token.to_string());
@@ -311,11 +311,16 @@ pub fn shell_escalation(command: &str) -> Option<String> {
 /// variable, a bare `&1`-style descriptor — because guessing there produces
 /// more false alarms than findings.
 fn resolve_shell_path(target: &str, root: &std::path::Path) -> Option<std::path::PathBuf> {
-    let target = target.trim().trim_matches(|c: char| matches!(c, '\'' | '"'));
+    let target = target
+        .trim()
+        .trim_matches(|c: char| matches!(c, '\'' | '"'));
     if target.is_empty() || target.starts_with('~') || target.starts_with('$') {
         return None;
     }
-    if matches!(target, "&1" | "&2" | "-" | "/dev/null" | "/dev/stdout" | "/dev/stderr") {
+    if matches!(
+        target,
+        "&1" | "&2" | "-" | "/dev/null" | "/dev/stdout" | "/dev/stderr"
+    ) {
         return None;
     }
     let path = std::path::Path::new(target);
@@ -481,14 +486,20 @@ mod tests {
         ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "b.rs"})));
         assert_eq!(ledger.outstanding().len(), 2);
 
-        ledger.confirm("files", &args(serde_json::json!({"action": "read", "path": "a.rs"})));
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "a.rs"})),
+        );
         assert_eq!(
             ledger.outstanding(),
             vec!["path:b.rs".to_string()],
             "reading a.rs must not clear the gate for b.rs"
         );
 
-        ledger.confirm("files", &args(serde_json::json!({"action": "read", "path": "b.rs"})));
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "b.rs"})),
+        );
         assert!(!ledger.is_blocked());
     }
 
@@ -497,8 +508,14 @@ mod tests {
         let mut ledger = VerificationLedger::default();
         ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
         assert!(ledger.is_blocked());
-        ledger.confirm("files", &args(serde_json::json!({"action": "read", "path": "a.rs"})));
-        assert!(!ledger.is_blocked(), "the read must actually clear the gate");
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "a.rs"})),
+        );
+        assert!(
+            !ledger.is_blocked(),
+            "the read must actually clear the gate"
+        );
     }
 
     #[test]
@@ -506,7 +523,10 @@ mod tests {
         let mut ledger = VerificationLedger::default();
         ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
         ledger.confirm("edit", &args(serde_json::json!({"path": "a.rs"})));
-        assert!(ledger.is_blocked(), "another write is not a confirming read");
+        assert!(
+            ledger.is_blocked(),
+            "another write is not a confirming read"
+        );
     }
 
     #[test]
@@ -559,7 +579,10 @@ mod tests {
     fn extra_arguments_still_satisfy_the_configured_command() {
         let mut ledger = VerificationLedger::new(Some("pnpm rust:test".into()));
         ledger.note_mutation("src/lib.rs");
-        ledger.note_command("cd mix-agent-desktop && pnpm rust:test -- --nocapture", true);
+        ledger.note_command(
+            "cd mix-agent-desktop && pnpm rust:test -- --nocapture",
+            true,
+        );
         assert!(!ledger.needs_verification());
     }
 

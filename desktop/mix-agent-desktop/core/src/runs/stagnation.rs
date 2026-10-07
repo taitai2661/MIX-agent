@@ -213,8 +213,8 @@ pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "read" | "list"
         ),
-        "glob" | "grep" | "outline" | "repo_map" | "web_fetch" | "web_search"
-        | "image_vision" | "network" => true,
+        "glob" | "grep" | "outline" | "repo_map" | "web_fetch" | "web_search" | "image_vision"
+        | "network" => true,
         _ => false,
     }
 }
