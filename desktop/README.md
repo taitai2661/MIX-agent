@@ -203,7 +203,7 @@ checkpoint 間隔（既定 10 ステップ）や停滞判定・検証などの�
 ### テスト
 
 `cargo test --workspace`（Rust）と `pnpm ui:test`（UI / vitest）で実行します。現在の件数は
-**Rust 407 件**（`#[test]` / `#[tokio::test]`）と **UI 191 ケース / 21 ファイル**です。
+**Rust 409 件**（`#[test]` / `#[tokio::test]`）と **UI 191 ケース / 21 ファイル**です。
 テストは継続的に追加されているため、数値はテストの追加・削除に合わせて更新してください。
 
 Rust 側は workspace 内に 7 つの `tests/` ディレクトリを持ちます。

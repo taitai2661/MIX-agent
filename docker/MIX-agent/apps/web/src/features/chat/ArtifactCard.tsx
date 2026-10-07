@@ -26,11 +26,18 @@ function fileKind(mime = "", name = "") {
 
 export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
   const { label, Icon } = fileKind(artifact.mime, artifact.name);
+  const isImage = artifact.mime?.startsWith("image/");
   return (
     <section className="artifact-card">
-      <div className="artifact-icon"><Icon aria-hidden="true" size={27} /></div>
+      {isImage ? (
+        <div className="artifact-image-container">
+          <img src={`/api/v1/artifacts/${artifact.artifact_id}`} alt={artifact.name || ""} className="artifact-preview-image" />
+        </div>
+      ) : (
+        <div className="artifact-icon"><Icon aria-hidden="true" size={27} /></div>
+      )}
       <div className="artifact-details">
-        <b>{artifact.name || t("成果物")}</b>
+        <b className="artifact-name-trunc">{artifact.name || t("成果物")}</b>
         <span>{label}{artifact.size ? ` · ${formatSize(artifact.size)}` : ""}</span>
       </div>
       <a className="artifact-download" href={`/api/v1/artifacts/${artifact.artifact_id}`} download={artifact.name || true}>

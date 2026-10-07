@@ -383,6 +383,11 @@ def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()
     are removed — so editing one conversation cannot delete another's uploads.
     `keep_artifact_ids` are attachments the replacement turn reuses; they must
     survive even though the only message referencing them is being deleted.
+
+    Returns the on-disk paths of artifacts that became orphaned. The caller must
+    unlink them only after the surrounding transaction commits: deleting files
+    here would leave the bytes gone while a rolled-back transaction restored the
+    rows that still reference them.
     """
     from mix_agent.db.models import (
         Approval,
@@ -396,7 +401,8 @@ def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()
 
     doomed = _doomed_messages(db, conversation.id, from_message_id)
     if not doomed:
-        return
+        return []
+    orphaned_paths = []
     message_ids = [message.id for message in doomed]
     doomed_id_set = set(message_ids)
     run_ids = {message.data.get("run_id") for message in doomed if message.data.get("run_id")}
@@ -450,8 +456,9 @@ def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()
         for artifact_id in artifact_ids - used - set(keep_artifact_ids):
             artifact = db.get(Artifact, artifact_id)
             if artifact and artifact.owner_id == conversation.owner_id:
-                (config.ARTIFACTS / artifact.id).unlink(missing_ok=True)
+                orphaned_paths.append(config.ARTIFACTS / artifact.id)
                 db.delete(artifact)
+    return orphaned_paths
 
 
 def purge_conversation(db, conversation):
@@ -2313,8 +2320,11 @@ async def _create_message_run(db, s, key, conversation, body, request_key, reque
     } if requested_model_id == "auto" else None)
     # Delete the replaced tail in the same transaction as the Run insert below:
     # `_build_run_record` commits once, so either both happen or neither does.
+    # The orphaned files are unlinked only after that commit succeeds — a
+    # rollback must restore the rows without the bytes having already vanished.
+    orphaned_paths = []
     if truncate_from_message_id:
-        _delete_message_tail(
+        orphaned_paths = _delete_message_tail(
             db, conversation, truncate_from_message_id,
             keep_artifact_ids=keep_artifact_ids,
         )
@@ -2323,6 +2333,8 @@ async def _create_message_run(db, s, key, conversation, body, request_key, reque
         snapshot, history, artifacts, auto_selection, auto_routing,
         memory_trace_ids, temporary_mode, prior_content,
     )
+    for path in orphaned_paths:
+        path.unlink(missing_ok=True)
     return run
 
 
@@ -2342,7 +2354,11 @@ async def edit_message(key: str, message_id: str, body: MessageInput, request: R
     request_key = request.headers.get("idempotency-key", "")
     # Hash the request as received, before attachments are carried over from the
     # replaced turn, so retrying the same edit is recognised as the same request.
-    request_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+    # The target turn is part of the hash so reusing a key across different
+    # messages is rejected rather than mistaken for a retry of this edit.
+    request_hash = hashlib.sha256(
+        b"edit:" + message_id.encode() + b":" + body.model_dump_json().encode()
+    ).hexdigest()
     if not 8 <= len(request_key) <= 100:
         raise HTTPException(422, "Idempotency-Keyが必要です")
     existing = db.scalar(select(Run).where(Run.request_key == request_key))

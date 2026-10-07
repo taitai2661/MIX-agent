@@ -167,7 +167,11 @@ impl Tool for TodoTool {
             let guard = self.store.next_ids.lock().await;
             *guard.get(&run_id).unwrap_or(&1)
         };
-        let mut items = BTreeMap::new();
+        // Collect explicitly supplied ids first so auto-assignment below can
+        // never collide with one. The previous single pass let a later explicit
+        // id overwrite an earlier auto item, silently dropping it from the plan.
+        let mut used_ids = std::collections::HashSet::new();
+        let mut parsed = Vec::with_capacity(entries.len());
         for entry in entries {
             let content = entry
                 .get("content")
@@ -180,16 +184,35 @@ impl Tool for TodoTool {
                 Some("in_progress") => TodoStatus::InProgress,
                 _ => TodoStatus::Pending,
             };
-            let id = match entry.get("id").and_then(|v| v.as_u64()) {
+            let explicit = match entry.get("id").and_then(|v| v.as_u64()) {
                 Some(raw) if raw > 0 && raw <= MAX_TODO_ID => {
                     // The id comes straight from model-authored tool arguments,
                     // so a huge value must not overflow the counter (a panic in
-                    // debug builds, a silent wrap in release).
+                    // debug builds, a silent wrap in release). A duplicate is
+                    // rejected rather than allowed to overwrite a sibling.
                     let id = raw as usize;
+                    if !used_ids.insert(id) {
+                        anyhow::bail!("duplicate todo id {id}");
+                    }
                     next_id = next_id.max(id.saturating_add(1));
-                    id
+                    Some(id)
                 }
-                _ => {
+                _ => None,
+            };
+            parsed.push((explicit, content, status));
+        }
+        let mut items = BTreeMap::new();
+        for (explicit, content, status) in parsed {
+            let id = match explicit {
+                Some(id) => id,
+                None => {
+                    // Skip ids already used and fail rather than wrap, so a
+                    // runaway id can never silently overwrite a sibling.
+                    while !used_ids.insert(next_id) {
+                        next_id = next_id
+                            .checked_add(1)
+                            .ok_or_else(|| anyhow::anyhow!("todo ids are exhausted"))?;
+                    }
                     let id = next_id;
                     next_id = next_id.saturating_add(1);
                     id
@@ -286,6 +309,49 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, 1);
         assert_eq!(items[0].status, TodoStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn an_auto_id_does_not_overwrite_a_later_explicit_id() {
+        // The auto id is handed out before the explicit `1` is seen. The old
+        // single pass inserted both under id 1 and silently dropped the first
+        // item; ids must stay unique within one list.
+        let tool = TodoTool::default();
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({ "todos": [
+                    { "content": "auto first", "status": "pending" },
+                    { "id": 1, "content": "explicit one", "status": "pending" }
+                ]}),
+            )
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        let items = tool.store.snapshot(ctx().run_id).await;
+        assert_eq!(items.len(), 2, "no item may be silently overwritten");
+        let contents: Vec<&str> = items.iter().map(|item| item.content.as_str()).collect();
+        assert!(contents.contains(&"auto first"));
+        assert!(contents.contains(&"explicit one"));
+        let ids: std::collections::HashSet<usize> = items.iter().map(|item| item.id).collect();
+        assert_eq!(ids.len(), 2, "ids stay unique");
+    }
+
+    #[tokio::test]
+    async fn duplicate_explicit_ids_are_rejected() {
+        // Two items claiming the same id cannot both survive; refuse the call
+        // rather than let the second silently replace the first.
+        let tool = TodoTool::default();
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({ "todos": [
+                    { "id": 7, "content": "a", "status": "pending" },
+                    { "id": 7, "content": "b", "status": "pending" }
+                ]}),
+            )
+            .await;
+        assert!(result.is_err(), "duplicate ids must be rejected");
     }
 
     #[tokio::test]

@@ -784,6 +784,96 @@ def test_edit_message_failure_keeps_the_history(signed, monkeypatch):
     assert len(history["runs"]) == 1
 
 
+def test_edit_idempotency_is_scoped_to_the_target_message(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    for index, key in enumerate(("edit-scope-seed-1", "edit-scope-seed-2")):
+        posted = signed.post(
+            url,
+            json={"model_id": model_id, "content": f"turn {index}", "mode": "chat"},
+            headers={"Idempotency-Key": key},
+        )
+        assert posted.status_code == 200, posted.text
+        with SessionLocal() as db:
+            db.get(Run, posted.json()["run_id"]).status = "completed"
+            db.commit()
+    messages = signed.get(url).json()["messages"]
+    target, later = messages[0]["id"], messages[1]["id"]
+    body = {"model_id": model_id, "content": "turn 0 (edited)", "mode": "chat"}
+    headers = {"Idempotency-Key": "edit-scope-key"}
+    edited = signed.post(url + "/" + target + "/edit", json=body, headers=headers)
+    assert edited.status_code == 200, edited.text
+    # Retrying the same edit is idempotent...
+    retried = signed.post(url + "/" + target + "/edit", json=body, headers=headers)
+    assert retried.status_code == 200, retried.text
+    assert retried.json() == edited.json()
+    # ...but the same key against a *different* turn is a different request, not
+    # a retry, so it must not be answered with the first Run.
+    conflict = signed.post(url + "/" + later + "/edit", json=body, headers=headers)
+    assert conflict.status_code == 409, conflict.text
+
+
+def test_delete_message_tail_defers_artifact_unlink_until_commit(signed, tmp_path, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from mix_agent import config
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(config, "ARTIFACTS", tmp_path)
+    base = datetime.now(UTC)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        conversation = Conversation(owner_id=owner, data={"title": "t", "state": "active"})
+        artifact = Artifact(
+            owner_id=owner,
+            data={"name": "note.txt", "mime": "text/plain", "size": 3},
+        )
+        db.add_all([conversation, artifact])
+        db.flush()
+        (tmp_path / artifact.id).write_bytes(b"abc")
+        kept = Message(
+            owner_id=owner,
+            conversation_id=conversation.id,
+            data={"role": "user", "content": "keep"},
+            created_at=base,
+        )
+        doomed = Message(
+            owner_id=owner,
+            conversation_id=conversation.id,
+            data={"role": "user", "content": "drop", "artifact_ids": [artifact.id]},
+            created_at=base + timedelta(seconds=1),
+        )
+        db.add_all([kept, doomed])
+        db.flush()
+        kept_id, doomed_id, artifact_id = kept.id, doomed.id, artifact.id
+
+        paths = routes._delete_message_tail(db, conversation, doomed_id)
+        # Nothing is unlinked here: the replacement Run's transaction may still
+        # roll back, so the bytes must outlive it. Only the caller unlinks after
+        # the commit.
+        assert (tmp_path / artifact_id).exists()
+        assert any(str(path).endswith(artifact_id) for path in paths)
+        db.rollback()
+
+    with SessionLocal() as db:
+        assert db.get(Message, kept_id) is not None
+        assert db.get(Message, doomed_id) is not None
+        assert db.get(Artifact, artifact_id) is not None
+    assert (tmp_path / artifact_id).exists()
+
+
 def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monkeypatch):
     from mix_agent.api import routes
 

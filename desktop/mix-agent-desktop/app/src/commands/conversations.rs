@@ -230,6 +230,28 @@ pub async fn dispatch_run(
     state: &AppState,
     input: SendMessageInput,
 ) -> Result<SendMessageOutput, String> {
+    dispatch(state, input, None).await
+}
+
+/// The turn an edit branches from, identified the way the transcript orders
+/// messages: by `created_at` with `rowid` breaking ties.
+struct TruncateTail {
+    created_at: String,
+    rowid: i64,
+}
+
+/// Start a Run, optionally replacing an existing tail first.
+///
+/// The truncation, the new Run row and the user turn are written in a single
+/// transaction, so an edit either replaces the old tail or leaves the
+/// conversation untouched. The engine is spawned only after that commit, which
+/// is what keeps a failure while preparing the Run from stranding a transcript
+/// that has already been deleted.
+async fn dispatch(
+    state: &AppState,
+    input: SendMessageInput,
+    truncate: Option<TruncateTail>,
+) -> Result<SendMessageOutput, String> {
     let pool = state.storage.pool();
     let row: Option<ConversationDispatchRow> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.mode'), json_extract(data, '$.modelId'), \
@@ -288,6 +310,20 @@ pub async fn dispatch_run(
         .await;
     }
 
+    // Project context: instructions / sources / AGENTS.md → system prompt,
+    // and the project folder → tool workspace root. Read-only and independent
+    // of the new turn, so resolve it before opening the write transaction.
+    let project = super::projects::load_project_runtime(pool, &input.conversation_id).await?;
+
+    let tools = build_tool_specs(state, mode.as_str()).await;
+    let reasoning = match input.reasoning.as_deref() {
+        Some("low") => Some(ReasoningControl::Low),
+        Some("medium") => Some(ReasoningControl::Medium),
+        Some("high") => Some(ReasoningControl::High),
+        Some("xhigh") => Some(ReasoningControl::Xhigh),
+        _ => None,
+    };
+
     let run_id = RunId::new_v4();
     let now = Utc::now();
     let budget = serde_json::json!({
@@ -298,6 +334,30 @@ pub async fn dispatch_run(
         "maxGrants": 2,
     });
     let request_key = format!("conv:{}:{}", input.conversation_id, now.timestamp_millis());
+
+    // The truncation, the Run row and the user turn share one transaction: an
+    // edit either replaces the old tail with a new Run, or leaves the
+    // conversation exactly as it was. Splitting them (truncate, commit, then
+    // start the Run) left the transcript deleted with nothing to replace it
+    // whenever Run creation failed.
+    let mut tx = pool.begin().await.map_err(crate::error::cmd_err)?;
+    if truncate.is_some() {
+        // The engine appends assistant turns to a transcript this edit is about
+        // to rewrite, so an in-flight Run must finish (or be cancelled) first.
+        // Checking inside the transaction closes the window between the check
+        // and the delete that would let a Run start against a deleted tail.
+        let active: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM runs WHERE conversation_id = ? AND status IN \
+             ('queued','running','waiting_approval','budget_extension_pending')",
+        )
+        .bind(&input.conversation_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(crate::error::cmd_err)?;
+        if active > 0 {
+            return Err("実行中はメッセージを編集できません".to_string());
+        }
+    }
     sqlx::query(
         "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
          VALUES (?, ?, ?, ?, 'queued', ?)",
@@ -321,14 +381,22 @@ pub async fn dispatch_run(
     )
     .bind(&input.conversation_id)
     .bind(&request_key)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(crate::error::cmd_err)?;
+
+    // Branch from the edited turn inside the same transaction. The delete and
+    // the history read below run on one connection, so the uncommitted delete is
+    // visible here; a rollback restores the tail intact.
+    if let Some(tail) = truncate {
+        truncate_messages_from(&mut tx, &input.conversation_id, &tail.created_at, tail.rowid)
+            .await?;
+    }
 
     // Before the user turn is inserted. `load_history` selects every message,
     // so loading it afterwards included the row just written and the engine
     // appended the same text again — every turn was sent to the model twice.
-    let history: Vec<HistoryMessage> = load_history(pool, &input.conversation_id).await?;
+    let history: Vec<HistoryMessage> = load_history(&mut *tx, &input.conversation_id).await?;
 
     // Persist the user turn.
     let user_data = serde_json::json!({
@@ -345,7 +413,7 @@ pub async fn dispatch_run(
         .bind(mixd_storage::records::SINGLE_USER_ID)
         .bind(user_data.to_string())
         .bind(&input.conversation_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(crate::error::cmd_err)?;
 
@@ -356,23 +424,14 @@ pub async fn dispatch_run(
         )
         .bind(now.to_rfc3339())
         .bind(&input.conversation_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await,
         "touch conversation",
     );
 
-    // Project context: instructions / sources / AGENTS.md → system prompt,
-    // and the project folder → tool workspace root.
-    let project = super::projects::load_project_runtime(pool, &input.conversation_id).await?;
-
-    let tools = build_tool_specs(state, mode.as_str()).await;
-    let reasoning = match input.reasoning.as_deref() {
-        Some("low") => Some(ReasoningControl::Low),
-        Some("medium") => Some(ReasoningControl::Medium),
-        Some("high") => Some(ReasoningControl::High),
-        Some("xhigh") => Some(ReasoningControl::Xhigh),
-        _ => None,
-    };
+    // Truncate + Run + user turn are now committed together; only past this
+    // point may the engine start and read the transcript.
+    tx.commit().await.map_err(crate::error::cmd_err)?;
 
     let request = RunRequest {
         run_id,
@@ -509,44 +568,24 @@ pub async fn edit_message(
     // Attachments are not editable in the transcript yet, but dropping them
     // because the text changed would silently turn an image question into a
     // text question, so the originals are carried into the replacement turn.
+    // A stored attachment that no longer parses must not be dropped silently
+    // either: refuse the edit rather than send the text without its image.
     let attachments: Vec<AttachmentInput> = match attachments_raw.as_deref() {
         None => Vec::new(),
-        Some(raw) => match serde_json::from_str(raw) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                // A stored attachment that no longer parses would otherwise be
-                // dropped without a trace; log it so the loss is diagnosable.
-                tracing::warn!(
-                    %err,
-                    message_id = %input.message_id,
-                    "could not parse the edited message's attachments; carrying none"
-                );
-                Vec::new()
-            }
-        },
+        Some(raw) => serde_json::from_str(raw).map_err(|err| {
+            tracing::warn!(
+                %err,
+                message_id = %input.message_id,
+                "could not parse the edited message's attachments"
+            );
+            "元のメッセージの添付を読み込めませんでした".to_string()
+        })?,
     };
 
-    // The engine appends assistant turns to a transcript this command is about
-    // to rewrite, so an in-flight Run must finish (or be cancelled) first. The
-    // check and the truncation share one transaction so a Run cannot start in
-    // the window between them and have its transcript deleted under it.
-    let mut tx = pool.begin().await.map_err(crate::error::cmd_err)?;
-    let active: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM runs WHERE conversation_id = ? AND status IN \
-         ('queued','running','waiting_approval','budget_extension_pending')",
-    )
-    .bind(&input.conversation_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(crate::error::cmd_err)?;
-    if active > 0 {
-        return Err("実行中はメッセージを編集できません".to_string());
-    }
-
-    truncate_messages_from(&mut tx, &input.conversation_id, &created_at, rowid).await?;
-    tx.commit().await.map_err(crate::error::cmd_err)?;
-
-    dispatch_run(
+    // The in-flight Run guard, the truncation and the replacement Run all live
+    // in one transaction inside `dispatch`, so a Run cannot start against a
+    // deleted tail and a failed dispatch cannot leave the transcript empty.
+    dispatch(
         &state,
         SendMessageInput {
             conversation_id: input.conversation_id,
@@ -559,6 +598,7 @@ pub async fn edit_message(
             temperature: None,
             max_tokens: None,
         },
+        Some(TruncateTail { created_at, rowid }),
     )
     .await
 }
@@ -643,10 +683,13 @@ async fn resolve_provider_id(state: &AppState, model_id: &str) -> Result<String,
     .map_err(|err| err.to_string())
 }
 
-async fn load_history(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
+async fn load_history<'e, E>(
+    executor: E,
     conversation_id: &str,
-) -> Result<Vec<HistoryMessage>, String> {
+) -> Result<Vec<HistoryMessage>, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     use sqlx::Row;
     // `toolCalls` has to come back. It used to be selected but hard-coded to an
     // empty vector, so a reloaded conversation handed the model a `tool` message
@@ -663,7 +706,7 @@ async fn load_history(
          ORDER BY created_at DESC, rowid DESC LIMIT 80",
     )
     .bind(conversation_id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
     .map_err(crate::error::cmd_err)?;
     let rows: Vec<_> = rows.into_iter().rev().collect();

@@ -972,6 +972,17 @@ svg {
   gap: 4px;
   margin-left: auto;
 }
+.send-hint {
+  color: var(--faint);
+  font-size: 11px;
+  margin-right: 8px;
+  pointer-events: none;
+}
+@media (max-width: 600px) {
+  .send-hint {
+    display: none;
+  }
+}
 .send {
   display: grid;
   place-items: center;
@@ -6000,3 +6011,42 @@ body {
 .memory-remember-form textarea { width: 100%; min-height: 100px; }
 .memory-debug { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
 .memory-debug form { display: flex; flex-direction: column; gap: 6px; }
+
+.attachment-image-span {
+  padding: 3px !important;
+  gap: 4px;
+}
+.attachment-thumb {
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.attachment-name {
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-image-container {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+}
+.artifact-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.artifact-name-trunc {
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}

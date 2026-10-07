@@ -269,6 +269,12 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [streamText, history.data]);
+  useEffect(() => {
+    if (composer.current) {
+      composer.current.style.height = "auto";
+      composer.current.style.height = composer.current.scrollHeight + "px";
+    }
+  }, [text]);
   const active =
     run.data &&
     ["running", "queued", "waiting_approval", "paused"].includes(run.data.status);
@@ -618,9 +624,13 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
               {attachments.length > 0 && (
                 <div className="attachments">
                   {attachments.map((a) => (
-                    <span key={a.artifact_id}>
-                      <FileText size={13} />
-                      {a.name}
+                    <span key={a.artifact_id} className={a.mime?.startsWith("image/") ? "attachment-image-span" : ""}>
+                      {a.mime?.startsWith("image/") ? (
+                        <img src={`/api/v1/artifacts/${a.artifact_id}`} alt="" className="attachment-thumb" />
+                      ) : (
+                        <FileText size={13} />
+                      )}
+                      <span className="attachment-name">{a.name}</span>
                       <button
                         type="button"
                         aria-label={t("添付解除")}
@@ -640,6 +650,17 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                 placeholder={t("MIX agent にメッセージを送信…")}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
+                onPaste={(e) => {
+                  const items = Array.from(e.clipboardData.items);
+                  const files = items
+                    .filter((item) => item.kind === "file")
+                    .map((item) => item.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    void attach(files);
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (
                     e.key === "Enter" &&
@@ -647,7 +668,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                     !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229
                   ) {
                     e.preventDefault();
-                    send();
+                    void send();
                   }
                 }}
               />
@@ -741,6 +762,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                   </div>
                 </details>
                 <div className="composer-actions">
+                  <span className="send-hint">{t("Enterで送信 / Shift+Enterで改行")}</span>
                   <button
                     type="button"
                     className="icon"
