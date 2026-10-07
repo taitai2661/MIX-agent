@@ -1,3 +1,0 @@
-# Mirrors `rust-version = "1.77"` in Cargo.toml (workspace), so clippy's
-# MSRV-aware suggestions never propose code newer than the declared toolchain.
-msrv = "1.77"

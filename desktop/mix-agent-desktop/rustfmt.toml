@@ -1,4 +1,0 @@
-# Matches `edition = "2021"` in Cargo.toml (workspace).
-# `cargo fmt` already passes --edition from Cargo.toml, so this only matters for
-# editors/tools that invoke rustfmt directly.
-edition = "2021"
