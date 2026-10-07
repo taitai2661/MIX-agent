@@ -227,6 +227,11 @@ impl Harness {
             model_id: "test-model".to_string(),
             provider_id: "p1".to_string(),
             system: None,
+            // No configured check by default: the gate is opt-in per project, and
+            // the tests that care set it explicitly.
+            verify_command: None,
+            format_command: None,
+            context_window: 0,
             temperature: None,
             reasoning: None,
             max_tokens: None,
@@ -496,6 +501,9 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         model_id: "m".to_string(),
         provider_id: "bad".to_string(),
         system: None,
+        verify_command: None,
+        format_command: None,
+        context_window: 0,
         temperature: None,
         reasoning: None,
         max_tokens: None,
@@ -1422,4 +1430,125 @@ async fn the_skill_catalogue_reaches_the_system_prompt_scoped_to_the_project() {
         system.iter().any(|s| s.contains("- scoped:")),
         "the skill must be listed by name; got {system:?}"
     );
+}
+
+#[tokio::test]
+async fn an_agent_run_carries_the_built_in_procedure_in_its_system_prompt() {
+    let harness = Harness::new(vec![text_turn("done")]).await;
+    let _drain = spawn_event_drain(&harness.engine);
+    harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+
+    let system = harness.provider.requests()[0]
+        .system
+        .clone()
+        .expect("an agent run must have a system prompt even with no project set up");
+    assert!(
+        system.contains("You are a coding agent"),
+        "the built-in procedure must reach the model; got {system:?}"
+    );
+    assert!(system.contains("Never claim a test"));
+}
+
+#[tokio::test]
+async fn a_change_without_the_project_check_blocks_the_conclusion() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "c1",
+            "edit",
+            r#"{"action":"create","path":"a.txt","new_string":"hello\n"}"#,
+        ),
+        text_turn("done"),
+    ])
+    .await;
+    allow_tool(&harness, "edit").await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.verify_command = Some("cargo test".to_string());
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+
+    let requests = harness.provider.requests();
+    assert!(
+        requests.len() > 2,
+        "the run must be sent back instead of concluding; got {} turns",
+        requests.len()
+    );
+    let told = requests[2].messages.iter().any(|m| {
+        m.content.contains("[verification]") && m.content.contains("cargo test")
+    });
+    assert!(
+        told,
+        "the repair turn must run the configured command so the model can act on it"
+    );
+}
+
+#[tokio::test]
+async fn running_the_configured_check_lets_the_run_conclude() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "c1",
+            "edit",
+            r#"{"action":"create","path":"a.txt","new_string":"hello\n"}"#,
+        ),
+        text_turn("done"),
+        tool_turn("c2", "terminal", r#"{"command":"echo verified"}"#),
+        text_turn("verified"),
+    ])
+    .await;
+    allow_tool(&harness, "edit").await;
+    allow_tool(&harness, "terminal").await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.verify_command = Some("echo verified".to_string());
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.text, "verified");
+    assert_eq!(
+        tool_names(&outcome.tool_calls),
+        vec!["edit", "terminal"],
+        "the model must actually be allowed to run the check"
+    );
+}
+
+#[tokio::test]
+async fn no_configured_check_leaves_a_change_unencumbered() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "c1",
+            "edit",
+            r#"{"action":"create","path":"a.txt","new_string":"hello\n"}"#,
+        ),
+        text_turn("done"),
+    ])
+    .await;
+    allow_tool(&harness, "edit").await;
+    let _drain = spawn_event_drain(&harness.engine);
+
+    let outcome = harness.engine.execute(harness.request().await).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+
+    // The read-back gate still applies, and it is the one that fires here: an
+    // edit always leaves an outstanding effect until it is read back. What must
+    // *not* happen is a demand for a check that was never configured.
+    let requests = harness.provider.requests();
+    let repairs: Vec<String> = requests
+        .iter()
+        .flat_map(|r| r.messages.iter())
+        .filter(|m| m.content.starts_with("[verification]"))
+        .map(|m| m.content.clone())
+        .collect();
+    assert!(!repairs.is_empty(), "the read-back gate must still fire");
+    for repair in &repairs {
+        assert!(repair.contains("confirmed the effect"));
+        assert!(
+            !repair.contains("project check"),
+            "no check is configured, so none may be demanded: {repair}"
+        );
+    }
 }

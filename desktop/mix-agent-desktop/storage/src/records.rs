@@ -211,6 +211,14 @@ pub struct ProjectData {
     /// Pasted reference texts (parity with the Docker edition).
     #[serde(rename = "sources", default)]
     pub sources: Vec<String>,
+    /// The project's own check (`pnpm rust:test`). When set, a Run that changed
+    /// files may not conclude until this command has succeeded. `None` falls
+    /// back to the app-wide setting, and then to no gate at all.
+    #[serde(rename = "verifyCommand", default)]
+    pub verify_command: Option<String>,
+    /// Formatter or lint command reported to the model around edits.
+    #[serde(rename = "formatCommand", default)]
+    pub format_command: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
     #[serde(rename = "updatedAt")]

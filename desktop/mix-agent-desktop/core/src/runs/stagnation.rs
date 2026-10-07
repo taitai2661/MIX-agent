@@ -178,16 +178,30 @@ pub fn classify_tool_call(name: &str, args: &serde_json::Value, is_error: bool) 
 /// more step in a loop.
 pub fn is_mutating(name: &str, args: &serde_json::Value) -> bool {
     match name {
+        // `create` and `append` were missing here, so a run that only ever
+        // created files classified as a read loop — and, once plan mode exists,
+        // would have been allowed to write through it.
         "files" => matches!(
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
-            "write" | "delete"
+            "write" | "delete" | "create" | "append"
         ),
-        "edit" | "terminal" | "todo" | "user_plan" => true,
+        "edit" | "terminal" | "todo" | "user_plan" | "agent" => true,
+        // `git` is read-only for the inspection actions and mutating for the
+        // rest, so the action decides rather than the tool name.
+        "git" => !matches!(
+            args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+            "status" | "diff" | "log" | "show" | "branch"
+        ),
+        // `memory` reads with `recall`/`search` and writes with
+        // `remember`/`forget`.
+        "memory" => !matches!(
+            args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+            "recall" | "search"
+        ),
         // A tool we have never heard of may well be mutating; assuming it is not
         // would let an unfamiliar tool's loop read as healthy work.
-        "glob" | "grep" | "web_fetch" | "web_search" | "network" | "image_vision" | "browser" => {
-            false
-        }
+        "glob" | "grep" | "outline" | "repo_map" | "skill" | "web_fetch" | "web_search"
+        | "network" | "image_vision" | "browser" => false,
         _ => true,
     }
 }
@@ -199,7 +213,8 @@ pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "read" | "list"
         ),
-        "glob" | "grep" | "web_fetch" | "web_search" | "image_vision" | "network" => true,
+        "glob" | "grep" | "outline" | "repo_map" | "web_fetch" | "web_search"
+        | "image_vision" | "network" => true,
         _ => false,
     }
 }

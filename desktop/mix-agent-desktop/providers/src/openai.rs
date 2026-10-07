@@ -351,34 +351,13 @@ impl Provider for OpenAiProvider {
 
 /// True for loopback / private-network endpoints, where an API key is usually
 /// not configured (Ollama, LM Studio, vLLM, a LAN inference box).
+///
+/// Single source of truth lives in [`crate::discovery`]: `host_of` parses the
+/// URL and `is_loopback_host` decides, so the key gate and the scanner can
+/// never disagree about what "local" means (an IPv6-loopback Ollama once
+/// demanded a key because a copy of this logic split `[::1]` on `':'`).
 fn is_local_endpoint(base_url: &str) -> bool {
-    let host = base_url
-        .split("://")
-        .nth(1)
-        .unwrap_or(base_url)
-        .split('/')
-        .next()
-        .unwrap_or("");
-    let host = host.rsplit('@').next().unwrap_or(host);
-    // `http://[::1]:11434` — splitting an IPv6 literal on ':' yields `"["`,
-    // which matched nothing, so a keyless IPv6-loopback Ollama demanded a key.
-    let host = if let Some(rest) = host.strip_prefix('[') {
-        rest.split(']').next().unwrap_or(rest)
-    } else {
-        host.split(':').next().unwrap_or(host)
-    };
-    if host == "localhost" || host == "::1" || host == "0.0.0.0" {
-        return true;
-    }
-    if host.starts_with("127.") || host.starts_with("10.") || host.starts_with("192.168.") {
-        return true;
-    }
-    // 172.16.0.0/12
-    host.starts_with("172.")
-        && matches!(
-            host.split('.').nth(1).and_then(|o| o.parse::<u8>().ok()),
-            Some(second) if (16..=31).contains(&second)
-        )
+    crate::discovery::is_loopback_host(crate::discovery::host_of(base_url))
 }
 
 fn build_messages(req: &ProviderRequest) -> Vec<OpenAiMessage<'_>> {

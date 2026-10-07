@@ -10,6 +10,15 @@ pub struct Budget {
     pub step_limit: u32,
     pub tool_call_limit: u32,
     pub wall_clock_minutes: u32,
+    /// Token ceiling for the Run, or `0` for unlimited.
+    ///
+    /// Steps bound how many turns a Run gets; tokens bound how much context it
+    /// may burn doing so. The two diverge badly on a large repository, where a
+    /// handful of reads can cost more than a hundred small turns, so a step
+    /// limit alone is not a spending limit.
+    pub token_limit: u32,
+    /// Input + output tokens reported by the Provider so far.
+    pub tokens_used: u32,
     pub grants_used: u32,
     pub max_grants: u32,
     #[serde(skip)]
@@ -28,6 +37,12 @@ impl<'de> Deserialize<'de> for Budget {
             step_limit: u32,
             tool_call_limit: u32,
             wall_clock_minutes: u32,
+            // Defaulted rather than required: rows written before the token
+            // budget existed must keep deserializing.
+            #[serde(default)]
+            token_limit: u32,
+            #[serde(default)]
+            tokens_used: u32,
             grants_used: u32,
             max_grants: u32,
         }
@@ -36,6 +51,8 @@ impl<'de> Deserialize<'de> for Budget {
             step_limit: raw.step_limit,
             tool_call_limit: raw.tool_call_limit,
             wall_clock_minutes: raw.wall_clock_minutes,
+            token_limit: raw.token_limit,
+            tokens_used: raw.tokens_used,
             grants_used: raw.grants_used,
             max_grants: raw.max_grants,
             started_at: std::time::Instant::now(),
@@ -56,6 +73,8 @@ impl Default for Budget {
             step_limit: 12,
             tool_call_limit: 12,
             wall_clock_minutes: 20,
+            token_limit: 0,
+            tokens_used: 0,
             grants_used: 0,
             max_grants: 2,
             started_at: std::time::Instant::now(),
@@ -70,6 +89,7 @@ impl Budget {
             step_limit: mode.default_step_limit(),
             tool_call_limit: mode.default_tool_call_limit(),
             wall_clock_minutes: mode.default_wall_clock_minutes(),
+            token_limit: mode.default_token_limit(),
             ..Default::default()
         }
     }
@@ -94,6 +114,13 @@ impl Budget {
             step_limit: pick("stepLimit", base.step_limit),
             tool_call_limit: pick("toolCallLimit", base.tool_call_limit),
             wall_clock_minutes: pick("wallClockMinutes", base.wall_clock_minutes),
+            // `null` (the UI's "not edited") keeps the mode's ceiling; a stored
+            // `0` is a deliberate "unlimited" and is preserved.
+            token_limit: pick("tokenLimit", base.token_limit),
+            tokens_used: value
+                .get("tokensUsed")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
             grants_used: value
                 .get("grantsUsed")
                 .and_then(|v| v.as_u64())
@@ -115,9 +142,17 @@ impl Budget {
             "stepLimit": self.step_limit,
             "toolCallLimit": self.tool_call_limit,
             "wallClockMinutes": self.wall_clock_minutes,
+            "tokenLimit": self.token_limit,
+            "tokensUsed": self.tokens_used,
             "grantsUsed": self.grants_used,
             "maxGrants": self.max_grants,
         })
+    }
+
+    /// Record what a turn cost, so the token ceiling reflects the whole Run.
+    pub fn record_usage(&mut self, input_tokens: u64, output_tokens: u64) {
+        let spent = input_tokens.saturating_add(output_tokens);
+        self.tokens_used = self.tokens_used.saturating_add(spent.min(u32::MAX as u64) as u32);
     }
 
     pub async fn check(&mut self, steps: u32, tool_calls: u32) -> BudgetVerdict {
@@ -126,6 +161,11 @@ impl Budget {
         }
         if tool_calls >= self.tool_call_limit {
             return BudgetVerdict::Exhausted("tool_call_limit");
+        }
+        // `0` is unlimited, which is also what a build with no pricing data
+        // configured reports.
+        if self.token_limit > 0 && self.tokens_used >= self.token_limit {
+            return BudgetVerdict::Exhausted("token_limit");
         }
         if self.started_at.elapsed()
             >= std::time::Duration::from_secs(self.wall_clock_minutes as u64 * 60)
@@ -147,6 +187,11 @@ impl Budget {
         self.grants_used = self.grants_used.saturating_add(1);
         self.step_limit = self.step_limit.saturating_mul(2);
         self.tool_call_limit = self.tool_call_limit.saturating_mul(2);
+        // An unlimited budget stays unlimited: doubling `0` would turn
+        // "no ceiling" into a 0-token ceiling.
+        if self.token_limit > 0 {
+            self.token_limit = self.token_limit.saturating_mul(2);
+        }
         self.wall_clock_minutes = self.wall_clock_minutes.saturating_add(30);
         self.started_at = std::time::Instant::now();
         true
@@ -166,6 +211,60 @@ mod tests {
         let mut b = Budget::default();
         assert_eq!(b.check(0, 0).await, BudgetVerdict::Ok);
         assert_eq!(b.check(12, 0).await, BudgetVerdict::Exhausted("step_limit"));
+    }
+
+    #[tokio::test]
+    async fn a_token_ceiling_blocks_a_run_that_is_under_its_step_limit() {
+        let mut b = Budget::for_mode(Mode::Agent);
+        b.token_limit = 1_000;
+        b.record_usage(600, 400);
+        assert_eq!(b.tokens_used, 1_000);
+        assert_eq!(
+            b.check(1, 1).await,
+            BudgetVerdict::Exhausted("token_limit")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unlimited_token_budget_never_blocks() {
+        let mut b = Budget::default();
+        b.record_usage(u64::MAX, u64::MAX);
+        assert_eq!(b.check(0, 0).await, BudgetVerdict::Ok);
+    }
+
+    #[tokio::test]
+    async fn extending_an_unlimited_budget_leaves_it_unlimited() {
+        let mut b = Budget::default();
+        assert_eq!(b.token_limit, 0);
+        assert!(b.extend());
+        assert_eq!(b.token_limit, 0, "doubling unlimited must stay unlimited");
+    }
+
+    #[tokio::test]
+    async fn extending_a_limited_budget_doubles_the_token_ceiling() {
+        let mut b = Budget::for_mode(Mode::Agent);
+        let before = b.token_limit;
+        assert!(before > 0);
+        assert!(b.extend());
+        assert_eq!(b.token_limit, before * 2);
+    }
+
+    #[test]
+    fn a_stored_document_without_a_token_budget_still_loads() {
+        let stored = serde_json::json!({
+            "stepLimit": 40,
+            "toolCallLimit": 80,
+            "wallClockMinutes": 30,
+            "grantsUsed": 0,
+            "maxGrants": 2,
+        });
+        let restored = Budget::from_json_with_base(&stored, Budget::for_mode(Mode::Agent));
+        assert_eq!(restored.step_limit, 40);
+        assert_eq!(
+            restored.token_limit,
+            Mode::Agent.default_token_limit(),
+            "an absent token limit keeps the mode's ceiling"
+        );
     }
 
     #[tokio::test]

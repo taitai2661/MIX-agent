@@ -29,6 +29,8 @@ fn seeded_project_data(root: &std::path::Path) -> ProjectData {
         root_path: root.to_string_lossy().to_string(),
         additional_paths: Vec::new(),
         sources: Vec::new(),
+        verify_command: None,
+        format_command: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     }

@@ -178,6 +178,9 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         crate::commands::projects::load_project_runtime(state.storage.pool(), &conversation_id)
             .await?;
 
+    let context_window = crate::commands::projects::context_window_for(state.storage.pool(), &model_id)
+        .await;
+
     let request = mixd_core::runs::engine::RunRequest {
         run_id,
         conversation_id: Uuid::parse_str(&conversation_id).map_err(crate::error::cmd_err)?,
@@ -193,6 +196,9 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         model_id,
         provider_id,
         system: project.system,
+        verify_command: project.verify_command,
+        format_command: project.format_command,
+        context_window,
         temperature: None,
         reasoning: None,
         max_tokens: None,

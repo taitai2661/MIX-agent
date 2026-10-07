@@ -19,6 +19,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
+import { TraceView, type TraceProbe } from "./TraceView";
 
 const ROLE_LABEL: Record<string, string> = {
   fact: "事実",
@@ -79,6 +80,7 @@ type MemoryView = {
   disputed_by_id?: string | null;
   selection_reason?: string;
   relevance?: number;
+  score_breakdown?: Record<string, number>;
   role_metadata?: Record<string, unknown> | null;
   evidence?: Array<{ id: string; kind: string; ref?: string; summary?: string; captured_at?: string }>;
   evidence_count?: number;
@@ -142,10 +144,20 @@ function MemoryCard({ memory, onSelect, onConflict }: { memory: MemoryView; onSe
       <div className="memory-metrics">
         <span>確度 {percent(memory.confidence)}</span>
         <span>顕著性 {percent(memory.salience)}</span>
-        {typeof memory.relevance === "number" && <span>関連度 {percent(memory.relevance)}</span>}
+        {typeof memory.relevance === "number" && <span>{t("関連度")} {memory.relevance.toFixed(2)}</span>}
         {memory.evidence_count ? <span>Evidence {memory.evidence_count}</span> : null}
       </div>
       {memory.selection_reason && <p className="memory-selection-reason">{memory.selection_reason}</p>}
+      {memory.score_breakdown && (
+        <details>
+          <summary>{t("スコア内訳")}</summary>
+          <ul className="memory-score-list">
+            {Object.entries(memory.score_breakdown).map(([name, value]) => (
+              <li key={name}>{name}: {typeof value === "number" ? value.toFixed(2) : String(value)}</li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }
@@ -210,7 +222,9 @@ export function Memories() {
   const [scope, setScope] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [probeQuery, setProbeQuery] = useState("");
-  const [probe, setProbe] = useState<{ memories: MemoryView[]; debug: any } | null>(null);
+  const [probe, setProbe] = useState<TraceProbe | null>(null);
+  const [probeLoading, setProbeLoading] = useState(false);
+  const [probeError, setProbeError] = useState<unknown>(null);
   const [selected, setSelected] = useState<MemoryView | null>(null);
   const [showConflicts, setShowConflicts] = useState(false);
   const [rememberOpen, setRememberOpen] = useState(false);
@@ -227,6 +241,39 @@ export function Memories() {
 
   const refreshAll = () => {
     qc.invalidateQueries({ predicate: (item) => String(item.queryKey[0]).startsWith("/memories") });
+  };
+
+  const runTrace = async (raw: string) => {
+    const query = raw.trim();
+    if (!query || probeLoading) return;
+    setProbeLoading(true);
+    setProbeError(null);
+    try {
+      const result = await api<TraceProbe>(`/memories-debug/search?q=${encodeURIComponent(query)}`);
+      setProbe({ ...result, query });
+    } catch (reason) {
+      setProbeError(reason);
+    } finally {
+      setProbeLoading(false);
+    }
+  };
+
+  const openHit = (hit: { id: string; content?: string; gist?: string; relevance?: number; selection_reason?: string; score_breakdown?: Record<string, number> }) => {
+    setSelected({
+      id: hit.id,
+      content: hit.content || hit.gist || "",
+      role: (hit as { role?: string }).role || "fact",
+      scope: (hit as { scope?: string }).scope || "user",
+      lifecycle: (hit as { lifecycle_state?: string }).lifecycle_state || "active",
+      lifecycle_label: (hit as { lifecycle_state?: string }).lifecycle_state || "active",
+      verification: "unverified",
+      confidence: 0,
+      salience: 0,
+      strength: 0,
+      relevance: hit.relevance,
+      selection_reason: hit.selection_reason,
+      score_breakdown: hit.score_breakdown,
+    });
   };
 
   const filteredGroups = useMemo(() => {
@@ -286,8 +333,7 @@ export function Memories() {
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={async (e) => {
                 if (e.key === "Enter" && q.trim()) {
-                  const result = await api<{ memories: MemoryView[]; debug: any }>(`/memories?q=${encodeURIComponent(q)}${roleFilter ? `&role=${roleFilter}` : ""}${scope ? `&scope=${scope}` : ""}`);
-                  setProbe(result);
+                  await runTrace(q);
                 }
               }}
             />
@@ -316,22 +362,10 @@ export function Memories() {
         </div>
       </section>
 
+      {probeLoading && <p className="trace-note">{t("トレースを実行中…")}</p>}
+      {probeError && <ErrorBox error={probeError} />}
       {probe && (
-        <section className="card memory-trace-result">
-          <header><h3>{t("想起トレース")}</h3></header>
-          {probe.debug && (
-            <div className="memory-metrics">
-              <span>{t("候補")} {probe.debug.considered}</span>
-              <span>{t("採用")} {probe.debug.kept}</span>
-              <span>{t("経過")} {probe.debug.elapsed_ms}ms</span>
-              <span>{t("役割")} {probe.debug.roles?.join(", ") || "-"}</span>
-              <span>{t("スコープ")} {probe.debug.scopes?.join(", ") || "-"}</span>
-            </div>
-          )}
-          <div className="memory-grid">
-            {(probe.memories || []).map((mem) => <MemoryCard key={mem.id} memory={mem} onSelect={setSelected} />)}
-          </div>
-        </section>
+        <TraceView probe={probe} onSelect={openHit} onClose={() => setProbe(null)} />
       )}
 
       {selected && <MemoryDetail memory={selected} onClose={() => setSelected(null)} />}
@@ -423,17 +457,12 @@ export function Memories() {
         <header><h3>{t("想起プローブ")}</h3></header>
         <form onSubmit={async (e) => {
           e.preventDefault();
-          try {
-            const result = await api<{ memories: MemoryView[]; debug: any }>(`/memories-debug/search?q=${encodeURIComponent(probeQuery.trim())}${roleFilter ? `&role=${roleFilter}` : ""}${scope ? `&scope=${scope}` : ""}`);
-            setProbe(result);
-          } catch (reason) {
-            console.error(reason);
-          }
+          await runTrace(probeQuery);
         }}>
           <Field label={t("クエリを入力して想起パイプラインの過程を確認")}>
             <input required value={probeQuery} onChange={(e) => setProbeQuery(e.target.value)} placeholder={t("例: Postgres migration で失敗した方法")} />
           </Field>
-          <div className="form-actions"><Button>{t("想起を実行")}</Button></div>
+          <div className="form-actions"><Button disabled={probeLoading || !probeQuery.trim()}>{probeLoading ? t("トレースを実行中…") : t("想起を実行")}</Button></div>
         </form>
       </section>
     </main>

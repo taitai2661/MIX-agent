@@ -17,8 +17,8 @@
 //!   dead end the Docker edition's `ollama_tags` discovery was built to avoid.
 //!
 //! Ports are shared between runtimes (LocalAI and llama.cpp both default to
-//! `8080`, Jan and GPT4All both to `1337`), so the port alone cannot identify a
-//! server. Every open port is therefore fingerprinted: a handful of cheap
+//! `8080`, so this sweep probes LocalAI on `8090`), so the port alone cannot
+//! identify a server. Every open port is therefore fingerprinted: a handful of cheap
 //! vendor-specific endpoints are queried in parallel and the first positive
 //! match wins. Ports with no positive match fall back to the runtime the port
 //! most commonly belongs to.
@@ -565,8 +565,12 @@ fn version_of(body: &serde_json::Value) -> Option<String> {
 
 /// `true` when the port accepted a TCP connection.
 async fn tcp_open(host: &str, port: u16) -> bool {
-    // `host` is already in the form `TcpStream::connect` wants, including the
-    // brackets an IPv6 literal needs.
+    // `LOOPBACK_HOSTS` keeps the IPv6 literal in URL form (`[::1]`) so
+    // `format!("http://{host}:{port}")` stays correct, but `TcpStream::connect`
+    // resolves `(&str, u16)` via `ToSocketAddrs` where the brackets are not a
+    // valid IP — a literal `[::1]` always failed DNS and the IPv6 half of the
+    // sweep never detected anything. Strip them for the connect only.
+    let host = host.trim_matches(|c| c == '[' || c == ']');
     tokio::time::timeout(
         TCP_CONNECT_TIMEOUT,
         tokio::net::TcpStream::connect((host, port)),
@@ -912,14 +916,21 @@ pub async fn scan_local_runtimes() -> anyhow::Result<ScanReport> {
     occupied.dedup_by_key(|o| o.port);
 
     // Online first, then lowest port, so the row a user is most likely to want
-    // leads. Within a host pair IPv4 sorts first, which keeps the reported base
-    // URL on the `127.0.0.1` literal rather than the IPv6 one.
+    // leads. A dual-stack server answers on both `127.0.0.1` and `[::1]` for
+    // the same port, so dedupe by port and keep the IPv4 row: string ordering
+    // would put `"[::1]"` first (`'[' > '1'` is false — `'['` is 91, `'1'` is
+    // 49), leaving the report on the IPv6 literal.
     runtimes.sort_by(|a, b| {
         b.online
             .cmp(&a.online)
+            .then_with(|| (a.host != "127.0.0.1").cmp(&(b.host != "127.0.0.1")))
             .then_with(|| a.host.cmp(&b.host))
             .then_with(|| a.port.cmp(&b.port))
     });
+    {
+        let mut seen_ports = std::collections::HashSet::new();
+        runtimes.retain(|r| seen_ports.insert(r.port));
+    }
 
     for id in RuntimeId::DETECTABLE {
         // A runtime already answered on its own port, or on the port this one
@@ -962,18 +973,29 @@ pub async fn probe_base_url(base_url: &str) -> anyhow::Result<DetectedRuntime> {
         return Err(anyhow::anyhow!("ホストを解析できません: {base_url}"));
     }
     // The port has to survive being split off for the TCP check; the base URL
-    // keeps it for the HTTP request.
-    let port = with_scheme
+    // keeps it for the HTTP request. A bracketed IPv6 literal contains colons
+    // itself, so `rsplit_once(':')` misparses `[::1]` (no port) as port `1]`.
+    // Split the port off after the closing bracket instead.
+    let authority = with_scheme
         .split("://")
         .nth(1)
         .and_then(|rest| rest.split(['/', '?', '#']).next())
-        .and_then(|authority| authority.rsplit_once(':'))
-        .and_then(|(_, port)| port.parse::<u16>().ok())
-        .unwrap_or(if with_scheme.starts_with("https") {
-            443
-        } else {
-            80
-        });
+        .unwrap_or("");
+    let port = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']')
+            .nth(1)
+            .and_then(|after| after.strip_prefix(':'))
+            .and_then(|port| port.parse::<u16>().ok())
+    } else {
+        authority
+            .rsplit_once(':')
+            .and_then(|(_, port)| port.parse::<u16>().ok())
+    }
+    .unwrap_or(if with_scheme.starts_with("https") {
+        443
+    } else {
+        80
+    });
 
     let client = http_client()?;
     let started = Instant::now();
@@ -995,6 +1017,7 @@ pub async fn probe_base_url(base_url: &str) -> anyhow::Result<DetectedRuntime> {
     // client talks to it fine — it just gets a generic label.
     let mut runtime = installed_only(identified.runtime.unwrap_or(RuntimeId::OpenAiCompat));
     runtime.base_url = with_scheme.trim_end_matches('/').to_string();
+    let tcp_host = host.trim_matches(|c| c == '[' || c == ']').to_string();
     runtime.host = host;
     runtime.port = port;
     runtime.latency_ms = Some(started.elapsed().as_millis() as u64);
@@ -1008,12 +1031,14 @@ pub async fn probe_base_url(base_url: &str) -> anyhow::Result<DetectedRuntime> {
     if runtime.models.is_empty() {
         runtime.models = models.unwrap_or_default();
     }
-    // The caller asked about this specific URL, so the server is reachable by
-    // construction. Whether it is *usable* is a separate question: a service
-    // that answers but serves no model list is reachable and still not a
-    // provider.
-    runtime.listening = true;
-    runtime.online = !runtime.models.is_empty();
+    // Whether the port is reachable is measured, not assumed: the caller may
+    // have typed a stopped server or a dead address, and reporting
+    // `listening: true` there makes `unavailable_reason()` blame another app
+    // for holding the port instead of reporting the connection failure.
+    // A service that answers TCP but serves no model list is still reachable
+    // (and still not a provider); a refused connection is not listening.
+    runtime.listening = tcp_open(&tcp_host, port).await;
+    runtime.online = runtime.listening && !runtime.models.is_empty();
     if runtime.models.is_empty() && runtime.error.is_none() {
         runtime.error = Some("OpenAI 互換のモデル一覧を取得できませんでした".into());
     }

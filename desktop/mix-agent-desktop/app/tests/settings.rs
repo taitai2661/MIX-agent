@@ -25,6 +25,9 @@ fn full_settings() -> SettingsView {
         projects_root: Some("/tmp/projects".into()),
         project_doc_max_bytes: Some(65_536),
         project_doc_fallback_filenames: vec!["TEAM_GUIDE.md".into()],
+        verify_command: Some("cargo test --workspace".into()),
+        format_command: Some("cargo fmt".into()),
+        sandbox_terminal: true,
         onboarding_completed: Some(true),
     }
 }

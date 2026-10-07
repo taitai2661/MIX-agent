@@ -109,7 +109,7 @@ PRESETS = (
     preset("01-ai", "01.AI", "OpenAI互換", "compatible", "https://api.lingyiwanwu.com/v1"),
     preset("lambda", "Lambda AI", "OpenAI互換", "compatible"),
     preset("vllm", "vLLM", "ローカル", "compatible", "http://host.docker.internal:8000/v1", False, True),
-    preset("localai", "LocalAI", "ローカル", "compatible", "http://host.docker.internal:8080/v1", False, True),
+    preset("localai", "LocalAI", "ローカル", "compatible", "http://host.docker.internal:8090/v1", False, True),
     preset("llama-cpp", "llama.cpp server", "ローカル", "compatible", "http://host.docker.internal:8080/v1", False, True),
     preset("jan", "Jan", "ローカル", "compatible", "http://host.docker.internal:1337/v1", False, True),
     preset("text-generation-webui", "text-generation-webui", "ローカル", "compatible", "http://host.docker.internal:5000/v1", False, True),

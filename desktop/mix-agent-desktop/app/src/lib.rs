@@ -289,6 +289,12 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             mode: mixd_core::mode::Mode::Thinking,
             model_id,
             system: Some(system),
+            // A sub-agent inherits the parent's folder but not its check: it is
+            // typically a read-only investigation, and forcing it to run the
+            // parent's test suite would double the cost of every delegation.
+            verify_command: None,
+            format_command: None,
+            context_window: 0,
             temperature: None,
             reasoning: None,
             max_tokens: None,

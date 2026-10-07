@@ -11,6 +11,7 @@ pub mod knowledge;
 pub mod memory;
 pub mod mode;
 pub mod pricing;
+pub mod prompt;
 pub mod providers_bridge;
 pub mod reliability;
 pub mod retrieval;

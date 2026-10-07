@@ -24,7 +24,7 @@ use crate::runs::checkpoint_store::CheckpointStore;
 use crate::runs::mode_policy::AgentModePolicy;
 use crate::runs::stagnation::{classify_tool_call, StagnationDetector};
 use crate::runs::state::{RunId, RunStatus, RunView};
-use crate::runs::verification::{destructive_reason, VerificationLedger};
+use crate::runs::verification::{destructive_reason, exit_code_of, mutated_paths, VerificationLedger};
 use mixd_providers::{
     AssistantToolCall, AssistantToolCallFn, Message, Provider, ProviderRequest, ReasoningControl,
     StreamEvent, ToolSpec, Usage,
@@ -724,6 +724,24 @@ pub struct RunRequest {
     pub model_id: String,
     pub provider_id: String,
     pub system: Option<String>,
+    /// The project's own check (`pnpm rust:test`, `cargo test`, …).
+    ///
+    /// When set, a Run that changed files may not conclude until that command
+    /// has been run *successfully* — the second half of "did you verify this?",
+    /// which reading the file back cannot answer. `None` disables the gate.
+    pub verify_command: Option<String>,
+    /// A formatter or lint command the project wants applied around edits.
+    ///
+    /// Reported to the model as part of the verification hint instead of being
+    /// executed behind its back: a hidden process rewriting files mid-run makes
+    /// the transcript disagree with the disk, and it would need its own
+    /// approval semantics on top of the tool gate.
+    pub format_command: Option<String>,
+    /// The selected model's context window, or `0` when unknown.
+    ///
+    /// Drives context compression, which used to be a fixed character count and
+    /// therefore both late for a small local model and wasteful for a large one.
+    pub context_window: u32,
     pub temperature: Option<f32>,
     pub reasoning: Option<ReasoningControl>,
     pub max_tokens: Option<u32>,
@@ -925,7 +943,7 @@ impl RunEngine {
         let mut last_usage: Option<Usage> = None;
         let mut last_finish: Option<String> = None;
         let mut stagnation = StagnationDetector::new();
-        let mut verification = VerificationLedger::default();
+        let mut verification = VerificationLedger::new(request.verify_command.clone());
         // Signals for the current turn, collected as tool calls execute. Kept
         // out here because the classifier needs the tool result, which only
         // exists after dispatch.
@@ -943,7 +961,13 @@ impl RunEngine {
         };
         // The skill catalogue belongs in the system prompt, not in the history:
         // it is the same on every turn and the adapters cache it there.
-        let mut system = request.system.clone().unwrap_or_default();
+        //
+        // The built-in procedure is composed in here rather than by each caller
+        // so every entry point — chat, agent, resumed run, scheduled run,
+        // sub-agent — gets it from one place, and a caller that passes no system
+        // text no longer sends an empty prompt.
+        let mut system = crate::prompt::compose_system(request.system.as_deref(), request.mode)
+            .unwrap_or_default();
         // Snapshot the registry before awaiting its catalogue: holding the read
         // guard across `skills_prompt(...).await` blocked an MCP reconnect's
         // write lock for the whole lookup.
@@ -1114,27 +1138,30 @@ impl RunEngine {
                 // the summary never duplicates the tail kept verbatim. The
                 // history and the summary are moved in and handed straight
                 // back, so an ordinary (uncompressed) step allocates nothing.
-                let outcome = crate::context::compress(
+                let outcome = crate::context::compress_with_budget(
                     std::mem::take(&mut current),
                     std::mem::take(&mut summary),
+                    request.context_window,
                     |older| async move {
                         summarize_turns(provider_handle.as_ref(), &model, &older).await
                     },
                 )
                 .await;
+                let evicted = outcome.evicted_tool_results;
                 current = outcome.messages;
                 summary = outcome.summary;
-                if !outcome.skipped {
+                if !outcome.skipped || evicted > 0 {
                     messages = strip_head(&current);
                     self.emit(
                         run_id,
                         "context_summary",
                         serde_json::json!({
-                            "compressed": true,
+                            "compressed": !outcome.skipped,
                             "activeChars": summary.char_count(),
                             "archiveRows": summary.archive.len(),
                             "messages": messages.len(),
                             "sourceMessages": source_messages,
+                            "evictedToolResults": evicted,
                         }),
                     )
                     .await;
@@ -1189,6 +1216,12 @@ impl RunEngine {
                     .await;
             }
 
+            // Spend the turn against the token ceiling. `last_usage` is the
+            // *latest* turn's usage, which the UI shows per turn; the budget
+            // needs the running total.
+            if let Some(usage) = &turn.usage {
+                budget.record_usage(usage.input_tokens, usage.output_tokens);
+            }
             last_usage = turn.usage.clone();
             last_finish = turn.finish_reason.clone();
             if !turn.reasoning.is_empty() {
@@ -1232,13 +1265,20 @@ impl RunEngine {
                 // allowed to conclude: it gets one more turn to verify the
                 // effect. Previously the ledger was written and never read, so
                 // this branch could not fire.
-                if self.policy.strict_verification && verification.is_blocked() {
+                // Two independent questions, both gated here: "did you read the
+                // effect back?" (`is_blocked`) and "did you run the project's
+                // own check?" (`needs_verification`). Reading a file back
+                // correctly proves nothing about whether it still builds.
+                let unanswered = verification.is_blocked();
+                let unchecked = verification.needs_verification();
+                if self.policy.strict_verification && (unanswered || unchecked) {
                     if unverified_repair_turns >= MAX_UNVERIFIED_REPAIR_TURNS {
                         self.emit(
                             run_id,
                             "verification_failed",
                             serde_json::json!({
                                 "outstanding": verification.outstanding(),
+                                "unverified": verification.unverified(),
                                 "reason": verification.last_reason(),
                             }),
                         )
@@ -1271,27 +1311,51 @@ impl RunEngine {
                     }
                     unverified_repair_turns += 1;
                     let outstanding = verification.outstanding();
+                    let unverified = verification.unverified();
                     self.emit(
                         run_id,
                         "verification_required",
                         serde_json::json!({
                             "tool": outstanding.first().cloned().unwrap_or_default(),
                             "outstanding": outstanding,
+                            "unverified": unverified,
+                            "verifyCommand": verification.verify_command(),
                             "reason": verification.last_reason(),
                         }),
                     )
                     .await;
-                    messages.push(Message::text(
-                        "user",
-                        format!(
-                            "[verification] You have not confirmed the effect of {}. \
-                             Read the affected path back and state what is actually there \
-                             before you conclude. Outstanding: {}.",
+                    let mut hints: Vec<String> = Vec::new();
+                    if unanswered {
+                        hints.push(format!(
+                            "You have not confirmed the effect of {}. Read the affected path \
+                             back and state what is actually there before you conclude. \
+                             Outstanding: {}.",
                             outstanding.join(", "),
                             verification
                                 .last_reason()
                                 .unwrap_or_else(|| "unconfirmed change".to_string())
-                        ),
+                        ));
+                    }
+                    if unchecked {
+                        let command = verification.verify_command().unwrap_or_default();
+                        let format_note = request
+                            .format_command
+                            .as_deref()
+                            .map(|cmd| format!(" Run `{cmd}` first if you have not."))
+                            .unwrap_or_default();
+                        hints.push(format!(
+                            "You changed {} file(s) but have not run the project check. Run \
+                             `{}` and report what it actually said before you conclude.{}\n\
+                             Unverified: {}.",
+                            unverified.len(),
+                            command,
+                            format_note,
+                            unverified.join(", ")
+                        ));
+                    }
+                    messages.push(Message::text(
+                        "user",
+                        format!("[verification] {}", hints.join(" ")),
                     ));
                     continue;
                 }
@@ -1387,13 +1451,38 @@ impl RunEngine {
                 // A `terminal` call or a slow fetch must not make the Run
                 // uncancellable: race the dispatch against the cancellation
                 // signal and stop as soon as the user asks to.
-                let result = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled_signal() => {
-                        tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
-                        break;
+                // Plan mode refuses anything that changes the workspace, before
+                // the permission gate and therefore before any stored allow
+                // rule can turn it writable. A refusal is reported through the
+                // same denied-call path as a user denial, so the model gets a
+                // reason it can act on instead of a silent no-op.
+                let result = if request.mode.is_read_only()
+                    && crate::runs::stagnation::is_mutating(&call.function.name, args)
+                {
+                    let record = RunToolCall {
+                        id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        arguments: args.clone(),
+                        result: None,
+                        error: None,
+                        approval_id: None,
+                    };
+                    self.deny_tool(
+                        run_id,
+                        record,
+                        "plan mode is read-only; describe the change and present it \
+                         with `user_plan` instead of making it",
+                    )
+                    .await
+                } else {
+                    tokio::select! {
+                        biased;
+                        _ = cancellation.cancelled_signal() => {
+                            tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
+                            break;
+                        }
+                        result = self.dispatch_tool(run_id, &request, call, args) => result,
                     }
-                    result = self.dispatch_tool(run_id, &request, call, args) => result,
                 };
                 all_tool_calls.push(result.clone());
                 let is_error = result.error.is_some();
@@ -1401,6 +1490,25 @@ impl RunEngine {
                 // for the target it confirms.
                 if !is_error && destructive.is_none() {
                     verification.confirm(&call.function.name, args);
+                }
+                if !is_error {
+                    // A deliberate file change re-arms the check gate, and a
+                    // successful `terminal` run of the configured check is the
+                    // only thing that clears it.
+                    for path in mutated_paths(&call.function.name, args) {
+                        verification.note_mutation(&path);
+                    }
+                    if call.function.name == "terminal" {
+                        let exit_ok = result
+                            .result
+                            .as_ref()
+                            .and_then(exit_code_of)
+                            .is_some_and(|code| code == 0);
+                        verification.note_command(
+                            args.get("command").and_then(|v| v.as_str()).unwrap_or_default(),
+                            exit_ok,
+                        );
+                    }
                 }
                 let content = match &result.error {
                     Some(err) => format!("Error: {}", err),
@@ -1439,7 +1547,7 @@ impl RunEngine {
             // A run that has actually verified its effects earns its repair
             // allowance back, so strict verification cannot permanently cap a
             // long multi-file run after two unconfirmed turns.
-            if !verification.is_blocked() {
+            if !verification.is_blocked() && !verification.needs_verification() {
                 unverified_repair_turns = 0;
             }
 
@@ -1485,6 +1593,11 @@ impl RunEngine {
                 "steps": steps,
                 "tool_calls": total_tool_calls,
                 "usage": last_usage,
+                "tokensUsed": budget.tokens_used,
+                "tokenLimit": budget.token_limit,
+                "estimatedCostUsd": last_usage
+                    .as_ref()
+                    .and_then(|usage| crate::pricing::estimate_cost_usd(request.wire_model(), usage)),
             }),
             RunOutcome {
                 status: RunStatus::Completed,
@@ -1542,6 +1655,8 @@ impl RunEngine {
                 "stepLimit": budget.step_limit,
                 "toolCallLimit": budget.tool_call_limit,
                 "wallClockMinutes": budget.wall_clock_minutes,
+                "tokenLimit": budget.token_limit,
+                "tokensUsed": budget.tokens_used,
                 "grants": budget.grants_used + 1,
             }),
         )

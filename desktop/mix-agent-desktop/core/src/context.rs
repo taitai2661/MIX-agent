@@ -19,8 +19,84 @@ use serde::{Deserialize, Serialize};
 pub const ACTIVE_SUMMARY_CHAR_BUDGET: usize = 4000;
 /// Number of archived summaries to keep.
 pub const ARCHIVE_ROW_LIMIT: usize = 12;
-/// Compression is attempted once the estimated prompt exceeds this many chars.
+/// Compression threshold used when the model's context window is unknown.
 pub const COMPRESS_THRESHOLD_CHARS: usize = 120_000;
+
+/// Rough characters per token. English prose and source code both land near
+/// four, and a heuristic that is 20% off only moves the compression point by
+/// 20% — it does not need to be a tokenizer.
+pub const CHARS_PER_TOKEN: usize = 4;
+
+/// Share of the context window the prompt may occupy before compressing.
+///
+/// The remainder is headroom for the model's own output and for the tool
+/// schemas, which are re-sent on every turn and are not part of `messages`.
+const PROMPT_BUDGET_PERCENT: usize = 60;
+
+/// Floor for the derived threshold, so a small local model does not compress on
+/// every single turn — compression itself costs a Provider call.
+const MIN_COMPRESS_THRESHOLD_CHARS: usize = 16_000;
+
+/// Total characters of Tool results kept inline before the oldest ones are
+/// replaced with a pointer.
+pub const TOOL_RESULT_CHAR_BUDGET: usize = 60_000;
+
+/// Characters the prompt may reach before older turns are summarised.
+///
+/// `window_tokens == 0` means "unknown" and keeps the fixed threshold. The
+/// previous behaviour was this fixed threshold for every model, which was both
+/// late for an 8k local model — the prompt was already over the window before
+/// anything was compressed — and needlessly eager for a 200k one.
+pub fn compress_threshold_chars(window_tokens: u32) -> usize {
+    if window_tokens == 0 {
+        return COMPRESS_THRESHOLD_CHARS;
+    }
+    let budget = window_tokens as usize * CHARS_PER_TOKEN * PROMPT_BUDGET_PERCENT / 100;
+    budget.max(MIN_COMPRESS_THRESHOLD_CHARS)
+}
+
+/// Replace the oldest oversized Tool results with a pointer.
+///
+/// The message itself is never removed: a `tool` message is only valid when the
+/// assistant turn that requested it is still in the list, and dropping it
+/// produces a sequence strict providers reject. Replacing the body keeps the
+/// pairing intact while giving the context back. Returns the rewritten list and
+/// how many results were elided, so the UI can say so.
+pub fn evict_tool_results(
+    mut messages: Vec<crate::providers_bridge::Message>,
+    budget: usize,
+) -> (Vec<crate::providers_bridge::Message>, usize) {
+    let total: usize = messages
+        .iter()
+        .filter(|m| m.role == "tool")
+        .map(|m| m.content.chars().count())
+        .sum();
+    if total <= budget {
+        return (messages, 0);
+    }
+    let mut remaining = total;
+    let mut evicted = 0usize;
+    for message in messages.iter_mut() {
+        if remaining <= budget {
+            break;
+        }
+        if message.role != "tool" {
+            continue;
+        }
+        let len = message.content.chars().count();
+        let placeholder = format!(
+            "[tool result elided: {len} chars, re-run the call if you still need it]"
+        );
+        let placeholder_len = placeholder.chars().count();
+        if placeholder_len >= len {
+            continue;
+        }
+        message.content = placeholder;
+        remaining = remaining - len + placeholder_len;
+        evicted += 1;
+    }
+    (messages, evicted)
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TaskState {
@@ -127,8 +203,12 @@ pub struct CompressionOutcome {
     /// The rebuilt message list.
     pub messages: Vec<crate::providers_bridge::Message>,
     pub summary: TieredSummary,
-    /// `true` when nothing was compressed because the prompt was short enough.
+    /// `true` when no summarisation happened because the prompt was short
+    /// enough. Tool results may still have been elided — that is reported
+    /// separately.
     pub skipped: bool,
+    /// How many oversized Tool results were replaced with a pointer.
+    pub evicted_tool_results: usize,
 }
 
 /// Estimate the character cost of a message list.
@@ -178,19 +258,44 @@ fn safe_split(messages: &[crate::providers_bridge::Message]) -> usize {
 /// copying the whole conversation just to find out it is still needed was the
 /// single largest per-step cost in the loop.
 pub async fn compress<F, Fut>(
-    mut messages: Vec<crate::providers_bridge::Message>,
-    mut summary: TieredSummary,
+    messages: Vec<crate::providers_bridge::Message>,
+    summary: TieredSummary,
     summarize: F,
 ) -> CompressionOutcome
 where
     F: FnOnce(Vec<crate::providers_bridge::Message>) -> Fut,
     Fut: std::future::Future<Output = Option<String>>,
 {
-    if estimate_chars(&messages) < COMPRESS_THRESHOLD_CHARS {
+    compress_with_budget(messages, summary, 0, summarize).await
+}
+
+/// [`compress`] with the selected model's context window.
+///
+/// The window is what makes the threshold meaningful; the old fixed count was
+/// the same for every model.
+pub async fn compress_with_budget<F, Fut>(
+    messages: Vec<crate::providers_bridge::Message>,
+    mut summary: TieredSummary,
+    window_tokens: u32,
+    summarize: F,
+) -> CompressionOutcome
+where
+    F: FnOnce(Vec<crate::providers_bridge::Message>) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    // Shrink oversized Tool results first: one 200 KB `terminal` dump can carry
+    // the prompt over the threshold by itself, and summarising the whole
+    // conversation is a far more expensive answer to that than dropping the
+    // dump.
+    let (mut messages, evicted_tool_results) =
+        evict_tool_results(messages, TOOL_RESULT_CHAR_BUDGET);
+
+    if estimate_chars(&messages) < compress_threshold_chars(window_tokens) {
         return CompressionOutcome {
             messages,
             summary,
             skipped: true,
+            evicted_tool_results,
         };
     }
 
@@ -202,6 +307,7 @@ where
             messages,
             summary,
             skipped: true,
+            evicted_tool_results,
         };
     }
     let older = messages[..split].to_vec();
@@ -229,6 +335,7 @@ where
                 messages: rebuilt,
                 summary,
                 skipped: false,
+                evicted_tool_results,
             }
         }
         // Summariser failed: keep everything rather than dropping context.
@@ -236,6 +343,7 @@ where
             messages,
             summary,
             skipped: true,
+            evicted_tool_results,
         },
     }
 }
@@ -247,6 +355,54 @@ mod tests {
 
     fn msg(role: &str, content: &str) -> Message {
         Message::text(role, content)
+    }
+
+    #[test]
+    fn an_unknown_window_keeps_the_fixed_threshold() {
+        assert_eq!(compress_threshold_chars(0), COMPRESS_THRESHOLD_CHARS);
+    }
+
+    #[test]
+    fn a_small_window_compresses_much_earlier_than_a_large_one() {
+        let small = compress_threshold_chars(8_000);
+        let large = compress_threshold_chars(200_000);
+        assert!(small < large);
+        assert_eq!(large, 200_000 * CHARS_PER_TOKEN * 60 / 100);
+        assert!(small >= MIN_COMPRESS_THRESHOLD_CHARS);
+    }
+
+    #[test]
+    fn an_absurdly_small_window_still_has_a_floor() {
+        assert_eq!(compress_threshold_chars(100), MIN_COMPRESS_THRESHOLD_CHARS);
+    }
+
+    #[test]
+    fn oversized_tool_results_are_elided_from_the_oldest_end() {
+        let mut messages = vec![msg("user", "go")];
+        for i in 0..3 {
+            messages.push(msg("assistant", &format!("call {i}")));
+            messages.push(msg("tool", &"x".repeat(40_000)));
+        }
+        let (out, evicted) = evict_tool_results(messages, 50_000);
+        assert!(evicted >= 1, "the budget must force at least one eviction");
+        assert_eq!(out.len(), 7, "no message may be dropped, only rewritten");
+        // The oldest result lost its body; the newest kept it.
+        assert!(out[2].content.starts_with("[tool result elided"));
+        assert_eq!(out[6].content.chars().count(), 40_000);
+        // The pairing the providers require is untouched.
+        for i in 0..7 {
+            if out[i].role == "tool" {
+                assert_eq!(out[i - 1].role, "assistant");
+            }
+        }
+    }
+
+    #[test]
+    fn a_prompt_within_budget_is_left_alone() {
+        let messages = vec![msg("user", "go"), msg("tool", "small")];
+        let (out, evicted) = evict_tool_results(messages, TOOL_RESULT_CHAR_BUDGET);
+        assert_eq!(evicted, 0);
+        assert_eq!(out[1].content, "small");
     }
 
     #[test]

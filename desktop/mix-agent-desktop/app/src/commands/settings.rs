@@ -33,6 +33,14 @@ pub struct SettingsView {
     /// Codex-compatible `project_doc_fallback_filenames`: extra instruction
     /// filenames consulted after `AGENTS.override.md` / `AGENTS.md`.
     pub project_doc_fallback_filenames: Vec<String>,
+    /// App-wide default for the project's own check, used by any project that
+    /// does not override it. `None` leaves the verification gate off.
+    pub verify_command: Option<String>,
+    /// App-wide default formatter/lint command reported to the model.
+    pub format_command: Option<String>,
+    /// Refuse shell commands that write outside the workspace, and any
+    /// privilege-escalation wrapper, instead of merely flagging them.
+    pub sandbox_terminal: bool,
     /// Whether the first-run wizard has been finished or explicitly deferred.
     ///
     /// `None` is the same as `false` to the UI: a fresh install has never
