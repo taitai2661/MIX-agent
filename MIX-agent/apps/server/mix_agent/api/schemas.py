@@ -473,38 +473,27 @@ class DecisionInput(Input):
 
 
 class MemoryInput(Input):
+    """ChatGPT-style flat input: content only (+ compat extras ignored)."""
+
     content: str = Field(min_length=1, max_length=10000)
+    pinned: bool = False
+    # Compat: old clients still send these; service ignores them.
     scope: str = Field(default="user", max_length=100)
     gist: str | None = Field(default=None, max_length=1000)
-    strength: float | None = Field(default=None, ge=0, le=1)
-    confidence: float | None = Field(default=None, ge=0, le=1)
-    salience: float | None = Field(default=None, ge=0, le=1)
-    lifecycle_state: Literal[
-        "candidate", "active", "superseded", "expired", "archived", "disputed",
-        # legacy aliases kept for backward compatibility
-        "latent", "established", "deleted",
-    ] | None = None
+    role: str | None = None
+    source_kind: str | None = None
+    role_metadata: dict | None = None
+    verification: str | None = None
     entities: list[str] | None = Field(default=None, max_length=50)
     concepts: list[str] | None = Field(default=None, max_length=50)
     temporal_context: str | None = Field(default=None, max_length=200)
     metadata: dict | None = None
-    # Role-based taxonomy
-    role: Literal[
-        "fact", "decision", "preference", "goal", "constraint",
-        "experience", "failure", "solution", "observation",
-        "hypothesis", "question",
-    ] | None = None
-    source_kind: Literal[
-        "user", "agent", "tool", "browser", "external", "consolidation",
-    ] | None = None
-    role_metadata: dict | None = None
-    verification: Literal[
-        "unverified", "pending", "verified", "disputed", "rejected",
-    ] | None = None
-    # Deprecated compatibility inputs. Category is retained only as legacy metadata.
     importance: int = Field(default=2, ge=1, le=5)
     category: str | None = Field(default=None, max_length=50)
-    pinned: bool = False
+    strength: float | None = Field(default=None, ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    salience: float | None = Field(default=None, ge=0, le=1)
+    lifecycle_state: str | None = None
 
 
 class MemoryEvidenceInput(Input):
@@ -524,17 +513,12 @@ class MemoryResolveConflictInput(Input):
 
 
 class MemoryRememberInput(Input):
-    """Reduced-shape ``memory.remember`` tool surface."""
+    """ChatGPT-style ``memory remember``: content only."""
+
     content: str = Field(min_length=1, max_length=10000)
-    role: Literal[
-        "fact", "decision", "preference", "goal", "constraint",
-        "experience", "failure", "solution", "observation",
-        "hypothesis", "question",
-    ] = "fact"
-    scope: Literal["working", "task", "project", "user", "world"] = "task"
-    source_kind: Literal[
-        "user", "agent", "tool", "browser", "external", "consolidation",
-    ] | None = None
+    role: str | None = None
+    scope: str | None = None
+    source_kind: str | None = None
     role_metadata: dict | None = None
     entities: list[str] | None = Field(default=None, max_length=50)
     concepts: list[str] | None = Field(default=None, max_length=50)

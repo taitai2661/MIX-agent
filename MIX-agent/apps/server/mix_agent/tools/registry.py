@@ -195,36 +195,26 @@ BUILTINS = [
         "builtin",
     ),
     # ---------------------------------------------------------------------------
-    # Memory Tool surface: reduced to recall / remember / forget.  These map to
-    # the role-based Memory Runtime; legacy memory_search/add/update/delete are
-    # kept only as compatibility shims and re-route to the same runtime.
+    # Memory Tool surface (ChatGPT-style flat): recall / remember / forget.
     # ---------------------------------------------------------------------------
     definition(
         "memory_recall",
-        "Recall memories relevant to the current task. Returns role-grouped items so the agent can distinguish Decisions, Failures, Facts and Experiences.",
-        {"query": S, "scopes": {"type": "array", "items": S, "maxItems": 8}, "roles": {"type": "array", "items": S, "maxItems": 12}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}},
+        "Recall saved user memories relevant to the current task. Returns a flat list of {id, content}.",
+        {"query": S, "limit": {"type": "integer", "minimum": 1, "maximum": 20}},
         executor="builtin",
         parallel_safe=True,
     ),
     definition(
         "memory_remember",
-        "Persist a single memory through the role-based Memory Evaluator. Pick the right role (fact / decision / failure / preference / goal / experience / hypothesis / question) so the agent can recall it correctly next time.",
-        {
-            "content": S,
-            "role": {"type": "string", "enum": ["fact", "decision", "preference", "goal", "constraint", "experience", "failure", "solution", "observation", "hypothesis", "question"]},
-            "scope": {"type": "string", "enum": ["working", "task", "project", "user", "world"]},
-            "role_metadata": {"type": "object"},
-            "entities": {"type": "array", "items": S, "maxItems": 30},
-            "concepts": {"type": "array", "items": S, "maxItems": 30},
-            "evidence": {"type": "array", "items": {"type": "object"}, "maxItems": 20},
-        },
+        "Save one short user fact or preference (ChatGPT-style, <=200 chars recommended). Duplicates are ignored.",
+        {"content": S},
         ["content"],
         "ask",
         "builtin",
     ),
     definition(
         "memory_forget",
-        "Remove (supersede) a memory. Provide an id, or a short query that resolves through memory_recall to find the target.",
+        "Delete a saved memory. Provide an id, or a short query that resolves to the target.",
         {"id": S, "query": S, "reason": {"type": "string", "maxLength": 200}},
         None,
         "ask",

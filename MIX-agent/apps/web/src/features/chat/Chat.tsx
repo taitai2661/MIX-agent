@@ -34,6 +34,7 @@ import { ErrorBox, useRows } from "@/components/shared";
 import { ModelPicker } from "@/components/model-picker";
 import { SelectMenu } from "@/components/select-menu";
 import { Toggle } from "@/components/toggle";
+import { useToast } from "@/components/toast";
 import { ModeStatus, ReasoningSummary } from "./ModeStatus";
 import { RunBudget } from "./RunBudget";
 import { RunActivity, type ToolCallHistory } from "./RunActivity";
@@ -78,6 +79,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const { id, projectId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { addToast } = useToast();
   const models = useRows<ChatModel>("/models"),
     projects = useRows<Row>("/projects"),
     agents = useRows<ChatAgent>("/agents"),

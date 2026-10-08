@@ -1,6 +1,6 @@
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
-import { Check, ChevronLeft, ChevronRight, Globe2, Sparkles, KeyRound, Bot } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Globe2, Sparkles, KeyRound, Bot, Zap, Shield } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ErrorBox, Field } from "@/components/shared";
@@ -103,6 +103,20 @@ export function Setup() {
           <Bot size={64} style={{ color: "var(--accent)", marginBottom: 20 }} />
           <h2>AIエージェントを始めましょう</h2>
           <p style={{ color: "var(--muted)", marginTop: 10 }}>初期設定はすぐに完了します。後から設定画面でいつでも変更可能です。</p>
+          <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 30 }}>
+            <div style={{ textAlign: "center" }}>
+              <Zap size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>高速な応答</p>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <Shield size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>安全な実行環境</p>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <Globe2 size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>Webアクセス</p>
+            </div>
+          </div>
         </div>
       )
     },

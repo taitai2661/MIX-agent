@@ -373,35 +373,20 @@ async def execute(db, run, tool, args):
         else:
             result = await _search_ddgs(query, count, freshness)
     elif name == "memory_recall":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.recall(
             db,
             run.owner_id,
             query=args.get("query", ""),
-            scopes=scopes,
-            roles=args.get("roles"),
             limit=int(args.get("limit") or 8),
         )
     elif name == "memory_remember":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.remember(
             db,
             run.owner_id,
             content=args.get("content", ""),
-            role=args.get("role") or "fact",
-            scope=args.get("scope") or scopes[0],
-            role_metadata=args.get("role_metadata"),
-            entities=args.get("entities"),
-            concepts=args.get("concepts"),
-            evidence=args.get("evidence"),
-            task_id=run.id,
-            source_kind="agent",
+            explicit_user=False,
         )
     elif name == "memory_forget":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.forget(
             db,
             run.owner_id,
@@ -410,33 +395,20 @@ async def execute(db, run, tool, args):
             reason=str(args.get("reason") or "agent forget"),
         )
     elif name == "memory_search":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
-        # Legacy alias: redirect through the role-based Recall Pipeline so
-        # older agents transparently benefit from the role taxonomy.
+        # Legacy alias for memory_recall.
         result = memory_tools.recall(
             db, run.owner_id,
             query=args.get("query", ""),
-            scopes=scopes,
             limit=8,
         )
     elif name in ("memory_add", "memory_update"):
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.remember(
             db,
             run.owner_id,
             content=args.get("content", ""),
-            role="fact",
-            scope=scopes[0],
-            entities=args.get("entities"),
-            concepts=args.get("concepts"),
-            task_id=run.id,
-            source_kind="agent",
+            explicit_user=False,
         )
     elif name == "memory_delete":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.forget(
             db, run.owner_id,
             memory_id=args.get("id"),

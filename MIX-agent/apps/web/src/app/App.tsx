@@ -29,16 +29,20 @@ import { Empty, ErrorBox, Logo } from "@/components/shared";
 import { ThemeController } from "@/components/theme";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ConfirmModal, PromptModal } from "@/components/modal";
+import { ToastProvider } from "@/components/toast";
+import { Tour } from "@/components/tour";
 import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
 import { Chat } from "@/features/chat/Chat";
 import { Conversations } from "@/features/chat/Conversations";
 import type { WorkspaceSnapshot } from "@/features/chat/greeting";
-import { Skills } from "@/features/skills/Skills";
-import { Settings } from "@/features/settings/Settings";
-import { Setup } from "@/features/setup/Setup";
-import { Schedules } from "@/features/schedules/Schedules";
-import { Projects } from "@/features/projects/Projects";
+import { lazy, Suspense } from "react";
+
+const Skills = lazy(() => import("@/features/skills/Skills").then(m => ({ default: m.Skills })));
+const Settings = lazy(() => import("@/features/settings/Settings").then(m => ({ default: m.Settings })));
+const Setup = lazy(() => import("@/features/setup/Setup").then(m => ({ default: m.Setup })));
+const Schedules = lazy(() => import("@/features/schedules/Schedules").then(m => ({ default: m.Schedules })));
+const Projects = lazy(() => import("@/features/projects/Projects").then(m => ({ default: m.Projects })));
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(
@@ -76,6 +80,7 @@ export function App() {
   const [openConversationMenu, setOpenConversationMenu] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Row | null>(null);
   const [trashTarget, setTrashTarget] = useState<Row | null>(null);
+  const [showTour, setShowTour] = useState(false);
   const folders = useQuery<Row[]>({
     queryKey: ["/conversation-folders"],
     queryFn: () => api("/conversation-folders"),
@@ -110,6 +115,10 @@ export function App() {
           setUser(me);
         }
         setReady(true);
+        // 初回ログイン時にツアーを表示
+        if (me && !localStorage.getItem("mix-agent-tour-done")) {
+          setShowTour(true);
+        }
       })
       .catch(setError);
   }, []);
@@ -216,6 +225,7 @@ export function App() {
     event.preventDefault();
   }
   return (
+    <ToastProvider>
     <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed " : "") + (resizingSidebar ? "sidebar-resizing" : "")}>
       <aside id="main-navigation" className="sidebar" aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
@@ -317,6 +327,7 @@ export function App() {
           ) : null}
         </header>
         <ErrorBoundary>
+          <Suspense fallback={<div className="page-loading">読み込み中…</div>}>
           <Routes>
             <Route path="/" element={<Chat workspace={workspace} />} />
             <Route path="/chat/:id" element={<Chat workspace={workspace} />} />
@@ -348,6 +359,7 @@ export function App() {
             />
             <Route path="*" element={<Empty>{t("ページが見つかりません")}</Empty>} />
           </Routes>
+          </Suspense>
         </ErrorBoundary>
         {renameTarget && <PromptModal
           title={t("チャット名を変更")}
@@ -377,7 +389,9 @@ export function App() {
           }}
           onCancel={() => setTrashTarget(null)}
         />}
+        {showTour && <Tour onClose={() => { setShowTour(false); localStorage.setItem("mix-agent-tour-done", "1"); }} />}
       </div>
     </div>
+    </ToastProvider>
   );
 }

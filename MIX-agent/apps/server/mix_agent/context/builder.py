@@ -26,8 +26,6 @@ from mix_agent.context.references import (
 )
 from mix_agent.context.summary import render as render_summary
 from mix_agent.context.types import CONTEXT_VERSION, ContextBudgetError
-from mix_agent.memory import runtime as mem_runtime
-from mix_agent.memory import types as mem_types
 
 TOOL_PROTOCOL_RESERVED = 2000
 
@@ -320,111 +318,29 @@ def _fit_block(items: list[dict], budget: int, model_id: str = ""):
     return retrievers.fit_items(items, budget, model_id)
 
 
-# Priority shares inside the memory budget.  Decisions and Failures are
-# surfaced even when the budget is tight; Questions/Experiences share the
-# remainder so we don't drown the model in low-confidence memories.
-_MEMORY_ROLE_PRIORITY: tuple[tuple[str, float], ...] = (
-    (mem_types.ROLE_DECISION, 0.28),
-    (mem_types.ROLE_FAILURE, 0.22),
-    (mem_types.ROLE_PREFERENCE, 0.12),
-    (mem_types.ROLE_GOAL, 0.10),
-    (mem_types.ROLE_FACT, 0.18),
-    (mem_types.ROLE_EXPERIENCE, 0.06),
-    (mem_types.ROLE_HYPOTHESIS, 0.02),
-    (mem_types.ROLE_QUESTION, 0.02),
-)
-
-
 def _render_memory(
     memories: list[dict],
     budget: int,
     model_id: str = "",
 ) -> tuple[list[dict], list[dict], str, dict[str, int]]:
-    """Render the memory block in role-organized buckets.
+    """Render the memory block as a flat ChatGPT-style bullet list.
 
-    The output keeps the highest-priority roles (decisions, failures) visible
-    even when the total budget is small, and surfaces only the most relevant
-    Facts / Experiences when there is room.  Returns ``(included, excluded,
-    block_text, group_counts)``.
+    Returns ``(included, excluded, block_text, group_counts)``. ``group_counts``
+    keeps the legacy ``{"all": n}`` shape so old traces don't crash.
     """
     if not memories or budget <= 0:
-        return [], [{"id": m.get("id"), "reason": "no_budget"} for m in memories], "", {}
-    grouped = mem_runtime.group_for_context(memories)
-    grouped_sets: dict[str, set[str]] = {key: {item["id"] for item in items if item.get("id")} for key, items in grouped.items()}
-    flat_ids: dict[str, dict] = {item["id"]: item for item in memories if item.get("id")}
-    included: list[dict] = []
-    excluded: list[dict] = []
-    sections: list[str] = []
-    # Report every bucket, including the empty ones: the trace is rendered as a
-    # per-bucket panel, so a missing key would be indistinguishable from a bug.
-    counts: dict[str, int] = {key: 0 for key in grouped}
-    used = 0
-    label_map = {
-        "decisions": "Relevant active Decisions",
-        "failures": "Past failures to avoid",
-        "preferences": "User preferences",
-        "goals": "Active goals / constraints",
-        "facts": "Relevant facts",
-        "experiences": "Relevant experiences",
-        "questions": "Open hypotheses / questions",
-        "other": "Other memory",
-    }
-    for role, share in _MEMORY_ROLE_PRIORITY:
-        bucket_key = _bucket_key_for_role(role)
-        bucket = grouped.get(bucket_key) or []
-        if not bucket:
-            continue
-        bucket_budget = max(120, int(budget * share))
-        bucket_included, bucket_excluded = _fit_block(bucket, bucket_budget, model_id)
-        counts[bucket_key] = len(bucket_included)
-        included.extend(bucket_included)
-        for entry in bucket_excluded:
-            excluded.append({"id": entry.get("id"), "reason": f"budget:{bucket_key}"})
-        if bucket_included:
-            text = json.dumps(bucket_included, ensure_ascii=False)
-            if len(text) > 1200:
-                text = text[:1200] + "…(truncated)"
-            sections.append(f"{label_map[bucket_key]}:\n{text}")
-        used += sum(len(json.dumps(m, ensure_ascii=False)) for m in bucket_included) // 2
-    # Leftover budget lets the highest-priority buckets absorb spillover.
-    leftover = max(0, budget - used)
-    if leftover > 200:
-        for role, share in _MEMORY_ROLE_PRIORITY:
-            bucket_key = _bucket_key_for_role(role)
-            bucket = grouped.get(bucket_key) or []
-            room_ids = grouped_sets.get(bucket_key, set()) - {m["id"] for m in included}
-            extras = [flat_ids[i] for i in room_ids if i in flat_ids]
-            if not extras:
-                continue
-            extra_included, _ = _fit_block(extras, leftover, model_id)
-            for item in extra_included:
-                if item["id"] in {m["id"] for m in included}:
-                    continue
-                included.append(item)
-                counts[bucket_key] = counts.get(bucket_key, 0) + 1
-                leftover -= len(json.dumps(item, ensure_ascii=False)) // 2 + 20
-                if leftover <= 100:
-                    break
-            if leftover <= 100:
-                break
-    block = head_blocks.heading(head_blocks.MEMORY) + "\n" + "\n\n".join(sections) if sections else ""
+        return [], [{"id": m.get("id"), "reason": "no_budget"} for m in memories], "", {"all": 0}
+    included, excluded = _fit_block(
+        [{"id": m.get("id"), "content": str(m.get("content", ""))[:600]} for m in memories if m.get("id")],
+        budget,
+        model_id,
+    )
+    counts = {"all": len(included)}
+    if not included:
+        return included, excluded, "", counts
+    lines = [f"- {m['content']}" for m in included if m.get("content")]
+    block = head_blocks.heading(head_blocks.MEMORY) + "\n" + "\n".join(lines) if lines else ""
     return included, excluded, block, counts
-
-
-def _bucket_key_for_role(role: str) -> str:
-    return {
-        mem_types.ROLE_DECISION: "decisions",
-        mem_types.ROLE_FAILURE: "failures",
-        mem_types.ROLE_PREFERENCE: "preferences",
-        mem_types.ROLE_GOAL: "goals",
-        mem_types.ROLE_CONSTRAINT: "goals",
-        mem_types.ROLE_FACT: "facts",
-        mem_types.ROLE_EXPERIENCE: "experiences",
-        mem_types.ROLE_SOLUTION: "experiences",
-        mem_types.ROLE_OBSERVATION: "experiences",
-        mem_types.ROLE_HYPOTHESIS: "questions",
-        mem_types.ROLE_QUESTION: "questions",
-    }.get(role, "other")
 
 
 def history_from_built(built: dict) -> list[dict]:
