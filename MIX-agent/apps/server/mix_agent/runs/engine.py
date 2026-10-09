@@ -1044,15 +1044,30 @@ def _replace_summary_block(head_text: str, summary_text: str) -> str:
 
 def _persist_trace(db, run, snapshot, history, estimated, total, tool_cost, summarized):
     model_id = snapshot.get("model_id", "")
+    history = history or []
+    # Per-category breakdown for token visibility: head (system block) vs
+    # conversation tail vs tool schemas. Cheap to compute (head only) and
+    # lets the dashboard/RunView show where input tokens actually go.
+    head_text = ""
+    if history and history[0].get("role") == "system":
+        head_text = str(history[0].get("content") or "")
+    head_tokens = context_tokens.count(head_text, model_id)
+    conversation_tokens = max(0, estimated - head_tokens)
+    window = (snapshot.get("context_window_info") or {}).get("context_window")
     trace = {
         "model": model_id,
         "trigger": run.data.get("trigger_type", "interactive"),
         "context_version": 1,
-        "context_window": (snapshot.get("context_window_info") or {}).get("context_window"),
+        "context_window": window,
         "input_budget": total,
         "estimated_input_tokens": estimated,
         "tool_schema_tokens": tool_cost,
-        "history_messages": len(history or []),
+        "head_tokens": head_tokens,
+        "conversation_tokens": conversation_tokens,
+        "budget_utilization": round(estimated / total, 3) if total else None,
+        "history_messages": len(history),
+        "steps": int(run.data.get("steps", 0)),
+        "tool_count": int(run.data.get("tool_count", 0)),
         "summarized": summarized,
         "missing_image_refs": run.data.get("missing_image_refs", []),
         "task_state_present": bool(run.data.get("task_state")),

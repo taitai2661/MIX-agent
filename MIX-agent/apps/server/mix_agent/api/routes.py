@@ -2471,6 +2471,7 @@ async def get_run(key: str, ctx=Depends(context)):
         "stagnation": run.data.get("stagnation_findings"),
         "checkpoint_resumed_from": run.data.get("checkpoint_resumed_from"),
         "checkpoints": checkpoints,
+        "context_trace": run.data.get("context_trace"),
     }
 
 

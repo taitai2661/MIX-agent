@@ -203,6 +203,7 @@ class RunView(BaseModel):
     stagnation: list[dict] | None = None
     checkpoint_resumed_from: dict | None = None
     checkpoints: list[RunCheckpointView] = Field(default_factory=list)
+    context_trace: dict | None = None
 
 
 class StatisticsSummaryView(BaseModel):

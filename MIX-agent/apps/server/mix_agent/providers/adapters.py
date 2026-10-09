@@ -520,15 +520,27 @@ class Adapter:
                 wire[-1]["content"].extend(entry["content"])
             else:
                 wire.append(entry)
+        wire_tools = [
+            {"name": t["model_name"], "description": t["description"], "input_schema": t["input_schema"]}
+            for t in tools
+        ]
+        # Prompt caching (Anthropic first-party only): the system head is a
+        # stable prefix resent every step. Marking it cacheable cuts input
+        # cost ~90% on cache hits with zero behavior change. Gateways speaking
+        # the Anthropic wire format may reject cache_control, so leave them
+        # on the legacy path.
+        if system and self.kind == "anthropic":
+            system_arg = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        else:
+            system_arg = system
+        if wire_tools and self.kind == "anthropic":
+            wire_tools[-1] = {**wire_tools[-1], "cache_control": {"type": "ephemeral"}}
         args = {
             "model": model,
-            "system": system,
+            "system": system_arg,
             "messages": wire,
             "max_tokens": settings.get("max_output_tokens", 4096),
-            "tools": [
-                {"name": t["model_name"], "description": t["description"], "input_schema": t["input_schema"]}
-                for t in tools
-            ],
+            "tools": wire_tools,
         }
         options = request_options(settings)
         if options is not None:

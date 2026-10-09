@@ -16,6 +16,7 @@ digesting an undifferentiated list of "traces".
 from __future__ import annotations
 
 import json
+import math
 
 from mix_agent.context import budget as budget_mod
 from mix_agent.context import head_blocks, retrievers, tokens, tools_selector
@@ -89,10 +90,19 @@ def select_recent(messages: list[dict], budget: int, model_id: str = "") -> tupl
     used = 0
     for idx in range(len(messages) - 1, -1, -1):
         message = messages[idx]
+        # Keep accounting identical to tokens.count_messages so the budget
+        # window matches what is actually sent (previously tool args used
+        # len//2 without the model adjustment, underestimating and causing
+        # avoidable overflow -> extra summarizer calls).
         cost = tokens.count(_message_text(message), model_id) + 8
-        cost += sum(len(str(image)) // 3 for image in message.get("images") or [])
+        # Same image/tool accounting as tokens.count_messages: base64 images
+        # dominate context and are approximated as decoded bytes / 2.
+        cost += sum(math.ceil(len(str(image)) / 3) for image in message.get("images") or [])
         cost += len(message.get("image_refs") or []) * 768
-        cost += sum(len(str(call.get("arguments") or "")) // 2 + 40 for call in message.get("tool_calls") or [])
+        cost += sum(
+            tokens.count(str(call.get("arguments") or ""), model_id) + 40
+            for call in message.get("tool_calls") or []
+        )
         if idx == mandatory_idx:
             included_rev.append(message)
             used += cost
