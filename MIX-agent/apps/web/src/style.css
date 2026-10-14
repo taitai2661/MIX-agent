@@ -4962,6 +4962,13 @@ body {
   margin: 0;
   overflow-wrap: anywhere;
 }
+/* §4: a row §4's one hop pulled in (`selection_reason="リンクから"`) is drawn
+   as one group, so "link rows sit below the seeds" reads off the screen and
+   not only off the server's ordering. */
+.memory-trace-hit.is-from-link {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
 .trace-header {
   display: flex;
   align-items: center;
@@ -6156,6 +6163,15 @@ body {
   color: #ffb74d;
 }
 .memory-disputed { background: rgba(229, 115, 115, 0.18); color: #e57373; }
+/* The two §2 lifecycles that retire a row without a partner to point at. */
+.memory-archived,
+.memory-expired {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.memory-archived { background: rgba(255, 255, 255, 0.06); color: var(--muted, #999); }
+.memory-expired { background: rgba(160, 160, 160, 0.16); color: #b6b6b6; }
 .memory-content { margin: 0; font-size: 13px; line-height: 1.4; }
 .memory-decision-block,
 .memory-failure-block { font-size: 12px; color: var(--muted, #888); }

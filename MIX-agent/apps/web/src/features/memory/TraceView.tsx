@@ -31,13 +31,18 @@ export type TraceStep = {
 export type TraceDebug = {
   elapsed_ms?: number;
   stop_reason?: string;
+  // §5 search debug: the ranking that actually ran, echoed verbatim
+  // ("recent" / "lexical" / "hybrid") — never re-labelled.
+  ranking_mode?: string;
   budget_exhausted?: boolean;
   auto?: Record<string, number>;
   trace?: TraceStep[];
   honored_settings?: string[];
   ignored_settings?: string[];
   seed_ids?: string[];
-  association_expansion?: Array<{ source: string; target: string; activation: number }>;
+  association_expansion?: Array<{ source: string; target: string; activation: number; kind?: string }>;
+  association_expansion_count?: number;
+  association_cutoff?: string | null;
   // Role-based recall() payload shape (tolerated when present).
   considered?: number;
   kept?: number;
@@ -141,6 +146,10 @@ export function TraceView({
   const stopKey = debug.stop_reason || "";
   const expansions = debug.association_expansion || [];
   const ignored = debug.ignored_settings || [];
+  // §4: rows a link pulled in carry `selection_reason="リンクから"` and are
+  // appended after the seeds. Counting them here keeps that contract visible
+  // instead of relying on the reader to know why two rows look different.
+  const linkHits = memories.filter((hit) => hit.selection_reason === "リンクから");
 
   const copyJson = async () => {
     try {
@@ -180,6 +189,18 @@ export function TraceView({
           </span>
         )}
         {stopKey && <span className="trace-stop">{t(STOP_LABEL[stopKey] || "停止理由")}: {t(STOP_LABEL[stopKey] || stopKey)}</span>}
+        {debug.ranking_mode && <span>{t("ランキング方式")}: {debug.ranking_mode}</span>}
+        {typeof debug.association_expansion_count === "number" && (
+          <span>
+            {t("関連展開")} {debug.association_expansion_count}
+          </span>
+        )}
+        {debug.association_cutoff && <span className="trace-warn">{t("打ち切り")}: {debug.association_cutoff}</span>}
+        {linkHits.length > 0 && (
+          <span>
+            seed {memories.length - linkHits.length} · {t("リンクから")} {linkHits.length}
+          </span>
+        )}
         {debug.budget_exhausted && <span className="trace-warn">{t("予算を使い切りました")}</span>}
         {typeof debug.auto?.trace_count === "number" && <span>{t("記憶")} {debug.auto.trace_count}</span>}
         {typeof debug.auto?.edge_count === "number" && <span>{t("関連エッジ")} {debug.auto.edge_count}</span>}
@@ -221,7 +242,7 @@ export function TraceView({
           {memories.map((hit) => (
             <article
               key={hit.id}
-              className="memory-trace-hit"
+              className={hit.selection_reason === "リンクから" ? "memory-trace-hit is-from-link" : "memory-trace-hit"}
               onClick={onSelect ? () => onSelect(hit) : undefined}
               role={onSelect ? "button" : undefined}
               tabIndex={onSelect ? 0 : undefined}
@@ -250,7 +271,14 @@ export function TraceView({
           <ul className="trace-expansion">
             {expansions.slice(0, 20).map((e, i) => (
               <li key={i}>
-                <code>{e.source.slice(0, 8)}</code> → <code>{e.target.slice(0, 8)}</code> · {e.activation.toFixed(2)}
+                <code>{e.source.slice(0, 8)}</code> → <code>{e.target.slice(0, 8)}</code>
+                {e.kind ? (
+                  <>
+                    {" · "}
+                    <code>{e.kind}</code>
+                  </>
+                ) : null}{" "}
+                · {e.activation.toFixed(2)}
               </li>
             ))}
             {expansions.length > 20 && <li>… +{expansions.length - 20}</li>}

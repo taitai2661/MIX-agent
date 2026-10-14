@@ -8,6 +8,16 @@
   removed; memory is a flat list of user facts like ChatGPT ).
 - Keep: memories / memory_revisions / memory_processing_jobs /
   memory_action_events.
+
+Superseded in part by ``docs/memory-spec.md``: the flat *storage* of content
+stays, but the spec (decided after this migration) requires the lifecycle /
+conflict columns of spec §1 back, and one ``memory_links`` table instead of the
+four dropped above. Those land in later migrations. The four tables themselves
+stay dropped — see the NOTE in ``mix_agent.db.models``.
+
+Follow-up migrations must stay re-runnable: every step here is guarded by an
+inspector lookup because this revision is applied to databases that already
+took a partial run.
 """
 
 import sqlalchemy as sa

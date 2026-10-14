@@ -40,7 +40,7 @@ const groups = [
       ["providers", "AI Providers", Server],
       ["models", "モデル", Sparkles],
       ["auto", "Auto", Sparkles],
-      ["memory", "Associative Memory", Brain],
+      ["memory", "Memory", Brain],
     ],
   },
   {

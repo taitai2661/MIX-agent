@@ -69,10 +69,33 @@ _LAUNCH_SEQUENCE = 0
 
 
 def _collect_memory_observations(db, run, final_answer: str) -> list[dict]:
-    """ChatGPT-style: no synchronous task-memory harvesting.
+    """Decision (Phase 2): keep harvesting nothing synchronously; always [].
 
-    Durable user facts are extracted async by ``MemoryProcessingJob`` only.
-    Kept as a stub so callers/tests don't crash; always returns [].
+    The roadmap asked whether a run's decisions / artifact summaries should be
+    collected here, on the completion path, in addition to the async extractor.
+    Evaluated against ``docs/memory-spec.md`` and rejected for now:
+
+    * §0 limits Memory to durable facts, preferences and constraints **about
+      the user**. A run's decisions and artifact summaries are task output;
+      storing them turns Memory into a transcript and dilutes retrieval for
+      every later turn. Keeping task memory separate is exactly what §1's
+      ``task_id`` and §3's lifecycle (``superseded`` / ``expired``) are for —
+      and both are Phase 3 (``未実装``). Without an expiry path, harvesting
+      now only accumulates decisions that can never go stale.
+    * The async ``MemoryProcessingJob`` (``memory.jobs.enqueue``) already gets
+      this same turn, and judges it with more context and more gates: the
+      spec §6 prompt, the top-10 ``existing`` memories for dedupe, §8 secret
+      filtering, 3-attempt backoff, and the ``memory_auto_formation`` setting.
+      A second synchronous writer would repeat that judgment with none of the
+      gates — and would run inside the run-completion transaction, adding
+      latency and a failure surface to every answer.
+    * Roadmap Phase 2 marks this as "実験的に有効化できるか検証" — an
+      experiment, not a shipped behaviour. The safe place for it is behind
+      Phase 3's consolidation, where a ``decision``-role observation can be
+      stored with ``task_id=run.id`` and decayed, rather than as a free-form
+      summary on the hot path.
+
+    Kept as a stub so the call site in ``drive`` stays unchanged; returns [].
     """
     return []
 

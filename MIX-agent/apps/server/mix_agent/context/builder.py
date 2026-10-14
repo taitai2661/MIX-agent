@@ -27,6 +27,7 @@ from mix_agent.context.references import (
 )
 from mix_agent.context.summary import render as render_summary
 from mix_agent.context.types import CONTEXT_VERSION, ContextBudgetError
+from mix_agent.memory.service import ITEM_CHAR_LIMIT
 
 TOOL_PROTOCOL_RESERVED = 2000
 
@@ -341,7 +342,7 @@ def _render_memory(
     if not memories or budget <= 0:
         return [], [{"id": m.get("id"), "reason": "no_budget"} for m in memories], "", {"all": 0}
     included, excluded = _fit_block(
-        [{"id": m.get("id"), "content": str(m.get("content", ""))[:600]} for m in memories if m.get("id")],
+        [{"id": m.get("id"), "content": str(m.get("content", ""))[:ITEM_CHAR_LIMIT]} for m in memories if m.get("id")],
         budget,
         model_id,
     )

@@ -72,4 +72,52 @@ describe("TraceView", () => {
     expect(html).toContain("想起トレース");
     expect(html).toContain("該当するTraceはありません。");
   });
+
+  it("echoes ranking_mode and §4's expansion contract verbatim", () => {
+    const html = renderToStaticMarkup(
+      <TraceView
+        probe={{
+          query: "走る",
+          memories: [
+            { id: "seed-1", content: "土曜の朝に走る", relevance: 0.9, selection_reason: "語彙が一致" },
+            { id: "link-1", content: "走った後は水を飲む", relevance: 0.18, selection_reason: "リンクから" },
+          ],
+          debug: {
+            stop_reason: "depth",
+            // The mode is echoed, never re-labelled: what ran is what shows.
+            ranking_mode: "lexical",
+            association_expansion: [
+              { source: "seed-1", target: "link-1", activation: 0.2, kind: "relates_to" },
+            ],
+            association_expansion_count: 1,
+            association_cutoff: "degree_limit",
+          },
+        }}
+      />,
+    );
+    expect(html).toContain("ランキング方式: lexical");
+    expect(html).toContain("最大hop到達"); // existing STOP_LABEL rendering, untouched
+    expect(html).toContain("関連展開 1");
+    expect(html).toContain("打ち切り: degree_limit");
+    // §2's word travels untranslated, next to the two ids it connects.
+    expect(html).toContain("<code>seed-1</code> → <code>link-1</code>");
+    expect(html).toContain("<code>relates_to</code>");
+    // §4: link-derived rows are told apart from the seeds they follow.
+    expect(html).toContain("memory-trace-hit is-from-link");
+    expect(html).toContain("seed 1 · リンクから 1");
+  });
+
+  it("keeps an unknown stop_reason and a missing cutoff readable", () => {
+    const html = renderToStaticMarkup(
+      <TraceView
+        probe={{
+          memories: [{ id: "m1", content: "x", selection_reason: "リンクから" }],
+          debug: { stop_reason: "flat", association_expansion_count: 0, association_cutoff: null },
+        }}
+      />,
+    );
+    expect(html).toContain("停止理由: flat");
+    expect(html).toContain("関連展開 0");
+    expect(html).not.toContain("打ち切り:");
+  });
 });

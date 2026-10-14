@@ -1,10 +1,11 @@
-"""ChatGPT-style public view: id / content / timestamps only."""
+"""ChatGPT-style public view: id / content / timestamps + spec §1 taxonomy."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from mix_agent.db.models import Memory
+from mix_agent.memory.service import lifecycle_value, role_value, scope_value, source_kind_value
 
 
 def _content(row: Memory) -> str:
@@ -14,7 +15,7 @@ def _content(row: Memory) -> str:
     return data.get("content") or data.get("gist", "")
 
 
-def render(row: Memory, evidence_rows=None, *, trace=None, score=None, selection_reason=None) -> dict:
+def render(row: Memory, evidence_rows=None, *, trace=None, score=None, selection_reason=None, link_count=None) -> dict:
     data = dict(row.data or {})
     view: dict[str, Any] = {
         "id": row.id,
@@ -29,8 +30,24 @@ def render(row: Memory, evidence_rows=None, *, trace=None, score=None, selection
         view["relevance"] = round(float(score), 4)
     if selection_reason:
         view["selection_reason"] = selection_reason
-    # legacy keys for old readers (constants now)
-    view.update({"role": "fact", "scope": "user", "lifecycle": "active"})
+    if link_count is not None:
+        # Spec §4: how many edges touch this row, counted by the caller in one
+        # batched query. Present only when asked for, so a direct render()
+        # keeps producing exactly the shape it did before links existed.
+        view["link_count"] = int(link_count)
+    # Spec §1 / §7.2 MemoryHit: real values read off the row's columns (0024),
+    # falling back to §1's own defaults for a row written before them. `role`
+    # also keeps the `data.role` mirror, which §6's extractor wrote first.
+    lifecycle = lifecycle_value(getattr(row, "lifecycle_state", None)) or "established"
+    view.update({
+        "role": role_value(getattr(row, "role", None)) or role_value(data.get("role")) or "fact",
+        "scope": scope_value(getattr(row, "scope", None)) or "user",
+        # legacy key + the §7.2 name: same value, no more `lifecycle: "active"`
+        # constants (that was a lie for anything the transition graph retired).
+        "lifecycle": lifecycle,
+        "lifecycle_state": lifecycle,
+        "source_kind": source_kind_value(getattr(row, "source_kind", None)) or "agent",
+    })
     return view
 
 

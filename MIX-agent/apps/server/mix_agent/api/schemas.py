@@ -509,8 +509,32 @@ class MemoryEvidenceInput(Input):
 
 
 class MemoryResolveConflictInput(Input):
-    resolution: Literal["prefer_a", "prefer_b", "merge", "dismiss"]
+    """Spec §3 ``resolve_conflict`` over HTTP, shaped like §7.2's writes.
+
+    ``resolution`` is the reason recorded on the RESOLVE event: everything but
+    the ``dismiss`` family leaves the rejected row ``superseded`` (§3),
+    ``dismiss`` leaves it ``expired``. ``"resolved"`` is the value §3's own
+    settlement uses when it has nothing more specific to say.
+
+    ``prefer`` names the row that wins and must be one of the two conflicting
+    memories. **Omitting it is §3's default** — the memory ``disputed_by_id``
+    points at (the one already stored) wins — and the UI must not pre-fill it
+    just because one side is showing: the default is a spec contract, not an
+    unset form field.
+    """
+
+    resolution: Literal["resolved", "prefer_a", "prefer_b", "merge", "dismiss"] = "resolved"
     prefer: str | None = Field(default=None, max_length=36)
+
+
+class MemoryResolveConflictView(BaseModel):
+    """§7.2's response keys (``decision`` / ``id`` / ``reason``) + §3's outcome."""
+
+    decision: Literal["resolved"] = "resolved"
+    id: str
+    loser_id: str
+    loser_state: str
+    reason: str
 
 
 class MemoryRememberInput(Input):
@@ -602,6 +626,9 @@ class SettingsInput(Input):
     memory_auto_formation: bool = True
     memory_seed_limit: int = Field(default=24, ge=4, le=64)
     memory_result_limit: int = Field(default=8, ge=1, le=30)
+    # §4 source (3): §5 embedding neighbours become links only when this is on
+    # (spec §4: "(3) は既定オフ").
+    memory_link_embedding_neighbors: bool = False
 
 
 class FeedbackInput(Input):

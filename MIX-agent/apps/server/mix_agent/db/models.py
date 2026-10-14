@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -179,27 +180,119 @@ class Permission(Record, Base):
 
 
 class Memory(Record, Base):
-    """A single ChatGPT-style Memory item.
+    """A single ChatGPT-style Memory item: one short user fact per row.
 
-    ChatGPT-like flat structure: one short user fact/preference per row.
-    ``content`` is first-class (not buried in JSONB) so list/search/edit
-    stays trivial. ``data`` keeps only UI hints: ``pinned`` / ``source``
-    (``user`` explicit vs ``auto`` extracted) / ``source_run``.
-    All role/scope/lifecycle/verification/association machinery was removed
-    in 0022 (see migration) — retrieval is plain text match + recency.
+    ``content`` stays first-class (not buried in JSONB) so list/search/edit
+    remains trivial, and ``data`` keeps the row-specific extras spec §1.1
+    leaves to each edition: ``pinned`` / ``source`` / ``source_run`` /
+    ``strength`` / ``activation_count`` / ``embedding``.
+
+    Judgment change (recorded in ``docs/memory-roadmap.md`` §2.2, decision B):
+    migration 0022 dropped the whole taxonomy *and* the four graph tables.
+    Spec §1 is the contract for both editions, so migration 0024 restores the
+    eight columns it needs — ``lifecycle_state``, ``superseded_by_id``,
+    ``disputed_by_id``, ``confidence``, ``salience``, ``role``, ``scope``,
+    ``source_kind`` — and those eight are now real columns, not constants
+    echoed back by ``service._trace_data``.
+
+    What 0022 deleted and is still deliberately *not* back:
+    ``title`` / ``verification`` / ``activation_count`` / ``task_id`` as
+    columns (the flat UI does not render them; ``activation_count`` rides in
+    ``data``), and three of the four graph tables ``MemoryAssociation`` /
+    ``MemoryFeature`` / ``MemoryConflict`` / ``MemoryEvidence``.
+    Supersession and conflict are expressed *on the row* (§1's
+    ``superseded_by_id`` / ``disputed_by_id``); associations get the single
+    ``memory_links`` table of spec §4, restored by migration 0025.
+    Re-adding a per-concept table is a spec change, not an implementation
+    detail — see the NOTE below.
     """
 
     __tablename__ = "memories"
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+    # --- spec §1, restored by migration 0024 (defaults are spec §1's) --------
+    # Validated against ``memory/types.py`` (spec §2) before every write; an
+    # unknown value never reaches the column.
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="established", server_default="established",
+    )
+    superseded_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    disputed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.7, server_default="0.7",
+    )
+    salience: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.5, server_default="0.5",
+    )
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="fact", server_default="fact",
+    )
+    scope: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="user", server_default="user",
+    )
+    source_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="agent", server_default="agent",
+    )
     __table_args__ = (
         Index("memory_owner_updated", "owner_id", "updated_at"),
+        Index("ix_memories_lifecycle_state", "lifecycle_state"),
     )
 
 
-# NOTE: MemoryAssociation / MemoryFeature / MemoryConflict / MemoryEvidence
-# were removed in the ChatGPT-style simplification (migration 0022 drops the
-# tables). Do not re-add them; use plain Memory rows only.
+# NOTE: migration 0022 dropped memory_associations / memory_features /
+# memory_conflicts / memory_evidences, and 0024 deliberately did *not* bring
+# any of them back: supersession and conflict live on the row itself
+# (``superseded_by_id`` / ``disputed_by_id``, spec §1/§3) and evidence and
+# features stay in the row's ``data``. Migration 0025 then restored *exactly
+# one* table — spec §4's ``memory_links`` (decision A = plan B: the flat UI
+# keeps its one-row-per-fact shape, associations get the single link table).
+# The other three stay deleted: re-creating four per-concept tables would be
+# a spec change, not an implementation detail.
+
+
+class MemoryLink(Base):
+    """One directed relation between two memories (spec §4).
+
+    The table is the *shadow* of §3 for the two transition kinds: a
+    ``supersedes`` link exists because the target row carries
+    ``superseded_by_id`` pointing at the source, and ``contradicts`` exists
+    because the target carries ``disputed_by_id`` (§4: "二重管理にしない").
+    ``memory.service.sync_links`` is the single writer that keeps the pair
+    equal, so neither side can move alone. The other §2 ``relation_kinds``
+    (``supports`` / ``derived_from`` / ``caused_by`` / ``relates_to``) have no
+    column and live only here.
+
+    ``ondelete="CASCADE"`` keeps §7.2's ``forget`` working: deleting a memory
+    drops its links in the same statement instead of blocking on the foreign
+    key.
+    """
+
+    __tablename__ = "memory_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_memory_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False,
+    )
+    target_memory_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.2, server_default="0.2")
+    coactivation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    __table_args__ = (
+        # Spec §4: (owner, source, target, kind) is unique — a duplicate upsert
+        # updates one row instead of adding a second edge.
+        UniqueConstraint(
+            "owner_id", "source_memory_id", "target_memory_id", "kind",
+            name="uq_memory_links_owner_source_target_kind",
+        ),
+        Index("memory_link_owner_source", "owner_id", "source_memory_id"),
+        Index("memory_link_owner_target", "owner_id", "target_memory_id"),
+    )
 
 
 class MemoryProcessingJob(Record, Base):

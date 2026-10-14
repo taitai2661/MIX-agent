@@ -15,9 +15,11 @@ from mix_agent.auth.security import read_secret, store_secret
 from mix_agent.db.models import Agent, Artifact, Conversation, MCPConnection, ScheduledJob, Settings, now
 from mix_agent.knowledge import service as knowledge
 from mix_agent.mcp import oauth as mcp_oauth
+from mix_agent.memory import embeddings as mem_embeddings
 from mix_agent.memory import runtime as memory_runtime
 from mix_agent.memory import service as memory
 from mix_agent.memory import tools as memory_tools
+from mix_agent.memory.service import RESULT_LIMIT_DEFAULT
 from mix_agent.skills import service as skills
 from mix_agent.tools.network import fetch_public, fetch_public_bytes
 
@@ -262,6 +264,44 @@ def save_text_artifact(db, owner, name, mime, content):
     return save_artifact(db, owner, content.encode("utf-8"), name, mime)
 
 
+async def _memory_query_vector(db, run, query) -> list[float] | None:
+    """Query embedding for memory tools; ``None`` means lexical ranking.
+
+    Runs inside async tool dispatch, so it is the natural place to resolve the
+    vector. Every failure path returns ``None`` instead of raising: a tool call
+    must never fail because an embedding endpoint was slow or absent.
+    """
+    from mix_agent.db.models import Provider
+
+    provider_id = (run.data or {}).get("snapshot", {}).get("provider_record_id")
+    provider = db.get(Provider, provider_id) if provider_id else None
+    if provider is None:
+        return None
+    key = read_secret(db, provider.data.get("secret_id"))
+    return await mem_embeddings.query_vector({**provider.data, "id": provider.id}, key, query)
+
+
+async def _embed_after_remember(db, run, result) -> dict:
+    """Best-effort vector for a memory the agent just wrote.
+
+    Uses the run's own provider so the row lands in the same embedding space as
+    the queries that will later retrieve it. Silent no-op when the provider has
+    no embeddings endpoint.
+    """
+    memory_id = (result or {}).get("id") if isinstance(result, dict) else None
+    if not memory_id:
+        return result
+    from mix_agent.auth.security import read_secret
+    from mix_agent.db.models import Provider
+
+    provider_id = (run.data or {}).get("snapshot", {}).get("provider_record_id")
+    provider = db.get(Provider, provider_id) if provider_id else None
+    key = read_secret(db, provider.data.get("secret_id")) if provider else None
+    if await mem_embeddings.embed_memory(db, memory_id, provider=provider, key=key):
+        db.commit()
+    return result
+
+
 async def execute(db, run, tool, args):
     name = tool["model_name"]
     scopes = run.data["snapshot"].get("memory_scopes", ["user"])
@@ -377,15 +417,16 @@ async def execute(db, run, tool, args):
             db,
             run.owner_id,
             query=args.get("query", ""),
-            limit=int(args.get("limit") or 8),
+            limit=int(args.get("limit") or RESULT_LIMIT_DEFAULT),
+            query_vector=await _memory_query_vector(db, run, args.get("query", "")),
         )
     elif name == "memory_remember":
-        result = memory_tools.remember(
+        result = await _embed_after_remember(db, run, memory_tools.remember(
             db,
             run.owner_id,
             content=args.get("content", ""),
             explicit_user=False,
-        )
+        ))
     elif name == "memory_forget":
         result = memory_tools.forget(
             db,
@@ -399,15 +440,16 @@ async def execute(db, run, tool, args):
         result = memory_tools.recall(
             db, run.owner_id,
             query=args.get("query", ""),
-            limit=8,
+            limit=RESULT_LIMIT_DEFAULT,
+            query_vector=await _memory_query_vector(db, run, args.get("query", "")),
         )
     elif name in ("memory_add", "memory_update"):
-        result = memory_tools.remember(
+        result = await _embed_after_remember(db, run, memory_tools.remember(
             db,
             run.owner_id,
             content=args.get("content", ""),
             explicit_user=False,
-        )
+        ))
     elif name == "memory_delete":
         result = memory_tools.forget(
             db, run.owner_id,

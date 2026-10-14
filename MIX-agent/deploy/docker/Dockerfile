@@ -33,6 +33,14 @@ COPY tests/ /workspace/tests/
 COPY runners/ /workspace/runners/
 COPY packages/ /workspace/packages/
 COPY deploy/ /workspace/deploy/
+# The contract test compares memory/jobs.py against docs/memory-spec.md §6, so
+# the spec has to travel with the test image (scripts/check-memory-parity.py
+# runs the same comparison on the host and in CI).
+COPY docs/ /workspace/docs/
+# The retrieval bench is shipped with the test image so §5's ranking can be
+# measured with one command in the same environment the contract tests use
+# (PostgreSQL, no network, no LLM API): experiments/run_retrieval_bench.py.
+COPY experiments/ /workspace/experiments/
 WORKDIR /workspace
 ENV PYTHONPATH=/app:/workspace
 USER 1000:1000

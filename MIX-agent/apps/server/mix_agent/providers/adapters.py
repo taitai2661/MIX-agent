@@ -1,6 +1,7 @@
 """Provider-specific wire formats stay here; the run engine sees normalized events."""
 
 import hashlib
+import logging
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -16,6 +17,8 @@ from mix_agent.providers.metadata import context_limit, resolve
 from mix_agent.providers.model_roles import chat_capability
 from mix_agent.providers.reasoning import request_options, show_summary
 
+LOGGER = logging.getLogger(__name__)
+
 DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
@@ -26,6 +29,23 @@ DEFAULT_URLS = {
     "compatible": "",
 }
 CAPABILITIES = ("chat", "tools", "vision", "reasoning", "structured_output")
+
+# Default embedding model per provider kind (memory spec §5). A provider record
+# may override it with ``embedding_model``. A kind with no entry — Anthropic
+# above all — reports "unsupported" instead of guessing an id that will 404, so
+# recall degrades to lexical ranking rather than failing the request.
+EMBEDDING_DEFAULT_MODELS = {
+    "openai": "text-embedding-3-small",
+    "openrouter": "text-embedding-3-small",
+    "ollama": "nomic-embed-text",
+    "lmstudio": "text-embedding-nomic-embed-text-v1.5",
+    "gemini": "text-embedding-004",
+    "compatible": "text-embedding-3-small",
+}
+
+
+class EmbeddingNotSupported(RuntimeError):
+    """This provider cannot embed; callers must fall back to lexical ranking."""
 
 
 class ProviderConfigurationError(ValueError):
@@ -211,6 +231,73 @@ class Adapter:
 
     def get_capabilities(self, model):
         return {**model.get("capabilities", {}), **model.get("overrides", {})}
+
+    def embedding_model(self):
+        """Embedding model id for this provider, or ``None`` when it has none."""
+        configured = str(self.provider.get("embedding_model") or "").strip()
+        if configured:
+            return configured
+        if self.transport_id == "anthropic_messages":
+            return None
+        return EMBEDDING_DEFAULT_MODELS.get(self.kind)
+
+    async def embed(self, texts):
+        """Return one vector per input text (memory spec §5).
+
+        Always raises :class:`EmbeddingNotSupported` instead of the underlying
+        HTTP/SDK error: the only caller is memory ranking, and for it "no
+        vectors today" and "provider down" mean exactly the same thing — fall
+        back to lexical scoring. Letting a transport error escape would turn a
+        missing embedding into a failed search.
+        """
+        items = [str(text).strip() for text in texts or [] if str(text or "").strip()]
+        if not items:
+            return []
+        model = self.embedding_model()
+        if not model:
+            raise EmbeddingNotSupported(f"provider kind {self.kind} has no embedding model")
+        transport = self.transport_for(model)
+        if transport == "anthropic_messages":
+            raise EmbeddingNotSupported("anthropic exposes no embeddings endpoint")
+        try:
+            if transport == "gemini_generate_content":
+                vectors = await self._embed_gemini(model, items)
+            else:
+                vectors = await self._embed_openai(model, items)
+        except EmbeddingNotSupported:
+            raise
+        except Exception as exc:  # every embedding failure means "rank lexically"
+            LOGGER.debug("embedding failed provider=%s model=%s error=%s", self.kind, model, type(exc).__name__)
+            raise EmbeddingNotSupported(f"embedding unavailable: {type(exc).__name__}") from exc
+        if len(vectors) != len(items):
+            raise EmbeddingNotSupported("provider returned the wrong number of embeddings")
+        return vectors
+
+    async def _embed_openai(self, model, texts):
+        """OpenAI / OpenAI-compatible / Ollama / LM Studio: ``POST {base}/embeddings``."""
+        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0,
+                               timeout=PROVIDER_TIMEOUT) as client:
+            response = await client.embeddings.create(model=model, input=texts)
+        return self._vectors([list(item.embedding or []) for item in response.data])
+
+    async def _embed_gemini(self, model, texts):
+        name = model if model.startswith("models/") else "models/" + model
+        async with genai.Client(api_key=self.key,
+                                http_options={"base_url": self.url, "timeout": 120000,
+                                              "headers": self.gateway_headers()}).aio as client:
+            response = await client.models.batch_embed_contents(model=name, contents=texts)
+        return self._vectors([list(item.values or []) for item in (response.embeddings or [])])
+
+    @staticmethod
+    def _vectors(raw):
+        """Validate and coerce a provider's payload before it reaches ranking."""
+        if not raw or any(not vector for vector in raw):
+            raise EmbeddingNotSupported("provider returned an empty embedding")
+        vectors = [[float(value) for value in vector] for vector in raw]
+        dims = len(vectors[0])
+        if dims < 8 or any(len(vector) != dims for vector in vectors):
+            raise EmbeddingNotSupported("provider returned inconsistent embedding dimensions")
+        return vectors
 
     async def stream(self, model, messages, tools, mode, settings):
         transport_id = self.transport_for(model)

@@ -200,7 +200,7 @@ BUILTINS = [
     definition(
         "memory_recall",
         "Recall saved user memories relevant to the current task. Returns a flat list of {id, content}.",
-        {"query": S, "limit": {"type": "integer", "minimum": 1, "maximum": 20}},
+        {"query": S, "limit": {"type": "integer", "minimum": 1, "maximum": 30}},
         executor="builtin",
         parallel_safe=True,
     ),
