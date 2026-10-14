@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+    "app",
+    "core",
+    "providers",
+    "tools",
+    "browser",
+    "mcp",
+    "storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+authors = ["MIX-agent contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/taitai2661/MIX-agent"
+
+[workspace.dependencies]
+# `rc` lets `ProviderRequest.tools` be an `Arc<Vec<ToolSpec>>`, so the Run Engine
+# hands the very same spec to every turn instead of deep-copying it each time.
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+# Minimal feature set (see Cargo.toml:26): rt + macros + time + sync + fs +
+# io-util + net. `signal`/`process` are needed by terminal handling;
+# `test-util` is intentionally NOT here — dev-dependencies add it per crate.
+tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "io-util", "io-std", "net", "signal", "process"] }
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+# Unified versions: single reqwest 0.12 line (compatible with tauri 2.x, which
+# depends on reqwest 0.12 via tauri-plugin-http/updater — NOT 0.13, so no bump).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "json", "chrono", "uuid"] }
+rand = "0.8"
+base64 = "0.22"
+# `dirs` 6 (unified; was a mix of `dirs 5`): same data_dir/config_dir API used
+# in app/src/lib.rs and storage migrations. `directories` was considered but
+# would rename every call site for no benefit.
+dirs = "6"
+
+# Domain crate names. These are local aliases that the `app` binary uses.
+mixd-core = { path = "core" }
+mixd-providers = { path = "providers" }
+mixd-tools = { path = "tools" }
+mixd-browser = { path = "browser" }
+mixd-mcp = { path = "mcp" }
+mixd-storage = { path = "storage" }
+
+# 既定の debug = true は完全 debuginfo を生成し、1つの .o が約800KB に達して
+# target/ が数十GB に膨張する。line-tables-only は行番号を残すため anyhow/thiserror
+# の ? チェーンや panic の backtrace はそのまま読める。
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+# Beta builds keep unwinding + no symbol stripping so crash reports from the
+# field still carry a backtrace. `panic = "abort"` / `strip = "symbols"` would
+# shrink the binary but blind beta diagnostics; re-enable both for the final
+# release build only.
+panic = "unwind"
+strip = "none"

@@ -1,0 +1,29 @@
+[package]
+name = "mixd-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MIX-agent Desktop — MCP client host"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+mixd-storage = { workspace = true }
+mixd-providers = { workspace = true }
+reqwest.workspace = true
+futures-util = "0.3"
+url = "2.5"
+base64.workspace = true
+rand.workspace = true
+sha2 = "0.10"
+sqlx.workspace = true

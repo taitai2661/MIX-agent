@@ -1,0 +1,7 @@
+# pnpm version single-sourcing: the canonical pin is `packageManager:
+# pnpm@10.11.0` in ../package.json consumed via corepack (`corepack enable` +
+# `corepack install`). CI still passes an explicit `version: "10.11.0"` to
+# pnpm/action-setup while COREPACK_ENABLE_AUTO_PIN=0; drop the CI `version:`
+# once CI switches to corepack, and keep this file version-agnostic.
+packages:
+  - "ui"
