@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Bot, CornerDownLeft, Keyboard, MessageSquare, Plus, Search, Settings2, Sparkles,
+  Bot, CornerDownLeft, FolderTree, Keyboard, MessageSquare, PanelLeft, Plus, Search, Settings2, Sparkles,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -73,6 +73,8 @@ export function CommandPalette() {
   const openSettings = useUi((s) => s.openSettings);
   const setSurface = useUi((s) => s.setSurface);
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
+  const toggleSidebar = useUi((s) => s.toggleSidebar);
+  const toggleFileTree = useUi((s) => s.toggleFileTree);
   const locale = useUi((s) => s.locale);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
@@ -159,6 +161,30 @@ export function CommandPalette() {
         },
       },
       {
+        id: "action:toggle-sidebar",
+        label: t("サイドバー切り替え"),
+        keys: "⌘B",
+        icon: <PanelLeft size={15} />,
+        kind: "action",
+        run: () => toggleSidebar(),
+      },
+      {
+        id: "action:toggle-file-tree",
+        label: t("ファイルツリー表示切替"),
+        keys: "⌘⇧E",
+        icon: <FolderTree size={15} />,
+        kind: "action",
+        run: () => toggleFileTree(),
+      },
+      {
+        id: "action:settings",
+        label: t("設定を開く"),
+        keys: "⌘,",
+        icon: <Settings2 size={15} />,
+        kind: "action",
+        run: () => openSettings(),
+      },
+      {
         id: "action:shortcuts",
         label: t("ショートカット一覧"),
         keys: "?",
@@ -172,7 +198,19 @@ export function CommandPalette() {
       ...modelItems,
       ...threads,
     ];
-  }, [conversations.data, models.data, openSettings, setConversationId, setModelId, setView, setSurface, setShortcutsOpen, locale]);
+  }, [
+    conversations.data,
+    models.data,
+    openSettings,
+    setConversationId,
+    setModelId,
+    setView,
+    setSurface,
+    setShortcutsOpen,
+    toggleSidebar,
+    toggleFileTree,
+    locale,
+  ]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

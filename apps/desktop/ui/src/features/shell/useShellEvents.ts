@@ -172,11 +172,30 @@ export function useShellEvents(handlers: {
 export function useAppShortcuts() {
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const toggleFileTree = useUi((s) => s.toggleFileTree);
+  const toggleSidebar = useUi((s) => s.toggleSidebar);
+  const openSettings = useUi((s) => s.openSettings);
+  const setRightPanel = useUi((s) => s.setRightPanel);
   const setSurface = useUi((s) => s.setSurface);
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
-  const setters = useRef({ setPaletteOpen, toggleFileTree, setSurface, setShortcutsOpen });
+  const setters = useRef({
+    setPaletteOpen,
+    toggleFileTree,
+    toggleSidebar,
+    openSettings,
+    setRightPanel,
+    setSurface,
+    setShortcutsOpen,
+  });
   useEffect(() => {
-    setters.current = { setPaletteOpen, toggleFileTree, setSurface, setShortcutsOpen };
+    setters.current = {
+      setPaletteOpen,
+      toggleFileTree,
+      toggleSidebar,
+      openSettings,
+      setRightPanel,
+      setSurface,
+      setShortcutsOpen,
+    };
   });
 
   useEffect(() => {
@@ -184,26 +203,60 @@ export function useAppShortcuts() {
       const {
         setPaletteOpen: palette,
         toggleFileTree: tree,
+        toggleSidebar: sidebar,
+        openSettings: settings,
+        setRightPanel: rightPanelSetter,
         setSurface: surface,
         setShortcutsOpen: shortcuts,
       } = setters.current;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      if (isMod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         palette(true);
+        return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+      if (isMod && !e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("mix:new-thread"));
+        return;
+      }
+      if (isMod && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        sidebar();
+        return;
+      }
+      if (isMod && !e.shiftKey && e.key === ",") {
+        e.preventDefault();
+        settings();
+        return;
+      }
+      if (isMod && e.shiftKey && e.key.toLowerCase() === "e") {
         e.preventDefault();
         tree();
+        return;
       }
       // Surface shortcuts: ⌘⇧C → chat, ⌘⇧D → desktop-agent.
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+      if (isMod && e.shiftKey && !e.altKey) {
         const key = e.key.toLowerCase();
         if (key === "c") {
           e.preventDefault();
           surface("chat");
+          return;
         } else if (key === "d") {
           e.preventDefault();
           surface("desktop-agent");
+          return;
+        }
+      }
+      // Esc: Close right panel if open and not in an input
+      if (e.key === "Escape" && !isMod && !e.shiftKey && !e.altKey) {
+        const state = useUi.getState();
+        if (state.rightPanel !== "none" && !state.paletteOpen && !state.shortcutsOpen) {
+          e.preventDefault();
+          rightPanelSetter("none");
+          return;
         }
       }
       // `?` (Shift+/) — only when the user is not typing into a field, so a

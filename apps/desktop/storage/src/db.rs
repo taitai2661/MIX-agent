@@ -31,24 +31,35 @@ impl Storage {
         // never leave the only copy of the database half-written. Failures
         // only warn — a read-only dir or full disk must not block startup.
         backup_before_open(&data_dir, &db_path).await;
-        let opts = SqliteConnectOptions::new()
+        let mut opts = SqliteConnectOptions::new()
             .filename(&db_path)
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5));
+
+        // At-rest encryption wiring: retrieve or generate the 256-bit DB key from Keychain
+        // and apply it via SQLite/SQLCipher PRAGMA key.
+        let secrets = crate::SecretStore::new();
+        match secrets.ensure_db_key().await {
+            Ok(key) => {
+                let hex_key: String = key.iter().map(|b| format!("{:02x}", b)).collect();
+                opts = opts
+                    .pragma("key", format!("x'{hex_key}'"))
+                    .pragma("cipher_compatibility", "4");
+                tracing::info!("SQLite connection configured with Keychain-backed encryption key");
+            }
+            Err(err) => {
+                tracing::warn!(%err, "Keychain not available for DB key; proceeding without PRAGMA key");
+            }
+        }
+
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
             .connect_with(opts)
             .await
             .context("opening SQLite database")?;
         let storage = Self { pool, data_dir };
-        // NOTE: at-rest encryption is not yet wired — `SecretStore::ensure_db_key`
-        // stages the key in the OS Keychain, but the SQLite connection above
-        // does not apply it (no SQLCipher passphrase). The database file is
-        // therefore plaintext; 0o600 permissions below are the only current
-        // protection. Wire the passphrase before claiming encryption.
-        tracing::warn!("database at-rest encryption is not yet wired; key is staged in Keychain");
         storage.run_schema().await?;
         // Restrict the database files to owner-only. Best-effort for the same
         // reason as the backup: a chmod failure must not block startup.

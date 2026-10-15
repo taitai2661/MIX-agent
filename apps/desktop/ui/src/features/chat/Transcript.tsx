@@ -10,6 +10,7 @@ import { LiveBlock } from "./LiveBlock";
 import type { MessageView, ModelView, RunView } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { ErrorBox, ListSkeleton } from "@/components/shared";
+import { useUi } from "@/lib/ui";
 
 export function Transcript({
   messages,
@@ -145,7 +146,7 @@ export function Transcript({
           aria-relevant="additions"
         >
           {error != null && <ErrorBox error={error} />}
-          {isEmpty && !error && <Welcome welcome={welcome} />}
+          {isEmpty && !error && <Welcome welcome={welcome} hasModels={models.length > 0} />}
           {!isEmpty && loading && messages.length === 0 && !showLive && (
             <ListSkeleton rows={1} />
           )}
@@ -193,7 +194,14 @@ export function Transcript({
 }
 
 
-function Welcome({ welcome }: { welcome: Welcome | null }) {
+function Welcome({
+  welcome,
+  hasModels,
+}: {
+  welcome: Welcome | null;
+  hasModels: boolean;
+}) {
+  const setOnboardingForcedOpen = useUi((s) => s.setOnboardingForcedOpen);
   return (
     <div className="relative flex flex-col items-center gap-6 py-16 text-center animate-rise">
       <div
@@ -221,12 +229,30 @@ function Welcome({ welcome }: { welcome: Welcome | null }) {
           </p>
         )}
       </div>
-      {!welcome && (
+      {!hasModels ? (
+        <div className="mx-auto flex w-full max-w-md flex-col items-center gap-3 rounded-xl border border-warning/30 bg-warning-soft p-4 text-center">
+          <div className="flex items-center gap-2 text-sm font-medium text-warning">
+            <Sparkles size={16} />
+            <span>{t("モデル提供元が接続されていません")}</span>
+          </div>
+          <p className="text-xs text-muted">
+            {t("会話を始めるには、Ollamaなどのローカルモデルを検出するか、APIキーを設定してください。")}
+          </p>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setOnboardingForcedOpen(true)}
+          >
+            {t("初期設定ウィザードを開く")}
+          </Button>
+        </div>
+      ) : welcome ? (
+        <WelcomeSuggestions suggestions={welcome.suggestions} />
+      ) : (
         <p className="mx-auto max-w-md text-sm text-muted">
           {hintWithKeys(t("何でも質問してください。/ でコマンド、⌘K で検索。"), ["/", "⌘K"])}
         </p>
       )}
-      {welcome && <WelcomeSuggestions suggestions={welcome.suggestions} />}
     </div>
   );
 }

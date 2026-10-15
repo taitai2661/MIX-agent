@@ -30,6 +30,8 @@ const GROUPS: ShortcutGroup[] = [
     items: [
       { keys: ["⌘", "K"], label: "コマンドパレット" },
       { keys: ["⌘", "N"], label: "新規スレッド" },
+      { keys: ["⌘", "B"], label: "サイドバー切り替え" },
+      { keys: ["⌘", ","], label: "設定を開く" },
       { keys: ["⌘", "⇧", "E"], label: "ファイルツリー" },
       { keys: ["⌘", "⇧", "C"], label: "チャットサーフェスへ" },
       { keys: ["⌘", "⇧", "D"], label: "エージェントサーフェスへ" },

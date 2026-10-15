@@ -10,7 +10,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::chromiumoxide_backend::ChromiumBackend;
 use crate::interface::{BrowserCall, BrowserResponse, BrowserTool};
 use crate::profile::{
-    default_profile_root, find_bundled_chromium, find_system_chromium, BrowserProfile,
+    default_profile_root, find_bundled_chromium, find_downloaded_chromium, find_system_chromium,
+    BrowserProfile,
 };
 
 /// Backend selection. Kept as an enum so a Firefox / WebKit backend can be
@@ -61,9 +62,12 @@ impl BrowserOperator {
         }
     }
 
-    /// Resolve the Chromium executable: bundled first, then the system copy.
+    /// Resolve the Chromium executable: bundled first, then user-downloaded, then the system copy.
     pub fn resolve_executable(&self) -> (BrowserBackend, Option<PathBuf>) {
         if let Some(exe) = find_bundled_chromium(self.resource_dir.as_deref()) {
+            return (BrowserBackend::Chromium, Some(exe));
+        }
+        if let Some(exe) = find_downloaded_chromium(&self.app_data) {
             return (BrowserBackend::Chromium, Some(exe));
         }
         if let Some(exe) = find_system_chromium() {

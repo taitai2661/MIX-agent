@@ -1404,6 +1404,17 @@ impl RunEngine {
                         serde_json::json!({ "hint": report.hint, "kind": report.kind }),
                     )
                     .await;
+
+                    // Phase 8.2: Turn-level re-retrieval on stagnation
+                    if !request.temporary {
+                        let query = format!("{} {}", request.user_message, report.hint);
+                        if let Ok(block) = crate::retrieval::retrieve_all(self.storage.as_ref(), &query).await {
+                            if let Some(msg) = block.to_message() {
+                                messages.push(msg);
+                            }
+                        }
+                    }
+
                     messages.push(Message::text(
                         "user",
                         format!(
@@ -1515,6 +1526,16 @@ impl RunEngine {
                             unverified.join(", ")
                         ));
                     }
+                    // Phase 8.2: Turn-level re-retrieval on verification checkpoint
+                    if !request.temporary {
+                        let query = format!("{} verify fix repair", request.user_message);
+                        if let Ok(block) = crate::retrieval::retrieve_all(self.storage.as_ref(), &query).await {
+                            if let Some(msg) = block.to_message() {
+                                messages.push(msg);
+                            }
+                        }
+                    }
+
                     messages.push(Message::text(
                         "user",
                         format!("[verification] {}", hints.join(" ")),

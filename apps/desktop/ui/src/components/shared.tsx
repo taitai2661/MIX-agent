@@ -1,9 +1,12 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import { Alert, Skeleton } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { CopyButton } from "./CopyButton";
 
 /** Inline error surface used by panes that keep their own layout. */
 export function ErrorBox({
@@ -19,21 +22,59 @@ export function ErrorBox({
   onAction?: () => void;
   className?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const message = errorMessage(error);
   if (!message) return null;
+
+  const lines = message.split("\n");
+  const isMultiLine = lines.length > 1;
+  const isLong = message.length > 160;
+  const showExpandable = isMultiLine || isLong;
+
   return (
     <Alert
       tone={variant === "warning" ? "warning" : "danger"}
-      className={className}
+      className={cn("items-start", className)}
       action={
-        action && onAction ? (
-          <Button variant="default" size="sm" onClick={onAction} className="shrink-0">
-            {action}
-          </Button>
-        ) : undefined
+        <div className="flex shrink-0 items-center gap-1">
+          {action && onAction && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={onAction}
+              className="shrink-0"
+            >
+              {action}
+            </Button>
+          )}
+          <CopyButton value={message} label={t("エラー内容をコピー")} />
+        </div>
       }
     >
-      {message}
+      <div className="flex min-w-0 flex-1 flex-col gap-1 text-xs">
+        {showExpandable ? (
+          <div>
+            <div className="font-medium text-fg break-words">
+              {lines[0] || message}
+            </div>
+            <button
+              type="button"
+              onClick={() => setExpanded((prev) => !prev)}
+              className="mt-1 inline-flex items-center gap-1 font-mono text-2xs text-faint transition hover:text-muted"
+            >
+              {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              <span>{expanded ? t("詳細を折りたたむ") : t("詳細を表示")}</span>
+            </button>
+            {expanded && (
+              <pre className="mt-1.5 max-h-48 overflow-auto rounded bg-inset/80 p-2 font-mono text-2xs text-muted whitespace-pre-wrap break-all border border-line/40">
+                {message}
+              </pre>
+            )}
+          </div>
+        ) : (
+          <div className="break-words font-medium">{message}</div>
+        )}
+      </div>
     </Alert>
   );
 }
@@ -109,7 +150,11 @@ export const payloadBlock =
 export function ErrorBadge({ error }: { error: unknown }) {
   const message = errorMessage(error);
   if (!message) return null;
-  return <Badge tone="danger">{message}</Badge>;
+  return (
+    <Badge tone="danger" title={message} className="cursor-help">
+      {message}
+    </Badge>
+  );
 }
 
 /**

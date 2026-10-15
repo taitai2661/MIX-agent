@@ -133,4 +133,5 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.2.3"))
+    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.3.5"))
+

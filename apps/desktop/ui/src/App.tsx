@@ -242,7 +242,7 @@ export function App() {
           variant="ghost"
           size="icon-sm"
           onClick={toggleSidebar}
-          title={t("サイドバーの表示切り替え")}
+          title={`${t("サイドバーの表示切り替え")} · ⌘B`}
           aria-label={t("サイドバーの表示切り替え")}
           aria-pressed={sidebarOpen}
         >

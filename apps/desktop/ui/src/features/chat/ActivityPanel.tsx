@@ -39,6 +39,7 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton, payloadBlock } from "@/components/shared";
+import { TerminalResultView } from "./TerminalResultView";
 
 function toolIcon(name: string) {
   if (name === "files") return FileText;
@@ -174,7 +175,7 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
         )}
         {tool.error && <ErrorBadge error={tool.error} />}
         {tool.result != null && (
-          <details className="group">
+          <details className="group" open={tool.name === "terminal"}>
             <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-faint transition-colors hover:text-muted">
               <ChevronRight
                 size={12}
@@ -183,9 +184,15 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
               />
               {t("結果")}
             </summary>
-            <pre className={cn("mt-1 max-h-52", payloadBlock)}>
-              {safeJson(tool.result)}
-            </pre>
+            <div className="mt-1">
+              {tool.name === "terminal" && typeof tool.result === "object" ? (
+                <TerminalResultView result={tool.result as Record<string, unknown>} />
+              ) : (
+                <pre className={cn("max-h-52", payloadBlock)}>
+                  {safeJson(tool.result)}
+                </pre>
+              )}
+            </div>
           </details>
         )}
       </div>

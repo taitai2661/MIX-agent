@@ -10,8 +10,10 @@ import { memo, useEffect, useState } from "react";
 import {
   Brain,
   Check,
+  CheckCircle2,
   ChevronRight,
   CircleAlert,
+  ListChecks,
   ShieldAlert,
   Sparkles,
   Wrench,
@@ -26,11 +28,14 @@ import {
   isBusy,
   describeToolCall,
   type RunTimeline,
+  type TodoItem,
   type ToolActivity,
 } from "@/lib/runEvents";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { CopyButton } from "@/components/CopyButton";
 import { ErrorBadge } from "@/components/shared";
 import { ApprovalCard } from "./ApprovalCard";
 
@@ -45,24 +50,45 @@ export const Reasoning = memo(function Reasoning({
   useEffect(() => {
     if (streaming) setOpen(true);
   }, [streaming]);
+
   return (
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="group rounded-lg border border-line bg-inset/60"
+      className="group rounded-lg border border-line bg-inset/60 shadow-xs"
     >
-      {/* `list-none` removes the native marker, so the disclosure state needs a
-          affordance of its own: a chevron that rotates with `open`. */}
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-fg">
-        <ChevronRight
-          size={12}
-          aria-hidden="true"
-          className="shrink-0 transition-transform duration-150 group-open:rotate-90"
-        />
-        <Brain size={12} className="shrink-0" aria-hidden="true" />
-        {t("思考プロセス")}
+      <summary className="flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-fg">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <ChevronRight
+            size={12}
+            aria-hidden="true"
+            className="shrink-0 transition-transform duration-150 group-open:rotate-90"
+          />
+          <Brain
+            size={12}
+            className={cn("shrink-0", streaming && "text-brand animate-pulse")}
+            aria-hidden="true"
+          />
+          <span>{t("思考プロセス")}</span>
+          {streaming ? (
+            <span className="flex items-center gap-1 text-2xs text-brand font-normal">
+              <Spinner size={9} />
+              <span>{t("思考中…")}</span>
+            </span>
+          ) : (
+            <span className="text-2xs text-faint font-normal">
+              ({text.length} {t("文字")})
+            </span>
+          )}
+        </div>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
+        >
+          <CopyButton value={text} label={t("思考プロセスをコピー")} />
+        </div>
       </summary>
-      <div className="max-h-72 overflow-y-auto whitespace-pre-wrap border-t border-line px-3 py-2 text-xs leading-5 text-muted">
+      <div className="max-h-72 overflow-y-auto whitespace-pre-wrap border-t border-line px-3 py-2 text-xs leading-5 text-muted select-text">
         {text}
       </div>
     </details>
@@ -116,6 +142,68 @@ const InlineTools = memo(function InlineTools({
         </div>
       ))}
     </div>
+  );
+});
+
+/** Compact inline checklist of the agent's active plan. */
+const InlineTodoList = memo(function InlineTodoList({
+  todos,
+}: {
+  todos: TodoItem[];
+}) {
+  const done = todos.filter((i) => i.status === "completed").length;
+  const current =
+    todos.find((i) => i.status === "in_progress") ??
+    todos.find((i) => i.status === "pending");
+
+  return (
+    <details className="group overflow-hidden rounded-lg border border-line bg-surface/80 text-xs shadow-xs">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-1.5 transition-colors hover:bg-hover">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <ListChecks size={13} className="shrink-0 text-brand" />
+          <span className="font-medium text-fg">{t("計画")}</span>
+          <Badge tone={done === todos.length ? "success" : "brand"} size="sm">
+            {done}/{todos.length}
+          </Badge>
+          {current && (
+            <span className="truncate text-2xs text-muted">
+              {current.content}
+            </span>
+          )}
+        </div>
+        <ChevronRight
+          size={12}
+          className="shrink-0 text-faint transition-transform group-open:rotate-90"
+        />
+      </summary>
+      <ul className="flex flex-col gap-1 border-t border-line p-2">
+        {todos.map((item) => (
+          <li
+            key={item.id}
+            className="flex items-start gap-1.5 text-2xs leading-4"
+          >
+            <span className="mt-0.5 shrink-0">
+              {item.status === "completed" ? (
+                <CheckCircle2 size={11} className="text-success" />
+              ) : item.status === "in_progress" ? (
+                <Spinner size={10} className="text-warning" />
+              ) : (
+                <span className="block size-2.5 rounded-sm border border-line" />
+              )}
+            </span>
+            <span
+              className={
+                item.status === "completed"
+                  ? "text-faint line-through"
+                  : "text-fg"
+              }
+            >
+              {item.content}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 });
 
@@ -174,6 +262,9 @@ export const LiveBlock = memo(function LiveBlock({
         {live.approval && <ApprovalCard live={live} />}
         {live.reasoning && (
           <Reasoning text={live.reasoning} streaming={busy && !live.text} />
+        )}
+        {live.todos && live.todos.length > 0 && (
+          <InlineTodoList todos={live.todos} />
         )}
         {live.tools.length > 0 && <InlineTools tools={live.tools} />}
         {live.text ? (

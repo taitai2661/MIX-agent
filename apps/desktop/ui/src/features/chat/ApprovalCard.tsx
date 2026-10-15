@@ -10,12 +10,12 @@
 import { memo, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import type { RunTimeline } from "@/lib/runEvents";
 import { Button } from "@/components/ui/button";
-import { ErrorBadge, payloadBlock } from "@/components/shared";
+import { ErrorBadge } from "@/components/shared";
+import { ApprovalDiffView } from "./ApprovalDiffView";
 
 export const ApprovalCard = memo(function ApprovalCard({
   live,
@@ -44,11 +44,6 @@ export const ApprovalCard = memo(function ApprovalCard({
       setBusy(false);
     }
   };
-  // Tool arguments can carry whole file bodies: clip the dump so one card
-  // cannot push the transcript — and the decision buttons — off-screen.
-  const rawArgs = JSON.stringify(approval.arguments, null, 2) ?? "";
-  const clippedArgs =
-    rawArgs.length > 2000 ? `${rawArgs.slice(0, 2000)}…` : rawArgs;
   return (
     <div
       role="alertdialog"
@@ -67,12 +62,12 @@ export const ApprovalCard = memo(function ApprovalCard({
           {approval.name}
         </code>
       </div>
-      <pre
-        id={`approval-args-${approval.approvalId ?? "pending"}`}
-        className={cn(payloadBlock, "mx-3 max-h-44 break-all")}
-      >
-        {clippedArgs}
-      </pre>
+      <div className="px-3 py-1">
+        <ApprovalDiffView
+          toolName={approval.name}
+          args={approval.arguments as Record<string, unknown>}
+        />
+      </div>
       <div className="flex items-center justify-end gap-2 px-3 py-2">
         {error && (
           <span role="status" className="mr-auto">

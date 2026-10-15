@@ -298,27 +298,35 @@ function RunErrorAlert({
     }
   };
   return (
-    <Alert tone="danger" className={className}>
-      <strong className="block font-medium">{t("実行に失敗しました")}</strong>
-      <span className="whitespace-pre-wrap break-words">{error}</span>
-      {onRetry && (
-        <span className="mt-2 flex items-center gap-2">
-          <Button
-            variant="default"
-            size="sm"
-            disabled={retryDisabled || retrying}
-            onClick={() => void retry()}
-          >
-            {retrying ? <Spinner size={12} /> : null}
-            {t("再試行")}
-          </Button>
-          {retryDisabled && (
-            <span className="text-xs text-faint">
-              {t("実行中は再試行できません")}
-            </span>
-          )}
+    <Alert
+      tone="danger"
+      className={className}
+      action={<CopyButton value={error} label={t("エラー内容をコピー")} />}
+    >
+      <div className="flex flex-col gap-1">
+        <strong className="block font-medium">{t("実行に失敗しました")}</strong>
+        <span className="whitespace-pre-wrap break-words text-xs leading-5">
+          {error}
         </span>
-      )}
+        {onRetry && (
+          <span className="mt-2 flex items-center gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              disabled={retryDisabled || retrying}
+              onClick={() => void retry()}
+            >
+              {retrying ? <Spinner size={12} /> : null}
+              {t("再試行")}
+            </Button>
+            {retryDisabled && (
+              <span className="text-xs text-faint">
+                {t("実行中は再試行できません")}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
     </Alert>
   );
 }

@@ -1,7 +1,8 @@
 [project]
 name = "mix-agent"
-version = "0.2.3"
+version = "0.3.5"
 requires-python = ">=3.12"
+
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "sqlalchemy>=2.0,<3",
   "psycopg[binary]>=3.2,<4", "alembic>=1.14,<2", "pydantic>=2.10,<3",

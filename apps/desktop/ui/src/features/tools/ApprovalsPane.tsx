@@ -5,11 +5,12 @@ import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { PENDING_APPROVALS_QUERY_KEY, usePendingApprovals } from "@/lib/queries";
 import { Card, Row, Section } from "@/components/layout";
-import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton, payloadBlock } from "@/components/shared";
+import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { PendingApprovalView } from "@/lib/types";
+import { ApprovalDiffView } from "@/features/chat/ApprovalDiffView";
 
 export function ApprovalsPane() {
   const queryClient = useQueryClient();
@@ -40,9 +41,12 @@ export function ApprovalsPane() {
               <strong className="font-mono text-sm font-medium text-fg">{p.tool_name}</strong>
               <Badge tone="warning" size="sm">{relativeTime(p.created_at)}</Badge>
             </div>
-            <pre className={`${payloadBlock} max-h-44`}>
-              {JSON.stringify(p.arguments, null, 2).slice(0, 1200)}
-            </pre>
+            <div className="my-1">
+              <ApprovalDiffView
+                toolName={p.tool_name}
+                args={p.arguments as Record<string, unknown>}
+              />
+            </div>
             <Row align="end">
               {decide.isError && (
                 <span className="mr-auto">
