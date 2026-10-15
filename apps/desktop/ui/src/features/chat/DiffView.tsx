@@ -85,8 +85,132 @@ const LINE_TONE: Record<DiffLine["kind"], string> = {
  */
 const MAX_DIFF_LINES = 2000;
 
+interface SplitDiffRow {
+  isHunk: boolean;
+  hunkText?: string;
+  leftNo?: number | null;
+  leftText?: string;
+  leftKind?: "del" | "ctx" | "empty";
+  rightNo?: number | null;
+  rightText?: string;
+  rightKind?: "add" | "ctx" | "empty";
+}
+
+export function buildSplitRows(lines: DiffLine[]): SplitDiffRow[] {
+  const rows: SplitDiffRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.kind === "hunk") {
+      rows.push({ isHunk: true, hunkText: line.text });
+      i++;
+      continue;
+    }
+    if (line.kind === "ctx") {
+      rows.push({
+        isHunk: false,
+        leftNo: line.oldNo,
+        leftText: line.text,
+        leftKind: "ctx",
+        rightNo: line.newNo,
+        rightText: line.text,
+        rightKind: "ctx",
+      });
+      i++;
+      continue;
+    }
+    const dels: DiffLine[] = [];
+    while (i < lines.length && lines[i].kind === "del") {
+      dels.push(lines[i]);
+      i++;
+    }
+    const adds: DiffLine[] = [];
+    while (i < lines.length && lines[i].kind === "add") {
+      adds.push(lines[i]);
+      i++;
+    }
+    const count = Math.max(dels.length, adds.length);
+    for (let k = 0; k < count; k++) {
+      const d = dels[k];
+      const a = adds[k];
+      rows.push({
+        isHunk: false,
+        leftNo: d ? d.oldNo : null,
+        leftText: d ? d.text : "",
+        leftKind: d ? "del" : "empty",
+        rightNo: a ? a.newNo : null,
+        rightText: a ? a.text : "",
+        rightKind: a ? "add" : "empty",
+      });
+    }
+  }
+  return rows;
+}
+
 /** Shared renderer for a parsed unified diff; used by both diff surfaces. */
-export const DiffLines = memo(function DiffLines({ lines }: { lines: DiffLine[] }) {
+export const DiffLines = memo(function DiffLines({
+  lines,
+  split = false,
+}: {
+  lines: DiffLine[];
+  split?: boolean;
+}) {
+  const splitRows = useMemo(() => (split ? buildSplitRows(lines) : []), [lines, split]);
+
+  if (split) {
+    return (
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+        <div className="min-w-max font-mono text-xs leading-5">
+          {splitRows.map((row, i) => {
+            if (row.isHunk) {
+              return (
+                <div
+                  key={i}
+                  className="border-y border-line bg-brand-soft px-3 py-0.5 text-2xs text-brand font-semibold select-none"
+                >
+                  {row.hunkText}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={i}
+                className="grid grid-cols-2 divide-x divide-line border-b border-line/40 last:border-b-0"
+              >
+                {/* Left (Old) */}
+                <div
+                  className={cn(
+                    "grid grid-cols-[2.5rem_1fr]",
+                    row.leftKind === "del" && "bg-diff-del text-diff-del-fg",
+                    row.leftKind === "empty" && "bg-inset/30",
+                  )}
+                >
+                  <span className="select-none border-e border-line px-1.5 text-end text-faint">
+                    {row.leftNo ?? ""}
+                  </span>
+                  <span className="whitespace-pre-wrap break-all px-2">{row.leftText}</span>
+                </div>
+                {/* Right (New) */}
+                <div
+                  className={cn(
+                    "grid grid-cols-[2.5rem_1fr]",
+                    row.rightKind === "add" && "bg-diff-add text-diff-add-fg",
+                    row.rightKind === "empty" && "bg-inset/30",
+                  )}
+                >
+                  <span className="select-none border-e border-line px-1.5 text-end text-faint">
+                    {row.rightNo ?? ""}
+                  </span>
+                  <span className="whitespace-pre-wrap break-all px-2">{row.rightText}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-x-auto rounded-lg border border-line">
       <div className="min-w-max font-mono text-xs leading-5">

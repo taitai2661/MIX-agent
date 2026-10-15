@@ -75,6 +75,10 @@ pub async fn collect_diagnostics(state: State<'_, AppState>) -> Result<Diagnosti
     let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE status IN ('queued','running','waiting_approval','budget_extension_pending')")
         .fetch_one(pool).await.unwrap_or(0);
     let db_key_present = state.secrets.db_key_status().await;
+    let db_encrypted = crate::commands::settings::read_settings(pool)
+        .await
+        .map(|s| s.database_encryption)
+        .unwrap_or(false);
     Ok(DiagnosticsReport {
         data_dir,
         db_ok,
@@ -86,6 +90,6 @@ pub async fn collect_diagnostics(state: State<'_, AppState>) -> Result<Diagnosti
         skill_count: skills as u32,
         active_runs: active as u32,
         db_key_present,
-        db_encrypted: false,
+        db_encrypted,
     })
 }

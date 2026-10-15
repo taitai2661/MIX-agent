@@ -27,7 +27,7 @@ import { cn } from "@/lib/cn";
  * genuinely has to differ, not that one of them looked nicer.
  */
 const segmentedVariants = cva(
-  "inline-flex h-row items-center gap-0.5 rounded-lg bg-inset p-0.5",
+  "inline-flex h-row items-center gap-0.5 rounded-md border border-line/60 bg-inset p-0.5",
 );
 
 export const Segmented = forwardRef<
@@ -48,6 +48,8 @@ export interface SegmentedOption<T extends string> {
   value: T;
   /** Visible content. */
   children: React.ReactNode;
+  /** Optional leading icon. */
+  icon?: React.ReactNode;
   /** Optional trailing count / metadata, rendered after the label. */
   trailing?: React.ReactNode;
   /** Accessible + tooltip text. Use when `children` is an icon or an
@@ -59,6 +61,7 @@ export interface SegmentedOption<T extends string> {
 export function SegmentedOption<T extends string>({
   value,
   children,
+  icon,
   trailing,
   label,
   disabled = false,
@@ -81,7 +84,7 @@ export function SegmentedOption<T extends string>({
       disabled={disabled}
       onClick={() => onSelect(value)}
       className={cn(
-        "flex h-full min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-2",
+        "inline-flex h-full min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2.5",
         "text-xs font-medium whitespace-nowrap transition-colors duration-100",
         selected
           ? "bg-surface text-fg shadow-xs"
@@ -89,11 +92,18 @@ export function SegmentedOption<T extends string>({
       )}
       {...props}
     >
+      {icon && (
+        <span className="inline-flex shrink-0 items-center justify-center text-current" aria-hidden="true">
+          {icon}
+        </span>
+      )}
       {/* `min-w-0` on the label is what lets it reach the ellipsis: without
           it the label keeps its `min-content` width, the option cannot shrink,
           and a group of three Japanese labels pushed a whole side panel past
           the window edge. */}
-      <span className="min-w-0 truncate">{children}</span>
+      <span className="inline-flex min-w-0 items-center justify-center gap-1.5 truncate [&>svg]:shrink-0 [&>svg]:inline-block">
+        {children}
+      </span>
       {trailing != null && (
         <span className="shrink-0 font-mono text-2xs">{trailing}</span>
       )}

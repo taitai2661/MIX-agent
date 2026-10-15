@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { FileDiff, FileText, GitBranch } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Columns2, FileDiff, FileText, GitBranch, Minus, Plus, Rows, Undo2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
@@ -8,6 +8,7 @@ import { DiffLines, parseUnifiedDiff } from "@/features/chat/DiffView";
 import { useActiveRoot, useGitStatus } from "@/lib/queries";
 import { ListRow, PanelHeader, PANEL_BODY } from "@/components/layout";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorAlert, ErrorBox, ListSkeleton } from "@/components/shared";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { GitStatusBadge } from "@/components/ui/status";
@@ -16,7 +17,15 @@ import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 type Scope = "unstaged" | "staged";
 
 /** Render a `git diff` payload: split into per-file blocks for headers. */
-const GitDiffBody = memo(function GitDiffBody({ unified }: { unified: string }) {
+const GitDiffBody = memo(function GitDiffBody({
+  unified,
+  root,
+  scope,
+}: {
+  unified: string;
+  root?: string | null;
+  scope?: Scope;
+}) {
   const blocks = useMemo(
     () => unified.split(/^diff --git /m).filter((b) => b.trim()).slice(0, 50),
     [unified],
@@ -27,31 +36,111 @@ const GitDiffBody = memo(function GitDiffBody({ unified }: { unified: string }) 
   return (
     <div className="flex flex-col gap-2.5">
       {blocks.map((block, i) => (
-        <GitDiffBlock key={i} block={block} />
+        <GitDiffBlock key={i} block={block} root={root} scope={scope} />
       ))}
     </div>
   );
 });
 
-const GitDiffBlock = memo(function GitDiffBlock({ block }: { block: string }) {
+const GitDiffBlock = memo(function GitDiffBlock({
+  block,
+  root,
+  scope,
+}: {
+  block: string;
+  root?: string | null;
+  scope?: Scope;
+}) {
+  const queryClient = useQueryClient();
+  const [split, setSplit] = useState(false);
+  const [busy, setBusy] = useState(false);
+
   const label = useMemo(() => {
     const firstLine = block.split("\n")[0];
     const pathMatch = /\b(?:a|b)\/(.+?)\s+b\/(.+)$/.exec(firstLine);
     return pathMatch ? pathMatch[2] : firstLine.trim();
   }, [block]);
+
   const { lines, capped } = useMemo(() => {
     const parsed = parseUnifiedDiff(`diff --git ${block}`);
     return { lines: parsed.slice(0, 2000), capped: parsed.length > 2000 };
   }, [block]);
+
+  const handleRestore = async () => {
+    if (!root || busy) return;
+    setBusy(true);
+    try {
+      await api.gitRestore(root, label, scope === "staged");
+      void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+      void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
+    } catch {
+      // restore failed
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleStage = async () => {
+    if (!root || busy) return;
+    setBusy(true);
+    try {
+      await api.gitStage(root, label, scope === "staged");
+      void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+      void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
+    } catch {
+      // stage failed
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5">
-        <FileDiff size={13} className="shrink-0 text-faint" />
-        <span className="min-w-0 truncate font-mono text-xs text-fg">
-          {label}
-        </span>
+    <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface p-2 shadow-xs">
+      <div className="flex items-center justify-between gap-1.5 border-b border-line pb-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <FileDiff size={13} className="shrink-0 text-brand" />
+          <span className="min-w-0 truncate font-mono text-xs font-medium text-fg" title={label}>
+            {label}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setSplit(!split)}
+            title={split ? t("統合表示") : t("2画面並列表示")}
+            aria-label={split ? t("統合表示") : t("2画面並列表示")}
+          >
+            {split ? <Rows size={12} /> : <Columns2 size={12} />}
+          </Button>
+          {root && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy}
+                onClick={() => void handleStage()}
+                title={scope === "staged" ? t("ステージ解除") : t("ステージに追加")}
+                aria-label={scope === "staged" ? t("ステージ解除") : t("ステージに追加")}
+              >
+                {scope === "staged" ? <Minus size={12} /> : <Plus size={12} />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy}
+                onClick={() => void handleRestore()}
+                title={t("変更を元に戻す")}
+                aria-label={t("変更を元に戻す")}
+                className="hover:text-danger"
+              >
+                <Undo2 size={12} />
+              </Button>
+            </>
+          )}
+        </div>
       </div>
-      <DiffLines lines={lines} />
+      <DiffLines lines={lines} split={split} />
       {capped && (
         <p className="text-xs text-faint">{t("大きな差分のため先頭2000行のみ表示します")}</p>
       )}
@@ -114,7 +203,7 @@ export function ChangesPanel({
           ) : !diff.data?.available ? (
             <ErrorBox error={diff.data?.unified_diff || t("git を利用できません")} />
           ) : diff.data.unified_diff.trim() ? (
-            <GitDiffBody unified={diff.data.unified_diff} />
+            <GitDiffBody unified={diff.data.unified_diff} root={root} scope={scope} />
           ) : (
             <EmptyState
               title={t("差分はありません")}

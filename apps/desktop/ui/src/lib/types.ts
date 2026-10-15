@@ -170,6 +170,8 @@ export interface SettingsView {
   format_command: string | null;
   /** Refuse shell commands that write outside the workspace. */
   sandbox_terminal: boolean;
+  /** Codex-compatible database encryption at rest. Defaults to false. */
+  database_encryption: boolean;
   onboarding_completed: boolean | null;
 }
 

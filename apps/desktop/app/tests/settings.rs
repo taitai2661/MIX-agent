@@ -32,6 +32,7 @@ fn full_settings() -> SettingsView {
         // Non-default on purpose: `true` is what proves the round trip carried
         // the key rather than re-deriving §4's `false`.
         memory_link_embedding_neighbors: true,
+        database_encryption: true,
         onboarding_completed: Some(true),
     }
 }
@@ -44,6 +45,11 @@ async fn a_missing_row_reads_back_as_the_defaults() {
     assert!(read.egress_allowlist.is_empty());
     assert_eq!(read.language, None);
     assert_eq!(read.onboarding_completed, None);
+    // Codex parity: database encryption defaults off.
+    assert!(
+        !read.database_encryption,
+        "database encryption must default off (Codex parity)"
+    );
     // Memory spec §6: auto formation ships enabled; `false` is an opt-out.
     assert!(read.memory_auto_formation, "auto formation defaults to on");
     // Memory spec §4 「(3) は既定オフ」: the embedding-neighbour source ships
@@ -83,6 +89,10 @@ async fn a_row_without_the_onboarding_key_reads_back_as_never_onboarded() {
     assert!(
         !read.memory_link_embedding_neighbors,
         "a legacy row must not silently enable embedding-neighbour links"
+    );
+    assert!(
+        !read.database_encryption,
+        "a legacy row must not silently enable database encryption"
     );
 }
 

@@ -1,6 +1,6 @@
+/* eslint-disable no-control-regex */
 import { memo, useMemo, useState } from "react";
-import { Check, Copy, Terminal as TerminalIcon, Timer } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { Check, Copy, Timer } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 
@@ -68,13 +68,12 @@ export const TerminalResultView = memo(function TerminalResultView({
 }: TerminalResultViewProps) {
   const [copied, setCopied] = useState(false);
 
-  if (!result || typeof result !== "object") return null;
-
-  const stdout = typeof result.stdout === "string" ? result.stdout : "";
-  const stderr = typeof result.stderr === "string" ? result.stderr : "";
-  const exitCode = typeof result.exit_code === "number" ? result.exit_code : null;
-  const startedAt = typeof result.started_at === "string" ? new Date(result.started_at).getTime() : null;
-  const finishedAt = typeof result.finished_at === "string" ? new Date(result.finished_at).getTime() : null;
+  const res = result && typeof result === "object" ? result : null;
+  const stdout = typeof res?.stdout === "string" ? res.stdout : "";
+  const stderr = typeof res?.stderr === "string" ? res.stderr : "";
+  const exitCode = typeof res?.exit_code === "number" ? res.exit_code : null;
+  const startedAt = typeof res?.started_at === "string" ? new Date(res.started_at).getTime() : null;
+  const finishedAt = typeof res?.finished_at === "string" ? new Date(res.finished_at).getTime() : null;
 
   const durationMs =
     startedAt && finishedAt && finishedAt >= startedAt
@@ -87,8 +86,13 @@ export const TerminalResultView = memo(function TerminalResultView({
     return `${(durationMs / 1000).toFixed(1)}s`;
   }, [durationMs]);
 
-  const outputText = [stdout, stderr].filter(Boolean).join("\n").trim();
+  const outputText = useMemo(
+    () => [stdout, stderr].filter(Boolean).join("\n").trim(),
+    [stdout, stderr],
+  );
   const spans = useMemo(() => parseAnsi(outputText), [outputText]);
+
+  if (!res) return null;
 
   const copyOutput = async () => {
     try {

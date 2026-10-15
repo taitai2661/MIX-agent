@@ -123,7 +123,7 @@
 
   /* -------------------------------------------------------------- layout */
   --container-content: 800px;
-  --spacing-titlebar: 50px;
+  --spacing-titlebar: 40px;
   --spacing-control: 34px;
   --spacing-row: 30px;
 }
@@ -226,6 +226,15 @@ textarea {
   color: inherit;
 }
 
+/* Ensure inline SVGs inside buttons and interactive controls stay inline */
+button svg,
+[role="button"] svg,
+[role="radio"] svg,
+[role="tab"] svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
 h1,
 h2,
 h3,
@@ -303,11 +312,11 @@ a:hover {
 }
 
 :root[data-platform="macos"] .app-titlebar {
-  padding-left: 80px;
+  padding-left: 88px;
   /* Keep in sync with `trafficLightPosition` in app/tauri.conf.json:
-     y = (titlebar - 12) / 2 so the traffic lights stay vertically centered
-     in the 50px bar (12px is the macOS traffic-light diameter). x = 20 leaves
-     an 8px gap before this 80px padding. */
+     y = (titlebar - 14) / 2 = 13 so the traffic lights (14px diameter on macOS)
+     stay vertically centered in the 40px bar. x = 18 with 3 buttons (54px wide)
+     leaves a 16px gap before this 88px padding for symmetric margins. */
   background: color-mix(in srgb, var(--color-bg) 86%, transparent);
   backdrop-filter: blur(20px) saturate(1.4);
 }

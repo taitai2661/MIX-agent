@@ -12,7 +12,9 @@
     "desktop:ui:build": "pnpm --filter mix-agent-desktop-ui build",
     "desktop:ui:test": "pnpm --filter mix-agent-desktop-ui test",
     "desktop:dev": "pnpm --filter mix-agent-desktop-workspace tauri:dev",
-    "desktop:build": "pnpm --filter mix-agent-desktop-workspace tauri:build"
+    "desktop:build": "pnpm --filter mix-agent-desktop-workspace tauri:build",
+    "desktop:build:dmg": "pnpm --filter mix-agent-desktop-workspace tauri:build:dmg",
+    "desktop:package": "pnpm --filter mix-agent-desktop-workspace tauri:build:dmg"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1"

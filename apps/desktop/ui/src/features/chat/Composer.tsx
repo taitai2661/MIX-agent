@@ -1,7 +1,8 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowUp,
+  AtSign,
   Bot,
   Brain,
   Check,
@@ -34,6 +35,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { ErrorBox } from "@/components/shared";
 import { ModelPicker } from "./ModelPicker";
 import { ProjectMenu } from "./ProjectMenu";
+import { MentionPopover } from "./MentionPopover";
+import { SlashCommandPopover, type SlashCommand } from "./SlashCommandPopover";
 import { MAX_ATTACHMENTS, useAttachments } from "./useAttachments";
 import { useVoiceInput } from "./useVoiceInput";
 import {
@@ -144,6 +147,89 @@ export const Composer = memo(function Composer(props: {
   const draftRef = useRef(draft);
   draftRef.current = draft;
 
+  const activeProject = projects.find((p) => p.id === projectId);
+  const rootPath = activeProject?.root_path ?? null;
+
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+
+  const checkMention = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el || !rootPath) {
+      setMentionQuery(null);
+      return;
+    }
+    const pos = el.selectionStart;
+    const textBefore = el.value.slice(0, pos);
+    const match = textBefore.match(/(?:^|\s)@([a-zA-Z0-9_\-./]*)$/);
+    if (match) {
+      setMentionQuery(match[1]);
+    } else {
+      setMentionQuery(null);
+    }
+  }, [rootPath]);
+
+  const onSelectMention = useCallback((path: string) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const pos = el.selectionStart;
+    const textBefore = el.value.slice(0, pos);
+    const textAfter = el.value.slice(pos);
+    const match = textBefore.match(/(?:^|\s)@([a-zA-Z0-9_\-./]*)$/);
+    if (!match) return;
+
+    const replaceStart = pos - match[1].length - 1;
+    const newText = el.value.slice(0, replaceStart) + `@${path} ` + textAfter;
+    setDraft(newText);
+    setMentionQuery(null);
+
+    requestAnimationFrame(() => {
+      el.focus();
+      const nextPos = replaceStart + path.length + 2;
+      el.setSelectionRange(nextPos, nextPos);
+    });
+  }, []);
+
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+
+  const checkSlash = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) {
+      setSlashQuery(null);
+      return;
+    }
+    const pos = el.selectionStart;
+    const textBefore = el.value.slice(0, pos);
+    const match = textBefore.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+    if (match) {
+      setSlashQuery(match[1]);
+    } else {
+      setSlashQuery(null);
+    }
+  }, []);
+
+  const onSelectSlashCommand = useCallback((command: SlashCommand) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const pos = el.selectionStart;
+    const textBefore = el.value.slice(0, pos);
+    const textAfter = el.value.slice(pos);
+    const match = textBefore.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+    if (!match) return;
+
+    const replaceStart = pos - match[1].length - 1;
+    const newText = el.value.slice(0, replaceStart) + command.prompt + textAfter;
+    setDraft(newText);
+    setSlashQuery(null);
+
+    requestAnimationFrame(() => {
+      el.focus();
+      const nextPos = replaceStart + command.prompt.length;
+      el.setSelectionRange(nextPos, nextPos);
+    });
+  }, []);
+
   // Draft persistence: one slot per conversation, via `lib/storage.ts`
   // (best-effort). Switching threads used to either drop the draft or leak it
   // into the next thread. The ref dance avoids persisting the freshly-restored
@@ -236,11 +322,20 @@ export const Composer = memo(function Composer(props: {
     el.style.height = `${next}px`;
   }, [draft]);
 
-  // Welcome chips (or external callers) pre-fill the draft through the typed
-  // prompt-insert store instead of threading state through ChatPane.
+  // Welcome chips (or external callers) pre-fill or append to the draft through
+  // the typed prompt-insert store instead of threading state through ChatPane.
   useEffect(() => {
-    const onInsert = (request: { text: string; mode?: typeof mode }) => {
-      if (typeof request?.text === "string") setDraft(request.text);
+    const onInsert = (request: { text: string; mode?: typeof mode; append?: boolean }) => {
+      if (typeof request?.text === "string") {
+        if (request.append) {
+          setDraft((prev) => {
+            const trimmed = prev.trimEnd();
+            return trimmed ? `${trimmed} ${request.text}` : request.text;
+          });
+        } else {
+          setDraft(request.text);
+        }
+      }
       // A greeting picked on one surface may name a mode the current surface
       // does not expose (e.g. "thinking" after switching to Desktop-Agent), so
       // only apply a mode that is actually allowed here.
@@ -337,49 +432,135 @@ export const Composer = memo(function Composer(props: {
             </div>
           )}
 
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            aria-label={t("メッセージを入力")}
-            aria-describedby="composer-hints"
-            placeholder={placeholder}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onPaste={(e) => {
-              const files = [...(e.clipboardData?.files ?? [])].filter((f) =>
-                f.type.startsWith("image/"),
-              );
-              if (files.length > 0) {
-                e.preventDefault();
-                void addImageFiles(files);
-              }
-            }}
-            onDrop={(e) => {
-              const files = [...(e.dataTransfer?.files ?? [])].filter((f) =>
-                f.type.startsWith("image/"),
-              );
-              if (files.length > 0) {
-                e.preventDefault();
-                void addImageFiles(files);
-              }
-            }}
-            onDragOver={(e) => {
-              if ([...(e.dataTransfer?.types ?? [])].includes("Files")) {
-                e.preventDefault();
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                // Enter sends, Shift+Enter breaks, and Cmd/Ctrl+Enter always
-                // sends (even with Shift) for users coming from native apps.
-                if (e.metaKey || e.ctrlKey || !e.shiftKey) {
-                  e.preventDefault();
-                  submit();
+          <div className="relative">
+            {mentionQuery !== null && rootPath && (
+              <MentionPopover
+                rootPath={rootPath}
+                query={mentionQuery}
+                onSelect={onSelectMention}
+                onClose={() => setMentionQuery(null)}
+                selectedIndex={mentionIndex}
+                setSelectedIndex={setMentionIndex}
+              />
+            )}
+            {slashQuery !== null && mentionQuery === null && (
+              <SlashCommandPopover
+                query={slashQuery}
+                onSelect={onSelectSlashCommand}
+                selectedIndex={slashIndex}
+                setSelectedIndex={setSlashIndex}
+              />
+            )}
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              aria-label={t("メッセージを入力")}
+              aria-describedby="composer-hints"
+              placeholder={placeholder}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+              }}
+              onKeyUp={(e) => {
+                if (!["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(e.key)) {
+                  checkMention();
+                  checkSlash();
                 }
-              }
-            }}
-            className="max-h-56 min-h-16 w-full resize-none bg-transparent px-5 pt-4 pb-3 text-base leading-6 text-fg placeholder:text-faint outline-none"
-          />
+              }}
+              onClick={() => {
+                checkMention();
+                checkSlash();
+              }}
+              onPaste={(e) => {
+                const files = [...(e.clipboardData?.files ?? [])].filter((f) =>
+                  f.type.startsWith("image/"),
+                );
+                if (files.length > 0) {
+                  e.preventDefault();
+                  void addImageFiles(files);
+                }
+              }}
+              onDrop={(e) => {
+                const files = [...(e.dataTransfer?.files ?? [])].filter((f) =>
+                  f.type.startsWith("image/"),
+                );
+                if (files.length > 0) {
+                  e.preventDefault();
+                  void addImageFiles(files);
+                }
+              }}
+              onDragOver={(e) => {
+                if ([...(e.dataTransfer?.types ?? [])].includes("Files")) {
+                  e.preventDefault();
+                }
+              }}
+              onKeyDown={(e) => {
+                if (mentionQuery !== null) {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMentionQuery(null);
+                    return;
+                  }
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMentionIndex((i) => i + 1);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMentionIndex((i) => Math.max(0, i - 1));
+                    return;
+                  }
+                  if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                    const items = document.querySelectorAll("[data-mention-item]");
+                    const active = items[mentionIndex] as HTMLElement | undefined;
+                    if (active) {
+                      e.preventDefault();
+                      active.click();
+                      return;
+                    }
+                  }
+                }
+
+                if (slashQuery !== null && mentionQuery === null) {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSlashQuery(null);
+                    return;
+                  }
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSlashIndex((i) => i + 1);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSlashIndex((i) => Math.max(0, i - 1));
+                    return;
+                  }
+                  if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                    const items = document.querySelectorAll("[data-slash-item]");
+                    const active = items[slashIndex] as HTMLElement | undefined;
+                    if (active) {
+                      e.preventDefault();
+                      active.click();
+                      return;
+                    }
+                  }
+                }
+
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  // Enter sends, Shift+Enter breaks, and Cmd/Ctrl+Enter always
+                  // sends (even with Shift) for users coming from native apps.
+                  if (e.metaKey || e.ctrlKey || !e.shiftKey) {
+                    e.preventDefault();
+                    submit();
+                  }
+                }
+              }}
+              className="max-h-56 min-h-16 w-full resize-none bg-transparent px-5 pt-4 pb-3 text-base leading-6 text-fg placeholder:text-faint outline-none"
+            />
+          </div>
 
           {/* Toolbar: two groups (input controls / model+actions) that wrap as a
               row on narrow centres instead of pushing the send button out of
@@ -400,6 +581,31 @@ export const Composer = memo(function Composer(props: {
               ) : (
                 <Paperclip size={18} />
               )}
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const el = textareaRef.current;
+                if (!el) return;
+                const pos = el.selectionStart;
+                const textBefore = el.value.slice(0, pos);
+                const textAfter = el.value.slice(pos);
+                const prefix = textBefore.length > 0 && !textBefore.endsWith(" ") ? " @" : "@";
+                setDraft(textBefore + prefix + textAfter);
+                setMentionQuery("");
+                requestAnimationFrame(() => {
+                  el.focus();
+                  const nextPos = pos + prefix.length;
+                  el.setSelectionRange(nextPos, nextPos);
+                });
+              }}
+              title={t("ファイルをメンション (@)")}
+              aria-label={t("ファイルをメンション (@)")}
+              className="shrink-0 rounded-full"
+            >
+              <AtSign size={18} />
             </Button>
 
             {MODES.length > 1 ? (

@@ -25,7 +25,7 @@
         "focus": true,
         "acceptFirstMouse": true,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 20, "y": 19 },
+        "trafficLightPosition": { "x": 18, "y": 13 },
         "hiddenTitle": true
       }
     ],
@@ -53,7 +53,21 @@
       "resources/chromium": "chromium"
     },
     "macOS": {
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.0",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 190
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 190
+        }
+      }
     },
     "windows": {
       "wix": {

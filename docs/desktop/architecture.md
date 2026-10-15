@@ -120,7 +120,7 @@ Browser 実装の差し替えが可能で、`BrowserBackend` は 3 状態
 ## セキュリティ
 
 - **OS Keychain**: `keyring-rs` で Provider Key / DB 暗号化鍵 / MCP token / OAuth refresh token を用途別 AAD（`"{purpose}|{name}"`）で保存。
-- **DB は平文**: ファイルは SQLite のまま平文で、所有者のみ読み書き可（0600）が唯一の保護です。SQLCipher の passphrase 配線は未実施のため、透過暗号化があると誤解しないでください（詳細は `storage/src/db.rs` の警告コメント参照）。DB 暗号化鍵（`db.master`）は Keychain に生成・保管済みですが、適用は将来作業です。
+- **DB 暗号化設定 (Codex 互換)**: 標準は **OFF（平文 SQLite）** で動作し、所有者のみ読み書き可（0600）のアクセス権で保護されます（Codex parity）。設定（GeneralSettings）から保存時の暗号化を **ON / OFF** 切り替え可能で、ON に設定された場合は OS Keychain にマスター暗号化鍵（`db.master`）が生成・保管されます。診断画面（Diagnostics）でも暗号化状態が確認できます。
 - **Egress allowlist + private IP deny**: `tools::network` が reqwest 実行前に検査。allowlist が空なら公開ホストのみ許可し、private IP は常に拒否します。保存済みルールは `*.example.com` のようなワイルドカードに対応します。
 - **WebView CSP**: `app/tauri.conf.json` の `app.security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
 - **window 設定**: `app.macosPrivateApi = true` は `titleBarStyle: Overlay` +

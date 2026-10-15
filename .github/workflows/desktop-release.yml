@@ -2,8 +2,9 @@ name: desktop-release
 
 # Builds installable MIX-agent Desktop artifacts for all three platforms.
 #
-# Tag scheme: `desktop-v*` (e.g. desktop-v0.1.0). Plain `v*` belongs to the
-# Docker `release.yml` workflow; the split avoids both workflows firing on one tag.
+# Tag scheme: `desktop-v*` (e.g. desktop-v0.1.0) or `v*` (e.g. v0.3.5).
+# Tagging with `v*` triggers both Docker releases and Desktop DMG / installer builds,
+# uploading them as unified GitHub Release assets.
 #
 # Alpha scope: x64 macOS + ARM macOS + x64 Windows + x64 Linux only.
 # Deferred (no runner / untested CfT bundle): aarch64-linux, universal-macos,
@@ -25,10 +26,11 @@ on:
   push:
     tags:
       - "desktop-v*"
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. desktop-v0.1.0)"
+        description: "Tag to build (e.g. desktop-v0.1.0 or v0.3.5)"
         required: true
 
 permissions:
@@ -292,7 +294,7 @@ jobs:
     needs: [bundle, checksums]
     # Tag pushes match the ref; manual dispatches use the `tag` input (the
     # bundle job checks out that same ref above).
-    if: startsWith(github.ref, 'refs/tags/desktop-v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write

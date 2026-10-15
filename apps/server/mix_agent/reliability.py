@@ -33,7 +33,16 @@ def classify_failure(exc: Exception) -> str:
         return "timeout"
     if is_context_limit_error(exc) or isinstance(exc, ProviderContextLimitError):
         return "context"
-    if "tool" in str(exc).casefold() and "support" in str(exc).casefold():
+    exc_str = str(exc).casefold()
+    if any(phrase in exc_str for phrase in (
+        "tool_use is not supported",
+        "tools are not supported",
+        "tool use not supported",
+        "function calling is not supported",
+        "tool calling is not supported",
+        "does not support tool",
+        "does not support function",
+    )):
         return "tool"
     response = getattr(exc, "response", None)
     code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)

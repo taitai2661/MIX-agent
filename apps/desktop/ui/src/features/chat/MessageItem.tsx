@@ -3,8 +3,11 @@
 /// only the scroll container, the empty-state greeting and the live block)
 /// so the list file stays focused.
 
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { FileText, MessageSquare, Pencil, Sparkles } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronRight, FileText, MessageSquare, Pencil, Sparkles, Wrench } from "lucide-react";
+import { api } from "@/lib/api";
+import { reduceRunEvents } from "@/lib/runEvents";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
 import { t } from "@/lib/i18n";
@@ -12,6 +15,7 @@ import { cn } from "@/lib/cn";
 import { displayModelName, relativeTime, stripLeakedMarkup } from "@/lib/format";
 import type { MessageView, ModelView, RunView } from "@/lib/types";
 import { Reasoning } from "./LiveBlock";
+import { InlineToolItem } from "./InlineToolItem";
 import { useUi } from "@/lib/ui";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -108,6 +112,9 @@ export const MessageItem = memo(function MessageItem({
         <div className="text-sm text-fg">
           <Markdown>{stripLeakedMarkup(message.content)}</Markdown>
         </div>
+        {run && run.tool_call_count > 0 && (
+          <MessageToolsAccordion runId={run.id} count={run.tool_call_count} />
+        )}
         {showRunError && run?.error && (
           <RunErrorAlert
             error={run.error}
@@ -119,6 +126,55 @@ export const MessageItem = memo(function MessageItem({
     </div>
   );
 });
+
+function MessageToolsAccordion({ runId, count }: { runId: string; count: number }) {
+  const [open, setOpen] = useState(false);
+  const events = useQuery({
+    queryKey: ["run_events", runId],
+    queryFn: () => api.listRunEvents(runId),
+    enabled: open,
+    staleTime: Infinity,
+  });
+
+  const timeline = useMemo(
+    () => (events.data ? reduceRunEvents(runId, events.data) : null),
+    [events.data, runId],
+  );
+
+  return (
+    <details
+      open={open}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      className="group mt-1 rounded-lg border border-line bg-surface/80 text-xs shadow-xs"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-1.5 transition-colors hover:bg-hover">
+        <div className="flex items-center gap-1.5 text-muted">
+          <Wrench size={12} className="shrink-0 text-faint" aria-hidden="true" />
+          <span className="font-medium text-fg">{t("実行されたツール")}</span>
+          <Badge tone="neutral" size="sm">
+            {count}
+          </Badge>
+        </div>
+        <ChevronRight
+          size={12}
+          className="shrink-0 text-faint transition-transform group-open:rotate-90"
+          aria-hidden="true"
+        />
+      </summary>
+      <div className="flex flex-col gap-1.5 border-t border-line p-2">
+        {events.isLoading && (
+          <div className="flex items-center gap-1.5 py-2 text-faint">
+            <Spinner size={12} />
+            <span>{t("読み込み中…")}</span>
+          </div>
+        )}
+        {timeline?.tools.map((tool) => (
+          <InlineToolItem key={tool.id} tool={tool} defaultOpen={false} />
+        ))}
+      </div>
+    </details>
+  );
+}
 
 /** A user turn with its inline editor. Kept separate from `MessageItem` so the
  *  editing state does not re-render the (memoised) assistant rows, and so the

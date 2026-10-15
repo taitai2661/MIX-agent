@@ -32,14 +32,51 @@ MIX-agent は、自分のマシンまたは信頼できるネットワーク（L
 
 本リポジトリは 2 つのエディションを同一リポジトリで管理しています：
 
-| エディション | 技術スタック | 特徴・用途 | 起動方法 |
+| エディション | 技術スタック | 特徴・用途 | 導入・起動方法 |
 | --- | --- | --- | --- |
+| **Desktop 版** (`apps/desktop`) | Tauri 2 + Rust + React | 個人ローカル専用、ネイティブ UI、高速・省リソース | **推奨**: Releases から `.dmg` 等をインストール<br>開発時: `pnpm desktop:dev` |
 | **Docker 版** (`apps/server`, `apps/web`) | FastAPI + PostgreSQL + React | セルフホスト、LAN/VPN 共有、長時間バックグラウンド実行 | `docker compose up -d --build` |
-| **Desktop 版** (`apps/desktop`) | Tauri 2 + Rust + React | 個人ローカル専用、ネイティブ UI、高速・省リソース | `pnpm desktop:dev` |
 
 ## 導入方法
 
-### Docker で起動（推奨・最短手順）
+### Desktop 版で起動（ローカルネイティブアプリ・推奨）
+
+#### 1. インストーラーから導入（推奨）
+
+[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) からお使いの OS に合わせたインストーラーをダウンロードします：
+
+- **macOS**:
+  - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
+  - Intel Mac: `mix-agent-desktop_*_x64.dmg`
+  - ダウンロードした `.dmg` を開き、`MIX-agent Desktop` を `Applications` フォルダへドラッグ＆ドロップしてインストールします。
+  - *(未公証・自己署名ビルドの場合)* 初回起動時に警告が表示された場合は、アプリアイコンを「Control キーを押しながらクリック」→「開く」を選択するか、ターミナルで `xattr -cr "/Applications/MIX-agent Desktop.app"` を実行してください。
+- **Windows**: `*.msi` または `*.exe` インストーラー
+- **Linux**: `*.deb` または `*.AppImage` パッケージ
+
+#### 2. ソースコードから起動・ビルド
+
+Rust (1.82+)、Node.js (22+)、pnpm を用意します。
+
+```sh
+# 依存関係のインストール
+pnpm install
+
+# デスクトップ版の起動 (Tauri Dev)
+pnpm desktop:dev
+
+# macOS 向け .dmg パッケージのローカルビルド
+pnpm desktop:build:dmg
+```
+
+1. Provider を追加し、必要な API Key を保存。保存後にモデル一覧を自動取得し、Context Window を確認できるモデルを Auto 候補へ追加します。
+2. 必要に応じて「接続テスト」または「モデル取得」を再実行。
+3. モデルの対応機能を確認。不明な機能は必要に応じて手動 Override。
+4. 既定モデル、Tools の権限、Runner の通信許可ドメインを設定。
+5. 必要なら Agent・MCP を追加。
+
+ローカルの Ollama / LM Studio には、Provider 設定でプライベート接続を明示的に許可します。
+
+### Docker で起動（セルフホスト・サーバー版）
 
 Docker Desktop、または Docker Engine と Compose v2 を用意します。
 リポジトリを clone して直下で起動するだけで、**追加の設定ファイル作成なしで即座にインストール・起動**できます。
@@ -50,27 +87,7 @@ cd MIX-agent
 docker compose up -d --build
 ```
 
-[http://localhost:8080](http://localhost:8080) をブラウザで開いて管理者を作成します。環境変数や API Key の事前設定は不要です。
-
-### Desktop 版で起動（ローカルネイティブアプリ）
-
-Rust (1.82+)、Node.js (22+)、pnpm を用意します。
-
-```sh
-# UI 依存関係のインストール
-pnpm install
-
-# デスクトップ版の起動 (Tauri Dev)
-pnpm desktop:dev
-```
-
-1. Provider を追加し、必要な API Key を保存。保存後にモデル一覧を自動取得し、Context Window を確認できるモデルを Auto 候補へ追加します。
-2. 必要に応じて「接続テスト」または「モデル取得」を再実行。
-3. モデルの対応機能を確認。不明な機能は必要に応じて手動 Override。
-4. 既定モデル、Tools の権限、Runner の通信許可ドメインを設定。
-5. 必要なら Agent・MCP を追加。
-
-ローカルの Ollama / LM Studio には、Provider 設定でプライベート接続を明示的に許可します。Docker 内の localhost はホスト PC ではありません。標準 URL では `host.docker.internal` を使用します。ホスト側サービスの待受設定も確認してください。
+[http://localhost:8080](http://localhost:8080) をブラウザで開いて管理者を作成します。環境変数や API Key の事前設定は不要です。Docker 内の localhost はホスト PC ではありません。ローカルの Ollama / LM Studio 等に接続する標準 URL では `host.docker.internal` を使用します。
 
 ### プロジェクトフォルダの接続
 
@@ -95,7 +112,12 @@ docker compose up -d --build
 
 ### リリース
 
-[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) にバージョンごとの変更内容と ZimaOS ストアのアーカイブを掲載しています。コンテナイメージは GitHub Container Registry（GHCR）から取得します。最新版は [v0.3.5](docs/release-notes-v0.3.5.md) です。公開手順は[リリースチェックリスト](docs/release-checklist.md)にまとめています。
+[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) にて、バージョンごとの変更内容とともに各配布物を公開しています：
+- **Desktop 版インストーラー**: macOS 用 `.dmg`（Apple Silicon / Intel）、Windows 用 `.msi` / `.exe`、Linux 用 `.deb` / `.AppImage`、およびチェックサム（`SHA256SUMS`）
+- **Docker コンテナイメージ**: GitHub Container Registry（GHCR）より配布
+- **ZimaOS / CasaOS ストアアーカイブ**: `mix-agent-zimaos-store-*.tar.gz`
+
+最新版は [v0.3.5](docs/release-notes-v0.3.5.md) です。公開手順は[リリースチェックリスト](docs/release-checklist.md)にまとめています。
 
 ## 実装内容
 

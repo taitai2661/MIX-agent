@@ -1,6 +1,7 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AtSign,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -17,6 +18,7 @@ import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { useActiveProject, gitStatusKey, useGitStatus } from "@/lib/queries";
+import { usePromptInsert } from "@/lib/promptInsert";
 import { PanelHeader } from "@/components/layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -87,6 +89,7 @@ interface TreeContext {
   gitMap: ReadonlyMap<string, string>;
   showHidden: boolean;
   onOpenFile: (path: string) => void;
+  onAddToChat: (path: string) => void;
 }
 
 const DirRows = memo(function DirRows({
@@ -166,27 +169,43 @@ const DirRows = memo(function DirRows({
           <FileText size={13} className="shrink-0 text-faint" />
         );
         return (
-          <button
+          <div
             key={childPath}
-            type="button"
-            className={rowClass}
+            className="group/row relative flex items-center"
             style={indent}
-            onClick={() => ctx.onOpenFile(childPath)}
-            title={
-              status ? `${entry.name} — ${gitStatusLabel(status)}` : entry.name
-            }
           >
-            <span className="w-3 shrink-0" />
-            {icon}
-            <span className="truncate">{entry.name}</span>
-            {status && (
-              <GitStatusBadge
-                letter={gitStatusLetter(status)}
-                label={gitStatusLabel(status)}
-                tone={gitStatusTone(status)}
-              />
-            )}
-          </button>
+            <button
+              type="button"
+              className={rowClass}
+              onClick={() => ctx.onOpenFile(childPath)}
+              title={
+                status ? `${entry.name} — ${gitStatusLabel(status)}` : entry.name
+              }
+            >
+              <span className="w-3 shrink-0" />
+              {icon}
+              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+              {status && (
+                <GitStatusBadge
+                  letter={gitStatusLetter(status)}
+                  label={gitStatusLabel(status)}
+                  tone={gitStatusTone(status)}
+                />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                ctx.onAddToChat(childPath);
+              }}
+              title={t("チャットに入力 (@{path})", { path: childPath })}
+              aria-label={t("チャットに入力")}
+              className="absolute right-1 hidden h-5 w-5 items-center justify-center rounded bg-surface/80 text-muted shadow-xs hover:bg-surface hover:text-brand group-hover/row:flex"
+            >
+              <AtSign size={11} />
+            </button>
+          </div>
         );
       })}
     </>
@@ -229,6 +248,8 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
     [],
   );
 
+  const insertFileReference = usePromptInsert((s) => s.insertFileReference);
+
   // Stable identity so memoised `DirRows` subtrees survive parent re-renders
   // (git poll, panel resize) instead of remounting every 15s.
   const ctx: TreeContext = useMemo(
@@ -239,8 +260,9 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
       gitMap,
       showHidden,
       onOpenFile: openFilePreview,
+      onAddToChat: (path: string) => insertFileReference(path),
     }),
-    [root, expanded, toggle, gitMap, showHidden, openFilePreview],
+    [root, expanded, toggle, gitMap, showHidden, openFilePreview, insertFileReference],
   );
 
   const refresh = () => {

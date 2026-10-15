@@ -122,10 +122,9 @@ impl Tool for SymbolsTool {
                     })
                 }
                 "references" => {
-                    let symbol = args
-                        .get("symbol")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("symbol is required for action: references"))?;
+                    let symbol = args.get("symbol").and_then(|v| v.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("symbol is required for action: references")
+                    })?;
                     if symbol.trim().is_empty() {
                         return Ok(ToolResult {
                             ok: false,
@@ -170,7 +169,11 @@ fn extract_outline(path: &Path) -> anyhow::Result<Vec<OutlineItem>> {
     let mut items = Vec::new();
     for (idx, line) in content.lines().enumerate() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') || trimmed.starts_with("/*") {
+        if trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.starts_with('#')
+            || trimmed.starts_with("/*")
+        {
             continue;
         }
 
@@ -198,7 +201,10 @@ fn parse_declaration(line: &str) -> Option<(String, String)> {
     let mut i = 0;
     while i < tokens.len() {
         match tokens[i] {
-            "pub" | "pub(crate)" | "pub(super)" | "export" | "default" | "async" | "static" | "const" if i + 1 < tokens.len() && tokens[i+1] == "fn" => {
+            "pub" | "pub(crate)" | "pub(super)" | "export" | "default" | "async" | "static"
+            | "const"
+                if i + 1 < tokens.len() && tokens[i + 1] == "fn" =>
+            {
                 i += 1;
             }
             "pub" | "pub(crate)" | "pub(super)" | "export" | "default" | "async" | "static" => {
@@ -246,7 +252,13 @@ fn parse_declaration(line: &str) -> Option<(String, String)> {
         }
         // Types / Type aliases
         "type" => {
-            let name = next.split('=').next().unwrap_or(next).split('<').next().unwrap_or(next);
+            let name = next
+                .split('=')
+                .next()
+                .unwrap_or(next)
+                .split('<')
+                .next()
+                .unwrap_or(next);
             if !name.is_empty() {
                 return Some(("type".to_string(), name.to_string()));
             }

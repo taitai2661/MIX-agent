@@ -1031,7 +1031,7 @@ pub fn run() {
                         )));
                     }
                 };
-            let secrets = std::sync::Arc::new(mixd_storage::SecretStore::new());
+            let secrets = std::sync::Arc::new(mixd_storage::SecretStore::open(&data_dir));
             // Tauri's resolved resource dir is where the bundled Chromium was
             // unpacked; guessing it from app_data breaks on installed builds.
             // Under cargo/tauri dev that dir is `target/debug`, whose Chromium
@@ -1153,9 +1153,12 @@ pub fn run() {
             commands::projects::delete_project,
             commands::conversations::set_conversation_project,
             commands::workspace::list_dir,
+            commands::workspace::find_workspace_files,
             commands::workspace::read_workspace_file,
             commands::workspace::git_status,
             commands::workspace::git_diff,
+            commands::workspace::git_restore,
+            commands::workspace::git_stage,
             commands::schedules::list_jobs,
             commands::schedules::create_job,
             commands::schedules::set_job_enabled,

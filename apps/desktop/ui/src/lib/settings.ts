@@ -34,6 +34,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   verify_command: null,
   format_command: null,
   sandbox_terminal: false,
+  // Codex parity: database encryption defaults to false.
+  database_encryption: false,
   onboarding_completed: null,
 };
 

@@ -95,18 +95,20 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
             <SegmentedOption
               value="activity"
               label={t("このRunのアクティビティ")}
+              icon={<Activity size={13} aria-hidden="true" />}
               selected={rightPanel === "activity"}
               onSelect={() => setRightPanel("activity")}
             >
-              <Activity size={12} aria-hidden="true" /> {t("アクティビティ")}
+              {t("アクティビティ")}
             </SegmentedOption>
             <SegmentedOption
               value="changes"
               label={t("変更")}
+              icon={<GitBranch size={13} aria-hidden="true" />}
               selected={rightPanel === "changes"}
               onSelect={() => setRightPanel("changes")}
             >
-              <GitBranch size={12} aria-hidden="true" /> {t("変更")}
+              {t("変更")}
             </SegmentedOption>
           </Segmented>
           <Button

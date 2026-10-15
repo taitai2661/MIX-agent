@@ -12,6 +12,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:dmg": "tauri build --bundles dmg",
+    "tauri:build:mac": "tauri build --bundles app,dmg",
     "rust:check": "cargo check --workspace --all-targets",
     "rust:fmt": "cargo fmt --all",
     "rust:fmt:check": "cargo fmt --all -- --check",

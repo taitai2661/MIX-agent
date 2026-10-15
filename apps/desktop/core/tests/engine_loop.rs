@@ -978,6 +978,8 @@ async fn chat_mode_is_offered_no_tools() {
             || s.name == "network"
             || s.name == "user_plan"
             || s.name == "image_vision"
+            || s.name == "git"
+            || s.name == "symbols"
             || s.name == "skill"
             || s.name == "agent"),
         "unexpected tools advertised: {:?}",

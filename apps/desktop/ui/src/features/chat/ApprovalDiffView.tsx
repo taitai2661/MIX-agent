@@ -10,7 +10,7 @@ interface ApprovalDiffViewProps {
   args: Record<string, unknown> | null | undefined;
 }
 
-function buildDiffFromArgs(toolName: string, args: Record<string, unknown>): {
+export function buildDiffFromArgs(toolName: string, args: Record<string, unknown>): {
   path?: string;
   unified?: string;
   command?: string;

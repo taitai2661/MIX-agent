@@ -64,17 +64,24 @@ pnpm tauri dev
 
 `ensure-chromium-dir.mjs` は `bundle.resources` に宣言された `app/resources/chromium/` が無い場合に空ディレクトリを作成します。`tauri-build` は宣言されたリソースの欠落をビルドエラーにするため、`.gitignore` 対象のこのディレクトリが無いクリーンなチェックアウトでは `tauri dev` が通りません。dev では同梱 Chromium（約 370 MB）を取得せず、実行時にシステム Chromium へフォールバックします。
 
-## ビルド
+### ビルド
 
 ```sh
-cd desktop/mix-agent-desktop
-pnpm tauri build
+cd apps/desktop
+# 全ターゲットのビルド
+pnpm tauri:build
+
+# macOS 向け .dmg のみを直接ビルド
+pnpm tauri:build:dmg
+
+# macOS 向け .app と .dmg の両方をビルド
+pnpm tauri:build:mac
 ```
 
-`beforeBuildCommand` は UI ビルドに加えて `node scripts/fetch-chromium.mjs`（`mix-agent-desktop/scripts/` 配下）を実行し、
+`beforeBuildCommand` は UI ビルドに加えて `node scripts/fetch-chromium.mjs` を実行し、
 同梱 Chromium を `app/resources/chromium/` へ取得します（`.gitignore` 対象、
 1 プラットフォーム約 370 MB）。`chromium` は `bundle.resources` に宣言されているため
-（`app/tauri.conf.json:51`）、この取得を飛ばすと同梱 Chromium を含まないアプリになり、
+（`app/tauri.conf.json`）、この取得を飛ばすと同梱 Chromium を含まないアプリになり、
 実行時はシステムブラウザへフォールバックします。`MIX_SKIP_CHROMIUM=1` を指定すれば
 ダウンロード自体をスキップできますが、dev 専用であり release ビルドでは
 `MIX_REQUIRE_CHROMIUM=1` が fail-closed（browser-less 出荷を拒否）になります。
@@ -84,18 +91,25 @@ release CI は `MIX_CHROMIUM_VERSION` をピン留めし、`chromium-version.jso
 リトライ（3 回・指数バックオフ）と `MIX_CHROMIUM_SHA256` / `MIX_CHROMIUM_SIZE` による
 検証、`unzip` / `Expand-Archive` 不在時の明示エラーに対応しています。
 
-成果物は Cargo workspace の target ディレクトリ（`desktop/mix-agent-desktop/target/`）
-配下、`release/bundle/` に生成されます（`app/target/` ではありません）。
+成果物は Cargo workspace の target ディレクトリ（`apps/desktop/target/`）
+配下、`release/bundle/` に生成されます。
+- **macOS**: `target/release/bundle/dmg/*.dmg`（インストーラー）および `target/release/bundle/macos/*.app`
+- **Windows**: `target/release/bundle/msi/*.msi` および `nsis/*.exe`
+- **Linux**: `target/release/bundle/deb/*.deb` および `appimage/*.AppImage`
+
 ローカルビルドでは `target/release/bundle/`、CI のクロスコンパイルでは
 target triple 付きの `target/<triple>/release/bundle/` になります。
-`bundle.targets` は `"all"` ですが、CI はプラットフォーム별로
-`app` / `dmg` / `msi` / `nsis` / `deb` / `appimage` を指定して `--bundles` を渡します。
-CI は `beforeBuildCommand` に UI ビルド＋Chromium 取得を一任しているため、
-別途 `pnpm build` を回さず Vite の二重ビルドを避けています。
+`bundle.targets` は `"all"` で、`tauri.conf.json` にて macOS DMG のウィンドウサイズや
+アイコン・Applications フォルダ配置が設定されています。
 
-リリースタグは Docker 版（`v*` → `../../.github/workflows/release.yml`）と Desktop 版
-（`desktop-v*` → `../../.github/workflows/desktop-release.yml`）で分離しています。
-Desktop の対応範囲は α として x64/arm64 macOS・x64 Windows・x64 Linux のみで、
+### リリース方式
+
+GitHub Releases へのリリースはタグプッシュまたは GitHub Actions の手動トリガーで行われます：
+- **`v*` タグ** (例: `v0.3.5`): Docker 版のイメージ公開 (`release.yml`) と並行して Desktop 版の各種インストーラー (`desktop-release.yml`) がビルドされ、単一の GitHub Release に `.dmg`, `.msi`, `.deb`, `SHA256SUMS` 等が添付されます。
+- **`desktop-v*` タグ** (例: `desktop-v0.1.0`): Desktop 版のみを単体リリースする場合に使用します。
+- **`workflow_dispatch`**: GitHub Actions 画面から任意のタグを指定してインストーラーをビルド・リリース可能。
+
+対応範囲は α として x64/arm64 macOS・x64 Windows・x64 Linux で、
 `aarch64-linux` / `universal-macos` / `win-arm64` は明示的に defer しています
 （`desktop-release.yml` の matrix コメント参照）。必須バンドル欠落時は
 `if-no-files-found: error` で失敗し、artifact retention は 14 日です。
@@ -110,7 +124,9 @@ Desktop の対応範囲は α として x64/arm64 macOS・x64 Windows・x64 Linu
 | `pnpm rust:test` | `cargo test --workspace --all-targets` |
 | `pnpm rust:clean` / `pnpm rust:clean:all` | `cargo clean --profile dev` / `cargo clean` |
 | `pnpm ui:dev` / `pnpm ui:build` / `pnpm ui:test` / `pnpm ui:lint` / `pnpm ui:typecheck` | UI サブセット（`pnpm --filter mix-agent-desktop-ui <task>`） |
-| `pnpm tauri:dev` / `pnpm tauri:build` | アプリの起動 / 配布ビルド（`pnpm tauri dev` / `pnpm tauri build` と同じ） |
+| `pnpm tauri:dev` / `pnpm tauri:build` | アプリの起動 / 全ターゲット配布ビルド |
+| `pnpm tauri:build:dmg` | macOS 向け `.dmg` インストーラーの直接ビルド（`tauri build --bundles dmg`） |
+| `pnpm tauri:build:mac` | macOS 向け `.app` と `.dmg` のビルド（`tauri build --bundles app,dmg`） |
 | `pnpm lint` | `rust:fmt:check` + `rust:clippy` + `ui:lint` + `ui:typecheck` |
 | `pnpm test` | `rust:test` + `ui:test` |
 | `pnpm check` | `rust:check` + `ui:build` |

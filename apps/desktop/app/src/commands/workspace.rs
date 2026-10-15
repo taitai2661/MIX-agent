@@ -324,3 +324,130 @@ pub async fn git_diff(
         truncated,
     })
 }
+
+/// Find workspace files respecting .gitignore and default exclusion lists.
+/// Returns relative paths, up to `limit` entries (default 300).
+#[tauri::command]
+pub async fn find_workspace_files(
+    _state: State<'_, AppState>,
+    root_path: String,
+    query: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let root = resolve_root(&root_path)?;
+    let max = limit.unwrap_or(300).min(1000);
+    let q = query
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
+
+    let files = tokio::task::spawn_blocking(move || {
+        let mut builder = ignore::WalkBuilder::new(&root);
+        builder.hidden(true);
+        builder.git_ignore(true);
+        builder.git_global(true);
+        builder.git_exclude(true);
+        builder.parents(true);
+
+        for &dir in HIDDEN_DIRS {
+            builder.add_custom_ignore_filename(dir);
+        }
+
+        let mut results = Vec::new();
+        for result in builder.build() {
+            let entry = match result {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(rel) = path.strip_prefix(&root) else {
+                continue;
+            };
+            let rel_str = rel.to_string_lossy().to_string();
+
+            if let Some(ref needle) = q {
+                if !rel_str.to_lowercase().contains(needle) {
+                    continue;
+                }
+            }
+
+            results.push(rel_str);
+            if results.len() >= max {
+                break;
+            }
+        }
+        results
+    })
+    .await
+    .map_err(crate::error::cmd_err)?;
+
+    Ok(files)
+}
+
+/// Restore a file's working tree or staged state (git restore / discard).
+#[tauri::command]
+pub async fn git_restore(
+    _state: State<'_, AppState>,
+    root_path: String,
+    path: String,
+    staged: bool,
+) -> Result<(), String> {
+    let root = resolve_root(&root_path)?;
+    mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
+
+    let mut args = vec!["restore"];
+    if staged {
+        args.push("--staged");
+    }
+    args.push("--");
+    args.push(&path);
+
+    let output = run_git(&root, &args)
+        .await
+        .map_err(|e| format!("git restore failed: {e}"))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        if !staged && err.contains("did not match any file") {
+            let target = root.join(&path);
+            if target.is_file() {
+                let _ = tokio::fs::remove_file(target).await;
+                return Ok(());
+            }
+        }
+        return Err(format!("git restore error: {err}"));
+    }
+
+    Ok(())
+}
+
+/// Stage or unstage a file (git add / git restore --staged).
+#[tauri::command]
+pub async fn git_stage(
+    _state: State<'_, AppState>,
+    root_path: String,
+    path: String,
+    unstage: bool,
+) -> Result<(), String> {
+    let root = resolve_root(&root_path)?;
+    mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
+
+    let args: Vec<&str> = if unstage {
+        vec!["restore", "--staged", "--", &path]
+    } else {
+        vec!["add", "--", &path]
+    };
+
+    let output = run_git(&root, &args)
+        .await
+        .map_err(|e| format!("git stage failed: {e}"))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git stage error: {err}"));
+    }
+
+    Ok(())
+}

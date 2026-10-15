@@ -9,15 +9,13 @@
 import { memo, useEffect, useState } from "react";
 import {
   Brain,
-  Check,
   CheckCircle2,
   ChevronRight,
-  CircleAlert,
   ListChecks,
   ShieldAlert,
   Sparkles,
-  Wrench,
 } from "lucide-react";
+import { InlineToolItem } from "./InlineToolItem";
 import { Markdown } from "@/components/Markdown";
 import { stripLeakedMarkup } from "@/lib/format";
 import { t, tf } from "@/lib/i18n";
@@ -26,7 +24,6 @@ import { errorMessage } from "@/lib/errors";
 import { api } from "@/lib/api";
 import {
   isBusy,
-  describeToolCall,
   type RunTimeline,
   type TodoItem,
   type ToolActivity,
@@ -81,12 +78,14 @@ export const Reasoning = memo(function Reasoning({
             </span>
           )}
         </div>
-        <div
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+        <span
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
           className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
         >
           <CopyButton value={text} label={t("思考プロセスをコピー")} />
-        </div>
+        </span>
       </summary>
       <div className="max-h-72 overflow-y-auto whitespace-pre-wrap border-t border-line px-3 py-2 text-xs leading-5 text-muted select-text">
         {text}
@@ -95,51 +94,25 @@ export const Reasoning = memo(function Reasoning({
   );
 });
 
-/** Compact, inline view of the tool calls the agent made in this run. The
- *  right-hand Activity panel has the full arguments/results; this keeps the
- *  conversation itself honest about what is happening while it streams. */
+/** Compact, inline view of the tool calls the agent made in this run with
+ *  collapsible diffs and terminal execution telemetry. */
 const InlineTools = memo(function InlineTools({
   tools,
 }: {
   tools: ToolActivity[];
 }) {
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-xs">
-      {tools.map((tool) => (
-        <div
+    <div className="flex flex-col gap-1.5">
+      {tools.map((tool, idx) => (
+        <InlineToolItem
           key={tool.id}
-          className="flex items-center gap-2 border-b border-line px-2.5 py-1.5 text-xs last:border-b-0"
-        >
-          <Wrench
-            size={12}
-            className="shrink-0 text-faint"
-            aria-hidden="true"
-          />
-          <span className="shrink-0 font-mono font-medium text-fg">
-            {tool.name}
-          </span>
-          <span
-            className="min-w-0 flex-1 truncate text-muted"
-            title={describeToolCall(tool)}
-          >
-            {describeToolCall(tool)}
-          </span>
-          {tool.status === "running" ? (
-            <Spinner size={11} />
-          ) : tool.status === "error" ? (
-            <CircleAlert
-              size={12}
-              className="shrink-0 text-danger"
-              aria-hidden="true"
-            />
-          ) : (
-            <Check
-              size={12}
-              className="shrink-0 text-success"
-              aria-hidden="true"
-            />
-          )}
-        </div>
+          tool={tool}
+          defaultOpen={
+            tool.status === "running" ||
+            tool.status === "error" ||
+            (idx === tools.length - 1 && (tool.name === "edit" || tool.name === "terminal"))
+          }
+        />
       ))}
     </div>
   );

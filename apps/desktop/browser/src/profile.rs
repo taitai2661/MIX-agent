@@ -96,19 +96,15 @@ pub fn find_downloaded_chromium(app_data_dir: &std::path::Path) -> Option<std::p
     let candidates: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
         vec![
             root.join("chrome-mac/Chromium.app/Contents/MacOS/Chromium"),
-            root.join("chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+            root.join(
+                "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            ),
             root.join("Chromium.app/Contents/MacOS/Chromium"),
         ]
     } else if cfg!(target_os = "windows") {
-        vec![
-            root.join("chrome-win/chrome.exe"),
-            root.join("chrome.exe"),
-        ]
+        vec![root.join("chrome-win/chrome.exe"), root.join("chrome.exe")]
     } else {
-        vec![
-            root.join("chrome-linux/chrome"),
-            root.join("chrome"),
-        ]
+        vec![root.join("chrome-linux/chrome"), root.join("chrome")]
     };
     candidates.into_iter().find(|p| p.is_file())
 }

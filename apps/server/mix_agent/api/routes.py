@@ -143,6 +143,49 @@ from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, registry
 
 router = APIRouter(prefix="/api/v1")
 
+# Backward-compatible re-exports for external callers (engine.py, scheduler, etc.)
+from mix_agent.api.helpers.cleanup import (  # noqa: E402
+    _collect_used_artifact_ids,
+    _conversation_artifact_ids,
+    _delete_message_tail,
+    _doomed_messages,
+    _run_context_artifact_ids,
+    purge_conversation,
+    purge_expired_conversations,
+    purge_temporary_run,
+)
+from mix_agent.api.helpers.scheduling import enqueue_scheduled_run  # noqa: E402
+
+# Default values for Settings fields. Applied at read-time so new fields are
+# automatically visible to older DB rows without a migration.
+DEFAULT_SETTINGS = {
+    "auto_retry_count": 3,
+    "auto_dynamic_switching": True,
+    "auto_priority": "balanced",
+    "browser_enabled": True,
+    "browser_install_requested": False,
+    "browser_install_status": "not_installed",
+    "browser_install_failure": None,
+    "browser_install_progress": None,
+    "browser_install_stage": None,
+    "browser_timeout_ms": 15000,
+    "browser_locale": "ja-JP",
+    "browser_user_agent": "",
+    "browser_viewport_width": 1280,
+    "browser_viewport_height": 720,
+    "browser_block_images": False,
+    "ui_language": "ja",
+    "web_search_enabled": True,
+    "web_search_backend": "ddgs",
+    "web_search_count": 5,
+    "searxng_url": "",
+    "tool_settings": {},
+    "memory_auto_formation": True,
+    "memory_seed_limit": 24,
+    "memory_result_limit": 8,
+    "memory_link_embedding_neighbors": False,
+}
+
 
 def context(request: Request, db=Depends(get_db)):
     return db, authenticate(request, db)
@@ -447,22 +490,34 @@ def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()
         db.delete(message)
     db.flush()
     if artifact_ids:
-        used: set = set()
-        for message in db.scalars(select(Message).where(Message.owner_id == conversation.owner_id)):
-            used.update(_conversation_artifact_ids([message]))
-        for run in db.scalars(select(Run).where(Run.owner_id == conversation.owner_id)):
-            used.update(_run_context_artifact_ids(run))
-            used.update(
-                item.get("artifact_id")
-                for item in run.data.get("browser_frames", [])
-                if item.get("artifact_id")
-            )
+        used = _collect_used_artifact_ids(db, conversation.owner_id)
         for artifact_id in artifact_ids - used - set(keep_artifact_ids):
             artifact = db.get(Artifact, artifact_id)
             if artifact and artifact.owner_id == conversation.owner_id:
                 orphaned_paths.append(config.ARTIFACTS / artifact.id)
                 db.delete(artifact)
     return orphaned_paths
+
+
+def _collect_used_artifact_ids(db, owner_id: str) -> set:
+    """Collect all artifact IDs still referenced by surviving messages and runs.
+
+    Used by cleanup paths to determine which artifacts are orphaned after a
+    deletion. Runs a full owner scan once, so callers should invoke this only
+    after the to-be-deleted rows have been flushed (but not committed) so
+    surviving rows reflect the intended post-deletion state.
+    """
+    used: set = set()
+    for message in db.scalars(select(Message).where(Message.owner_id == owner_id)):
+        used.update(_conversation_artifact_ids([message]))
+    for run in db.scalars(select(Run).where(Run.owner_id == owner_id)):
+        used.update(_run_context_artifact_ids(run))
+        used.update(
+            item.get("artifact_id")
+            for item in run.data.get("browser_frames", [])
+            if item.get("artifact_id")
+        )
+    return used
 
 
 def purge_conversation(db, conversation):
@@ -481,12 +536,7 @@ def purge_conversation(db, conversation):
     db.flush()
     # Compute surviving artifact references once instead of rescanning every
     # message and run for each candidate artifact.
-    used = set()
-    for message in db.scalars(select(Message).where(Message.owner_id == conversation.owner_id)):
-        used.update(_conversation_artifact_ids([message]))
-    for run in db.scalars(select(Run).where(Run.owner_id == conversation.owner_id)):
-        used.update(_run_context_artifact_ids(run))
-        used.update(item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id"))
+    used = _collect_used_artifact_ids(db, conversation.owner_id)
     for artifact_id in artifact_ids:
         if artifact_id not in used:
             artifact = db.get(Artifact, artifact_id)
@@ -1062,18 +1112,10 @@ async def settings(ctx=Depends(context)):
     row = own(db, Settings, "settings", s.owner_id)
     view = public(row)
     # Older profiles predate these preferences; expose compatible defaults.
-    view["data"] = {"auto_retry_count": 3, "auto_dynamic_switching": True, "auto_priority": "balanced", "browser_enabled": True,
-                     "browser_install_requested": False, "browser_install_status": "not_installed",
-                     "browser_install_failure": None, "browser_install_progress": None,
-                     "browser_install_stage": None,
-                     "browser_timeout_ms": 15000, "browser_locale": "ja-JP", "browser_user_agent": "",
-                     "browser_viewport_width": 1280, "browser_viewport_height": 720, "browser_block_images": False,
-                     "ui_language": "ja", "web_search_enabled": True,
-                     "web_search_backend": "ddgs", "web_search_count": 5, "searxng_url": "", "tool_settings": {},
-                     "memory_auto_formation": True, "memory_seed_limit": 24, "memory_result_limit": 8,
-                     # §4 source (3) is off until an operator turns it on.
-                     "memory_link_embedding_neighbors": False,
-                     **{key: value for key, value in view["data"].items() if key not in memory.AUTOMATIC_SETTING_KEYS}}
+    view["data"] = {
+        **DEFAULT_SETTINGS,
+        **{key: value for key, value in view["data"].items() if key not in memory.AUTOMATIC_SETTING_KEYS},
+    }
     if view["data"].get("browser_install_requested"):
         state = await browser_install_state(db, row)
         view["data"] = {**view["data"], "browser_install_status": state["status"],

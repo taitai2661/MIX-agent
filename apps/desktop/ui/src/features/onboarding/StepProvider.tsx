@@ -40,11 +40,11 @@ export function StepProvider({ onDone }: { onDone: () => void }) {
             key={opt.id}
             value={opt.id}
             label={opt.label}
+            icon={<opt.Icon size={13} aria-hidden="true" />}
             selected={tab === opt.id}
             onSelect={setTab}
             data-testid={`onboarding-provider-tab-${opt.id}`}
           >
-            <opt.Icon size={12} aria-hidden="true" />
             {opt.label}
           </SegmentedOption>
         ))}

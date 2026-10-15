@@ -1,4 +1,4 @@
-import { Brain, Compass, Zap } from "lucide-react";
+import { Brain, Compass, Lock, Zap } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { useOnboardingGate } from "@/features/onboarding/useOnboardingGate";
 import { Card, Field, Row, Section } from "@/components/layout";
@@ -73,6 +73,20 @@ export function GeneralSettings() {
           }
         />
         <p className="m-0 text-xs text-muted">{t("既定はオフです。")}</p>
+      </Card>
+
+      <Card title={t("データベースの暗号化")} icon={<Lock size={13} />}>
+        <ToggleRow
+          label={t("保存時の暗号化")}
+          hint={t(
+            "ローカルデータベースの暗号化を有効にします。既定はオフ（Codex互換の平文SQLite）です。",
+          )}
+          checked={data.database_encryption}
+          onChange={(database_encryption) => patch({ database_encryption })}
+        />
+        <p className="m-0 text-xs text-muted">
+          {t("マスターキーはOSのKeychainにあります")}
+        </p>
       </Card>
     </Section>
   );

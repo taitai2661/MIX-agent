@@ -14,6 +14,8 @@ export type PromptMode = "chat" | "thinking" | "agent";
 export interface PromptInsertRequest {
   text: string;
   mode?: PromptMode;
+  /** Whether to append text to current draft or replace it (default: false = replace). */
+  append?: boolean;
   /** Incremented per request so identical payloads still notify. */
   nonce: number;
 }
@@ -21,13 +23,23 @@ export interface PromptInsertRequest {
 interface PromptInsertState {
   request: PromptInsertRequest | null;
   insertPrompt: (text: string, mode?: PromptMode) => void;
+  appendPrompt: (text: string) => void;
+  insertFileReference: (path: string) => void;
 }
 
 export const usePromptInsert = create<PromptInsertState>((set) => ({
   request: null,
   insertPrompt: (text, mode) =>
     set((s) => ({
-      request: { text, mode, nonce: (s.request?.nonce ?? 0) + 1 },
+      request: { text, mode, append: false, nonce: (s.request?.nonce ?? 0) + 1 },
+    })),
+  appendPrompt: (text) =>
+    set((s) => ({
+      request: { text, append: true, nonce: (s.request?.nonce ?? 0) + 1 },
+    })),
+  insertFileReference: (path) =>
+    set((s) => ({
+      request: { text: `@${path} `, append: true, nonce: (s.request?.nonce ?? 0) + 1 },
     })),
 }));
 

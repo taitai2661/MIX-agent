@@ -62,6 +62,8 @@ pub struct SettingsView {
     /// replaces the stored document wholesale, so a key the struct does not
     /// carry would be dropped from the row the next time Settings was saved.
     pub memory_link_embedding_neighbors: bool,
+    /// Codex-compatible database encryption at rest. Defaults to `false` (plain SQLite).
+    pub database_encryption: bool,
     /// Whether the first-run wizard has been finished or explicitly deferred.
     ///
     /// `None` is the same as `false` to the UI: a fresh install has never
@@ -98,6 +100,8 @@ impl Default for SettingsView {
             memory_auto_formation: true,
             // §4 「(3) は既定オフ」 — off until this row says otherwise.
             memory_link_embedding_neighbors: false,
+            // Codex parity: defaults to false (plain SQLite).
+            database_encryption: false,
             onboarding_completed: None,
         }
     }
@@ -114,6 +118,9 @@ pub async fn update_settings(
     input: SettingsView,
 ) -> Result<SettingsView, String> {
     validate_settings(&input)?;
+    if input.database_encryption {
+        let _ = state.secrets.ensure_db_key().await;
+    }
     let view = write_settings(state.storage.pool(), input).await?;
     // `default_model_id` decides which provider embeds Memory text, so moving
     // the default can change the embedding source; re-derive it on the next

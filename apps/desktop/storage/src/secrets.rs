@@ -13,7 +13,9 @@
 //!   (owner-only 0o600 permissions are the only current protection; see
 //!   `db.rs`). Do not claim at-rest encryption until the wiring lands.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -34,12 +36,259 @@ pub const SERVICE: &str = "io.github.taitai2661.mix-agent-desktop";
 const DB_KEY_PURPOSE: &str = "db.master";
 const MASTER_SEED_SLOT: &str = "_master_seed";
 
-#[derive(Default)]
-pub struct SecretStore {}
+/// Abstract backend interface for secret storage.
+pub trait SecretBackend: Send + Sync {
+    fn put(&self, slot: &str, encrypted_value: &str) -> anyhow::Result<()>;
+    fn get(&self, slot: &str) -> anyhow::Result<Option<String>>;
+    fn delete(&self, slot: &str) -> anyhow::Result<()>;
+    fn master_seed(&self) -> anyhow::Result<String>;
+    fn probe(&self) -> anyhow::Result<()>;
+}
 
-/// Every entry point here talks to the OS Keychain and runs Argon2; both are
-/// blocking. Called from async Tauri commands (once per provider row, even),
-/// they used to occupy a runtime worker thread for tens of milliseconds each.
+/// File-based encrypted secret store.
+/// Stores AES-GCM encrypted secrets in a JSON file with 0600 permissions
+/// alongside a master seed file, avoiding OS Keychain popups.
+pub struct FileBackend {
+    dir: PathBuf,
+    secrets_path: PathBuf,
+    seed_path: PathBuf,
+    cache: RwLock<Option<HashMap<String, String>>>,
+}
+
+impl FileBackend {
+    pub fn new(dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref().to_path_buf();
+        let secrets_path = dir.join("secrets.enc.json");
+        let seed_path = dir.join(".master_seed");
+        Self {
+            dir,
+            secrets_path,
+            seed_path,
+            cache: RwLock::new(None),
+        }
+    }
+
+    fn ensure_loaded(&self) -> anyhow::Result<()> {
+        let needs_load = {
+            let read = self
+                .cache
+                .read()
+                .map_err(|e| anyhow!("cache lock poisoned: {e}"))?;
+            read.is_none()
+        };
+        if needs_load {
+            let mut write = self
+                .cache
+                .write()
+                .map_err(|e| anyhow!("cache lock poisoned: {e}"))?;
+            if write.is_none() {
+                let map = if self.secrets_path.exists() {
+                    let bytes = std::fs::read(&self.secrets_path)
+                        .with_context(|| format!("reading {}", self.secrets_path.display()))?;
+                    serde_json::from_slice(&bytes)
+                        .with_context(|| format!("parsing {}", self.secrets_path.display()))?
+                } else {
+                    HashMap::new()
+                };
+                *write = Some(map);
+            }
+        }
+        Ok(())
+    }
+
+    fn persist(&self, map: &HashMap<String, String>) -> anyhow::Result<()> {
+        if !self.dir.exists() {
+            std::fs::create_dir_all(&self.dir)
+                .with_context(|| format!("creating directory {}", self.dir.display()))?;
+        }
+        let data = serde_json::to_vec_pretty(map).context("serializing secrets")?;
+        atomic_write_file(&self.secrets_path, &data)
+    }
+}
+
+impl SecretBackend for FileBackend {
+    fn put(&self, slot: &str, encrypted_value: &str) -> anyhow::Result<()> {
+        self.ensure_loaded()?;
+        let mut write = self
+            .cache
+            .write()
+            .map_err(|e| anyhow!("cache lock poisoned: {e}"))?;
+        let map = write
+            .as_mut()
+            .ok_or_else(|| anyhow!("cache not initialized"))?;
+        map.insert(slot.to_string(), encrypted_value.to_string());
+        self.persist(map)
+    }
+
+    fn get(&self, slot: &str) -> anyhow::Result<Option<String>> {
+        self.ensure_loaded()?;
+        let read = self
+            .cache
+            .read()
+            .map_err(|e| anyhow!("cache lock poisoned: {e}"))?;
+        let map = read
+            .as_ref()
+            .ok_or_else(|| anyhow!("cache not initialized"))?;
+        Ok(map.get(slot).cloned())
+    }
+
+    fn delete(&self, slot: &str) -> anyhow::Result<()> {
+        self.ensure_loaded()?;
+        let mut write = self
+            .cache
+            .write()
+            .map_err(|e| anyhow!("cache lock poisoned: {e}"))?;
+        let map = write
+            .as_mut()
+            .ok_or_else(|| anyhow!("cache not initialized"))?;
+        if map.remove(slot).is_some() {
+            self.persist(map)?;
+        }
+        Ok(())
+    }
+
+    fn master_seed(&self) -> anyhow::Result<String> {
+        #[cfg(test)]
+        {
+            if let Some(seed) = test_seed() {
+                return Ok(seed);
+            }
+        }
+        if self.seed_path.exists() {
+            let seed = std::fs::read_to_string(&self.seed_path).with_context(|| {
+                format!("reading master seed from {}", self.seed_path.display())
+            })?;
+            let trimmed = seed.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(trimmed);
+            }
+        }
+        if !self.dir.exists() {
+            std::fs::create_dir_all(&self.dir)
+                .with_context(|| format!("creating directory {}", self.dir.display()))?;
+        }
+        use rand::RngCore;
+        let mut rng = rand::thread_rng();
+        let mut buf = [0u8; 32];
+        rng.fill_bytes(&mut buf);
+        let seed = BASE64.encode(buf);
+        atomic_write_file(&self.seed_path, seed.as_bytes())
+            .with_context(|| format!("writing master seed to {}", self.seed_path.display()))?;
+        Ok(seed)
+    }
+
+    fn probe(&self) -> anyhow::Result<()> {
+        if !self.dir.exists() {
+            std::fs::create_dir_all(&self.dir)
+                .with_context(|| format!("creating directory {}", self.dir.display()))?;
+        }
+        let probe_file = self.dir.join(".probe");
+        atomic_write_file(&probe_file, b"ok")?;
+        let _ = std::fs::remove_file(probe_file);
+        Ok(())
+    }
+}
+
+/// OS Keychain backend (legacy / optional).
+pub struct KeychainBackend;
+
+impl SecretBackend for KeychainBackend {
+    fn put(&self, slot: &str, encrypted_value: &str) -> anyhow::Result<()> {
+        Entry::new(SERVICE, slot)?.set_password(encrypted_value)?;
+        Ok(())
+    }
+
+    fn get(&self, slot: &str) -> anyhow::Result<Option<String>> {
+        let entry = Entry::new(SERVICE, slot)?;
+        match entry.get_password() {
+            Ok(cipher) => Ok(Some(cipher)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn delete(&self, slot: &str) -> anyhow::Result<()> {
+        let entry = Entry::new(SERVICE, slot)?;
+        match entry.delete_credential() {
+            Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn master_seed(&self) -> anyhow::Result<String> {
+        #[cfg(test)]
+        {
+            if let Some(seed) = test_seed() {
+                return Ok(seed);
+            }
+        }
+        let entry = Entry::new(SERVICE, MASTER_SEED_SLOT)?;
+        match entry.get_password() {
+            Ok(seed) => Ok(seed),
+            Err(keyring::Error::NoEntry) => {
+                use rand::RngCore;
+                let mut rng = rand::thread_rng();
+                let mut buf = [0u8; 32];
+                rng.fill_bytes(&mut buf);
+                let seed = BASE64.encode(buf);
+                entry
+                    .set_password(&seed)
+                    .context("storing the master seed in the Keychain")?;
+                Ok(seed)
+            }
+            Err(err) => Err(anyhow!(err).context("reading the master seed from the Keychain")),
+        }
+    }
+
+    fn probe(&self) -> anyhow::Result<()> {
+        let entry = Entry::new(SERVICE, "_diagnostics_probe")?;
+        match entry.get_password() {
+            Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(anyhow!("Keychain is not reachable: {err}")),
+        }
+    }
+}
+
+fn atomic_write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    let tmp_path = path.with_extension("tmp");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp_path)
+        .with_context(|| format!("opening temporary file {}", tmp_path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = file.set_permissions(perms);
+    }
+
+    use std::io::Write;
+    file.write_all(content)?;
+    file.sync_all()?;
+    drop(file);
+
+    std::fs::rename(&tmp_path, path)
+        .with_context(|| format!("renaming {} to {}", tmp_path.display(), path.display()))?;
+    Ok(())
+}
+
+#[derive(Clone)]
+pub struct SecretStore {
+    backend: Arc<dyn SecretBackend>,
+    master_key_cache: Arc<OnceLock<[u8; 32]>>,
+}
+
+impl Default for SecretStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Every entry point here runs Argon2 or filesystem/Keychain I/O; both are
+/// blocking. Called from async Tauri commands, offload to worker threads.
 macro_rules! offload {
     ($body:expr) => {
         tokio::task::spawn_blocking($body)
@@ -49,18 +298,82 @@ macro_rules! offload {
 }
 
 impl SecretStore {
+    /// Create a secret store explicitly backed by a data directory.
+    /// By default uses `FileBackend` (AES-GCM encrypted file, 0600 mode) to avoid
+    /// macOS Keychain permission prompts. Set `MIX_SECRET_BACKEND=keychain` to force
+    /// OS Keychain usage.
+    pub fn open(data_dir: impl AsRef<Path>) -> Self {
+        let backend: Arc<dyn SecretBackend> = match std::env::var("MIX_SECRET_BACKEND").as_deref() {
+            Ok("keychain") => Arc::new(KeychainBackend),
+            _ => Arc::new(FileBackend::new(data_dir)),
+        };
+        Self::with_backend(backend)
+    }
+
+    /// Default constructor. Checks `MIX_SECRET_BACKEND`; if unset or "file", resolves
+    /// default data directory (or temporary directory in tests).
     pub fn new() -> Self {
-        Self::default()
+        let backend: Arc<dyn SecretBackend> = match std::env::var("MIX_SECRET_BACKEND").as_deref() {
+            Ok("keychain") => Arc::new(KeychainBackend),
+            _ => {
+                #[cfg(test)]
+                let default_dir = std::env::temp_dir()
+                    .join(format!("mixd_test_secrets_{}", uuid::Uuid::new_v4()));
+                #[cfg(not(test))]
+                let default_dir = std::env::var("MIX_DATA_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| {
+                        dirs::data_local_dir()
+                            .map(|d| d.join("mix-agent-desktop"))
+                            .unwrap_or_else(|| PathBuf::from("."))
+                    });
+                Arc::new(FileBackend::new(default_dir))
+            }
+        };
+        Self::with_backend(backend)
+    }
+
+    pub fn with_backend(backend: Arc<dyn SecretBackend>) -> Self {
+        Self {
+            backend,
+            master_key_cache: Arc::new(OnceLock::new()),
+        }
+    }
+
+    fn master_key(&self) -> anyhow::Result<[u8; 32]> {
+        if let Some(key) = self.master_key_cache.get() {
+            return Ok(*key);
+        }
+        let seed = self.backend.master_seed()?;
+        let key = derive_master_key(&seed)?;
+        let _ = self.master_key_cache.set(key);
+        self.master_key_cache
+            .get()
+            .cloned()
+            .ok_or_else(|| anyhow!("master key not cached"))
     }
 
     pub async fn put(&self, purpose: &str, name: &str, value: &[u8]) -> anyhow::Result<()> {
+        let store = self.clone();
         let (purpose, name, value) = (purpose.to_string(), name.to_string(), value.to_vec());
-        offload!(move || put_blocking(&purpose, &name, &value))
+        offload!(move || {
+            let slot = keyring_key(&purpose, &name);
+            let master = store.master_key()?;
+            let encrypted = encrypt_with_key(&master, &purpose, &name, &value)?;
+            store.backend.put(&slot, &encrypted)
+        })
     }
 
     pub async fn get(&self, purpose: &str, name: &str) -> anyhow::Result<Vec<u8>> {
+        let store = self.clone();
         let (purpose, name) = (purpose.to_string(), name.to_string());
-        offload!(move || get_blocking(&purpose, &name))
+        offload!(move || {
+            let slot = keyring_key(&purpose, &name);
+            let maybe_cipher = store.backend.get(&slot)?;
+            let cipher = maybe_cipher.ok_or_else(|| anyhow!("no entry for slot {slot}"))?;
+            let master = store.master_key()?;
+            decrypt_with_key(&master, &purpose, &name, cipher.as_bytes())
+        })
     }
 
     pub async fn get_string(&self, purpose: &str, name: &str) -> anyhow::Result<String> {
@@ -69,11 +382,15 @@ impl SecretStore {
     }
 
     pub async fn delete(&self, purpose: &str, name: &str) -> anyhow::Result<()> {
+        let store = self.clone();
         let (purpose, name) = (purpose.to_string(), name.to_string());
-        offload!(move || delete_blocking(&purpose, &name))
+        offload!(move || {
+            let slot = keyring_key(&purpose, &name);
+            store.backend.delete(&slot)
+        })
     }
 
-    /// Ensure the master DB encryption key exists in the Keychain.
+    /// Ensure the master DB encryption key exists in the secret store.
     pub async fn ensure_db_key(&self) -> anyhow::Result<[u8; 32]> {
         if let Ok(plain) = self.get(DB_KEY_PURPOSE, "master").await {
             if plain.len() == 32 {
@@ -82,10 +399,13 @@ impl SecretStore {
                 return Ok(key);
             }
         }
-        use rand::RngCore;
-        let mut rng = rand::thread_rng();
-        let mut bytes = [0u8; 32];
-        rng.fill_bytes(&mut bytes);
+        let bytes = {
+            use rand::RngCore;
+            let mut rng = rand::thread_rng();
+            let mut bytes = [0u8; 32];
+            rng.fill_bytes(&mut bytes);
+            bytes
+        };
         self.put(DB_KEY_PURPOSE, "master", &bytes).await?;
         Ok(bytes)
     }
@@ -95,53 +415,17 @@ impl SecretStore {
     }
 
     /// Reachability check for the diagnostics pane.
-    ///
-    /// Reading a slot that is allowed to be absent proves the Keychain answers
-    /// at all; a locked or permission-denied Keychain surfaces as an error.
     pub async fn probe(&self) -> anyhow::Result<()> {
-        offload!(|| {
-            let entry = Entry::new(SERVICE, "_diagnostics_probe")?;
-            match entry.get_password() {
-                Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(err) => Err(anyhow!("Keychain is not reachable: {err}")),
-            }
-        })
+        let store = self.clone();
+        offload!(move || store.backend.probe())
     }
 
-    /// Report whether a usable master key is already in the Keychain.
-    ///
-    /// `Some(true)` means the key is present and the right length (32 bytes);
-    /// `Some(false)` means no entry exists yet and `ensure_db_key` will mint
-    /// one on the next call. `None` is returned when the Keychain is reachable
-    /// but refused to answer — usually because the OS denied access.
+    /// Report whether a usable master key is already in the secret store.
     pub async fn db_key_status(&self) -> Option<bool> {
         match self.get(DB_KEY_PURPOSE, "master").await {
             Ok(plain) => Some(plain.len() == 32),
             Err(_) => None,
         }
-    }
-}
-
-fn put_blocking(purpose: &str, name: &str, value: &[u8]) -> anyhow::Result<()> {
-    let slot = keyring_key(purpose, name);
-    let encrypted = encrypt_with_master(purpose, name, value)?;
-    Entry::new(SERVICE, &slot)?.set_password(&encrypted)?;
-    Ok(())
-}
-
-fn get_blocking(purpose: &str, name: &str) -> anyhow::Result<Vec<u8>> {
-    let slot = keyring_key(purpose, name);
-    let entry = Entry::new(SERVICE, &slot)?;
-    let cipher = entry.get_password()?;
-    decrypt_with_master(purpose, name, cipher.as_bytes())
-}
-
-fn delete_blocking(purpose: &str, name: &str) -> anyhow::Result<()> {
-    let slot = keyring_key(purpose, name);
-    let entry = Entry::new(SERVICE, &slot)?;
-    match entry.delete_credential() {
-        Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => Err(err.into()),
     }
 }
 
@@ -155,62 +439,6 @@ struct SealedPayload {
     p: String,
     n: String,
     c: String,
-}
-
-/// The Keychain-bound master key, derived once per process.
-///
-/// Argon2id at the default parameters costs tens of milliseconds, and this ran
-/// on every `get`/`put` — i.e. once per provider row when listing them.
-fn master_key() -> anyhow::Result<[u8; 32]> {
-    static CACHED: OnceLock<[u8; 32]> = OnceLock::new();
-    if let Some(key) = CACHED.get() {
-        return Ok(*key);
-    }
-    // Two first-touch calls can run at once (secret access goes through
-    // `spawn_blocking`), and each would generate its *own* seed. The Keychain
-    // keeps whichever wrote last, so everything sealed under the other one
-    // became permanently undecryptable.
-    static SEED_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = SEED_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(key) = CACHED.get() {
-        return Ok(*key);
-    }
-    let seed = load_master_seed()?;
-    let key = derive_master_key(&seed)?;
-    let _ = CACHED.set(key);
-    // Whoever wins the cache wins for the process, and their key is the one
-    // derived from the seed the Keychain now holds.
-    CACHED
-        .get()
-        .cloned()
-        .ok_or_else(|| anyhow!("master key not cached"))
-}
-
-fn load_master_seed() -> anyhow::Result<String> {
-    #[cfg(test)]
-    {
-        if let Some(seed) = test_seed() {
-            return Ok(seed);
-        }
-    }
-    let entry = Entry::new(SERVICE, MASTER_SEED_SLOT)?;
-    match entry.get_password() {
-        Ok(seed) => Ok(seed),
-        Err(keyring::Error::NoEntry) => {
-            use rand::RngCore;
-            let mut rng = rand::thread_rng();
-            let mut buf = [0u8; 32];
-            rng.fill_bytes(&mut buf);
-            let seed = BASE64.encode(buf);
-            // Not `.ok()`: if this write fails the next launch generates a
-            // different seed and every stored payload becomes undecryptable.
-            entry
-                .set_password(&seed)
-                .context("storing the master seed in the Keychain")?;
-            Ok(seed)
-        }
-        Err(err) => Err(anyhow!(err).context("reading the master seed from the Keychain")),
-    }
 }
 
 fn derive_master_key(seed: &str) -> anyhow::Result<[u8; 32]> {
@@ -235,9 +463,13 @@ fn test_seed() -> Option<String> {
     )
 }
 
-fn encrypt_with_master(purpose: &str, name: &str, plaintext: &[u8]) -> anyhow::Result<String> {
-    let master = master_key()?;
-    let cipher = Aes256Gcm::new_from_slice(&master).map_err(|e| anyhow!("cipher: {}", e))?;
+fn encrypt_with_key(
+    master: &[u8; 32],
+    purpose: &str,
+    name: &str,
+    plaintext: &[u8],
+) -> anyhow::Result<String> {
+    let cipher = Aes256Gcm::new_from_slice(master).map_err(|e| anyhow!("cipher: {}", e))?;
     use rand::RngCore;
     let mut rng = rand::thread_rng();
     let mut nonce_bytes = [0u8; 12];
@@ -262,9 +494,13 @@ fn encrypt_with_master(purpose: &str, name: &str, plaintext: &[u8]) -> anyhow::R
     serde_json::to_string(&sealed).context("encoding sealed payload")
 }
 
-fn decrypt_with_master(purpose: &str, name: &str, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let master = master_key()?;
-    let cipher = Aes256Gcm::new_from_slice(&master).map_err(|e| anyhow!("cipher: {}", e))?;
+fn decrypt_with_key(
+    master: &[u8; 32],
+    purpose: &str,
+    name: &str,
+    payload: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let cipher = Aes256Gcm::new_from_slice(master).map_err(|e| anyhow!("cipher: {}", e))?;
     let sealed: SealedPayload =
         serde_json::from_slice(payload).context("parsing sealed payload")?;
     let nonce_bytes = BASE64.decode(&sealed.n).context("decoding nonce")?;
@@ -285,6 +521,20 @@ fn decrypt_with_master(purpose: &str, name: &str, payload: &[u8]) -> anyhow::Res
         )
         .map_err(|e| anyhow!("decrypting secret: {}", e))?;
     Ok(plaintext)
+}
+
+#[cfg(test)]
+fn encrypt_with_master(purpose: &str, name: &str, plaintext: &[u8]) -> anyhow::Result<String> {
+    let seed = test_seed().unwrap_or_else(|| "test-seed".to_string());
+    let master = derive_master_key(&seed)?;
+    encrypt_with_key(&master, purpose, name, plaintext)
+}
+
+#[cfg(test)]
+fn decrypt_with_master(purpose: &str, name: &str, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let seed = test_seed().unwrap_or_else(|| "test-seed".to_string());
+    let master = derive_master_key(&seed)?;
+    decrypt_with_key(&master, purpose, name, payload)
 }
 
 #[cfg(test)]
@@ -332,11 +582,6 @@ mod tests {
         );
     }
 
-    /// `db_key_status` is consumed by the diagnostics pane; it has to be
-    /// callable from the same async callers without going through the
-    /// Keychain. The test seed bypasses the Keychain entirely so the
-    /// `Some(true) | Some(false) | None` tri-state is exercised at the
-    /// unit-test layer without an OS dependency.
     #[tokio::test]
     async fn db_key_status_reports_a_missing_or_present_key() {
         let store = SecretStore::new();
@@ -345,8 +590,53 @@ mod tests {
         match store.db_key_status().await {
             Some(false) | Some(true) | None => {}
         }
-        // After `ensure_db_key` runs the key must be present and exactly 32
-        // bytes long; the Keychain stub is replaced by `db.master` slot, which
-        // is allowed to be absent on a fresh test directory.
+    }
+
+    #[tokio::test]
+    async fn file_backend_round_trip_and_persistence() {
+        let temp_dir = std::env::temp_dir().join(format!("mixd_test_fb_{}", uuid::Uuid::new_v4()));
+        let store = SecretStore::open(&temp_dir);
+
+        // Probe should succeed
+        store.probe().await.expect("probe");
+
+        // Put secret
+        store
+            .put("provider/openai", "api_key", b"sk-test-12345")
+            .await
+            .expect("put");
+
+        // Read back
+        let value = store
+            .get_string("provider/openai", "api_key")
+            .await
+            .expect("get");
+        assert_eq!(value, "sk-test-12345");
+
+        // Ensure db key
+        let db_key = store.ensure_db_key().await.expect("ensure db key");
+        assert_eq!(db_key.len(), 32);
+        assert_eq!(store.db_key_status().await, Some(true));
+
+        // Re-open from same dir to verify persistence
+        let store2 = SecretStore::open(&temp_dir);
+        let value2 = store2
+            .get_string("provider/openai", "api_key")
+            .await
+            .expect("get persisted");
+        assert_eq!(value2, "sk-test-12345");
+
+        let db_key2 = store2.db_master_key().await.expect("read db key");
+        assert_eq!(db_key, db_key2);
+
+        // Delete secret
+        store2
+            .delete("provider/openai", "api_key")
+            .await
+            .expect("delete");
+        assert!(store2.get("provider/openai", "api_key").await.is_err());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

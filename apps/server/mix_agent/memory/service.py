@@ -51,11 +51,27 @@ from mix_agent.memory.types import (
 )
 
 SENSITIVE = re.compile(
-    r"(?:api[_ -]?key|password|passwd|secret|access[_ -]?token|session[_ -]?token|authorization|private[_ -]?key|cookie|認証コード|パスワード)\s*[:=：]",
+    r"(?:"
+    r"api[_ -]?key|password|passwd|secret|access[_ -]?token|session[_ -]?token"
+    r"|authorization|private[_ -]?key|cookie"
+    r"|bearer|client[_ -]?secret|refresh[_ -]?token"
+    r"|認証コード|パスワード"
+    r"|kennwort|passwort|zugangstoken|geheimschlüssel"
+    r"|密码|访问令牌|密钥|认证码"
+    r"|비밀번호|액세스토큰|인증코드"
+    r")\s*[:=：]",
     re.IGNORECASE,
 )
 SENSITIVE_VALUE = re.compile(
-    r"(?:api[_ -]?key|password|passwd|secret|access[_ -]?token|session[_ -]?token|authorization|private[_ -]?key|cookie|認証コード|パスワード)\s*[:=：]\s*[^\s,;]+",
+    r"(?:"
+    r"api[_ -]?key|password|passwd|secret|access[_ -]?token|session[_ -]?token"
+    r"|authorization|private[_ -]?key|cookie"
+    r"|bearer|client[_ -]?secret|refresh[_ -]?token"
+    r"|認証コード|パスワード"
+    r"|kennwort|passwort|zugangstoken|geheimschlüssel"
+    r"|密码|访问令牌|密钥|认证码"
+    r"|비밀번호|액세스토큰|인증코드"
+    r")\s*[:=：]\s*[^\s,;]+",
     re.IGNORECASE,
 )
 STOP_WORDS = frozenset({"これ", "それ", "ため", "です", "ます", "する", "した", "して", "with", "that", "this", "from", "your"})

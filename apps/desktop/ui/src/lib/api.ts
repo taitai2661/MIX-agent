@@ -189,11 +189,17 @@ export const api = {
 
   listDir: (rootPath: string, path: string) =>
     invoke<DirEntryView[]>("list_dir", { rootPath, path }),
+  findWorkspaceFiles: (rootPath: string, query?: string | null, limit?: number | null) =>
+    invoke<string[]>("find_workspace_files", { rootPath, query: query ?? null, limit: limit ?? null }),
   readWorkspaceFile: (rootPath: string, path: string) =>
     invoke<FileContentView>("read_workspace_file", { rootPath, path }),
   gitStatus: (rootPath: string) => invoke<GitStatusView>("git_status", { rootPath }),
   gitDiff: (rootPath: string, scope: string, path: string | null) =>
     invoke<GitDiffView>("git_diff", { rootPath, scope, path }),
+  gitRestore: (rootPath: string, path: string, staged: boolean = false) =>
+    invoke<void>("git_restore", { rootPath, path, staged }),
+  gitStage: (rootPath: string, path: string, unstage: boolean = false) =>
+    invoke<void>("git_stage", { rootPath, path, unstage }),
 
   listScheduleJobs: () => invoke<ScheduleJobView[]>("list_jobs"),
   createScheduleJob: (input: {

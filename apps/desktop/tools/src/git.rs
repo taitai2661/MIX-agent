@@ -185,7 +185,10 @@ async fn run_git_diff(
 
     let diff_text = String::from_utf8_lossy(&output.stdout);
     let (unified_diff, truncated) = if diff_text.len() > MAX_DIFF_BYTES {
-        (format!("{}… [truncated]", &diff_text[..MAX_DIFF_BYTES]), true)
+        (
+            format!("{}… [truncated]", &diff_text[..MAX_DIFF_BYTES]),
+            true,
+        )
     } else {
         (diff_text.to_string(), false)
     };
@@ -203,10 +206,7 @@ async fn run_git_diff(
     })
 }
 
-async fn exec_git(
-    root: &Path,
-    args: &[&str],
-) -> anyhow::Result<std::process::Output> {
+async fn exec_git(root: &Path, args: &[&str]) -> anyhow::Result<std::process::Output> {
     let mut base_args = vec![
         "--no-optional-locks",
         "-c",

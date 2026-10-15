@@ -10,7 +10,9 @@
 6. 初回公開時はGitHub Packagesで8種類のパッケージをPublicにし、匿名で各イメージをpull/manifest参照できることを確認する。
 7. `gh-pages` に `store.json`、`index.json`、`store/main.zip` があり、対象バージョンが一致していることを確認する。
 8. GitHub Releaseに `mix-agent-zimaos-store-vX.Y.Z.tar.gz` と `mix-agent-zimaos-legacy-vX.Y.Z.zip` が添付されていることを確認する。
-9. ZimaOSでv2ストアURLから更新を確認し、必要なら旧クライアント向け `store/main.zip` でも追加・更新を確認する。
+9. `desktop-release` ワークフローが完了し、GitHub Release に Desktop 版の各種インストーラー（macOS 用 `.dmg` [aarch64 / x64]、Windows 用 `.msi` / `.exe`、Linux 用 `.deb` / `.AppImage`、および `SHA256SUMS`）が添付されていることを確認する。
+10. ZimaOSでv2ストアURLから更新を確認し、必要なら旧クライアント向け `store/main.zip` でも追加・更新を確認する。
+11. 配布された `.dmg` を macOS 実機でマウントし、Applications フォルダへの配置および起動ができることを確認する。
 
 公開前にチェックする点:
 

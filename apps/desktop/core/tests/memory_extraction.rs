@@ -265,8 +265,15 @@ async fn count_for(storage: &Storage, sql: &str, bind: &str) -> i64 {
 #[test]
 fn extraction_prompt_matches_the_spec_verbatim() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let spec = std::fs::read_to_string(manifest.join("../../docs/memory-spec.md"))
-        .expect("read docs/memory-spec.md");
+    let spec_path = {
+        let p = manifest.join("../../docs/memory-spec.md");
+        if p.exists() {
+            p
+        } else {
+            manifest.join("../../../docs/memory-spec.md")
+        }
+    };
+    let spec = std::fs::read_to_string(&spec_path).expect("read docs/memory-spec.md");
     let marker = "**共通抽出プロンプト**:\n\n```\n";
     let start = spec.find(marker).expect("spec has the prompt marker") + marker.len();
     let end = start + spec[start..].find("\n```").expect("prompt fence closes");

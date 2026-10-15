@@ -32,14 +32,51 @@ MIX-agent is a self-hosted AI workspace for running AI on your own machine or in
 
 This repository hosts two distinct editions in a monorepo structure:
 
-| Edition | Tech Stack | Characteristics & Use Cases | How to Run |
+| Edition | Tech Stack | Characteristics & Use Cases | Installation & How to Run |
 | --- | --- | --- | --- |
+| **Desktop Edition** (`apps/desktop`) | Tauri 2 + Rust + React | Personal local-first, native UI, fast and lightweight | **Recommended**: Download `.dmg` etc. from Releases<br>Development: `pnpm desktop:dev` |
 | **Docker Edition** (`apps/server`, `apps/web`) | FastAPI + PostgreSQL + React | Self-hosted, LAN/VPN sharing, long-running background tasks | `docker compose up -d --build` |
-| **Desktop Edition** (`apps/desktop`) | Tauri 2 + Rust + React | Personal local-first, native UI, fast and lightweight | `pnpm desktop:dev` |
 
 ## Installation
 
-### Start with Docker (Recommended / Quickest)
+### Start with Desktop App (Native Application - Recommended)
+
+#### 1. Install via Pre-built Package (Recommended)
+
+Download the installer for your operating system from [GitHub Releases](https://github.com/taitai2661/MIX-agent/releases):
+
+- **macOS**:
+  - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
+  - Intel Mac: `mix-agent-desktop_*_x64.dmg`
+  - Open the downloaded `.dmg` and drag & drop `MIX-agent Desktop` into your `Applications` folder.
+  - *(For self-signed or unnotarized builds)* If macOS displays a gatekeeper warning on first launch, right-click (or Control-click) the application icon and select "Open", or run `xattr -cr "/Applications/MIX-agent Desktop.app"` in Terminal.
+- **Windows**: `*.msi` or `*.exe` installer
+- **Linux**: `*.deb` or `*.AppImage` package
+
+#### 2. Run / Build from Source
+
+Rust (1.82+), Node.js (22+), and pnpm are required.
+
+```sh
+# Install dependencies
+pnpm install
+
+# Start Desktop App (Tauri Dev)
+pnpm desktop:dev
+
+# Build local .dmg package for macOS
+pnpm desktop:build:dmg
+```
+
+1. Add a provider and save the API key. The model list is fetched automatically, and models whose context window can be verified are added to the Auto candidates.
+2. Re-run "connection test" or "fetch models" as needed.
+3. Review each model's capabilities. Manually override anything unknown.
+4. Set the default model, tool permissions, and the domains runners may communicate with.
+5. Add agents / MCP servers if needed.
+
+For local Ollama / LM Studio, explicitly allow private connections in the provider settings.
+
+### Start with Docker (Self-hosted Server)
 
 Docker Desktop, or Docker Engine with Compose v2, is required.
 Simply clone the repository and run Compose at the root—**no extra setup or environment file required**:
@@ -50,27 +87,7 @@ cd MIX-agent
 docker compose up -d --build
 ```
 
-Open [http://localhost:8080](http://localhost:8080) and create the administrator. No environment variables or pre-provisioned API keys are required.
-
-### Start with Desktop App (Native Application)
-
-Rust (1.82+), Node.js (22+), and pnpm are required.
-
-```sh
-# Install UI dependencies
-pnpm install
-
-# Start Desktop App (Tauri Dev)
-pnpm desktop:dev
-```
-
-1. Add a provider and save the API key. The model list is fetched automatically, and models whose context window can be verified are added to the Auto candidates.
-2. Re-run "connection test" or "fetch models" as needed.
-3. Review each model's capabilities. Manually override anything unknown.
-4. Set the default model, tool permissions, and the domains runners may communicate with.
-5. Add agents / MCP servers if needed.
-
-For local Ollama / LM Studio, explicitly allow private connections in the provider settings. localhost inside Docker is not your host machine; use `host.docker.internal` in the default URL. Also check the listening settings on the host side.
+Open [http://localhost:8080](http://localhost:8080) and create the administrator. No environment variables or pre-provisioned API keys are required. localhost inside Docker is not your host machine; use `host.docker.internal` in the default URL when connecting to local Ollama / LM Studio.
 
 ### Connect a project folder
 
@@ -95,7 +112,12 @@ State is stored in Docker volumes. `docker compose down` stops the containers, b
 
 ### Releases
 
-[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) carry per-version change logs and ZimaOS store archives. Container images are published to the GitHub Container Registry (GHCR). The latest version is [v0.3.5](docs/release-notes-v0.3.5.md). The publishing procedure is summarized in the [release checklist](docs/release-checklist.md).
+[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) distributes all artifacts alongside per-version changelogs:
+- **Desktop Installers**: macOS `.dmg` (Apple Silicon / Intel), Windows `.msi` / `.exe`, Linux `.deb` / `.AppImage`, and checksum manifest (`SHA256SUMS`)
+- **Docker Container Images**: Published to GitHub Container Registry (GHCR)
+- **ZimaOS / CasaOS Store Archives**: `mix-agent-zimaos-store-*.tar.gz`
+
+The latest version is [v0.3.5](docs/release-notes-v0.3.5.md). The publishing procedure is summarized in the [release checklist](docs/release-checklist.md).
 
 ## Features
 
