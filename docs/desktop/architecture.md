@@ -8,18 +8,22 @@
 
 ```
 MIX-agent/
-├── docker/MIX-agent/           # Docker 版（Desktop 側の変更では触らない）
-├── desktop/mix-agent-desktop/  # Desktop 版（Cargo + pnpm workspace）
-│   ├── app/         Tauri 2 shell + #[tauri::command] surface
-│   ├── core/        Run Engine / state / events / context
-│   ├── providers/   OpenAI / Anthropic / Gemini / OpenAI-Compatible / Ollama / LM Studio
-│   ├── tools/       Tool Registry + executor
-│   ├── browser/     Browser Operator + chromiumoxide backend
-│   ├── mcp/         MCP client host
-│   ├── storage/     SQLite + Keychain
-│   ├── scripts/     fetch-chromium.mjs
-│   └── ui/          React 19 + Vite + Tailwind
-└── desktop/docs/    Desktop 版設計資料（本ファイル・api-mapping.md）
+├── apps/
+│   ├── desktop/                # Desktop 版（Cargo + pnpm workspace）
+│   │   ├── app/         Tauri 2 shell + #[tauri::command] surface
+│   │   ├── core/        Run Engine / state / events / context
+│   │   ├── providers/   OpenAI / Anthropic / Gemini / OpenAI-Compatible / Ollama / LM Studio
+│   │   ├── tools/       Tool Registry + executor
+│   │   ├── browser/     Browser Operator + chromiumoxide backend
+│   │   ├── mcp/         MCP client host
+│   │   ├── storage/     SQLite + Keychain
+│   │   ├── scripts/     fetch-chromium.mjs
+│   │   └── ui/          React 19 + Vite + Tailwind (Desktop独自UI)
+│   ├── server/                 # Docker 版バックエンド (FastAPI + Python)
+│   └── web/                    # Docker 版フロントエンド (React 19 + Vite)
+├── docs/                       # ドキュメント (desktop/ 含む)
+├── scripts/                    # パリティチェック、アイコン生成など
+└── compose.yaml                # Docker Compose 設定
 ```
 
 ## 信頼境界

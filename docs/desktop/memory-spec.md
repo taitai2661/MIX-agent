@@ -1,6 +1,6 @@
 # Memory 仕様書（両エディション共通）
 
-> **この文書は `docker/MIX-agent/docs/memory-spec.md` と `desktop/docs/memory-spec.md` に同一内容で置く。**
+> **この文書は `docs/memory-spec.md` と `docs/desktop/memory-spec.md` に同一内容で置く。**
 > `scripts/check-memory-parity.py` が本文の一致と、§2 の語の語彙が両エディションの実装で
 > 定義されていることを CI（`.github/workflows/ci.yml` の `memory-parity`）で検査する。
 >

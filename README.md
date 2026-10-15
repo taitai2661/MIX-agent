@@ -28,16 +28,21 @@ MIX-agent は、自分のマシンまたは信頼できるネットワーク（L
 - **プロジェクト / Knowledge / Skills**: プロジェクト単位の指示・資料・会話整理、テキストのチャンク検索、`SKILL.md`（Agent Skills）の取り込み・書き出し
 - **運用と安全**: 暗号化バックアップ・復元、運用診断、Runner の隔離と通信許可ドメイン制御（[安全上の境界](#安全上の境界)を参照）
 
+## エディション構成
+
+本リポジトリは 2 つのエディションを同一リポジトリで管理しています：
+
+| エディション | 技術スタック | 特徴・用途 | 起動方法 |
+| --- | --- | --- | --- |
+| **Docker 版** (`apps/server`, `apps/web`) | FastAPI + PostgreSQL + React | セルフホスト、LAN/VPN 共有、長時間バックグラウンド実行 | `docker compose up -d --build` |
+| **Desktop 版** (`apps/desktop`) | Tauri 2 + Rust + React | 個人ローカル専用、ネイティブ UI、高速・省リソース | `pnpm desktop:dev` |
+
 ## 導入方法
 
-| 方法 | 対象 |
-| --- | --- |
-| Docker Compose | Docker を自分で管理する人 |
-| ZimaOS コミュニティストア | AMD64 の ZimaOS を使う人（[ZimaOS ガイド](docs/zimaos.md)） |
+### Docker で起動（推奨・最短手順）
 
-### Docker で起動
-
-Docker Desktop、または Docker Engine と Compose v2 を用意します。初回ビルドと Browser 機能の導入に備えて 10GB 以上のディスク空き容量を推奨します。
+Docker Desktop、または Docker Engine と Compose v2 を用意します。
+リポジトリを clone して直下で起動するだけで、**追加の設定ファイル作成なしで即座にインストール・起動**できます。
 
 ```sh
 git clone https://github.com/taitai2661/MIX-agent.git
@@ -45,7 +50,19 @@ cd MIX-agent
 docker compose up -d --build
 ```
 
-[http://localhost:8080](http://localhost:8080) を開いて管理者を作成します。環境変数や API Key の事前設定は不要です。
+[http://localhost:8080](http://localhost:8080) をブラウザで開いて管理者を作成します。環境変数や API Key の事前設定は不要です。
+
+### Desktop 版で起動（ローカルネイティブアプリ）
+
+Rust (1.82+)、Node.js (22+)、pnpm を用意します。
+
+```sh
+# UI 依存関係のインストール
+pnpm install
+
+# デスクトップ版の起動 (Tauri Dev)
+pnpm desktop:dev
+```
 
 1. Provider を追加し、必要な API Key を保存。保存後にモデル一覧を自動取得し、Context Window を確認できるモデルを Auto 候補へ追加します。
 2. 必要に応じて「接続テスト」または「モデル取得」を再実行。

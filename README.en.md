@@ -28,16 +28,21 @@ MIX-agent is a self-hosted AI workspace for running AI on your own machine or in
 - **Projects / Knowledge / Skills**: project-scoped instructions, materials, and conversation organization; chunk-based text retrieval; import/export of `SKILL.md` (Agent Skills)
 - **Operations and safety**: encrypted backups and restore, operational diagnostics, isolated runners with allowed-domain controls (see [Security boundaries](#security-boundaries))
 
+## Editions
+
+This repository hosts two distinct editions in a monorepo structure:
+
+| Edition | Tech Stack | Characteristics & Use Cases | How to Run |
+| --- | --- | --- | --- |
+| **Docker Edition** (`apps/server`, `apps/web`) | FastAPI + PostgreSQL + React | Self-hosted, LAN/VPN sharing, long-running background tasks | `docker compose up -d --build` |
+| **Desktop Edition** (`apps/desktop`) | Tauri 2 + Rust + React | Personal local-first, native UI, fast and lightweight | `pnpm desktop:dev` |
+
 ## Installation
 
-| Method | For |
-| --- | --- |
-| Docker Compose | Anyone managing their own Docker |
-| ZimaOS Community Store | AMD64 ZimaOS users ([ZimaOS guide](docs/zimaos.md)) |
+### Start with Docker (Recommended / Quickest)
 
-### Start with Docker
-
-Docker Desktop, or Docker Engine with Compose v2, is required. At least 10 GB of free disk space is recommended for the initial build and the browser feature.
+Docker Desktop, or Docker Engine with Compose v2, is required.
+Simply clone the repository and run Compose at the root—**no extra setup or environment file required**:
 
 ```sh
 git clone https://github.com/taitai2661/MIX-agent.git
@@ -46,6 +51,18 @@ docker compose up -d --build
 ```
 
 Open [http://localhost:8080](http://localhost:8080) and create the administrator. No environment variables or pre-provisioned API keys are required.
+
+### Start with Desktop App (Native Application)
+
+Rust (1.82+), Node.js (22+), and pnpm are required.
+
+```sh
+# Install UI dependencies
+pnpm install
+
+# Start Desktop App (Tauri Dev)
+pnpm desktop:dev
+```
 
 1. Add a provider and save the API key. The model list is fetched automatically, and models whose context window can be verified are added to the Auto candidates.
 2. Re-run "connection test" or "fetch models" as needed.
