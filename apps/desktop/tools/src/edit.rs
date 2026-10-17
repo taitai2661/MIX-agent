@@ -522,12 +522,22 @@ impl EditTool {
             after_map.insert(entry_path.to_string(), after);
         }
 
-        // All entries applied cleanly: write every file. A failure here is a
-        // partial write, which the atomic_write temp-file protocol minimises
-        // but cannot eliminate across multiple files.
+        // All entries applied cleanly: write every file. If writing any file fails,
+        // rollback all previously written files to their `before` contents so
+        // multi_edit remains all-or-nothing (atomic) across the batch.
+        let mut written_paths: Vec<(&str, &std::path::PathBuf)> = Vec::new();
         for (entry_path, after) in &after_map {
             let resolved = resolved_map.get(entry_path).unwrap();
-            atomic_write(resolved, after)?;
+            if let Err(err) = atomic_write(resolved, after) {
+                // Rollback previously written files in reverse order
+                for (prev_path, prev_resolved) in written_paths.iter().rev() {
+                    if let Some(orig) = before_map.get(*prev_path) {
+                        let _ = atomic_write(prev_resolved, orig);
+                    }
+                }
+                return Err(err);
+            }
+            written_paths.push((entry_path.as_str(), resolved));
         }
 
         let outcome = MultiEditOutcome { edits: outcomes };
@@ -676,6 +686,37 @@ mod tests {
             .filter(|n| n.contains("mix-agent-tmp"))
             .collect();
         assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn multi_edit_atomicity_rolls_back_or_aborts_before_write() {
+        let dir = std::env::temp_dir().join(format!("mixd-multi-edit-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file1 = dir.join("file1.txt");
+        let file2 = dir.join("file2.txt");
+        std::fs::write(&file1, "first file original").unwrap();
+        std::fs::write(&file2, "second file original").unwrap();
+
+        let batch = vec![
+            serde_json::json!({
+                "path": "file1.txt",
+                "old_string": "first file original",
+                "new_string": "first file updated"
+            }),
+            serde_json::json!({
+                "path": "file2.txt",
+                "old_string": "non-existent anchor",
+                "new_string": "second file updated"
+            }),
+        ];
+
+        // Should fail on file2 anchor match and leave file1 untouched
+        let res = EditTool::invoke_multi_blocking(Some(dir.display().to_string()), Vec::new(), batch);
+        assert!(res.is_err() || res.as_ref().is_ok_and(|r| !r.ok));
+        assert_eq!(std::fs::read_to_string(&file1).unwrap(), "first file original");
+        assert_eq!(std::fs::read_to_string(&file2).unwrap(), "second file original");
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

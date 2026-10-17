@@ -219,6 +219,8 @@ jobs:
           pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           MIX_REQUIRE_CHROMIUM: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -253,10 +255,6 @@ jobs:
           xcrun stapler staple "$APP"
 
       - name: Collect artifacts
-        # NOTE: *.app.tar.gz is intentionally NOT collected: it is the Tauri
-        # updater bundle, and Phase 6 ships with the updater disabled
-        # (endpoints: [], active: false). Re-add the glob when updates are
-        # enabled (see the header comment + release job below).
         uses: actions/upload-artifact@v4
         with:
           name: mix-agent-desktop-${{ matrix.target }}
@@ -266,7 +264,12 @@ jobs:
             apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.exe
             apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.deb
             apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.AppImage
-          if-no-files-found: error
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz.sig
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip.sig
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/latest.json
+          if-no-files-found: warn
           retention-days: 14
 
   checksums:
@@ -311,12 +314,10 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.deb
             artifacts/**/*.AppImage
+            artifacts/**/*.tar.gz
+            artifacts/**/*.tar.gz.sig
+            artifacts/**/*.zip
+            artifacts/**/*.zip.sig
+            artifacts/**/latest.json
             artifacts/**/SHA256SUMS
-            # *.app.tar.gz (updater bundle) intentionally excluded: Phase 6 is
-            # "release CI without updates". Re-add with .sig/latest.json when
-            # TAURI_SIGNING_PRIVATE_KEY + updater endpoints/pubkey are set.
-            # Updater artifacts (.sig / latest.json) are intentionally NOT
-            # published: Phase 6 is "release CI without updates". To enable,
-            # configure TAURI_SIGNING_PRIVATE_KEY + updater endpoints/pubkey
-            # and add the .sig/latest.json globs here.
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false

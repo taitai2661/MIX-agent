@@ -319,6 +319,14 @@ export interface DiagnosticsReport {
   db_encrypted: boolean;
 }
 
+export interface DiagnosticsExport {
+  report: DiagnosticsReport;
+  os: string;
+  arch: string;
+  app_version: string;
+  recent_logs: string;
+}
+
 export interface CheckpointView {
   id: string;
   step_index: number;

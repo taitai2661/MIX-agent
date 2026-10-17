@@ -1174,6 +1174,8 @@ pub fn run() {
             commands::backups::restore_backup,
             commands::backups::relaunch_app,
             commands::diagnostics::collect_diagnostics,
+            commands::diagnostics::get_recent_logs,
+            commands::diagnostics::export_diagnostics,
             updater::check_for_updates,
             updater::install_update,
         ])

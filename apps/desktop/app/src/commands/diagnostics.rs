@@ -93,3 +93,71 @@ pub async fn collect_diagnostics(state: State<'_, AppState>) -> Result<Diagnosti
         db_encrypted,
     })
 }
+
+#[derive(Serialize)]
+pub struct DiagnosticsExport {
+    pub report: DiagnosticsReport,
+    pub os: String,
+    pub arch: String,
+    pub app_version: String,
+    pub recent_logs: String,
+}
+
+#[tauri::command]
+pub async fn get_recent_logs(lines: Option<usize>) -> Result<String, String> {
+    let limit = lines.unwrap_or(200).min(2000);
+    let Some(dir) = dirs::data_dir().map(|base| base.join(crate::APP_IDENTIFIER)) else {
+        return Ok("log directory not found".to_string());
+    };
+    if !dir.is_dir() {
+        return Ok("no log directory exists yet".to_string());
+    }
+
+    // Find the latest mix-agent.log.* file or mix-agent.log
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("mix-agent.log") {
+                        if let Ok(meta) = entry.metadata() {
+                            if let Ok(modified) = meta.modified() {
+                                files.push((modified, path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let Some((_, latest_path)) = files.first() else {
+        return Ok("no log file found".to_string());
+    };
+
+    match tokio::fs::read_to_string(latest_path).await {
+        Ok(content) => {
+            let all_lines: Vec<&str> = content.lines().collect();
+            let start = all_lines.len().saturating_sub(limit);
+            Ok(all_lines[start..].join("\n"))
+        }
+        Err(e) => Ok(format!("could not read log file: {e}")),
+    }
+}
+
+#[tauri::command]
+pub async fn export_diagnostics(
+    state: State<'_, AppState>,
+) -> Result<DiagnosticsExport, String> {
+    let report = collect_diagnostics(state).await?;
+    let recent_logs = get_recent_logs(Some(300)).await.unwrap_or_default();
+    Ok(DiagnosticsExport {
+        report,
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        recent_logs,
+    })
+}
+

@@ -1,4 +1,4 @@
-import { FolderTree, Globe, MessageSquare, Sparkles } from "lucide-react";
+import { FolderTree, Globe, MessageSquare, ShieldCheck, Sparkles } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { useApplySettings } from "@/lib/settings";
 import { useUi } from "@/lib/ui";
@@ -66,6 +66,18 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
           </li>
         ))}
       </ul>
+
+      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface/60 px-3.5 py-3">
+        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-brand" aria-hidden="true" />
+        <div className="flex flex-col gap-0.5 text-xs">
+          <span className="font-medium text-fg">{t("ローカル実行と安全設計")}</span>
+          <span className="text-muted leading-relaxed">
+            {t(
+              "会話履歴や設定はあなたの端末ローカルに安全に保存されます。ファイルの編集やシェル実行などの操作は、必ず事前に承認を求める安全設計になっています。",
+            )}
+          </span>
+        </div>
+      </div>
 
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-faint">{t("表示言語")}</span>

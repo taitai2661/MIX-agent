@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentView, AttachmentPayload, BrowserInvokeOutput, BrowserProfileView, BrowserStatus, CheckpointView,
-  ConversationSummary, DiagnosticsReport, DirEntryView, DiscoveredModelView, FileContentView, FileDiffView,
+  ConversationSummary, DiagnosticsExport, DiagnosticsReport, DirEntryView, DiscoveredModelView, FileContentView, FileDiffView,
   GitDiffView, GitStatusView, HealthReport, KnowledgeDocView, KnowledgeSearchHit,
   LocalRuntimeView, LocalScanView, McpConnectionView, ConflictResolutionView, MemoryLinkView,
   MemoryRevisionView, MemorySearchHit, MemoryView, MessageView, ModelView,
@@ -235,6 +235,8 @@ export const api = {
   deleteAgent: (id: string) => invoke<void>("delete_agent", { id }),
 
   diagnostics: () => invoke<DiagnosticsReport>("collect_diagnostics"),
+  getRecentLogs: (lines?: number) => invoke<string>("get_recent_logs", { lines: lines ?? null }),
+  exportDiagnostics: () => invoke<DiagnosticsExport>("export_diagnostics"),
 
   previewFileDiff: (
     path: string,

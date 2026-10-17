@@ -779,4 +779,18 @@ export const en: Record<string, string> = {
   "破棄": "Discard",
   "チャットに入力 (@{path})": "Add to chat (@{path})",
   "チャットに入力": "Add to chat",
+
+  // Diagnostics and Safety
+  "システム診断": "System Diagnostics",
+  "最近のログ": "Recent logs",
+  "ログを隠す": "Hide logs",
+  "診断をコピー": "Copy diagnostics",
+  "コピー完了": "Copied",
+  "書き出し": "Export",
+  "最近の実行ログ": "Recent execution logs",
+  "ログ読み込み中...": "Loading logs...",
+  "ログはありません": "No logs recorded",
+  "ローカル実行と安全設計": "Local Execution & Safety First",
+  "会話履歴や設定はあなたの端末ローカルに安全に保存されます。ファイルの編集やシェル実行などの操作は、必ず事前に承認を求める安全設計になっています。":
+    "Your conversations and settings are stored safely on your local device. Operations such as file edits and shell executions are designed to require your approval beforehand.",
 };
