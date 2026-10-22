@@ -318,7 +318,7 @@ export const en: Record<string, string> = {
   "必須": "Required", "任意": "Optional", "切断済み": "Disconnected", "起動": "Start", "再起動": "Restart",
   "関連": "Related", "Traceを訂正": "Correct trace", "明示的なTraceを追加": "Add explicit trace",
   "Context不明": "Unknown context", "手動設定。空欄にして保存すると、API取得値に戻します。": "Manual setting. Save it blank to restore the value from the API.",
-  "model-infoから補完されています。": "Provided by model-info.",
+  "models.devから補完されています。": "Provided by models.dev.",
   "Provider APIから取得しています。": "Retrieved from the provider API.",
   "未設定のモデルは、安全のためAutoの候補から除外されます。": "Unconfigured models are excluded from Auto for safety.",
   "未実施": "Not checked", "空欄なら現在のKeyを保持します。": "Leave blank to keep the current key.",

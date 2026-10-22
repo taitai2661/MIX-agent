@@ -1,7 +1,7 @@
 """Local model price resolution for usage cost estimates.
 
 All prices are USD per 1,000,000 tokens.  This module never contacts a
-provider: the model-info catalog is resolved during a model sync and stored on
+provider: the models.dev catalog is resolved during a model sync and stored on
 the model record, while an administrator can override it per model.
 """
 
@@ -17,8 +17,9 @@ _ALIASES = {
     "cache_read": ("cache_read", "cache_read_input_tokens", "cached", "cached_input"),
     "cache_write": ("cache_write", "cache_creation_input_tokens", "cached_write"),
 }
-# model-info states a price unit explicitly; anything else (per-request fees,
-# unknown units) is unusable for token-based estimates and must not be guessed.
+# models.dev states USD per 1M tokens; an explicit unit on stored evidence is
+# honored, while anything else (per-request fees, unknown units) is unusable
+# for token-based estimates and must not be guessed.
 _UNITS = {"1M_tokens": 1.0, "1K_tokens": 1_000.0, "1_token": 1_000_000.0}
 
 
@@ -70,7 +71,7 @@ def resolve(model_data):
     external = normalize(value)
     if external:
         source = evidence.get("source") if isinstance(evidence, dict) else None
-        return external, source or "model_info"
+        return external, source or "models_dev"
     return None, "unknown"
 
 

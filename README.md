@@ -205,7 +205,7 @@ API の `mode` は変更していません。`GET /models` の各レコードの
 
 Node.js 22 以上、pnpm を使用します。アプリケーション DB は PostgreSQL 専用で、起動は Docker Compose 経由です。
 
-モデルのコンテキスト長・料金・能力などの補完データは [model-info](https://github.com/taitai2661/model-info) の静的 JSON から取得します。既定の取得先は GitHub Pages で、`MIX_MODEL_INFO_URL` に `https://` のアドレスまたはローカルの model-info チェックアウト（その `v1/` を含むディレクトリ）を指定して差し替えられます。取得できない場合、当該モデルの補完データは未設定のまま扱われます。
+モデルのコンテキスト長・料金・能力などの補完データは [models.dev](https://models.dev) の `api.json` から取得します。既定の取得先は `https://models.dev/api.json` で、`MIX_MODELS_DEV_URL` に別の URL またはローカルの `api.json` へのパスを指定して差し替えられます。取得できない場合、当該モデルの補完データは未設定のまま扱われます。旧 `MIX_MODEL_INFO_URL` は非推奨です。
 
 ```sh
 # フロントエンドのビルド

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from mix_agent.providers import model_info
+from mix_agent.providers import models_dev
 
 SENSITIVE_KEYS = {"api_key", "key", "token", "authorization", "owner", "organization", "org_id"}
 
@@ -40,7 +40,7 @@ def _record(values, source, confidence):
             for key, value in values.items() if value is not None}
 
 
-async def resolve(kind, model_id, provider_item, resolver_ids=("provider_api", "model_info"),
+async def resolve(kind, model_id, provider_item, resolver_ids=("provider_api", "models_dev"),
                   *, preset_id=None):
     """Return normalized effective metadata and all non-manual candidates."""
     candidates = {}
@@ -49,12 +49,12 @@ async def resolve(kind, model_id, provider_item, resolver_ids=("provider_api", "
     if "provider_api" in resolver_ids and any(value is not None for value in api_values.values()):
         candidates["provider_api"] = _record(api_values, "provider_api", "official")
     external = {}
-    if "model_info" in resolver_ids:
-        external = await model_info.lookup(model_info.provider_keys(preset_id), model_id)
+    if "models_dev" in resolver_ids:
+        external = await models_dev.lookup(models_dev.provider_keys(preset_id), model_id)
     if any(value is not None for value in external.values()):
-        candidates["model_info"] = _record(external, "model_info", "external")
+        candidates["models_dev"] = _record(external, models_dev.SOURCE, "external")
     effective = {}
-    for source in ("provider_api", "model_info"):
+    for source in ("provider_api", "models_dev"):
         for field, evidence in candidates.get(source, {}).items():
             effective.setdefault(field, evidence)
     return {"provider_metadata": redact(provider_item), "metadata_candidates": candidates, "metadata": effective}

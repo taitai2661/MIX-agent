@@ -154,7 +154,9 @@ export function Models() {
                 {row.data.context_window
                   ? row.data.context_window.toLocaleString() + " context"
                   : t("Context不明")}
-                {row.data.context_source ? " · " + row.data.context_source : ""}
+                {row.data.context_source
+                  ? " · " + (row.data.context_source === "models_dev" ? "models.dev" : row.data.context_source)
+                  : ""}
               </small>
             </div>
           </div>
@@ -191,8 +193,8 @@ export function Models() {
               hint={
                 row.data.context_source === "manual"
                   ? t("手動設定。空欄にして保存すると、API取得値に戻します。")
-                  : row.data.context_source === "model_info"
-                    ? t("model-infoから補完されています。")
+                  : row.data.context_source === "models_dev" || row.data.context_source === "model_info"
+                    ? t("models.devから補完されています。")
                     : row.data.context_window
                       ? t("Provider APIから取得しています。")
                       : t("未設定のモデルは、安全のためAutoの候補から除外されます。")

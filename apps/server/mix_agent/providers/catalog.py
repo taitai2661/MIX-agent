@@ -23,7 +23,7 @@ def preset(id, name, category, kind, url="", api_key=True, private=False, *, tra
     return {"id": id, "name": name, "category": category, "kind": kind,
             "default_url": url, "api_key_required": api_key, "allow_private_default": private,
             "transport_id": transport_id, "discovery_id": discovery_id,
-            "metadata_resolver_ids": ("provider_api", "model_info"),
+            "metadata_resolver_ids": ("provider_api", "models_dev"),
             "extra_config_schema": list(extra_config_schema),
             "model_transports": dict(model_transports or {}),
             "session_header": session_header}

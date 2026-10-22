@@ -2,10 +2,17 @@ from mix_agent import pricing
 from mix_agent.usage import token_usage
 
 
-def test_normalize_model_info_pricing():
+def test_normalize_models_dev_pricing():
     assert pricing.normalize({"currency": "USD", "unit": "1M_tokens",
                               "input": 3, "output": 15, "cached_input": 0.3, "cached_write": 3.75}) == {
         "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75,
+    }
+
+
+def test_normalize_accepts_the_models_dev_cost_shape():
+    assert pricing.normalize({"input": 3, "output": 15, "cache_read": 0.3,
+                              "tiers": [{"input": 6, "output": 30}]}) == {
+        "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": None,
     }
 
 
@@ -48,7 +55,7 @@ def test_normalize_accepts_alias_keys():
 
 def test_resolve_prefers_manual_override():
     data = {
-        "metadata": {"pricing": {"value": {"input": 1, "output": 1}, "source": "model_info"}},
+        "metadata": {"pricing": {"value": {"input": 1, "output": 1}, "source": "models_dev"}},
         "pricing_override": {"input": 5, "output": 10},
     }
     prices, source = pricing.resolve(data)
@@ -57,15 +64,15 @@ def test_resolve_prefers_manual_override():
 
 
 def test_resolve_uses_catalog_evidence():
-    data = {"metadata": {"pricing": {"value": {"input": 2, "output": 4}, "source": "model_info"}}}
+    data = {"metadata": {"pricing": {"value": {"input": 2, "output": 4}, "source": "models_dev"}}}
     prices, source = pricing.resolve(data)
-    assert source == "model_info"
+    assert source == "models_dev"
     assert prices["output"] == 4.0
 
 
-def test_resolve_defaults_to_model_info_source():
+def test_resolve_defaults_to_models_dev_source():
     data = {"metadata": {"pricing": {"value": {"input": 2, "output": 4}}}}
-    assert pricing.resolve(data)[1] == "model_info"
+    assert pricing.resolve(data)[1] == "models_dev"
 
 
 def test_resolve_unknown_without_prices():

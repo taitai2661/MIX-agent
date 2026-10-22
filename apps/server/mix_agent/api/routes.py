@@ -1374,7 +1374,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
          cost_value, priced_count, estimated_count, has_manual, has_known) in group_rows:
         model_key, provider_key = model_key or "unknown", provider_key or "unknown"
         known = bool(priced_count)
-        source_name = "manual" if has_manual else ("model_info" if has_known else "unknown")
+        source_name = "manual" if has_manual else ("models_dev" if has_known else "unknown")
         groups.append({
             "key": f"{model_key}:{provider_key}:{mode_key}", "model_id": model_key,
             "provider_id": provider_key, "mode": mode_key,

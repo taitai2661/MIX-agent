@@ -205,7 +205,7 @@ Control spec references: [OpenAI](https://developers.openai.com/api/docs/guides/
 
 Node.js 22+ and pnpm are required. The application database is PostgreSQL-only, and everything starts via Docker Compose.
 
-Supplementary model data (context lengths, pricing, capabilities) is fetched from the static JSON of [model-info](https://github.com/taitai2661/model-info). The default source is GitHub Pages; set `MIX_MODEL_INFO_URL` to an `https://` address or a local model-info checkout (the directory containing its `v1/`) to override it. If it cannot be fetched, the supplementary data for that model is left unset.
+Supplementary model data (context lengths, pricing, capabilities) is fetched from [models.dev](https://models.dev)'s `api.json`. The default source is `https://models.dev/api.json`; set `MIX_MODELS_DEV_URL` to another URL or a local `api.json` path to override it. If it cannot be fetched, the supplementary data for that model is left unset. The old `MIX_MODEL_INFO_URL` is deprecated.
 
 ```sh
 # Build the frontend
