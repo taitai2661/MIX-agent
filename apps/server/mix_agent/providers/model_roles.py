@@ -4,7 +4,6 @@ Provider model listings can mix chat models with endpoint-specific models. Only
 known special-purpose IDs are excluded; unknown models remain Auto-eligible.
 """
 
-
 NON_CHAT_MODEL_PREFIXES = {
     # Model IDs in this namespace are specific to NVIDIA NIM even though its
     # provider wire kind is the generic ``compatible`` transport.

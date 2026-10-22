@@ -10,7 +10,8 @@
  */
 export const greetingEn: Readonly<Record<string, string>> = {
   "ac-1": "There are no threads yet, so you can set things up from scratch.",
-  "ac-2": "There is no record yet, so the approach is entirely yours to choose.",
+  "ac-2":
+    "There is no record yet, so the approach is entirely yours to choose.",
   "ac-3": "The history is empty. Let's start with the first one.",
   "ae-1": "It has been a little while.",
   "ae-2": "Because the record is thin, rebuilding it from scratch is easier.",
@@ -34,7 +35,8 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "aw-2": "Last week's thread is still connected.",
   "aw-3": "Is there anything you left open for this week?",
   "ay-1": "Picking up from yesterday is the easiest way forward.",
-  "ay-2": "If you want to carry over what was left yesterday, now is that continuation.",
+  "ay-2":
+    "If you want to carry over what was left yesterday, now is that continuation.",
   "ay-3": "Yesterday's log is still here.",
   "compose-fallback": "Tell me what you would like to move forward.",
   "dk-1": "Hello. How was your day?",
@@ -153,9 +155,11 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "nt-14": "We draw a line before sleepiness arrives first.",
   "nt-15": "I continue as a follow-up to last time, alongside the record.",
   "nt-16": "Changes are left behind so they can be traced later.",
-  "nt-17": "Reading or writing files, and running shell commands, always ask first.",
+  "nt-17":
+    "Reading or writing files, and running shell commands, always ask first.",
   "nt-18": "Edits are kept as a diff, so they stay reviewable.",
-  "nt-19": "Everything is left behind so it can be read back after verification.",
+  "nt-19":
+    "Everything is left behind so it can be read back after verification.",
   "nt-2": "I always explain what is about to happen before running it.",
   "nt-20": "Only the folder set on the project is in scope.",
   "nt-21": "Nothing is written outside that folder.",
@@ -199,19 +203,23 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "rt-5": "Welcome back. Good to be talking again.",
   "rt-6": "Welcome back. What shall we move forward today?",
   "sg-browser.label": "Check it in the browser",
-  "sg-browser.prompt": "Open it in the browser and confirm it matches what you intended.",
+  "sg-browser.prompt":
+    "Open it in the browser and confirm it matches what you intended.",
   "sg-daylog.label": "Summarise today's work log",
   "sg-daylog.prompt": "Summarise today's threads into a work log.",
   "sg-diff.label": "Review the latest changes",
-  "sg-diff.prompt": "Show me the remaining changes as a diff so I can check they match what you intended.",
+  "sg-diff.prompt":
+    "Show me the remaining changes as a diff so I can check they match what you intended.",
   "sg-explain.label": "Summarise what this code does and why, in Japanese",
   "sg-explain.prompt": "Summarise what this code does and why, in Japanese",
   "sg-first.label": "Start the first thread",
-  "sg-first.prompt": "Show me how MIX-agent works, using a realistic situation.",
+  "sg-first.prompt":
+    "Show me how MIX-agent works, using a realistic situation.",
   "sg-folder.label": "Show me the folder layout",
   "sg-folder.prompt": "List the contents of this folder.",
   "sg-instructions.label": "Review the project instructions",
-  "sg-instructions.prompt": "List this project's instructions and check for gaps or contradictions.",
+  "sg-instructions.prompt":
+    "List this project's instructions and check for gaps or contradictions.",
   "sg-plan.label": "Break it down into steps",
   "sg-plan.prompt": "Lay out what to do next as a sequence of steps.",
   "sg-project.label": "Set up a project",
@@ -221,11 +229,13 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "sg-refactor.label": "Suggest a refactor, with the safety net for it",
   "sg-refactor.prompt": "Suggest a refactor, with the safety net for it",
   "sg-resume.label": "Continue from yesterday",
-  "sg-resume.prompt": "Review the previous thread and continue from where it stopped.",
+  "sg-resume.prompt":
+    "Review the previous thread and continue from where it stopped.",
   "sg-tests.label": "Run the tests and show me the result",
   "sg-tests.prompt": "Run the relevant tests and investigate any failures.",
   "sg-tidy.label": "Tidy up recent threads",
-  "sg-tidy.prompt": "List the recent threads and suggest where the title and the content disagree.",
+  "sg-tidy.prompt":
+    "List the recent threads and suggest where the title and the content disagree.",
   "sg-todos.label": "Collect every TODO in this repository",
   "sg-todos.prompt": "Collect every TODO in this repository",
   "sm-1": "In the heat, short stretches are easier to keep up.",
@@ -277,7 +287,8 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "wk-1": "There is nothing recorded yet, so it can be designed from scratch.",
   "wk-2": "With nothing here yet, the constraints are yours to set.",
   "wk-3": "The number of threads is still modest.",
-  "wk-4": "There is a little history, so it looks like we can start right away.",
+  "wk-4":
+    "There is a little history, so it looks like we can start right away.",
   "wk-5": "Gaps can be picked out of the accumulated record.",
   "wk-6": "At this volume it can be tidied in one go.",
   "wk-7": "Records have built up.",
@@ -285,5 +296,6 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "ye-1": "It is the end of the year.",
   "ye-2": "Settling on one thing to close the year makes it easier.",
   "ys-1": "The year is just getting going.",
-  "ys-2": "At the start of the year, shallow notes are easier to build on later.",
+  "ys-2":
+    "At the start of the year, shallow notes are easier to build on later.",
 };

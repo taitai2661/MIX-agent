@@ -38,12 +38,17 @@ export function readHistory(store?: Storage | null): WelcomeHistory {
     lastVisitAt: number(value.lastVisitAt),
     firstSeenTodayAt: number(value.firstSeenTodayAt),
     recent: Array.isArray(value.recent)
-      ? value.recent.filter((item): item is string => typeof item === "string").slice(0, MAX_RECENT)
+      ? value.recent
+          .filter((item): item is string => typeof item === "string")
+          .slice(0, MAX_RECENT)
       : [],
   };
 }
 
-export function writeHistory(history: WelcomeHistory, store?: Storage | null): void {
+export function writeHistory(
+  history: WelcomeHistory,
+  store?: Storage | null,
+): void {
   try {
     setString(key, JSON.stringify(history), store);
   } catch (error) {
@@ -54,7 +59,10 @@ export function writeHistory(history: WelcomeHistory, store?: Storage | null): v
 }
 
 /** 今回表示した部品の ID を先頭に足し、長さ一定に収めます。 */
-export function remember(history: WelcomeHistory, used: readonly string[]): WelcomeHistory {
+export function remember(
+  history: WelcomeHistory,
+  used: readonly string[],
+): WelcomeHistory {
   return {
     ...history,
     recent: [...used, ...history.recent].slice(0, MAX_RECENT),

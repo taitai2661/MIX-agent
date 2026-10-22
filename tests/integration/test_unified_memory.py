@@ -1,5 +1,7 @@
 """ChatGPT-style flat memory tests: CRUD + dedup + hard delete."""
 
+from datetime import UTC, datetime, timedelta
+
 from mix_agent.db.models import Memory, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.memory import service
@@ -24,9 +26,15 @@ def test_create_and_dedup(signed):
 def test_search_finds_by_text_and_ignores_unrelated(signed):
     with SessionLocal() as db:
         owner = owner_id(db)
-        service.change(db, owner, "回答は日本語にする", source_run="explicit-user-request")
+        created = service.change(db, owner, "回答は日本語にする", source_run="explicit-user-request")
         db.commit()
         assert service.search(db, owner, "日本語") != []
+        # §5.2 drops a candidate scoring below min_score, so a query that
+        # shares no term with a *stale* memory returns nothing. A fresh
+        # memory still scores on recency alone (0.15 > min_score), so "no
+        # shared term" by itself is not the rule — the score is.
+        db.get(Memory, created["id"]).updated_at = datetime.now(UTC) - timedelta(days=400)
+        db.commit()
         assert service.search(db, owner, "南極のペンギンの個体数") == []
 
 

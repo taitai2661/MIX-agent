@@ -49,7 +49,11 @@ export function ResizableHandle({
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const start = drag.current;
     if (!start || start.pointerId !== event.pointerId) return;
-    const next = clamp(start.width + (event.clientX - start.x) * direction, min, max);
+    const next = clamp(
+      start.width + (event.clientX - start.x) * direction,
+      min,
+      max,
+    );
     start.currentWidth = next;
     onChange(next);
   };

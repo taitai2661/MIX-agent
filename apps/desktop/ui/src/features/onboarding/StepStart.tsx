@@ -52,9 +52,13 @@ export function StepStart({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-xl font-semibold tracking-tight text-fg">{t("準備ができました")}</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-fg">
+          {t("準備ができました")}
+        </h2>
         <p className="text-sm text-muted">
-          {t("チャットを始められます。ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。")}
+          {t(
+            "チャットを始められます。ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。",
+          )}
         </p>
       </div>
 
@@ -71,15 +75,24 @@ export function StepStart({
         <SummaryRow
           done={folderName !== null}
           label={t("作業フォルダ")}
-          value={folderName ?? t("未設定（チャットはプロジェクトなしで始まります）")}
+          value={
+            folderName ?? t("未設定（チャットはプロジェクトなしで始まります）")
+          }
         />
       </ul>
 
       <Row>
-        <Button variant="primary" size="lg" onClick={start} disabled={createThread.isPending}>
-          {createThread.isPending
-            ? <Spinner size={13} />
-            : <MessageSquare size={13} />}
+        <Button
+          variant="primary"
+          size="lg"
+          onClick={start}
+          disabled={createThread.isPending}
+        >
+          {createThread.isPending ? (
+            <Spinner size={13} />
+          ) : (
+            <MessageSquare size={13} />
+          )}
           {t("チャットを始める")}
         </Button>
         <span className="flex items-center gap-1 text-xs text-faint">

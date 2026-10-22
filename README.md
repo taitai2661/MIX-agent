@@ -49,7 +49,7 @@ MIX-agent は、自分のマシンまたは信頼できるネットワーク（L
   - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
   - Intel Mac: `mix-agent-desktop_*_x64.dmg`
   - ダウンロードした `.dmg` を開き、`MIX-agent Desktop` を `Applications` フォルダへドラッグ＆ドロップしてインストールします。
-  - *(未公証・自己署名ビルドの場合)* 初回起動時に警告が表示された場合は、アプリアイコンを「Control キーを押しながらクリック」→「開く」を選択するか、ターミナルで `xattr -cr "/Applications/MIX-agent Desktop.app"` を実行してください。
+  - **v0.4.0 の macOS ビルドは署名・公証されていません**（公開環境に Apple Developer の証明書が設定されていないため）。初回起動時に Gatekeeper の警告が表示されます。アプリアイコンを「Control キーを押しながらクリック」→「開く」を選択するか、ターミナルで `xattr -cr "/Applications/MIX-agent Desktop.app"` を実行してください。
 - **Windows**: `*.msi` または `*.exe` インストーラー
 - **Linux**: `*.deb` または `*.AppImage` パッケージ
 
@@ -117,7 +117,9 @@ docker compose up -d --build
 - **Docker コンテナイメージ**: GitHub Container Registry（GHCR）より配布
 - **ZimaOS / CasaOS ストアアーカイブ**: `mix-agent-zimaos-store-*.tar.gz`
 
-最新版は [v0.3.5](docs/release-notes-v0.3.5.md) です。公開手順は[リリースチェックリスト](docs/release-checklist.md)にまとめています。
+Desktop 版の版は独立したラインで、v0.4.0 の時点で `0.1.0` です。Docker 版と同じ Release に添付されますが、アプリ内の版番号は `0.1.0` のままです。
+
+最新版は [v0.4.0](docs/release-notes-v0.4.0.md) です。公開手順は[リリースチェックリスト](docs/release-checklist.md)にまとめています。
 
 ## 実装内容
 

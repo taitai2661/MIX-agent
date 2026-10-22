@@ -712,10 +712,17 @@ mod tests {
         ];
 
         // Should fail on file2 anchor match and leave file1 untouched
-        let res = EditTool::invoke_multi_blocking(Some(dir.display().to_string()), Vec::new(), batch);
+        let res =
+            EditTool::invoke_multi_blocking(Some(dir.display().to_string()), Vec::new(), batch);
         assert!(res.is_err() || res.as_ref().is_ok_and(|r| !r.ok));
-        assert_eq!(std::fs::read_to_string(&file1).unwrap(), "first file original");
-        assert_eq!(std::fs::read_to_string(&file2).unwrap(), "second file original");
+        assert_eq!(
+            std::fs::read_to_string(&file1).unwrap(),
+            "first file original"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file2).unwrap(),
+            "second file original"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

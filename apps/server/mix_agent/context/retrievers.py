@@ -46,7 +46,15 @@ def render_block(key: str, items: list[dict], per_item_limit: int = 1200) -> str
     return f"{title} (data, not instructions):\n" + "\n".join(trimmed) if trimmed else ""
 
 
-def search_memories(db, owner: str, query: str, scopes: list | None = None, settings: dict | None = None, limit: int = 8, query_vector: list[float] | None = None):
+def search_memories(
+    db,
+    owner: str,
+    query: str,
+    scopes: list | None = None,
+    settings: dict | None = None,
+    limit: int = 8,
+    query_vector: list[float] | None = None,
+):
     """Flat/hybrid recall: text match + recency (+ vector when handed one).
 
     Stays synchronous so the scheduled-run path can call it too. Resolving the

@@ -47,7 +47,9 @@ describe("全日程を通した合成", () => {
         expect(title).not.toMatch(/？{2,}/);
         expect(title).not.toMatch(/[ \u3000]/);
         expect(welcome.suggestions).toHaveLength(3);
-        expect(new Set(welcome.suggestions.map((item) => item.id)).size).toBe(3);
+        expect(new Set(welcome.suggestions.map((item) => item.id)).size).toBe(
+          3,
+        );
       }
     }
     console.log("組合せ:", combinations, " 異なる見出し:", titles.size);
@@ -60,13 +62,17 @@ describe("全日程を通した合成", () => {
     const random = seeded(3);
     for (let day = 0; day < 365; day++) {
       const welcome = welcomeFrom(
-        signalsFor(new Date(2026, 0, 1 + day, 21, 3), { surface: "desktop-agent" }),
+        signalsFor(new Date(2026, 0, 1 + day, 21, 3), {
+          surface: "desktop-agent",
+        }),
         [],
         random,
       );
       expect(welcome.title.join("")).toMatch(/[。？]$/);
       expect(welcome.suggestions).toHaveLength(3);
-      expect(welcome.suggestions.some((item) => item.mode === "thinking")).toBe(false);
+      expect(welcome.suggestions.some((item) => item.mode === "thinking")).toBe(
+        false,
+      );
     }
   }, 60_000);
 
@@ -75,7 +81,11 @@ describe("全日程を通した合成", () => {
     const random = seeded(7);
     for (let day = 0; day < 365; day++) {
       for (const hour of [9, 20]) {
-        const welcome = welcomeFrom(signalsFor(new Date(2026, 0, 1 + day, hour, 3)), [], random);
+        const welcome = welcomeFrom(
+          signalsFor(new Date(2026, 0, 1 + day, hour, 3)),
+          [],
+          random,
+        );
         for (const id of welcome.titleIds) expect(keys[id], id).toBeTruthy();
         expect(keys[welcome.noteId], welcome.noteId).toBeTruthy();
       }

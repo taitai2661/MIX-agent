@@ -53,7 +53,10 @@ export function StatusDot({
   }[tone];
   return (
     <span className={cn("inline-flex items-center gap-1.5", className)}>
-      <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", fill)} />
+      <span
+        aria-hidden="true"
+        className={cn("size-2 shrink-0 rounded-full", fill)}
+      />
       <span className="sr-only">{label}</span>
     </span>
   );

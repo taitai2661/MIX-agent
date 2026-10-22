@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  Camera, ChevronRight, Code, FileText, Globe, MousePointerClick, RefreshCw,
-  ScrollText, Search, Terminal, Type as TypeIcon,
+  Camera,
+  ChevronRight,
+  Code,
+  FileText,
+  Globe,
+  MousePointerClick,
+  RefreshCw,
+  ScrollText,
+  Search,
+  Terminal,
+  Type as TypeIcon,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -19,18 +28,60 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import type { BrowserProfileView, BrowserStatus } from "@/lib/types";
 
 type Action =
-  | "info" | "navigate" | "dom" | "screenshot" | "evaluate"
-  | "click" | "type" | "scroll" | "wait_for";
+  | "info"
+  | "navigate"
+  | "dom"
+  | "screenshot"
+  | "evaluate"
+  | "click"
+  | "type"
+  | "scroll"
+  | "wait_for";
 
-const ACTIONS: Array<{ id: Action; label: string; icon: typeof Globe; hint: string }> = [
-  { id: "info", label: "Page info", icon: FileText, hint: "Title, URL and viewport" },
+const ACTIONS: Array<{
+  id: Action;
+  label: string;
+  icon: typeof Globe;
+  hint: string;
+}> = [
+  {
+    id: "info",
+    label: "Page info",
+    icon: FileText,
+    hint: "Title, URL and viewport",
+  },
   { id: "navigate", label: "Navigate", icon: Globe, hint: "Load a URL" },
-  { id: "dom", label: "DOM", icon: Code, hint: "innerHTML of a selector (or the body)" },
-  { id: "click", label: "Click", icon: MousePointerClick, hint: "Click a CSS selector" },
-  { id: "type", label: "Type", icon: TypeIcon, hint: "Type text into a selector" },
+  {
+    id: "dom",
+    label: "DOM",
+    icon: Code,
+    hint: "innerHTML of a selector (or the body)",
+  },
+  {
+    id: "click",
+    label: "Click",
+    icon: MousePointerClick,
+    hint: "Click a CSS selector",
+  },
+  {
+    id: "type",
+    label: "Type",
+    icon: TypeIcon,
+    hint: "Type text into a selector",
+  },
   { id: "scroll", label: "Scroll", icon: ScrollText, hint: "Scroll by dx/dy" },
-  { id: "wait_for", label: "Wait", icon: Search, hint: "Wait for selector, URL or JS" },
-  { id: "screenshot", label: "Screenshot", icon: Camera, hint: "Capture the viewport" },
+  {
+    id: "wait_for",
+    label: "Wait",
+    icon: Search,
+    hint: "Wait for selector, URL or JS",
+  },
+  {
+    id: "screenshot",
+    label: "Screenshot",
+    icon: Camera,
+    hint: "Capture the viewport",
+  },
   { id: "evaluate", label: "Evaluate", icon: Terminal, hint: "Run JavaScript" },
 ];
 
@@ -77,7 +128,10 @@ export function BrowserPane() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, p] = await Promise.all([api.browserStatus(), api.browserProfiles()]);
+      const [s, p] = await Promise.all([
+        api.browserStatus(),
+        api.browserProfiles(),
+      ]);
       setStatus(s);
       setProfiles(p);
       if (p.length > 0 && !p.some((x) => x.workspace_id === workspaceId)) {
@@ -88,7 +142,10 @@ export function BrowserPane() {
         setWorkspaceId(preferred);
       }
     } catch (e) {
-      setLog((l) => [...l, { id: nextId++, action: "info", ok: false, summary: errorMessage(e) }]);
+      setLog((l) => [
+        ...l,
+        { id: nextId++, action: "info", ok: false, summary: errorMessage(e) },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -110,7 +167,10 @@ export function BrowserPane() {
         selector: selector || null,
         text: text || null,
         x: null,
-        y: action === "scroll" && Number.isFinite(scrollValue) ? scrollValue : null,
+        y:
+          action === "scroll" && Number.isFinite(scrollValue)
+            ? scrollValue
+            : null,
         script: script || null,
         full_page: false,
         condition: action === "wait_for" ? condition : null,
@@ -118,20 +178,29 @@ export function BrowserPane() {
       });
       // Shared `optString` guard (see `lib/runEvents.ts`) instead of an
       // inline `typeof` check on the `unknown` payload.
-      const detail = optString(out.payload) ?? JSON.stringify(out.payload, null, 2);
-      setLog((l) => [
-        {
-          id: nextId++,
-          action,
-          ok: out.ok,
-          summary: out.ok ? "ok" : (out.error ?? "failed"),
-          detail: detail.length > 4000 ? `${detail.slice(0, 4000)}\n…` : detail,
-          artifactId: out.artifact_id,
-        },
-        ...l,
-      ].slice(0, 50));
+      const detail =
+        optString(out.payload) ?? JSON.stringify(out.payload, null, 2);
+      setLog((l) =>
+        [
+          {
+            id: nextId++,
+            action,
+            ok: out.ok,
+            summary: out.ok ? "ok" : (out.error ?? "failed"),
+            detail:
+              detail.length > 4000 ? `${detail.slice(0, 4000)}\n…` : detail,
+            artifactId: out.artifact_id,
+          },
+          ...l,
+        ].slice(0, 50),
+      );
     } catch (e) {
-      setLog((l) => [{ id: nextId++, action, ok: false, summary: errorMessage(e) }, ...l].slice(0, 50));
+      setLog((l) =>
+        [
+          { id: nextId++, action, ok: false, summary: errorMessage(e) },
+          ...l,
+        ].slice(0, 50),
+      );
     } finally {
       setBusy(false);
     }
@@ -147,28 +216,47 @@ export function BrowserPane() {
 
   return (
     <Section>
-      <Card title={t("バックエンド")} icon={<Globe size={13} />} action={
-        <Button variant="ghost" size="sm" onClick={() => void refresh()} title={t("状態を更新")}>
-          <RefreshCw size={12} /> {t("更新")}
-        </Button>
-      }>
+      <Card
+        title={t("バックエンド")}
+        icon={<Globe size={13} />}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void refresh()}
+            title={t("状態を更新")}
+          >
+            <RefreshCw size={12} /> {t("更新")}
+          </Button>
+        }
+      >
         <Row className="gap-1.5">
           <Badge size="sm" className="font-mono">
             {status?.backend ?? (loading ? t("読み込み中…") : "—")}
           </Badge>
-          <Badge size="sm">{status?.headless ? t("ヘッドレス") : t("ヘッドあり")}</Badge>
-          <Badge size="sm">{status?.profiles ?? 0} {t("プロファイル")}</Badge>
-          <Badge size="sm">{status?.artifacts ?? 0} {t("成果物")}</Badge>
+          <Badge size="sm">
+            {status?.headless ? t("ヘッドレス") : t("ヘッドあり")}
+          </Badge>
+          <Badge size="sm">
+            {status?.profiles ?? 0} {t("プロファイル")}
+          </Badge>
+          <Badge size="sm">
+            {status?.artifacts ?? 0} {t("成果物")}
+          </Badge>
         </Row>
         {status?.executable ? (
-          <code className="break-all text-xs text-faint">{status.executable}</code>
+          <code className="break-all text-xs text-faint">
+            {status.executable}
+          </code>
         ) : loading ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-muted">
             <Spinner size={12} /> {t("読み込み中…")}
           </span>
         ) : (
           <p className="m-0 text-xs text-muted">
-            {t("Chromiumが見つかりません。システムのChromiumを入れるか、バンドル版を用意してください。")}
+            {t(
+              "Chromiumが見つかりません。システムのChromiumを入れるか、バンドル版を用意してください。",
+            )}
           </p>
         )}
       </Card>
@@ -177,16 +265,24 @@ export function BrowserPane() {
         <Row className="gap-2">
           <Select
             value={knownProfile ? workspaceId : "new"}
-            onChange={(e) => setWorkspaceId(e.target.value === "new" ? crypto.randomUUID() : e.target.value)}
+            onChange={(e) =>
+              setWorkspaceId(
+                e.target.value === "new" ? crypto.randomUUID() : e.target.value,
+              )
+            }
           >
-            {!knownProfile && <option value="new">{t("新規プロファイル")}</option>}
+            {!knownProfile && (
+              <option value="new">{t("新規プロファイル")}</option>
+            )}
             {profiles.map((p) => (
               <option key={p.workspace_id} value={p.workspace_id}>
                 {p.display_name} {p.provisioned ? "" : t("(未作成)")}
               </option>
             ))}
           </Select>
-          <code className="min-w-0 flex-1 truncate font-mono text-xs text-faint">{workspaceId}</code>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs text-faint">
+            {workspaceId}
+          </code>
           <Button
             disabled={busy}
             onClick={async () => {
@@ -205,7 +301,15 @@ export function BrowserPane() {
                 setWorkspaceId(crypto.randomUUID());
                 await refresh();
               } catch (e) {
-                setLog((l) => [{ id: nextId++, action: "info", ok: false, summary: errorMessage(e) }, ...l]);
+                setLog((l) => [
+                  {
+                    id: nextId++,
+                    action: "info",
+                    ok: false,
+                    summary: errorMessage(e),
+                  },
+                  ...l,
+                ]);
               }
             }}
           >
@@ -243,16 +347,17 @@ export function BrowserPane() {
             />
           </Field>
         )}
-        {needsSelector && (action !== "wait_for" || condition === "selector") && (
-          <Field>
-            <Input
-              aria-label={t("CSSセレクター（例: #search、body）")}
-              placeholder={t("CSSセレクター（例: #search、body）")}
-              value={selector}
-              onChange={(e) => setSelector(e.target.value)}
-            />
-          </Field>
-        )}
+        {needsSelector &&
+          (action !== "wait_for" || condition === "selector") && (
+            <Field>
+              <Input
+                aria-label={t("CSSセレクター（例: #search、body）")}
+                placeholder={t("CSSセレクター（例: #search、body）")}
+                value={selector}
+                onChange={(e) => setSelector(e.target.value)}
+              />
+            </Field>
+          )}
         {needsText && (
           <Field>
             <Input
@@ -339,10 +444,20 @@ export function BrowserPane() {
         ) : (
           <ul className="flex flex-col">
             {log.map((e) => (
-              <li key={e.id} className="border-t border-line py-2 first:border-0 first:pt-0">
+              <li
+                key={e.id}
+                className="border-t border-line py-2 first:border-0 first:pt-0"
+              >
                 <Row className="gap-2">
-                  <Badge size="sm" className="font-mono">{e.action}</Badge>
-                  <span className={cn("text-xs", e.ok ? "text-success" : "text-danger")}>
+                  <Badge size="sm" className="font-mono">
+                    {e.action}
+                  </Badge>
+                  <span
+                    className={cn(
+                      "text-xs",
+                      e.ok ? "text-success" : "text-danger",
+                    )}
+                  >
                     {e.ok ? t("成功") : t("失敗")}: {e.summary}
                   </span>
                   {e.artifactId && (
@@ -361,7 +476,9 @@ export function BrowserPane() {
                       />
                       {t("出力")}
                     </summary>
-                    <pre className={`${payloadBlock} mt-1.5 max-h-64 break-words`}>
+                    <pre
+                      className={`${payloadBlock} mt-1.5 max-h-64 break-words`}
+                    >
                       {e.detail}
                     </pre>
                   </details>
@@ -378,7 +495,9 @@ export function BrowserPane() {
             {profiles.map((p) => (
               <li key={p.workspace_id} className="flex items-center gap-2">
                 <span className="text-muted">{p.display_name}</span>
-                <code className="font-mono text-xs text-faint">{p.workspace_id.slice(0, 8)}</code>
+                <code className="font-mono text-xs text-faint">
+                  {p.workspace_id.slice(0, 8)}
+                </code>
                 <Badge tone={p.provisioned ? "success" : "neutral"} size="sm">
                   {p.provisioned ? t("準備完了") : t("空")}
                 </Badge>
@@ -386,7 +505,9 @@ export function BrowserPane() {
             ))}
           </ul>
           <p className="m-0 text-xs text-muted">
-            {t("各ワークスペースは独自のCookie・localStorage・キャッシュを持ち、エージェントのワークスペースと一致します。")}
+            {t(
+              "各ワークスペースは独自のCookie・localStorage・キャッシュを持ち、エージェントのワークスペースと一致します。",
+            )}
           </p>
         </Card>
       )}

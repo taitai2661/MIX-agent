@@ -45,27 +45,55 @@ export const DialogContent = forwardRef<
   );
 });
 
-export function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("mb-3 flex flex-col gap-1 pe-6", className)} {...props} />;
-}
-
-export function DialogTitle({ className, ...props }: React.ComponentProps<"h2">) {
+export function DialogHeader({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
   return (
-    <DialogPrimitive.Title
-      className={cn("text-base font-semibold tracking-tight text-fg", className)}
+    <div
+      className={cn("mb-3 flex flex-col gap-1 pe-6", className)}
       {...props}
     />
   );
 }
 
-export function DialogDescription({ className, ...props }: React.ComponentProps<"p">) {
+export function DialogTitle({
+  className,
+  ...props
+}: React.ComponentProps<"h2">) {
   return (
-    <DialogPrimitive.Description className={cn("text-sm text-muted", className)} {...props} />
+    <DialogPrimitive.Title
+      className={cn(
+        "text-base font-semibold tracking-tight text-fg",
+        className,
+      )}
+      {...props}
+    />
   );
 }
 
-export function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("mt-4 flex items-center justify-end gap-2", className)} {...props} />;
+export function DialogDescription({
+  className,
+  ...props
+}: React.ComponentProps<"p">) {
+  return (
+    <DialogPrimitive.Description
+      className={cn("text-sm text-muted", className)}
+      {...props}
+    />
+  );
+}
+
+export function DialogFooter({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn("mt-4 flex items-center justify-end gap-2", className)}
+      {...props}
+    />
+  );
 }
 
 export interface ConfirmRequest {
@@ -109,7 +137,10 @@ export function useConfirm() {
   }, []);
 
   const dialog = (
-    <Dialog open={request !== null} onOpenChange={(open) => !open && settle(false)}>
+    <Dialog
+      open={request !== null}
+      onOpenChange={(open) => !open && settle(false)}
+    >
       {request && (
         <DialogContent
           onInteractOutside={(e: Event) => {
@@ -122,7 +153,9 @@ export function useConfirm() {
         >
           <DialogHeader>
             <DialogTitle>{request.title}</DialogTitle>
-            {request.description && <DialogDescription>{request.description}</DialogDescription>}
+            {request.description && (
+              <DialogDescription>{request.description}</DialogDescription>
+            )}
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => settle(false)}>

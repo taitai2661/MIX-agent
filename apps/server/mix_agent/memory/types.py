@@ -44,7 +44,9 @@ ROLES: Final[tuple[str, ...]] = (
 )
 
 # Roles that describe *what the agent believes to be true right now* (semantic).
-SEMANTIC_ROLES: Final = frozenset({ROLE_FACT, ROLE_DECISION, ROLE_PREFERENCE, ROLE_GOAL, ROLE_CONSTRAINT, ROLE_SOLUTION})
+SEMANTIC_ROLES: Final = frozenset(
+    {ROLE_FACT, ROLE_DECISION, ROLE_PREFERENCE, ROLE_GOAL, ROLE_CONSTRAINT, ROLE_SOLUTION}
+)
 # Roles that describe *what happened* (episodic).
 EPISODIC_ROLES: Final = frozenset({ROLE_EXPERIENCE, ROLE_FAILURE, ROLE_OBSERVATION})
 # Roles that are not yet stable enough to drive action without confirmation.

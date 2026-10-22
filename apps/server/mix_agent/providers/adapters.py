@@ -112,10 +112,18 @@ def is_context_limit_error(exc):
     if isinstance(exc, ProviderContextLimitError):
         return True
     text = " ".join(str(value) for value in (exc, getattr(exc, "body", ""))).lower()
-    return any(marker in text for marker in (
-        "context length", "context window", "context limit", "maximum context",
-        "too many tokens", "input is too long", "prompt is too long",
-    ))
+    return any(
+        marker in text
+        for marker in (
+            "context length",
+            "context window",
+            "context limit",
+            "maximum context",
+            "too many tokens",
+            "input is too long",
+            "prompt is too long",
+        )
+    )
 
 
 class Adapter:
@@ -131,14 +139,25 @@ class Adapter:
         self.preset = get_preset(provider.get("preset_id"))
         # Records created before presets retain a deliberate legacy mapping.
         if not self.preset:
-            self.preset = get_preset({"openai": "openai", "anthropic": "anthropic", "gemini": "gemini",
-                                      "openrouter": "openrouter", "ollama": "ollama", "lmstudio": "lmstudio"}.get(self.kind, "custom"))
+            self.preset = get_preset(
+                {
+                    "openai": "openai",
+                    "anthropic": "anthropic",
+                    "gemini": "gemini",
+                    "openrouter": "openrouter",
+                    "ollama": "ollama",
+                    "lmstudio": "lmstudio",
+                }.get(self.kind, "custom")
+            )
         if not self.preset:
             raise ValueError("Provider preset has no transport configuration")
         self.transport_id = self.preset["transport_id"]
         self.discovery_id = self.preset["discovery_id"]
-        missing = [field["key"] for field in self.preset.get("extra_config_schema", [])
-                   if field.get("required") and not provider.get("extra_config", {}).get(field["key"])]
+        missing = [
+            field["key"]
+            for field in self.preset.get("extra_config_schema", [])
+            if field.get("required") and not provider.get("extra_config", {}).get(field["key"])
+        ]
         if missing:
             raise ProviderConfigurationError("missing_extra_config:" + ",".join(missing))
 
@@ -182,9 +201,16 @@ class Adapter:
                     model_info = details.get("model_info", {})
                     context = context_limit(details)
                     if not context and isinstance(model_info, dict):
-                        context = next((value for key, value in model_info.items()
-                                        if key.endswith(".context_length") and isinstance(value, int)
-                                        and not isinstance(value, bool)), None)
+                        context = next(
+                            (
+                                value
+                                for key, value in model_info.items()
+                                if key.endswith(".context_length")
+                                and isinstance(value, int)
+                                and not isinstance(value, bool)
+                            ),
+                            None,
+                        )
                     items.append({"id": model_id, "name": model_id, "context_length": context})
                 body = {"data": items}
             else:
@@ -206,8 +232,13 @@ class Adapter:
             modalities = item.get("architecture", {}).get("input_modalities")
             if modalities is not None:
                 caps["vision"] = "image" in modalities
-            resolved = await resolve(self.kind, model_id, item, self.preset["metadata_resolver_ids"],
-                                     preset_id=self.preset.get("id"))
+            resolved = await resolve(
+                self.kind,
+                model_id,
+                item,
+                self.preset["metadata_resolver_ids"],
+                preset_id=self.preset.get("id"),
+            )
             metadata = resolved["metadata"]
             # Documented capabilities fill only what the wire listing left
             # unknown; a probe still decides whatever both leave unanswered.
@@ -217,13 +248,19 @@ class Adapter:
                     if caps.get(key) is None:
                         caps[key] = catalog_caps.get(key)
             context = metadata.get("context_window")
-            result.append({
-                "model_id": model_id, "name": item.get("displayName", item.get("name", model_id)),
-                "capabilities": caps, "context_window": context["value"] if context else None,
-                "context_source": context["source"] if context else None,
-                "context_confidence": context["confidence"] if context else None,
-                "source": "provider_api", "overrides": {}, **resolved,
-            })
+            result.append(
+                {
+                    "model_id": model_id,
+                    "name": item.get("displayName", item.get("name", model_id)),
+                    "capabilities": caps,
+                    "context_window": context["value"] if context else None,
+                    "context_source": context["source"] if context else None,
+                    "context_confidence": context["confidence"] if context else None,
+                    "source": "provider_api",
+                    "overrides": {},
+                    **resolved,
+                }
+            )
         return result
 
     async def test_connection(self):
@@ -267,7 +304,9 @@ class Adapter:
         except EmbeddingNotSupported:
             raise
         except Exception as exc:  # every embedding failure means "rank lexically"
-            LOGGER.debug("embedding failed provider=%s model=%s error=%s", self.kind, model, type(exc).__name__)
+            LOGGER.debug(
+                "embedding failed provider=%s model=%s error=%s", self.kind, model, type(exc).__name__
+            )
             raise EmbeddingNotSupported(f"embedding unavailable: {type(exc).__name__}") from exc
         if len(vectors) != len(items):
             raise EmbeddingNotSupported("provider returned the wrong number of embeddings")
@@ -275,16 +314,18 @@ class Adapter:
 
     async def _embed_openai(self, model, texts):
         """OpenAI / OpenAI-compatible / Ollama / LM Studio: ``POST {base}/embeddings``."""
-        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0,
-                               timeout=PROVIDER_TIMEOUT) as client:
+        async with AsyncOpenAI(
+            api_key=self.key or "local", base_url=self.url, max_retries=0, timeout=PROVIDER_TIMEOUT
+        ) as client:
             response = await client.embeddings.create(model=model, input=texts)
         return self._vectors([list(item.embedding or []) for item in response.data])
 
     async def _embed_gemini(self, model, texts):
         name = model if model.startswith("models/") else "models/" + model
-        async with genai.Client(api_key=self.key,
-                                http_options={"base_url": self.url, "timeout": 120000,
-                                              "headers": self.gateway_headers()}).aio as client:
+        async with genai.Client(
+            api_key=self.key,
+            http_options={"base_url": self.url, "timeout": 120000, "headers": self.gateway_headers()},
+        ).aio as client:
             response = await client.models.batch_embed_contents(model=name, contents=texts)
         return self._vectors([list(item.values or []) for item in (response.embeddings or [])])
 
@@ -316,7 +357,9 @@ class Adapter:
                 yield event
         except Exception as exc:
             if is_context_limit_error(exc):
-                raise ProviderContextLimitError("Provider rejected the request because its context limit was exceeded") from exc
+                raise ProviderContextLimitError(
+                    "Provider rejected the request because its context limit was exceeded"
+                ) from exc
             raise
 
     async def _ollama(self, model, messages, tools, mode, settings):
@@ -343,7 +386,10 @@ class Adapter:
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         }
         message = [{"role": "user", "content": "Call mix_tool_probe now. Do not answer with text."}]
-        base = {"max_output_tokens": 64, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}
+        base = {
+            "max_output_tokens": 64,
+            "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False},
+        }
         for forced in (True, False):
             async for event in self.stream(model, message, [probe], "chat", {**base, "_tool_probe": forced}):
                 if event["kind"] == "response":
@@ -354,12 +400,17 @@ class Adapter:
 
     async def probe_vision(self, model):
         """Verify image wire support with a tiny image; never stores the response."""
-        message = [{
-            "role": "user",
-            "content": "Reply with the single word: ok",
-            "images": [VISION_DATA_URL],
-        }]
-        settings = {"max_output_tokens": 16, "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}}
+        message = [
+            {
+                "role": "user",
+                "content": "Reply with the single word: ok",
+                "images": [VISION_DATA_URL],
+            }
+        ]
+        settings = {
+            "max_output_tokens": 16,
+            "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False},
+        }
         async for event in self.stream(model, message, [], "chat", settings):
             if event["kind"] == "response":
                 return bool(event.get("message", {}).get("content"))
@@ -425,9 +476,13 @@ class Adapter:
             )
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "function", "name": "mix_tool_probe"}
-        async with AsyncOpenAI(api_key=self.key, base_url=self.url, max_retries=0,
-                               timeout=PROVIDER_TIMEOUT,
-                               default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
+        async with AsyncOpenAI(
+            api_key=self.key,
+            base_url=self.url,
+            max_retries=0,
+            timeout=PROVIDER_TIMEOUT,
+            default_headers=self.gateway_headers(settings.get("_session_id")),
+        ) as client:
             stream = await client.responses.create(**args)
             async for event in stream:
                 if event.type == "response.output_text.delta":
@@ -491,9 +546,13 @@ class Adapter:
         content, calls, finished = "", {}, False
         reasoning_details, raw_reasoning = {}, ""
         usage = None
-        async with AsyncOpenAI(api_key=self.key or "local", base_url=self.url, max_retries=0,
-                               timeout=PROVIDER_TIMEOUT,
-                               default_headers=self.gateway_headers(settings.get("_session_id"))) as client:
+        async with AsyncOpenAI(
+            api_key=self.key or "local",
+            base_url=self.url,
+            max_retries=0,
+            timeout=PROVIDER_TIMEOUT,
+            default_headers=self.gateway_headers(settings.get("_session_id")),
+        ) as client:
             stream = await self._compatible_create(client, args)
             async for chunk in stream:
                 # The usage-bearing final chunk carries no choices; capture it
@@ -573,9 +632,7 @@ class Adapter:
         keeps working while everyone else gains measurable usage.
         """
         try:
-            return await client.chat.completions.create(
-                **{**args, "stream_options": {"include_usage": True}}
-            )
+            return await client.chat.completions.create(**{**args, "stream_options": {"include_usage": True}})
         except (BadRequestError, UnprocessableEntityError) as exc:
             details = str(exc).casefold()
             if "stream_options" not in details and "include_usage" not in details:
@@ -639,9 +696,13 @@ class Adapter:
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "tool", "name": "mix_tool_probe"}
         async with (
-            AsyncAnthropic(api_key=self.key, base_url=anthropic_base_url(self.url), max_retries=0,
-                           timeout=PROVIDER_TIMEOUT,
-                           default_headers=self.gateway_headers(settings.get("_session_id"))) as client,
+            AsyncAnthropic(
+                api_key=self.key,
+                base_url=anthropic_base_url(self.url),
+                max_retries=0,
+                timeout=PROVIDER_TIMEOUT,
+                default_headers=self.gateway_headers(settings.get("_session_id")),
+            ) as client,
             client.messages.stream(**args) as stream,
         ):
             async for event in stream:
@@ -715,9 +776,14 @@ class Adapter:
             }
         native, calls, text, finished = [], [], "", False
         usage = None
-        async with genai.Client(api_key=self.key,
-                                http_options={"base_url": self.url, "timeout": 120000,
-                                               "headers": self.gateway_headers(settings.get("_session_id"))}).aio as client:
+        async with genai.Client(
+            api_key=self.key,
+            http_options={
+                "base_url": self.url,
+                "timeout": 120000,
+                "headers": self.gateway_headers(settings.get("_session_id")),
+            },
+        ).aio as client:
             async for chunk in await client.models.generate_content_stream(
                 model=model, contents=wire, config=cfg
             ):

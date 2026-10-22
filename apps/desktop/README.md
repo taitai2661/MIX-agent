@@ -1,14 +1,14 @@
 # MIX-agent Desktop
 
 Tauri 2 + Rust + React 19 で再実装されたローカル AI ワークスペース。
-[Docker 版](../docker/MIX-agent/) の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）を踏襲しつつ、**単一ユーザー・OS Keychain 連携**のネイティブアプリとして動作します。
+[Docker 版](../../compose.yaml) の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）を踏襲しつつ、**単一ユーザー・OS Keychain 連携**のネイティブアプリとして動作します。
 
-> **重要**: `desktop/` は `docker/` へ一切依存しません。両者は仕様書（[`docs/architecture.md`](docs/architecture.md) と [`docs/api-mapping.md`](docs/api-mapping.md)、[`docker/MIX-agent/docs/architecture.md`](../docker/MIX-agent/docs/architecture.md)）のみで結ばれます。
+> **重要**: `apps/desktop/` は Docker 版へ一切依存しません。両者は仕様書（[`docs/desktop/architecture.md`](../../docs/desktop/architecture.md) と [`docs/desktop/api-mapping.md`](../../docs/desktop/api-mapping.md)）のみで結ばれます。
 
 ## 構成
 
 ```
-desktop/mix-agent-desktop/
+apps/desktop/
 ├── Cargo.toml            # Cargo workspace root（app / core / providers / tools / browser / mcp / storage）
 ├── rust-toolchain.toml   # 固定ツールチェーン（stable + rustfmt / clippy）
 ├── rustfmt.toml          # rustfmt 設定
@@ -55,12 +55,12 @@ OS 別追加要件:
 ## クイックスタート
 
 ```sh
-cd desktop/mix-agent-desktop
+cd apps/desktop
 pnpm install
 pnpm tauri dev
 ```
 
-初回起動時は Tauri が Cargo workspace をビルドするため数分かかります。`tauri.conf.json` の `beforeDevCommand` で `node scripts/ensure-chromium-dir.mjs`（`mix-agent-desktop/scripts/` 配下、以下同）の後に `pnpm --filter mix-agent-desktop-ui dev` が走り、Vite dev サーバー（http://localhost:5173、`--strictPort`）に Tauri WebView が接続します。
+初回起動時は Tauri が Cargo workspace をビルドするため数分かかります。`tauri.conf.json` の `beforeDevCommand` で `node scripts/ensure-chromium-dir.mjs`（`apps/desktop/scripts/` 配下、以下同）の後に `pnpm --filter mix-agent-desktop-ui dev` が走り、Vite dev サーバー（http://localhost:5173、`--strictPort`）に Tauri WebView が接続します。
 
 `ensure-chromium-dir.mjs` は `bundle.resources` に宣言された `app/resources/chromium/` が無い場合に空ディレクトリを作成します。`tauri-build` は宣言されたリソースの欠落をビルドエラーにするため、`.gitignore` 対象のこのディレクトリが無いクリーンなチェックアウトでは `tauri dev` が通りません。dev では同梱 Chromium（約 370 MB）を取得せず、実行時にシステム Chromium へフォールバックします。
 
@@ -105,9 +105,14 @@ target triple 付きの `target/<triple>/release/bundle/` になります。
 ### リリース方式
 
 GitHub Releases へのリリースはタグプッシュまたは GitHub Actions の手動トリガーで行われます：
-- **`v*` タグ** (例: `v0.3.5`): Docker 版のイメージ公開 (`release.yml`) と並行して Desktop 版の各種インストーラー (`desktop-release.yml`) がビルドされ、単一の GitHub Release に `.dmg`, `.msi`, `.deb`, `SHA256SUMS` 等が添付されます。
+- **`v*` タグ** (例: `v0.4.0`): Docker 版のイメージ公開 (`release.yml`) と並行して Desktop 版の各種インストーラー (`desktop-release.yml`) がビルドされ、単一の GitHub Release に `.dmg`, `.msi`, `.deb`, `SHA256SUMS` 等が添付されます。
 - **`desktop-v*` タグ** (例: `desktop-v0.1.0`): Desktop 版のみを単体リリースする場合に使用します。
 - **`workflow_dispatch`**: GitHub Actions 画面から任意のタグを指定してインストーラーをビルド・リリース可能。
+
+Desktop 版の版は Docker 版とは独立したラインで、現在は `0.1.0` です。`v*` タグを
+切った場合、Release の配布物には Docker 版と同じタグが付きますが、アプリを起動して
+表示される版番号は `0.1.0` のままです（`Cargo.toml` / `tauri.conf.json` /
+`package.json` / `ui/package.json` の 4 箇所で一致することをテストで検証しています）。
 
 対応範囲は α として x64/arm64 macOS・x64 Windows・x64 Linux で、
 `aarch64-linux` / `universal-macos` / `win-arm64` は明示的に defer しています
@@ -131,9 +136,7 @@ GitHub Releases へのリリースはタグプッシュまたは GitHub Actions 
 | `pnpm test` | `rust:test` + `ui:test` |
 | `pnpm check` | `rust:check` + `ui:build` |
 
-上記はすべて `desktop/mix-agent-desktop/` で実行するスクリプトです。`desktop/` 直下には
-`test` / `lint` / `check` のみを `pnpm --dir mix-agent-desktop <task>` へ委譲する
-薄いルート `package.json` があり、CI も `desktop/mix-agent-desktop/` を
+上記はすべて `apps/desktop/` で実行するスクリプトです。CI も `apps/desktop/` を
 `working-directory` として実行します。
 
 ## ツール
@@ -191,7 +194,7 @@ auto-update は基盤（`updater.rs`、署名付きアーティファクト設�
 `desktop-release.yml`）まで用意されていますが、`tauri.conf.json` では
 `plugins.updater.active = false` / `endpoints: []` のままなので、出荷版は更新を
 確認しません。Phase 6 は「更新なしの release CI」として確定しています。
-有効化の手順は [`docs/architecture.md`](docs/architecture.md) を参照してください。
+有効化の手順は [`docs/desktop/architecture.md`](../../docs/desktop/architecture.md) を参照してください。
 
 ### 空チャットの挨拶
 
@@ -212,7 +215,7 @@ auto-update は基盤（`updater.rs`、署名付きアーティファクト設�
 cd ui && pnpm ui:test      # greeting/ を含むケース（件数は `pnpm ui:test` で確認）
 ```
 
-Docker 版も同じ方式で実装していますが、両者は [`docs/architecture.md`](docs/architecture.md)
+Docker 版も同じ方式で実装していますが、両者は [`docs/desktop/architecture.md`](../../docs/desktop/architecture.md)
 の方針どおりコードを共有せず、Desktop 版は `スレッド` / プロジェクト / 差分 /
 Browser など自分の語彙で書き下しています。
 
@@ -289,4 +292,4 @@ transcript 永続化に加え、budget 拡張・キャンセル・resume と履�
 
 ## ライセンス
 
-[Apache License 2.0](../LICENSE) / [NOTICE](../NOTICE)
+[Apache License 2.0](LICENSE) / [NOTICE](NOTICE)

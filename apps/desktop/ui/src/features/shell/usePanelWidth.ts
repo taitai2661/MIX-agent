@@ -14,8 +14,15 @@ export function readPanelWidth(
   return fallback;
 }
 
-export function usePanelWidth(key: string, fallback: number, min: number, max: number) {
-  const [width, setWidth] = useState(() => readPanelWidth(key, fallback, min, max));
+export function usePanelWidth(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+) {
+  const [width, setWidth] = useState(() =>
+    readPanelWidth(key, fallback, min, max),
+  );
   const commitWidth = (next: number) => {
     // Clamp into [min, max]: drag handlers can overshoot by a frame, and an
     // out-of-range value would fail `readPanelWidth` on the next mount and

@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-monorepo",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "private": true,
   "description": "MIX-agent — Unified Monorepo for MIX-agent (Docker/Server/Web) and Desktop",
   "packageManager": "pnpm@10.11.0",

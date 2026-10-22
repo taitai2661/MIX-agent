@@ -38,7 +38,13 @@ import { useUi } from "@/lib/ui";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton, payloadBlock } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  ListSkeleton,
+  payloadBlock,
+} from "@/components/shared";
 import { TerminalResultView } from "./TerminalResultView";
 
 function toolIcon(name: string) {
@@ -59,7 +65,12 @@ function statusOf(tool: ToolActivity): {
   tone: NonNullable<BadgeProps["tone"]>;
 } {
   if (tool.status === "running") {
-    return { label: t("実行中"), Icon: CheckCircle2, spin: true, tone: "warning" };
+    return {
+      label: t("実行中"),
+      Icon: CheckCircle2,
+      spin: true,
+      tone: "warning",
+    };
   }
   if (tool.status === "error") {
     return { label: t("失敗"), Icon: CircleAlert, spin: false, tone: "danger" };
@@ -186,7 +197,9 @@ function ToolRow({ tool }: { tool: ToolActivity }) {
             </summary>
             <div className="mt-1">
               {tool.name === "terminal" && typeof tool.result === "object" ? (
-                <TerminalResultView result={tool.result as Record<string, unknown>} />
+                <TerminalResultView
+                  result={tool.result as Record<string, unknown>}
+                />
               ) : (
                 <pre className={cn("max-h-52", payloadBlock)}>
                   {safeJson(tool.result)}
@@ -296,7 +309,11 @@ export function ActivityPanel({
     setResumingId(checkpointId);
     setResumeError(null);
     try {
-      await api.resumeRun({ id, from_checkpoint: checkpointId, unknown_actions: [] });
+      await api.resumeRun({
+        id,
+        from_checkpoint: checkpointId,
+        unknown_actions: [],
+      });
       // Track the resumed run. Without this every event it emitted was dropped
       // (`run_id !== liveRunId`) and the history query — `staleTime: Infinity`
       // — was never refetched, so the panel froze on the pre-resume snapshot.
@@ -330,12 +347,8 @@ export function ActivityPanel({
           `Card` has, has no automatic minimum size to fall back on. The cards
           were silently squashed and cut off instead of the column scrolling. */}
       <div className={PANEL_BODY}>
-        {runId && !history.isError && !timeline && (
-          <ListSkeleton rows={1} />
-        )}
-        {runId && history.isError && (
-          <ErrorBox error={history.error} />
-        )}
+        {runId && !history.isError && !timeline && <ListSkeleton rows={1} />}
+        {runId && history.isError && <ErrorBox error={history.error} />}
         {resumeError && <ErrorBox error={resumeError} />}
         {empty && (
           <EmptyState compact title={t("アクティビティはありません")} />

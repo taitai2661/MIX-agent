@@ -26,11 +26,19 @@ export function Page({
           <div className="mx-auto flex w-full max-w-content items-center gap-3">
             <div className="min-w-0 flex-1">
               {title && (
-                <h1 className="truncate text-base font-semibold tracking-tight text-fg">{title}</h1>
+                <h1 className="truncate text-base font-semibold tracking-tight text-fg">
+                  {title}
+                </h1>
               )}
-              {sub && <p className="mt-0.5 line-clamp-2 text-xs text-muted">{sub}</p>}
+              {sub && (
+                <p className="mt-0.5 line-clamp-2 text-xs text-muted">{sub}</p>
+              )}
             </div>
-            {actions && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>}
+            {actions && (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                {actions}
+              </div>
+            )}
           </div>
         </header>
       )}
@@ -80,17 +88,29 @@ export function Card({
       {(title || action) && (
         <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
           {icon && <span className="shrink-0 text-faint">{icon}</span>}
-          {title && <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{title}</h3>}
+          {title && (
+            <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">
+              {title}
+            </h3>
+          )}
           {action}
         </div>
       )}
-      <div className={cn("flex flex-col gap-3 p-4", bodyClassName)}>{children}</div>
+      <div className={cn("flex flex-col gap-3 p-4", bodyClassName)}>
+        {children}
+      </div>
     </section>
   );
 }
 
 /** Stacked group of cards, the standard body of a settings or list tab. */
-export function Section({ children, className }: { children: ReactNode; className?: string }) {
+export function Section({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return <div className={cn("flex flex-col gap-4", className)}>{children}</div>;
 }
 
@@ -118,7 +138,9 @@ export function Field({
 }) {
   const control = label ? (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted select-none">{label}</span>
+      <span className="text-xs font-medium text-muted select-none">
+        {label}
+      </span>
       {children}
     </label>
   ) : (
@@ -205,7 +227,13 @@ export const tdStrong = "px-3 py-1.5 align-middle font-medium text-fg";
 
 /** A `<kbd>` in the keyboard-hint rows. Six of these appeared verbatim across
  *  the composer's hint bar and the transcript's welcome screen. */
-export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+export function Kbd({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <kbd
       className={cn(
@@ -244,7 +272,8 @@ export function NavRow({
       className={cn(
         "flex h-row w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm",
         "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg active:bg-active",
-        selected && "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset",
+        selected &&
+          "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset",
         className,
       )}
       {...props}
@@ -297,7 +326,8 @@ export function ListRow({
       className={cn(
         "flex h-row w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 text-start",
         "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg active:bg-active",
-        selected && "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset",
+        selected &&
+          "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset",
         className,
       )}
       {...props}
@@ -348,20 +378,34 @@ export function PanelHeader({
       )}
     >
       {onBack ? (
-        <Button variant="ghost" size="icon-sm" title={t("戻る")} aria-label={t("戻る")} onClick={onBack}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title={t("戻る")}
+          aria-label={t("戻る")}
+          onClick={onBack}
+        >
           <ArrowLeft size={14} />
         </Button>
       ) : (
         <span className="shrink-0 text-faint">{icon}</span>
       )}
-      <span className={cn("min-w-0 flex-1 truncate text-fg", titleClass)} title={title}>
+      <span
+        className={cn("min-w-0 flex-1 truncate text-fg", titleClass)}
+        title={title}
+      >
         {title}
       </span>
       {trailing}
-      <Button variant="ghost" size="icon-sm" title={t("閉じる")} aria-label={t("閉じる")} onClick={onClose}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title={t("閉じる")}
+        aria-label={t("閉じる")}
+        onClick={onClose}
+      >
         <X size={14} />
       </Button>
     </div>
   );
 }
-

@@ -13,7 +13,12 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
 import { Card, Field, Row, Section } from "@/components/layout";
-import { EmptyState, ErrorBox, ListSkeleton, payloadBlock } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBox,
+  ListSkeleton,
+  payloadBlock,
+} from "@/components/shared";
 import { DeleteIconButton, SearchEmptyState } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,7 +36,8 @@ import { LocalDiscoveryCard } from "./LocalDiscoveryCard";
 import type { ProviderPresetView, ProviderView } from "@/lib/types";
 
 function ProviderIcon({ kind }: { kind: string }) {
-  const local = kind === "compatible" || kind === "ollama" || kind === "lmstudio";
+  const local =
+    kind === "compatible" || kind === "ollama" || kind === "lmstudio";
   const Icon = local ? Server : Cloud;
   return <Icon size={15} className="shrink-0 text-faint" aria-hidden="true" />;
 }
@@ -53,7 +59,8 @@ export function ProvidersPane() {
   const [editBaseUrl, setEditBaseUrl] = useState("");
   const [editApiKey, setEditApiKey] = useState("");
 
-  const selectedPreset = presets.data?.find((p) => p.slug === draftPreset) ?? null;
+  const selectedPreset =
+    presets.data?.find((p) => p.slug === draftPreset) ?? null;
 
   const createProvider = useMutation({
     mutationFn: () =>
@@ -163,8 +170,9 @@ export function ProvidersPane() {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return list;
     return list.filter((p) =>
-      [p.label, p.kind, p.base_url ?? "", p.preset ?? ""]
-        .some((v) => v.toLocaleLowerCase().includes(needle)),
+      [p.label, p.kind, p.base_url ?? "", p.preset ?? ""].some((v) =>
+        v.toLocaleLowerCase().includes(needle),
+      ),
     );
   }, [list, query]);
 
@@ -203,7 +211,14 @@ export function ProvidersPane() {
               onChange={(e) => setDraftLabel(e.target.value)}
             />
           </Field>
-          <Field label="Base URL" hint={selectedPreset?.default_url ? t("プリセットの既定値を編集できます") : undefined}>
+          <Field
+            label="Base URL"
+            hint={
+              selectedPreset?.default_url
+                ? t("プリセットの既定値を編集できます")
+                : undefined
+            }
+          >
             <Input
               placeholder="https://api.example.com/v1"
               value={draftBaseUrl}
@@ -234,7 +249,11 @@ export function ProvidersPane() {
             disabled={!draftPreset || createProvider.isPending}
             onClick={() => createProvider.mutate()}
           >
-            {createProvider.isPending ? <Spinner size={12} /> : <Plus size={12} />}
+            {createProvider.isPending ? (
+              <Spinner size={12} />
+            ) : (
+              <Plus size={12} />
+            )}
             {t("作成")}
           </Button>
         </Row>
@@ -280,7 +299,10 @@ export function ProvidersPane() {
                     {editing ? (
                       <div className="flex flex-col gap-3">
                         <Field label={t("ラベル")}>
-                          <Input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
+                          <Input
+                            value={editLabel}
+                            onChange={(e) => setEditLabel(e.target.value)}
+                          />
                         </Field>
                         <Field label="Base URL">
                           <Input
@@ -288,7 +310,10 @@ export function ProvidersPane() {
                             onChange={(e) => setEditBaseUrl(e.target.value)}
                           />
                         </Field>
-                        <Field label={t("API キー")} hint={t("空欄のままにすると既存のキーを保持します")}>
+                        <Field
+                          label={t("API キー")}
+                          hint={t("空欄のままにすると既存のキーを保持します")}
+                        >
                           <Input
                             type="password"
                             placeholder="••••••••"
@@ -297,13 +322,19 @@ export function ProvidersPane() {
                           />
                         </Field>
                         <Row align="end">
-                          <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setEditingId(null)}
+                          >
                             {t("キャンセル")}
                           </Button>
                           <Button
                             variant="primary"
                             size="sm"
-                            disabled={!editLabel.trim() || updateProvider.isPending}
+                            disabled={
+                              !editLabel.trim() || updateProvider.isPending
+                            }
                             onClick={() =>
                               updateProvider.mutate({
                                 id: p.id,
@@ -314,7 +345,9 @@ export function ProvidersPane() {
                               })
                             }
                           >
-                            {updateProvider.isPending ? <Spinner size={12} /> : null}
+                            {updateProvider.isPending ? (
+                              <Spinner size={12} />
+                            ) : null}
                             {t("保存")}
                           </Button>
                         </Row>
@@ -324,16 +357,26 @@ export function ProvidersPane() {
                         <div className="flex items-start gap-2.5">
                           <ProviderIcon kind={p.kind} />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-fg">{p.label}</div>
+                            <div className="truncate text-sm font-medium text-fg">
+                              {p.label}
+                            </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                              <Badge size="sm" className="font-mono">{p.kind}</Badge>
+                              <Badge size="sm" className="font-mono">
+                                {p.kind}
+                              </Badge>
                               {p.has_api_key ? (
-                                <Badge tone="success" size="sm">{t("保存済み")}</Badge>
+                                <Badge tone="success" size="sm">
+                                  {t("保存済み")}
+                                </Badge>
                               ) : (
-                                <Badge tone="warning" size="sm">{t("未設定")}</Badge>
+                                <Badge tone="warning" size="sm">
+                                  {t("未設定")}
+                                </Badge>
                               )}
                               {p.preset && (
-                                <span className="truncate text-2xs text-faint">{p.preset}</span>
+                                <span className="truncate text-2xs text-faint">
+                                  {p.preset}
+                                </span>
                               )}
                             </div>
                           </div>
@@ -342,12 +385,17 @@ export function ProvidersPane() {
                             <Switch
                               checked={p.enabled}
                               onCheckedChange={() => toggleEnabled(p)}
-                              aria-label={tf("{name} を有効にする", { name: p.label })}
+                              aria-label={tf("{name} を有効にする", {
+                                name: p.label,
+                              })}
                             />
                           </label>
                         </div>
 
-                        <div className={payloadBlock} title={p.base_url ?? undefined}>
+                        <div
+                          className={payloadBlock}
+                          title={p.base_url ?? undefined}
+                        >
                           {p.base_url ?? "—"}
                         </div>
 
@@ -367,7 +415,8 @@ export function ProvidersPane() {
                             disabled={syncProvider.isPending}
                             onClick={() => syncProvider.mutate(p.id)}
                           >
-                            {syncProvider.isPending && syncProvider.variables === p.id ? (
+                            {syncProvider.isPending &&
+                            syncProvider.variables === p.id ? (
                               <Spinner size={12} />
                             ) : (
                               <RefreshCw size={12} />
@@ -386,7 +435,9 @@ export function ProvidersPane() {
                             </Button>
                             <DeleteIconButton
                               title={t("プロバイダーを削除しますか？")}
-                              description={t("このプロバイダーのモデル一覧も消えます。")}
+                              description={t(
+                                "このプロバイダーのモデル一覧も消えます。",
+                              )}
                               pending={deleteProvider.isPending}
                               onDelete={() => deleteProvider.mutate(p.id)}
                             />

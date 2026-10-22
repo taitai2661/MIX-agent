@@ -31,7 +31,8 @@ function parseAnsi(raw: string): AnsiSpan[] {
         if (code === 0) {
           currentClasses = [];
         } else if (code === 1) {
-          if (!currentClasses.includes("font-bold")) currentClasses.push("font-bold");
+          if (!currentClasses.includes("font-bold"))
+            currentClasses.push("font-bold");
         } else if (code === 31 || code === 91) {
           currentClasses = currentClasses.filter((c) => !c.startsWith("text-"));
           currentClasses.push("text-danger");
@@ -72,8 +73,14 @@ export const TerminalResultView = memo(function TerminalResultView({
   const stdout = typeof res?.stdout === "string" ? res.stdout : "";
   const stderr = typeof res?.stderr === "string" ? res.stderr : "";
   const exitCode = typeof res?.exit_code === "number" ? res.exit_code : null;
-  const startedAt = typeof res?.started_at === "string" ? new Date(res.started_at).getTime() : null;
-  const finishedAt = typeof res?.finished_at === "string" ? new Date(res.finished_at).getTime() : null;
+  const startedAt =
+    typeof res?.started_at === "string"
+      ? new Date(res.started_at).getTime()
+      : null;
+  const finishedAt =
+    typeof res?.finished_at === "string"
+      ? new Date(res.finished_at).getTime()
+      : null;
 
   const durationMs =
     startedAt && finishedAt && finishedAt >= startedAt
@@ -130,7 +137,9 @@ export const TerminalResultView = memo(function TerminalResultView({
             {copied ? (
               <>
                 <Check size={12} className="text-success" />
-                <span className="text-[11px] text-success">{t("コピー済み")}</span>
+                <span className="text-[11px] text-success">
+                  {t("コピー済み")}
+                </span>
               </>
             ) : (
               <>

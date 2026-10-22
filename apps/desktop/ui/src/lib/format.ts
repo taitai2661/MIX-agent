@@ -30,9 +30,21 @@ export function threadGroup(iso: string, now: Date = new Date()): ThreadGroup {
   if (Number.isNaN(then.getTime())) return "older";
   // Calendar-aware boundaries (not fixed 24h offsets) so DST transitions
   // do not shift "yesterday"/"week" by an hour.
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const startOfYesterday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - 1,
+  ).getTime();
+  const startOfWeek = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - 6,
+  ).getTime();
   const time = then.getTime();
   if (time >= startOfToday) return "today";
   if (time >= startOfYesterday) return "yesterday";

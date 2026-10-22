@@ -77,11 +77,21 @@ export function createTimeline(runId: string): RunTimeline {
   };
 }
 
-export const TERMINAL_STATUSES = ["completed", "failed", "cancelled", "interrupted"];
+export const TERMINAL_STATUSES = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
 
 /** A Run that is still doing something, including the two states where it is
  * waiting on the user rather than on the model. */
-export const BUSY_STATUSES = ["queued", "running", "waiting_approval", "budget_extension_pending"];
+export const BUSY_STATUSES = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "budget_extension_pending",
+];
 
 export function isTerminal(status: string): boolean {
   return TERMINAL_STATUSES.includes(status);
@@ -119,7 +129,10 @@ export function optNumber(value: unknown): number | undefined {
 }
 
 /** Fold one event into the timeline. Unknown kinds are ignored. */
-export function applyRunEvent(timeline: RunTimeline, event: RunEventPayload): RunTimeline {
+export function applyRunEvent(
+  timeline: RunTimeline,
+  event: RunEventPayload,
+): RunTimeline {
   if (event.run_id !== timeline.runId) return timeline;
   const next: RunTimeline = { ...timeline };
   const d = record(event.data);
@@ -200,7 +213,11 @@ export function applyRunEvent(timeline: RunTimeline, event: RunEventPayload): Ru
       if (idx >= 0) {
         next.tools = next.tools.map((tool, i) =>
           i === idx
-            ? { ...tool, status: "error" as const, error: optString(d.reason) ?? "denied" }
+            ? {
+                ...tool,
+                status: "error" as const,
+                error: optString(d.reason) ?? "denied",
+              }
             : tool,
         );
       }
@@ -252,12 +269,15 @@ export function applyRunEvent(timeline: RunTimeline, event: RunEventPayload): Ru
         tool: optString(d.tool) ?? "tool",
         reason: optString(d.reason) ?? "",
         outstanding: Array.isArray(d.outstanding)
-          ? (d.outstanding as unknown[]).filter((x): x is string => typeof x === "string")
+          ? (d.outstanding as unknown[]).filter(
+              (x): x is string => typeof x === "string",
+            )
           : [],
       };
       break;
     case "verification_failed":
-      next.verificationFailed = optString(d.reason) ?? "an unconfirmed change was left";
+      next.verificationFailed =
+        optString(d.reason) ?? "an unconfirmed change was left";
       break;
     case "todo_list": {
       const items = Array.isArray(d.todos) ? d.todos : [];
@@ -280,15 +300,25 @@ export function applyRunEvent(timeline: RunTimeline, event: RunEventPayload): Ru
 }
 
 /** Reduce a whole batch of events (history replay or a throttled flush). */
-export function reduceRunEvents(runId: string, events: RunEventPayload[]): RunTimeline {
-  return events.reduce((timeline, event) => applyRunEvent(timeline, event), createTimeline(runId));
+export function reduceRunEvents(
+  runId: string,
+  events: RunEventPayload[],
+): RunTimeline {
+  return events.reduce(
+    (timeline, event) => applyRunEvent(timeline, event),
+    createTimeline(runId),
+  );
 }
 
 /** True when the tool is a file write that can be previewed as a diff. */
 export function isFileWrite(tool: ToolActivity): boolean {
   const args = record(tool.arguments);
   if (tool.name === "files") {
-    return args.action === "write" && typeof args.path === "string" && typeof args.content === "string";
+    return (
+      args.action === "write" &&
+      typeof args.path === "string" &&
+      typeof args.content === "string"
+    );
   }
   // `edit` is now the primary way a change happens, so it needs the same
   // preview the whole-file write already had.
@@ -317,13 +347,20 @@ export function describeToolCall(tool: ToolActivity): string {
     case "files":
       return [str("action"), str("path")].filter(Boolean).join(" · ");
     case "edit":
-      return [str("action") ?? "replace", str("path")].filter(Boolean).join(" · ");
+      return [str("action") ?? "replace", str("path")]
+        .filter(Boolean)
+        .join(" · ");
     case "glob":
       return str("pattern") ?? "glob";
     case "grep":
       return [str("pattern"), str("path")].filter(Boolean).join(" in ");
     case "terminal":
-      return [str("command"), ...(Array.isArray(args.args) ? (args.args as unknown[]).map(String) : [])]
+      return [
+        str("command"),
+        ...(Array.isArray(args.args)
+          ? (args.args as unknown[]).map(String)
+          : []),
+      ]
         .filter(Boolean)
         .join(" ");
     case "web_search":
@@ -332,7 +369,10 @@ export function describeToolCall(tool: ToolActivity): string {
     case "skill":
       return str("name") ?? "list skills";
     case "agent":
-      return [str("agent"), str("task")?.slice(0, 60)].filter(Boolean).join(": ") || "list agents";
+      return (
+        [str("agent"), str("task")?.slice(0, 60)].filter(Boolean).join(": ") ||
+        "list agents"
+      );
     case "todo":
       return "checklist";
     case "user_plan":

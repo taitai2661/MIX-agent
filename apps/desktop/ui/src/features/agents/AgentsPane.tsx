@@ -7,7 +7,12 @@ import { t, tf } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import { Card, Field, Page, Row } from "@/components/layout";
 import { DeleteIconButton } from "@/components/common";
-import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  ListSkeleton,
+} from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -23,7 +28,11 @@ export function AgentsPane() {
 
   const create = useMutation({
     mutationFn: () =>
-      api.createAgent({ name: draftName, instructions: draftInstructions, tool_ids: draftTools }),
+      api.createAgent({
+        name: draftName,
+        instructions: draftInstructions,
+        tool_ids: draftTools,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
       setDraftName("");
@@ -37,14 +46,21 @@ export function AgentsPane() {
   // `DeleteIconButton` owns the confirm dialog and renders it itself.
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteAgent(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["agents"] }),
   });
 
   const list = agents.data ?? [];
 
   return (
-    <Page title={t("エージェント")} sub={t("ツールを絞った専用エージェントを定義します。")}>
-      <Card title={`${t("エージェント")} — ${t("作成")}`} icon={<Bot size={13} />}>
+    <Page
+      title={t("エージェント")}
+      sub={t("ツールを絞った専用エージェントを定義します。")}
+    >
+      <Card
+        title={`${t("エージェント")} — ${t("作成")}`}
+        icon={<Bot size={13} />}
+      >
         <Field label={t("名前")}>
           <Input
             placeholder={t("Agent 名")}
@@ -78,7 +94,9 @@ export function AgentsPane() {
                   checked={checked}
                   onChange={(e) =>
                     setDraftTools((prev) =>
-                      e.target.checked ? [...prev, tool.id] : prev.filter((x) => x !== tool.id),
+                      e.target.checked
+                        ? [...prev, tool.id]
+                        : prev.filter((x) => x !== tool.id),
                     )
                   }
                 />
@@ -104,7 +122,11 @@ export function AgentsPane() {
       ) : agents.isError ? (
         <ErrorBox error={agents.error} />
       ) : list.length === 0 ? (
-        <EmptyState icon={<Bot size={22} />} title={t("エージェント")} sub={t("まだ登録されていません。")} />
+        <EmptyState
+          icon={<Bot size={22} />}
+          title={t("エージェント")}
+          sub={t("まだ登録されていません。")}
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {remove.isError && <ErrorBadge error={remove.error} />}
@@ -113,10 +135,14 @@ export function AgentsPane() {
               <Row align="between">
                 <span className="text-sm font-medium text-fg">{a.name}</span>
                 <Row className="flex-nowrap gap-1.5">
-                  <span className="text-xs text-faint">{relativeTime(a.updated_at)}</span>
+                  <span className="text-xs text-faint">
+                    {relativeTime(a.updated_at)}
+                  </span>
                   <DeleteIconButton
                     title={t("このエージェントを削除しますか？")}
-                    description={tf("{name} は元に戻せません。", { name: a.name })}
+                    description={tf("{name} は元に戻せません。", {
+                      name: a.name,
+                    })}
                     label={tf("{name} を削除", { name: a.name })}
                     disabled={remove.isPending}
                     pending={remove.isPending && remove.variables === a.id}
@@ -126,10 +152,14 @@ export function AgentsPane() {
               </Row>
               <Row className="gap-1">
                 {a.tool_ids.map((id) => (
-                  <Badge key={id} size="sm" className="font-mono">{id}</Badge>
+                  <Badge key={id} size="sm" className="font-mono">
+                    {id}
+                  </Badge>
                 ))}
               </Row>
-              <p className="m-0 whitespace-pre-wrap text-xs text-muted">{a.instructions}</p>
+              <p className="m-0 whitespace-pre-wrap text-xs text-muted">
+                {a.instructions}
+              </p>
             </Card>
           ))}
         </div>

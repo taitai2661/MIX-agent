@@ -1,6 +1,15 @@
 import { memo, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Columns2, FileDiff, FileText, GitBranch, Minus, Plus, Rows, Undo2 } from "lucide-react";
+import {
+  Columns2,
+  FileDiff,
+  FileText,
+  GitBranch,
+  Minus,
+  Plus,
+  Rows,
+  Undo2,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
@@ -9,7 +18,12 @@ import { useActiveRoot, useGitStatus } from "@/lib/queries";
 import { ListRow, PanelHeader, PANEL_BODY } from "@/components/layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { EmptyState, ErrorAlert, ErrorBox, ListSkeleton } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorAlert,
+  ErrorBox,
+  ListSkeleton,
+} from "@/components/shared";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { GitStatusBadge } from "@/components/ui/status";
 import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
@@ -27,7 +41,11 @@ const GitDiffBody = memo(function GitDiffBody({
   scope?: Scope;
 }) {
   const blocks = useMemo(
-    () => unified.split(/^diff --git /m).filter((b) => b.trim()).slice(0, 50),
+    () =>
+      unified
+        .split(/^diff --git /m)
+        .filter((b) => b.trim())
+        .slice(0, 50),
     [unified],
   );
   if (!unified.trim()) {
@@ -99,7 +117,10 @@ const GitDiffBlock = memo(function GitDiffBlock({
       <div className="flex items-center justify-between gap-1.5 border-b border-line pb-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
           <FileDiff size={13} className="shrink-0 text-brand" />
-          <span className="min-w-0 truncate font-mono text-xs font-medium text-fg" title={label}>
+          <span
+            className="min-w-0 truncate font-mono text-xs font-medium text-fg"
+            title={label}
+          >
             {label}
           </span>
         </div>
@@ -120,8 +141,12 @@ const GitDiffBlock = memo(function GitDiffBlock({
                 size="icon-sm"
                 disabled={busy}
                 onClick={() => void handleStage()}
-                title={scope === "staged" ? t("ステージ解除") : t("ステージに追加")}
-                aria-label={scope === "staged" ? t("ステージ解除") : t("ステージに追加")}
+                title={
+                  scope === "staged" ? t("ステージ解除") : t("ステージに追加")
+                }
+                aria-label={
+                  scope === "staged" ? t("ステージ解除") : t("ステージに追加")
+                }
               >
                 {scope === "staged" ? <Minus size={12} /> : <Plus size={12} />}
               </Button>
@@ -142,7 +167,9 @@ const GitDiffBlock = memo(function GitDiffBlock({
       </div>
       <DiffLines lines={lines} split={split} />
       {capped && (
-        <p className="text-xs text-faint">{t("大きな差分のため先頭2000行のみ表示します")}</p>
+        <p className="text-xs text-faint">
+          {t("大きな差分のため先頭2000行のみ表示します")}
+        </p>
       )}
     </div>
   );
@@ -201,9 +228,15 @@ export function ChangesPanel({
           ) : diff.isError ? (
             <ErrorAlert error={diff.error} />
           ) : !diff.data?.available ? (
-            <ErrorBox error={diff.data?.unified_diff || t("git を利用できません")} />
+            <ErrorBox
+              error={diff.data?.unified_diff || t("git を利用できません")}
+            />
           ) : diff.data.unified_diff.trim() ? (
-            <GitDiffBody unified={diff.data.unified_diff} root={root} scope={scope} />
+            <GitDiffBody
+              unified={diff.data.unified_diff}
+              root={root}
+              scope={scope}
+            />
           ) : (
             <EmptyState
               title={t("差分はありません")}
@@ -341,7 +374,10 @@ export function FilePreviewPanel() {
           <EmptyState title={t("バイナリファイル")} />
         </div>
       ) : (
-        <FilePreviewBody content={file.data.content} truncated={file.data.truncated} />
+        <FilePreviewBody
+          content={file.data.content}
+          truncated={file.data.truncated}
+        />
       )}
     </>
   );
@@ -358,27 +394,30 @@ const FilePreviewBody = memo(function FilePreviewBody({
 }) {
   const { lines, capped } = useMemo(() => {
     const all = content.split("\n");
-    return { lines: all.slice(0, PREVIEW_MAX_LINES), capped: all.length > PREVIEW_MAX_LINES };
+    return {
+      lines: all.slice(0, PREVIEW_MAX_LINES),
+      capped: all.length > PREVIEW_MAX_LINES,
+    };
   }, [content]);
   return (
-        <div className="flex min-h-0 flex-1 flex-col">
-          {(truncated || capped) && (
-            <div className="shrink-0 border-b border-line bg-warning-soft px-3 py-1.5 text-xs text-warning">
-              {t("ファイルが大きすぎるため冒頭のみ表示します")}
-            </div>
-          )}
-          <div className="min-h-0 flex-1 overflow-auto">
-            {lines.map((line, i) => (
-              <div key={i} className="flex font-mono text-xs leading-5">
-                <span className="sticky start-0 w-11 shrink-0 border-e border-line bg-inset px-1.5 text-end text-faint select-none">
-                  {i + 1}
-                </span>
-                <span className="whitespace-pre-wrap break-all px-2 text-fg">
-                  {line}
-                </span>
-              </div>
-            ))}
-          </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {(truncated || capped) && (
+        <div className="shrink-0 border-b border-line bg-warning-soft px-3 py-1.5 text-xs text-warning">
+          {t("ファイルが大きすぎるため冒頭のみ表示します")}
         </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-auto">
+        {lines.map((line, i) => (
+          <div key={i} className="flex font-mono text-xs leading-5">
+            <span className="sticky start-0 w-11 shrink-0 border-e border-line bg-inset px-1.5 text-end text-faint select-none">
+              {i + 1}
+            </span>
+            <span className="whitespace-pre-wrap break-all px-2 text-fg">
+              {line}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 });

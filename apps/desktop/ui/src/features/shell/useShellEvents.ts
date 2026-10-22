@@ -3,7 +3,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { api, listenRunEvents } from "@/lib/api";
 import { useRunEvents } from "@/lib/runStore";
-import { CONVERSATIONS_QUERY_KEY, PENDING_APPROVALS_QUERY_KEY } from "@/lib/queries";
+import {
+  CONVERSATIONS_QUERY_KEY,
+  PENDING_APPROVALS_QUERY_KEY,
+} from "@/lib/queries";
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
 import type { UpdateNotice } from "@/lib/types";
 
@@ -115,8 +118,13 @@ export function useShellEvents(handlers: {
         // Approval cards are pushed as run events, so the pending list can be
         // invalidated on the signal that actually changes it rather than only
         // re-read on a timer.
-        if (evt.kind === "tool_approval_requested" || evt.kind === "tool_approval_resolved") {
-          void queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY });
+        if (
+          evt.kind === "tool_approval_requested" ||
+          evt.kind === "tool_approval_resolved"
+        ) {
+          void queryClient.invalidateQueries({
+            queryKey: PENDING_APPROVALS_QUERY_KEY,
+          });
         }
       }),
     );
@@ -151,7 +159,10 @@ export function useShellEvents(handlers: {
     window.addEventListener("mix:new-thread", onNewThread);
     track(
       listen("scheduled_runs_started", () => {
-        if (active) void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+        if (active)
+          void queryClient.invalidateQueries({
+            queryKey: CONVERSATIONS_QUERY_KEY,
+          });
       }),
     );
     track(
@@ -253,7 +264,11 @@ export function useAppShortcuts() {
       // Esc: Close right panel if open and not in an input
       if (e.key === "Escape" && !isMod && !e.shiftKey && !e.altKey) {
         const state = useUi.getState();
-        if (state.rightPanel !== "none" && !state.paletteOpen && !state.shortcutsOpen) {
+        if (
+          state.rightPanel !== "none" &&
+          !state.paletteOpen &&
+          !state.shortcutsOpen
+        ) {
           e.preventDefault();
           rightPanelSetter("none");
           return;

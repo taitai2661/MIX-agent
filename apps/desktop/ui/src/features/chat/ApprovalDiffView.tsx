@@ -10,7 +10,10 @@ interface ApprovalDiffViewProps {
   args: Record<string, unknown> | null | undefined;
 }
 
-export function buildDiffFromArgs(toolName: string, args: Record<string, unknown>): {
+export function buildDiffFromArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+): {
   path?: string;
   unified?: string;
   command?: string;
@@ -25,8 +28,10 @@ export function buildDiffFromArgs(toolName: string, args: Record<string, unknown
       let combined = "";
       for (const edit of args.edits as Record<string, unknown>[]) {
         const p = typeof edit.path === "string" ? edit.path : path;
-        const oldStr = typeof edit.old_string === "string" ? edit.old_string : "";
-        const newStr = typeof edit.new_string === "string" ? edit.new_string : "";
+        const oldStr =
+          typeof edit.old_string === "string" ? edit.old_string : "";
+        const newStr =
+          typeof edit.new_string === "string" ? edit.new_string : "";
         combined += `--- a/${p}\n+++ b/${p}\n@@ -1,1 +1,1 @@\n`;
         for (const line of oldStr.split("\n")) {
           combined += `-${line}\n`;
@@ -104,7 +109,8 @@ export const ApprovalDiffView = memo(function ApprovalDiffView({
   }, [parsed?.unified]);
 
   const rawArgs = JSON.stringify(args, null, 2) ?? "";
-  const clippedArgs = rawArgs.length > 2000 ? `${rawArgs.slice(0, 2000)}…` : rawArgs;
+  const clippedArgs =
+    rawArgs.length > 2000 ? `${rawArgs.slice(0, 2000)}…` : rawArgs;
 
   return (
     <div className="flex flex-col gap-2">

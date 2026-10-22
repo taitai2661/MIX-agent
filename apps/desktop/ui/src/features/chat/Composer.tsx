@@ -63,7 +63,12 @@ interface ModeMeta {
 const ALL_MODES: ModeMeta[] = [
   // Labels stay as raw i18n keys; `t()` is applied at render time so a
   // locale switch updates them without re-importing the module.
-  { id: "chat", label: "チャット", hint: "素早い質疑応答", Icon: MessageSquare },
+  {
+    id: "chat",
+    label: "チャット",
+    hint: "素早い質疑応答",
+    Icon: MessageSquare,
+  },
   { id: "thinking", label: "思考", hint: "深く考えて回答", Icon: Brain },
   {
     id: "agent",
@@ -127,7 +132,8 @@ export const Composer = memo(function Composer(props: {
   const onProjectChange = props.onProjectChange ?? ctx?.onProjectChange;
   const onCreateProject = props.onCreateProject ?? ctx?.onCreateProject;
   const modelsPending = props.modelsPending ?? ctx?.modelsPending ?? false;
-  const projectsPending = props.projectsPending ?? ctx?.projectsPending ?? false;
+  const projectsPending =
+    props.projectsPending ?? ctx?.projectsPending ?? false;
   const { busy, onSend, onStop, draftKey = null } = props;
   const [draft, setDraft] = useState("");
   const {
@@ -139,7 +145,10 @@ export const Composer = memo(function Composer(props: {
     removeAttachment,
     clearAttachments,
   } = useAttachments();
-  const { listening, toggleVoiceInput, speechSupported } = useVoiceInput(draft, setDraft);
+  const { listening, toggleVoiceInput, speechSupported } = useVoiceInput(
+    draft,
+    setDraft,
+  );
   const [temporaryMode, setTemporaryMode] = useState(false);
   const [allowTools, setAllowTools] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -148,7 +157,7 @@ export const Composer = memo(function Composer(props: {
   draftRef.current = draft;
 
   const activeProject = projects.find((p) => p.id === projectId);
-  const rootPath = activeProject?.root_path ?? null;
+  const rootPath = activeProject?.rootPath ?? null;
 
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -219,7 +228,8 @@ export const Composer = memo(function Composer(props: {
     if (!match) return;
 
     const replaceStart = pos - match[1].length - 1;
-    const newText = el.value.slice(0, replaceStart) + command.prompt + textAfter;
+    const newText =
+      el.value.slice(0, replaceStart) + command.prompt + textAfter;
     setDraft(newText);
     setSlashQuery(null);
 
@@ -267,7 +277,8 @@ export const Composer = memo(function Composer(props: {
     return () => window.cancelAnimationFrame(id);
   }, []);
 
-  const selectedModel = modelId === "auto" ? undefined : models.find((m) => m.id === modelId);
+  const selectedModel =
+    modelId === "auto" ? undefined : models.find((m) => m.id === modelId);
   const isAutoModel = modelId === "auto";
   // The selected model is gone from the list — its provider was deleted, or the
   // models failed to load while an id was already set. Sending would queue a run
@@ -276,7 +287,8 @@ export const Composer = memo(function Composer(props: {
   // guard keeps an empty list from reading as "stale" on first load, which would
   // hide the real state (nothing is configured yet). `auto` is a pseudo-model
   // resolved server-side and is never stale.
-  const staleModel = !!modelId && !isAutoModel && models.length > 0 && !selectedModel;
+  const staleModel =
+    !!modelId && !isAutoModel && models.length > 0 && !selectedModel;
   // Narrow the master mode list down to what the active surface allows. When
   // the surface only allows one mode we hide the dropdown entirely below.
   const MODES =
@@ -291,7 +303,10 @@ export const Composer = memo(function Composer(props: {
   // Auto resolves to a vision-capable model when an image is attached, so the
   // warning only applies to an explicitly picked model without vision.
   const visionWarning =
-    hasImage && !isAutoModel && selectedModel != null && !selectedModel.supports_vision;
+    hasImage &&
+    !isAutoModel &&
+    selectedModel != null &&
+    !selectedModel.supports_vision;
   const sendDisabledReason = busy
     ? t("実行中です")
     : staleModel
@@ -308,7 +323,10 @@ export const Composer = memo(function Composer(props: {
     !busy &&
     !!modelId &&
     !staleModel &&
-    (!hasImage || isAutoModel || !selectedModel || selectedModel.supports_vision);
+    (!hasImage ||
+      isAutoModel ||
+      !selectedModel ||
+      selectedModel.supports_vision);
 
   // Grow the textarea with its content, bounded by the `max-h-56` class.
   // Written as a `field-sizing` opt-out rather than a pixel write: setting
@@ -325,7 +343,11 @@ export const Composer = memo(function Composer(props: {
   // Welcome chips (or external callers) pre-fill or append to the draft through
   // the typed prompt-insert store instead of threading state through ChatPane.
   useEffect(() => {
-    const onInsert = (request: { text: string; mode?: typeof mode; append?: boolean }) => {
+    const onInsert = (request: {
+      text: string;
+      mode?: typeof mode;
+      append?: boolean;
+    }) => {
       if (typeof request?.text === "string") {
         if (request.append) {
           setDraft((prev) => {
@@ -364,7 +386,6 @@ export const Composer = memo(function Composer(props: {
     setAllowTools(false);
     textareaRef.current?.focus();
   };
-
 
   const placeholder =
     mode === "agent"
@@ -462,7 +483,11 @@ export const Composer = memo(function Composer(props: {
                 setDraft(e.target.value);
               }}
               onKeyUp={(e) => {
-                if (!["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(e.key)) {
+                if (
+                  !["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(
+                    e.key,
+                  )
+                ) {
                   checkMention();
                   checkSlash();
                 }
@@ -512,8 +537,12 @@ export const Composer = memo(function Composer(props: {
                     return;
                   }
                   if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
-                    const items = document.querySelectorAll("[data-mention-item]");
-                    const active = items[mentionIndex] as HTMLElement | undefined;
+                    const items = document.querySelectorAll(
+                      "[data-mention-item]",
+                    );
+                    const active = items[mentionIndex] as
+                      | HTMLElement
+                      | undefined;
                     if (active) {
                       e.preventDefault();
                       active.click();
@@ -539,7 +568,8 @@ export const Composer = memo(function Composer(props: {
                     return;
                   }
                   if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
-                    const items = document.querySelectorAll("[data-slash-item]");
+                    const items =
+                      document.querySelectorAll("[data-slash-item]");
                     const active = items[slashIndex] as HTMLElement | undefined;
                     if (active) {
                       e.preventDefault();
@@ -576,11 +606,7 @@ export const Composer = memo(function Composer(props: {
               aria-label={t("画像を添付")}
               className="shrink-0 rounded-full"
             >
-              {attaching ? (
-                <Spinner size={18} />
-              ) : (
-                <Paperclip size={18} />
-              )}
+              {attaching ? <Spinner size={18} /> : <Paperclip size={18} />}
             </Button>
 
             <Button
@@ -592,7 +618,10 @@ export const Composer = memo(function Composer(props: {
                 const pos = el.selectionStart;
                 const textBefore = el.value.slice(0, pos);
                 const textAfter = el.value.slice(pos);
-                const prefix = textBefore.length > 0 && !textBefore.endsWith(" ") ? " @" : "@";
+                const prefix =
+                  textBefore.length > 0 && !textBefore.endsWith(" ")
+                    ? " @"
+                    : "@";
                 setDraft(textBefore + prefix + textAfter);
                 setMentionQuery("");
                 requestAnimationFrame(() => {
@@ -674,90 +703,103 @@ export const Composer = memo(function Composer(props: {
             )}
 
             <div className="ms-auto flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-2">
-            <ModelPicker
-              models={models}
-              value={modelId}
-              onChange={setModelId}
-              providers={providers}
-              pending={modelsPending}
-              temporary={temporaryMode}
-              onTemporaryChange={setTemporaryMode}
-              allowTools={allowTools}
-              onAllowToolsChange={setAllowTools}
-              className="max-w-32 min-w-0 flex-1 rounded-full sm:max-w-44 sm:flex-none"
-            />
-
-            {showProjectPicker && (
-              <ProjectMenu
-                projects={projects}
-                projectId={projectId}
-                onProjectChange={onProjectChange}
-                onCreateProject={onCreateProject}
-                pending={projectsPending}
+              <ModelPicker
+                models={models}
+                value={modelId}
+                onChange={setModelId}
+                providers={providers}
+                pending={modelsPending}
+                temporary={temporaryMode}
+                onTemporaryChange={setTemporaryMode}
+                allowTools={allowTools}
+                onAllowToolsChange={setAllowTools}
+                className="max-w-32 min-w-0 flex-1 rounded-full sm:max-w-44 sm:flex-none"
               />
-            )}
 
-            {/* Thin divider groups the text controls (left) from the voice +
-                send actions (right), so the model name, mic and send button no
-                longer read as one crowded run. */}
-            <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-line" />
-
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleVoiceInput}
-              disabled={!speechSupported}
-              title={
-                speechSupported
-                  ? t("音声入力")
-                  : `${t("音声入力")} — ${t("このブラウザは音声入力に対応していません")}`
-              }
-              aria-label={t("音声入力")}
-              aria-disabled={!speechSupported}
-              className={cn("shrink-0 rounded-full", listening && "relative")}
-            >
-              <Mic size={18} />
-              {listening && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 rounded-full border border-current opacity-60 animate-mix-pulse motion-reduce:animate-none"
+              {showProjectPicker && (
+                <ProjectMenu
+                  projects={projects}
+                  projectId={projectId}
+                  onProjectChange={onProjectChange}
+                  onCreateProject={onCreateProject}
+                  pending={projectsPending}
                 />
               )}
-            </Button>
 
-            {/* Stop and send share one `size="icon"` slot, so both glyphs are
+              {/* Thin divider groups the text controls (left) from the voice +
+                send actions (right), so the model name, mic and send button no
+                longer read as one crowded run. */}
+              <span
+                aria-hidden="true"
+                className="mx-1 h-5 w-px shrink-0 bg-line"
+              />
+
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleVoiceInput}
+                disabled={!speechSupported}
+                title={
+                  speechSupported
+                    ? t("音声入力")
+                    : `${t("音声入力")} — ${t("このブラウザは音声入力に対応していません")}`
+                }
+                aria-label={t("音声入力")}
+                aria-disabled={!speechSupported}
+                className={cn("shrink-0 rounded-full", listening && "relative")}
+              >
+                <Mic size={18} />
+                {listening && (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 rounded-full border border-current opacity-60 animate-mix-pulse motion-reduce:animate-none"
+                  />
+                )}
+              </Button>
+
+              {/* Stop and send share one `size="icon"` slot, so both glyphs are
                 the same 18px and swapping between them does not shift the row. */}
-            {busy ? (
-              <Button
-                variant="default"
-                size="icon"
-                onClick={onStop}
-                aria-label={t("停止")}
-                title={t("停止")}
-                className="shrink-0 rounded-full shadow-md"
-              >
-                <Square size={18} />
-              </Button>
-            ) : (
-              <Button
-                variant="primary"
-                size="icon"
-                disabled={!canSend}
-                onClick={submit}
-                aria-label={sendDisabledReason ? `${t("送信")} — ${sendDisabledReason}` : t("送信")}
-                aria-keyshortcuts="Enter meta+Enter ctrl+Enter"
-                title={sendDisabledReason ?? `${t("送信")} (Enter)`}
-                className="shrink-0 rounded-full shadow-md disabled:shadow-none"
-              >
-                <ArrowUp size={18} />
-              </Button>
-            )}
+              {busy ? (
+                <Button
+                  variant="default"
+                  size="icon"
+                  onClick={onStop}
+                  aria-label={t("停止")}
+                  title={t("停止")}
+                  className="shrink-0 rounded-full shadow-md"
+                >
+                  <Square size={18} />
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="icon"
+                  disabled={!canSend}
+                  onClick={submit}
+                  aria-label={
+                    sendDisabledReason
+                      ? `${t("送信")} — ${sendDisabledReason}`
+                      : t("送信")
+                  }
+                  aria-keyshortcuts="Enter meta+Enter ctrl+Enter"
+                  title={sendDisabledReason ?? `${t("送信")} (Enter)`}
+                  className="shrink-0 rounded-full shadow-md disabled:shadow-none"
+                >
+                  <ArrowUp size={18} />
+                </Button>
+              )}
             </div>
           </div>
         </div>
 
-        <div id="composer-hints" className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint">
-          <span className="hidden items-center gap-1 sm:inline-flex" aria-hidden="true">
+        <div
+          id="composer-hints"
+          className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint"
+        >
+          <span
+            className="hidden items-center gap-1 sm:inline-flex"
+            aria-hidden="true"
+          >
             <Kbd>Enter</Kbd>
             <span>{t("送信")}</span>
             <span className="mx-1 text-line">·</span>

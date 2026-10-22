@@ -33,7 +33,8 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         // Do not steal Escape from an open modal dialog / menu above us.
-        if (document.querySelector("[role='dialog'][data-modal='true']")) return;
+        if (document.querySelector("[role='dialog'][data-modal='true']"))
+          return;
         e.preventDefault();
         setRightPanel("none");
       }

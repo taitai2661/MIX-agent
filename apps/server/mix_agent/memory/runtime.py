@@ -17,8 +17,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
@@ -37,7 +35,11 @@ from mix_agent.memory.types import LIFECYCLE_DISPUTED, LIFECYCLE_SUPERSEDED
 
 LOGGER = logging.getLogger(__name__)
 
-RECALL_DEFAULTS: dict[str, float] = {"result_limit": legacy_service.RESULT_LIMIT_DEFAULT, "lexical_weight": legacy_service.LEXICAL_WEIGHT_WITHOUT_VECTOR, "recency_weight": legacy_service.RECENCY_WEIGHT_WITHOUT_VECTOR}
+RECALL_DEFAULTS: dict[str, float] = {
+    "result_limit": legacy_service.RESULT_LIMIT_DEFAULT,
+    "lexical_weight": legacy_service.LEXICAL_WEIGHT_WITHOUT_VECTOR,
+    "recency_weight": legacy_service.RECENCY_WEIGHT_WITHOUT_VECTOR,
+}
 
 
 def _query_text(task) -> str:
@@ -52,10 +54,35 @@ def _query_text(task) -> str:
     return ""
 
 
-def recall(db, owner: str, task, *, scopes=None, roles=None, include_lifecycles=None, limit=None, settings=None, debug=False, query_vector=None, **kwargs):
+def recall(
+    db,
+    owner: str,
+    task,
+    *,
+    scopes=None,
+    roles=None,
+    include_lifecycles=None,
+    limit=None,
+    settings=None,
+    debug=False,
+    query_vector=None,
+    **kwargs,
+):
     query = _query_text(task)
-    n = max(1, min(RESULT_LIMIT_MAX, int(limit or (settings or {}).get("result_limit", RESULT_LIMIT_DEFAULT) if isinstance(settings, dict) else RESULT_LIMIT_DEFAULT)))
-    found = legacy_service.search(db, owner, query, settings={"result_limit": n}, debug=debug, query_vector=query_vector)
+    n = max(
+        1,
+        min(
+            RESULT_LIMIT_MAX,
+            int(
+                limit or (settings or {}).get("result_limit", RESULT_LIMIT_DEFAULT)
+                if isinstance(settings, dict)
+                else RESULT_LIMIT_DEFAULT
+            ),
+        ),
+    )
+    found = legacy_service.search(
+        db, owner, query, scopes=scopes, settings={"result_limit": n}, debug=debug, query_vector=query_vector
+    )
     search_debug: dict = {}
     if debug:
         # `search(debug=True)` wraps its rows; unwrap so both branches below
@@ -70,21 +97,41 @@ def recall(db, owner: str, task, *, scopes=None, roles=None, include_lifecycles=
         row = db.get(Memory, item["id"])
         if not row:
             continue
-        views.append(mem_views.render(row, score=item.get("relevance"), selection_reason=item.get("selection_reason"),
-                                      link_count=counts.get(item["id"], 0)))
+        views.append(
+            mem_views.render(
+                row,
+                score=item.get("relevance"),
+                selection_reason=item.get("selection_reason"),
+                link_count=counts.get(item["id"], 0),
+            )
+        )
     if debug:
         weights = search_debug.get("weights") or {
             "lexical": LEXICAL_WEIGHT_WITH_VECTOR if query_vector else LEXICAL_WEIGHT_WITHOUT_VECTOR,
             "vector": 0.0,
             "recency": RECENCY_WEIGHT_WITHOUT_VECTOR,
         }
-        return {"memories": views, "debug": {"considered": search_debug.get("considered", len(views)), "kept": len(views), "weights": weights, "lexical": search_debug.get("lexical", LEXICAL_WEIGHT_WITH_VECTOR if query_vector else LEXICAL_WEIGHT_WITHOUT_VECTOR), "query_vector": bool(query_vector), "task_keywords": sorted(legacy_service.terms(query))[:20],
+        return {
+            "memories": views,
+            "debug": {
+                "considered": search_debug.get("considered", len(views)),
+                "kept": len(views),
+                "weights": weights,
+                "lexical": search_debug.get(
+                    "lexical", LEXICAL_WEIGHT_WITH_VECTOR if query_vector else LEXICAL_WEIGHT_WITHOUT_VECTOR
+                ),
+                "query_vector": bool(query_vector),
+                "task_keywords": sorted(legacy_service.terms(query))[:20],
                 # Honest values (spec §1): what the results actually *are*,
                 # read back from the rows instead of a hard-coded `["active"]`.
                 "scopes": sorted({item.get("scope") for item in found if item.get("scope")}),
                 "roles": sorted({item.get("role") for item in found if item.get("role")}),
-                "lifecycles": sorted({item.get("lifecycle_state") for item in found if item.get("lifecycle_state")}),
-                "lifecycle_excluded": search_debug.get("lifecycle_excluded", 0), "elapsed_ms": search_debug.get("elapsed_ms", 0.0), "budget_exhausted": False,
+                "lifecycles": sorted(
+                    {item.get("lifecycle_state") for item in found if item.get("lifecycle_state")}
+                ),
+                "lifecycle_excluded": search_debug.get("lifecycle_excluded", 0),
+                "elapsed_ms": search_debug.get("elapsed_ms", 0.0),
+                "budget_exhausted": False,
                 # §4/§5.3: the one hop search() followed, forwarded unchanged.
                 # TraceView reads `association_expansion` entries as
                 # {source, target, activation}; `stop_reason`,
@@ -98,11 +145,23 @@ def recall(db, owner: str, task, *, scopes=None, roles=None, include_lifecycles=
                 "ranking_mode": search_debug.get("ranking_mode"),
                 "association_expansion": search_debug.get("association_expansion") or [],
                 "association_expansion_count": search_debug.get("association_expansion_count", 0),
-                "association_cutoff": search_debug.get("association_cutoff")}}
+                "association_cutoff": search_debug.get("association_cutoff"),
+            },
+        }
     return views
 
 
-def evaluate(db, owner: str, *, task_id=None, observation=None, tool_call=None, plan_step=None, explicit_user=False, **kwargs) -> dict:
+def evaluate(
+    db,
+    owner: str,
+    *,
+    task_id=None,
+    observation=None,
+    tool_call=None,
+    plan_step=None,
+    explicit_user=False,
+    **kwargs,
+) -> dict:
     observation = observation or {}
     summary = (observation.get("summary") or observation.get("content") or "").strip()
     if not summary:
@@ -116,10 +175,16 @@ def evaluate(db, owner: str, *, task_id=None, observation=None, tool_call=None, 
     if len(content.strip()) < 2:
         return {"plan": [], "skipped": True, "reason": "too short"}
     normalized = legacy_service._normalize(content)
-    for row in db.scalars(select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)):
+    for row in db.scalars(
+        select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)
+    ):
         existing = legacy_service._content(row)
         if legacy_service._normalize(existing) == normalized:
-            return {"plan": [{"action": "reinforce", "memory_id": row.id, "reason": "duplicate"}], "skipped": False, "reason": "duplicate"}
+            return {
+                "plan": [{"action": "reinforce", "memory_id": row.id, "reason": "duplicate"}],
+                "skipped": False,
+                "reason": "duplicate",
+            }
     candidate = {"content": content, "gist": summary, "explicit_user": explicit_user}
     # Spec §6's extractor labels each item; keep the label (validated) so the
     # created row carries `data.role` instead of pretending everything is fact.
@@ -151,7 +216,9 @@ def apply_plan(db, owner: str, plan: list[dict], *, run_id: str | None = None) -
             # remember is stored `established` (like the synchronous path);
             # an automatic one stays `candidate` until something confirms it.
             source_run = run_id or ("explicit-user-request" if candidate.get("explicit_user") else None)
-            created = legacy_service.change(db, owner, content, source_run=source_run, pinned=False, role=candidate.get("role"))
+            created = legacy_service.change(
+                db, owner, content, source_run=source_run, pinned=False, role=candidate.get("role")
+            )
             row = db.get(Memory, created["id"])
             results.append({"action": "create", "id": row.id, "memory": mem_views.render(row)})
             logged = True  # service.change already logged CREATE (or REINFORCE on dedupe)
@@ -241,13 +308,20 @@ def supersede(db, owner: str, *, old_id: str, new_id: str | None = None, reason:
     if not old or old.owner_id != owner:
         raise ValueError("Old memory not found")
     if not new_id:
-        raise ValueError("supersede requires the replacement memory (new_id); use service.change(..., delete=True) to forget outright")
+        raise ValueError(
+            "supersede requires the replacement memory (new_id); use service.change(..., delete=True) to forget outright"
+        )
     new = db.get(Memory, new_id)
     if not new or new.owner_id != owner:
         raise ValueError("Replacement memory not found")
     if old.id == new.id:
         raise ValueError("a memory cannot supersede itself")
-    db.add(MemoryRevision(owner_id=owner, data={"memory_id": old.id, "previous": {"id": old.id, **legacy_service._trace_data(old)}}))
+    db.add(
+        MemoryRevision(
+            owner_id=owner,
+            data={"memory_id": old.id, "previous": {"id": old.id, **legacy_service._trace_data(old)}},
+        )
+    )
     old.lifecycle_state = LIFECYCLE_SUPERSEDED
     old.superseded_by_id = new.id
     # A superseded row is settled, not contested.
@@ -277,7 +351,12 @@ def dispute(db, owner: str, *, memory_id: str, conflicting_id: str, reason: str 
         raise ValueError("Conflicting memory not found")
     if row.id == other.id:
         raise ValueError("a memory cannot conflict with itself")
-    db.add(MemoryRevision(owner_id=owner, data={"memory_id": row.id, "previous": {"id": row.id, **legacy_service._trace_data(row)}}))
+    db.add(
+        MemoryRevision(
+            owner_id=owner,
+            data={"memory_id": row.id, "previous": {"id": row.id, **legacy_service._trace_data(row)}},
+        )
+    )
     row.lifecycle_state = LIFECYCLE_DISPUTED
     row.disputed_by_id = other.id
     db.flush()
@@ -285,7 +364,13 @@ def dispute(db, owner: str, *, memory_id: str, conflicting_id: str, reason: str 
     # challenger row itself is untouched, exactly as §3 says).
     legacy_service.sync_links(db, row)
     _emit_event(db, owner, None, "DISPUTE", row.id, None, other.id, reason)
-    return {"id": row.id, "a": row.id, "b": other.id, "disputed_by_id": other.id, "lifecycle": LIFECYCLE_DISPUTED}
+    return {
+        "id": row.id,
+        "a": row.id,
+        "b": other.id,
+        "disputed_by_id": other.id,
+        "lifecycle": LIFECYCLE_DISPUTED,
+    }
 
 
 def resolve_conflict(db, owner: str, *, conflict_id: str, resolution: str, prefer: str | None = None) -> dict:
@@ -306,10 +391,23 @@ def resolve_conflict(db, owner: str, *, conflict_id: str, resolution: str, prefe
         raise ValueError("prefer must be one of the two conflicting memories")
     winner_id = row.id if prefer == row.id else other_id
     loser_id = other_id if winner_id == row.id else row.id
-    return legacy_service.resolve_conflict(db, owner, winner_id=winner_id, loser_id=loser_id, resolution=resolution)
+    return legacy_service.resolve_conflict(
+        db, owner, winner_id=winner_id, loser_id=loser_id, resolution=resolution
+    )
 
 
-def attach_evidence(db, owner: str, memory_id: str, *, kind: str = "observation", ref: str = "", summary: str = "", data=None, captured_at=None, confidence=None) -> dict:
+def attach_evidence(
+    db,
+    owner: str,
+    memory_id: str,
+    *,
+    kind: str = "observation",
+    ref: str = "",
+    summary: str = "",
+    data=None,
+    captured_at=None,
+    confidence=None,
+) -> dict:
     row = db.get(Memory, memory_id)
     if not row or row.owner_id != owner:
         raise ValueError("Memory not found")
@@ -318,7 +416,17 @@ def attach_evidence(db, owner: str, memory_id: str, *, kind: str = "observation"
 
 
 def group_for_context(memories: list[dict]) -> dict[str, list[dict]]:
-    grouped: dict[str, list[dict]] = {"all": list(memories or []), "decisions": [], "failures": [], "facts": list(memories or []), "preferences": [], "goals": [], "questions": [], "experiences": [], "other": []}
+    grouped: dict[str, list[dict]] = {
+        "all": list(memories or []),
+        "decisions": [],
+        "failures": [],
+        "facts": list(memories or []),
+        "preferences": [],
+        "goals": [],
+        "questions": [],
+        "experiences": [],
+        "other": [],
+    }
     return grouped
 
 
@@ -342,15 +450,32 @@ def compact_for_context(memories: list[dict], token_budget: int = 1500) -> list[
 def _next_candidate_index(db, run_id: str | None) -> int:
     if not run_id:
         return 0
-    stored = db.scalar(select(func.count()).select_from(MemoryActionEvent).where(MemoryActionEvent.run_id == run_id))
+    stored = db.scalar(
+        select(func.count()).select_from(MemoryActionEvent).where(MemoryActionEvent.run_id == run_id)
+    )
     pending = sum(1 for obj in db.new if isinstance(obj, MemoryActionEvent) and obj.run_id == run_id)
     return int(stored or 0) + pending
 
 
-def _emit_event(db, owner: str, run_id: str | None, action: str, memory_id: str | None, before, after, reason: str) -> None:
+def _emit_event(
+    db, owner: str, run_id: str | None, action: str, memory_id: str | None, before, after, reason: str
+) -> None:
     # `after` is the id the action moved *to* (§3 transitions name a second
     # row: SUPERSEDE's replacement, DISPUTE's counterpart, RESOLVE's winner).
     # Recording it means a two-row transition can be read back from the event
     # log alone, without re-deriving it from the rows.
     related = after if isinstance(after, str) and after else None
-    db.add(MemoryActionEvent(owner_id=owner, run_id=run_id, candidate_index=_next_candidate_index(db, run_id), data={"action": action, "memory_id": memory_id, "related_memory_id": related, "reason": (reason or "")[:400], "runtime": "chatgpt_flat"}))
+    db.add(
+        MemoryActionEvent(
+            owner_id=owner,
+            run_id=run_id,
+            candidate_index=_next_candidate_index(db, run_id),
+            data={
+                "action": action,
+                "memory_id": memory_id,
+                "related_memory_id": related,
+                "reason": (reason or "")[:400],
+                "runtime": "chatgpt_flat",
+            },
+        )
+    )

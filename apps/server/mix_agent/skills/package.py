@@ -145,7 +145,11 @@ def parse_archive(raw: bytes) -> list[dict]:
             entries[name] = bundle.read(info)
 
     roots = sorted(
-        {str(PurePosixPath(name).parent) for name in entries if PurePosixPath(name).name.lower() == "skill.md"},
+        {
+            str(PurePosixPath(name).parent)
+            for name in entries
+            if PurePosixPath(name).name.lower() == "skill.md"
+        },
         key=lambda value: value.count("/"),
     )
     if not roots:
@@ -170,7 +174,7 @@ def parse_archive(raw: bytes) -> list[dict]:
         for name, payload in entries.items():
             if not name.startswith(prefix) or name == prefix + "SKILL.md":
                 continue
-            relative = name[len(prefix):]
+            relative = name[len(prefix) :]
             if relative.lower() == "skill.md":
                 continue
             total += len(payload)

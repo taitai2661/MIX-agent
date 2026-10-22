@@ -3,16 +3,34 @@
 /// only the scroll container, the empty-state greeting and the live block)
 /// so the list file stays focused.
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, FileText, MessageSquare, Pencil, Sparkles, Wrench } from "lucide-react";
+import {
+  ChevronRight,
+  FileText,
+  MessageSquare,
+  Pencil,
+  Sparkles,
+  Wrench,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { reduceRunEvents } from "@/lib/runEvents";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
-import { displayModelName, relativeTime, stripLeakedMarkup } from "@/lib/format";
+import {
+  displayModelName,
+  relativeTime,
+  stripLeakedMarkup,
+} from "@/lib/format";
 import type { MessageView, ModelView, RunView } from "@/lib/types";
 import { Reasoning } from "./LiveBlock";
 import { InlineToolItem } from "./InlineToolItem";
@@ -127,7 +145,13 @@ export const MessageItem = memo(function MessageItem({
   );
 });
 
-function MessageToolsAccordion({ runId, count }: { runId: string; count: number }) {
+function MessageToolsAccordion({
+  runId,
+  count,
+}: {
+  runId: string;
+  count: number;
+}) {
   const [open, setOpen] = useState(false);
   const events = useQuery({
     queryKey: ["run_events", runId],
@@ -149,7 +173,11 @@ function MessageToolsAccordion({ runId, count }: { runId: string; count: number 
     >
       <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-1.5 transition-colors hover:bg-hover">
         <div className="flex items-center gap-1.5 text-muted">
-          <Wrench size={12} className="shrink-0 text-faint" aria-hidden="true" />
+          <Wrench
+            size={12}
+            className="shrink-0 text-faint"
+            aria-hidden="true"
+          />
           <span className="font-medium text-fg">{t("実行されたツール")}</span>
           <Badge tone="neutral" size="sm">
             {count}

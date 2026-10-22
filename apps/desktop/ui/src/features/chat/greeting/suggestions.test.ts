@@ -26,8 +26,10 @@ function sequence(values: number[]): () => number {
   return () => values[index++ % values.length];
 }
 
-const all = (s: ReturnType<typeof signals>, random = sequence([0.1, 0.9, 0.5, 0.3, 0.7])) =>
-  suggestionsFor(s, [], 30, random).map((item) => item.id);
+const all = (
+  s: ReturnType<typeof signals>,
+  random = sequence([0.1, 0.9, 0.5, 0.3, 0.7]),
+) => suggestionsFor(s, [], 30, random).map((item) => item.id);
 
 describe("提案の生成", () => {
   it("既定で 3 つを返す", () => {
@@ -35,12 +37,19 @@ describe("提案の生成", () => {
   });
 
   it("同じ提案を重複して返さない", () => {
-    const ids = suggestionsFor(signals(), [], 20, sequence([0.1, 0.9, 0.5, 0.3, 0.7])).map((item) => item.id);
+    const ids = suggestionsFor(
+      signals(),
+      [],
+      20,
+      sequence([0.1, 0.9, 0.5, 0.3, 0.7]),
+    ).map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("直近で使った提案を避ける", () => {
-    const recent = suggestionsFor(signals(), [], 3, () => 0).map((item) => item.id);
+    const recent = suggestionsFor(signals(), [], 3, () => 0).map(
+      (item) => item.id,
+    );
     const next = suggestionsFor(signals(), recent, 3, () => 0);
     for (const item of next) expect(recent).not.toContain(item.id);
   });
@@ -55,7 +64,12 @@ describe("提案の生成", () => {
   });
 
   it("ラベルとプロンプトに英語訳がある", () => {
-    for (const item of suggestionsFor(signals(), [], 30, sequence([0.1, 0.9]))) {
+    for (const item of suggestionsFor(
+      signals(),
+      [],
+      30,
+      sequence([0.1, 0.9]),
+    )) {
       expect(greetingEn[suggestionLabelId(item.id)], item.id).toBeTruthy();
       expect(greetingEn[suggestionPromptId(item.id)], item.id).toBeTruthy();
     }
@@ -69,7 +83,9 @@ describe("提案の生成", () => {
   it("Desktop-Agent では思考モードの指定を外す", () => {
     const agent = signals({ surface: "desktop-agent" });
     const items = suggestionsFor(agent, [], 30, sequence([0, 0]));
-    expect(items.find((item) => item.id === "sg-explain")?.mode).toBeUndefined();
+    expect(
+      items.find((item) => item.id === "sg-explain")?.mode,
+    ).toBeUndefined();
   });
 
   it("Desktop-Agent  では差分・テスト・ブラウザの提案を出す", () => {
@@ -88,17 +104,26 @@ describe("提案の生成", () => {
   it("プロジェクトの有無で提案を切り替える", () => {
     expect(all(signals({ projectActive: true }))).toContain("sg-instructions");
     expect(all(signals({ projectActive: false }))).toContain("sg-project");
-    expect(all(signals({ projectActive: false }))).not.toContain("sg-instructions");
+    expect(all(signals({ projectActive: false }))).not.toContain(
+      "sg-instructions",
+    );
   });
 
   it("昨日の活動があれば継続の提案を候補に入れる", () => {
     const now = new Date(2026, 5, 10, 14, 0);
-    const ids = all(signals({ now, lastMessageAt: new Date(now.getTime() - 30 * 3_600_000).getTime() }));
+    const ids = all(
+      signals({
+        now,
+        lastMessageAt: new Date(now.getTime() - 30 * 3_600_000).getTime(),
+      }),
+    );
     expect(ids).toContain("sg-resume");
   });
 
   it("スレッドがゼロなら最初の一言を提案する", () => {
-    expect(all(signals({ conversationCount: 0, lastMessageAt: null }))).toContain("sg-first");
+    expect(
+      all(signals({ conversationCount: 0, lastMessageAt: null })),
+    ).toContain("sg-first");
   });
 
   it("スレッドが多いなら整理の提案を候補に入れる", () => {
@@ -106,11 +131,18 @@ describe("提案の生成", () => {
   });
 
   it("夜には作業ログの提案を出す", () => {
-    expect(all(signals({ now: new Date(2026, 5, 10, 23, 0) }))).toContain("sg-daylog");
+    expect(all(signals({ now: new Date(2026, 5, 10, 23, 0) }))).toContain(
+      "sg-daylog",
+    );
   });
 
   it("ラベルとプロンプトが空でない", () => {
-    for (const item of suggestionsFor(signals(), [], 30, sequence([0.1, 0.9]))) {
+    for (const item of suggestionsFor(
+      signals(),
+      [],
+      30,
+      sequence([0.1, 0.9]),
+    )) {
       expect(item.label.length, item.id).toBeGreaterThan(2);
       expect(item.prompt.length, item.id).toBeGreaterThan(8);
     }

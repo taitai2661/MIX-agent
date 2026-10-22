@@ -134,7 +134,11 @@ export function ToggleRow({
     <div className={cn("flex flex-col gap-1", className)}>
       <label className="flex items-center justify-between gap-4 text-sm text-fg">
         <span>{label}</span>
-        <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+        <Switch
+          checked={checked}
+          onCheckedChange={onChange}
+          disabled={disabled}
+        />
       </label>
       {hint && <p className="m-0 text-xs text-muted">{hint}</p>}
     </div>
@@ -142,12 +146,28 @@ export function ToggleRow({
 }
 
 /** Section heading inside a pane body; one size everywhere. */
-export function SectionHeading({ children, className }: { children: ReactNode; className?: string }) {
-  return <h2 className={cn("text-sm font-semibold text-fg", className)}>{children}</h2>;
+export function SectionHeading({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <h2 className={cn("text-sm font-semibold text-fg", className)}>
+      {children}
+    </h2>
+  );
 }
 
 /** Compact count chip for nav labels, panel headers and table titles. */
-export function CountBadge({ count, label }: { count: number; label?: string }) {
+export function CountBadge({
+  count,
+  label,
+}: {
+  count: number;
+  label?: string;
+}) {
   return (
     <Badge tone="neutral" size="sm" className="font-mono" title={label}>
       {count}

@@ -33,7 +33,9 @@ const PROVIDER: ProviderView = {
 };
 
 function wrapper({ children }: { children: ReactNode }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
@@ -83,14 +85,20 @@ describe("useOnboardingGate", () => {
   });
 
   it("does not show once the user has finished or deferred", async () => {
-    mockedApi.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, onboarding_completed: true });
+    mockedApi.getSettings.mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      onboarding_completed: true,
+    });
     const { result } = await settled(renderGate());
     expect(result.current.show).toBe(false);
   });
 
   it("reopens from Settings even when a provider exists", async () => {
     mockedApi.listProviders.mockResolvedValue([PROVIDER]);
-    mockedApi.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, onboarding_completed: true });
+    mockedApi.getSettings.mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      onboarding_completed: true,
+    });
     const { result } = await settled(renderGate());
     expect(result.current.show).toBe(false);
 
@@ -106,7 +114,9 @@ describe("useOnboardingGate", () => {
 
     act(() => result.current.complete());
 
-    await waitFor(() => expect(mockedApi.updateSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockedApi.updateSettings).toHaveBeenCalledTimes(1),
+    );
     const written = mockedApi.updateSettings.mock.calls[0][0];
     expect(written.onboarding_completed).toBe(true);
     // The document is replaced wholesale on save, so the rest of it has to

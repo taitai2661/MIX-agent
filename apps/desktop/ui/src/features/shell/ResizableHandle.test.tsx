@@ -37,7 +37,10 @@ describe("ResizableHandle", () => {
       />,
     );
 
-    fireEvent.keyDown(screen.getByRole("separator"), { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(screen.getByRole("separator"), {
+      key: "ArrowRight",
+      shiftKey: true,
+    });
 
     expect(onChange).toHaveBeenCalledWith(320);
     expect(onCommit).toHaveBeenCalledWith(320);

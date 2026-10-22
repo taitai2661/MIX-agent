@@ -39,21 +39,27 @@ def upgrade():
     # Backfill from JSONB, then gist fallback. Works on postgres + sqlite (tests use postgres).
     try:
         if bind.dialect.name == "postgresql":
-            bind.execute(sa.text(
-                "UPDATE memories SET content = COALESCE(NULLIF(data->>'content',''), NULLIF(data->>'gist',''), content, '') "
-                "WHERE COALESCE(content,'') = ''"
-            ))
+            bind.execute(
+                sa.text(
+                    "UPDATE memories SET content = COALESCE(NULLIF(data->>'content',''), NULLIF(data->>'gist',''), content, '') "
+                    "WHERE COALESCE(content,'') = ''"
+                )
+            )
             # keep minimal data mirror for old readers
-            bind.execute(sa.text(
-                "UPDATE memories SET data = jsonb_set(COALESCE(data,'{}'::jsonb), '{content}', to_jsonb(content), true) "
-                "WHERE (data->>'content') IS DISTINCT FROM content"
-            ))
+            bind.execute(
+                sa.text(
+                    "UPDATE memories SET data = jsonb_set(COALESCE(data,'{}'::jsonb), '{content}', to_jsonb(content), true) "
+                    "WHERE (data->>'content') IS DISTINCT FROM content"
+                )
+            )
         else:
-            bind.execute(sa.text(
-                "UPDATE memories SET content = COALESCE(json_extract(data,'$.content'), content, '') "
-                "WHERE COALESCE(content,'') = ''"
-            ))
-    except Exception:
+            bind.execute(
+                sa.text(
+                    "UPDATE memories SET content = COALESCE(json_extract(data,'$.content'), content, '') "
+                    "WHERE COALESCE(content,'') = ''"
+                )
+            )
+    except Exception:  # noqa: BLE001, S110 - best-effort backfill; a missing column must not abort the upgrade
         pass
 
     # 2. drop unused tables
@@ -61,22 +67,37 @@ def upgrade():
         try:
             if table in inspector.get_table_names():
                 op.drop_table(table)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - best-effort table drop; a missing table must not abort the upgrade
             pass
 
     # 3. drop taxonomy columns (guarded, re-runnable)
     inspector = sa.inspect(bind)
-    mem_cols = {c["name"] for c in inspector.get_columns("memories")} if "memories" in inspector.get_table_names() else set()
+    mem_cols = (
+        {c["name"] for c in inspector.get_columns("memories")}
+        if "memories" in inspector.get_table_names()
+        else set()
+    )
     for col in (
-        "lifecycle_state", "role", "scope", "source_kind", "confidence", "salience",
-        "strength", "activation_count", "last_activated_at", "last_reinforced_at",
-        "task_id", "superseded_by_id", "disputed_by_id", "verification",
+        "lifecycle_state",
+        "role",
+        "scope",
+        "source_kind",
+        "confidence",
+        "salience",
+        "strength",
+        "activation_count",
+        "last_activated_at",
+        "last_reinforced_at",
+        "task_id",
+        "superseded_by_id",
+        "disputed_by_id",
+        "verification",
     ):
         if col in mem_cols:
             try:
                 with op.batch_alter_table("memories") as batch:
                     batch.drop_column(col)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - best-effort column drop; a missing column must not abort the upgrade
                 pass
 
     # 4. index for ChatGPT-style recent-first listing
@@ -88,8 +109,10 @@ def upgrade():
             op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             # trigram on flat content column (old index was on data->>'content')
             op.execute("DROP INDEX IF EXISTS memory_text_trgm")
-            op.execute("CREATE INDEX IF NOT EXISTS memory_content_trgm ON memories USING gin (content gin_trgm_ops)")
-    except Exception:
+            op.execute(
+                "CREATE INDEX IF NOT EXISTS memory_content_trgm ON memories USING gin (content gin_trgm_ops)"
+            )
+    except Exception:  # noqa: BLE001, S110 - best-effort index step; a missing index must not abort the upgrade
         pass
 
 

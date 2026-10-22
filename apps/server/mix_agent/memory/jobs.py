@@ -82,12 +82,19 @@ def enqueue(db, run, user_content, assistant_content, activated_ids):
     existing = db.scalar(select(MemoryProcessingJob).where(MemoryProcessingJob.run_id == run.id))
     if existing:
         return existing
-    job = MemoryProcessingJob(owner_id=run.owner_id, run_id=run.id, status="pending", data={
-        "user_content": service.redact_sensitive(user_content[:20000]), "assistant_content": service.redact_sensitive(assistant_content[:10000]),
-        "next_attempt_at": now().isoformat(),
-    })
+    job = MemoryProcessingJob(
+        owner_id=run.owner_id,
+        run_id=run.id,
+        status="pending",
+        data={
+            "user_content": service.redact_sensitive(user_content[:20000]),
+            "assistant_content": service.redact_sensitive(assistant_content[:10000]),
+            "next_attempt_at": now().isoformat(),
+        },
+    )
     db.add(job)
     from mix_agent.wakeups import mark
+
     mark(db, "memory")
     return job
 
@@ -113,7 +120,9 @@ def _parse_payload(raw):
         if isinstance(item, str):
             item = {"content": item}
         if not isinstance(item, dict):
-            raise ValueError("invalid memory item")
+            # A malformed extractor payload is bad *data*, not a programming type
+            # error: the retry path is shared with the other parse failures.
+            raise ValueError("invalid memory item")  # noqa: TRY004
         content = str(item.get("content") or item.get("gist") or "").strip()
         if not content:
             continue
@@ -179,9 +188,16 @@ async def _evaluate(job, run, provider, key, existing):
 
         async with asyncio.timeout(EVALUATE_TIMEOUT):
             async for event in Adapter(provider.data, key).stream(
-                snapshot["model_id"], messages, [], "chat",
-                {"max_output_tokens": 800, "temperature": 0, "_session_id": run.conversation_id,
-                 "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False}},
+                snapshot["model_id"],
+                messages,
+                [],
+                "chat",
+                {
+                    "max_output_tokens": 800,
+                    "temperature": 0,
+                    "_session_id": run.conversation_id,
+                    "_resolved_reasoning": {"policy": "off", "request": {}, "summary": False},
+                },
             ):
                 if event["kind"] == "response":
                     content = event["message"]["content"]
@@ -205,9 +221,11 @@ def _reinforce_target(db, owner, content):
     query_terms = service.terms(content)
     if not query_terms:
         return None
-    rows = list(db.scalars(
-        select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)
-    ))
+    rows = list(
+        db.scalars(
+            select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)
+        )
+    )
     normalized = service._normalize(content)
     matching = []
     for row in rows:
@@ -215,11 +233,19 @@ def _reinforce_target(db, owner, content):
             return row
         if query_terms & service.terms(service._content(row)):
             matching.append(row)
-    ranked = service.rank(query_terms, (
-        (service.terms(service._content(row)), row.updated_at or row.created_at,
-         mem_embeddings.row_vector(row.data), row)
-        for row in matching
-    ), limit=1)
+    ranked = service.rank(
+        query_terms,
+        (
+            (
+                service.terms(service._content(row)),
+                row.updated_at or row.created_at,
+                mem_embeddings.row_vector(row.data),
+                row,
+            )
+            for row in matching
+        ),
+        limit=1,
+    )
     return ranked[0]["payload"] if ranked else None
 
 
@@ -294,7 +320,12 @@ async def process_one(job_id):
             return
         run = db.get(Run, job.run_id)
         settings = db.get(Settings, "settings")
-        if not run or not settings or settings.owner_id != job.owner_id or settings.data.get("memory_auto_formation", True) is False:
+        if (
+            not run
+            or not settings
+            or settings.owner_id != job.owner_id
+            or settings.data.get("memory_auto_formation", True) is False
+        ):
             job.status = "skipped"
             db.commit()
             return
@@ -311,7 +342,11 @@ async def process_one(job_id):
             current = db.get(MemoryProcessingJob, job_id)
             touched = _apply(db, current, candidates)
             current.status, current.updated_at = "completed", now()
-            current.data = {**current.data, "candidate_count": len(candidates), "completed_at": now().isoformat()}
+            current.data = {
+                **current.data,
+                "candidate_count": len(candidates),
+                "completed_at": now().isoformat(),
+            }
             db.commit()
             # Vectors are what makes these rows retrievable semantically. One
             # batched call; a provider without an embeddings endpoint simply
@@ -327,7 +362,11 @@ async def process_one(job_id):
             current = db.get(MemoryProcessingJob, job_id)
             if current and current.status == "running":
                 current.status, current.updated_at = "retrying", now()
-                current.data = {**current.data, "error": "cancelled", "next_attempt_at": (now() + timedelta(seconds=30)).isoformat()}
+                current.data = {
+                    **current.data,
+                    "error": "cancelled",
+                    "next_attempt_at": (now() + timedelta(seconds=30)).isoformat(),
+                }
                 db.commit()
         raise
     except Exception as exc:  # noqa: BLE001 - provider and schema failures share the durable retry path
@@ -337,12 +376,17 @@ async def process_one(job_id):
                 return
             retry = current.attempts < 3
             current.status, current.updated_at = ("retrying" if retry else "failed"), now()
-            current.data = {**current.data, "error": type(exc).__name__, "next_attempt_at": (now() + timedelta(seconds=30 * current.attempts)).isoformat()}
+            current.data = {
+                **current.data,
+                "error": type(exc).__name__,
+                "next_attempt_at": (now() + timedelta(seconds=30 * current.attempts)).isoformat(),
+            }
             db.commit()
 
 
 async def scheduler():
     from mix_agent.wakeups import memory_jobs as wakeup
+
     seen = wakeup.revision
     while True:
         delay = 30.0
@@ -351,7 +395,14 @@ async def scheduler():
                 # §3's daily decay runs in the same worker loop as the
                 # extraction jobs: same process, same "once a day" marker.
                 daily_decay(db)
-                jobs = list(db.scalars(select(MemoryProcessingJob).where(MemoryProcessingJob.status.in_(("pending", "retrying"))).order_by(MemoryProcessingJob.created_at).limit(4)))
+                jobs = list(
+                    db.scalars(
+                        select(MemoryProcessingJob)
+                        .where(MemoryProcessingJob.status.in_(("pending", "retrying")))
+                        .order_by(MemoryProcessingJob.created_at)
+                        .limit(4)
+                    )
+                )
             due = []
             for job in jobs:
                 next_at = datetime_from_iso(job.data.get("next_attempt_at"))

@@ -17,25 +17,59 @@ def _safe_text(value: Any, limit: int = 2000) -> str:
     return text
 
 
-def recall(db, owner: str, *, query: str = "", task: dict | None = None, limit: int = 8, query_vector: list[float] | None = None, **kwargs) -> dict:
+def recall(
+    db,
+    owner: str,
+    *,
+    query: str = "",
+    task: dict | None = None,
+    limit: int = 8,
+    query_vector: list[float] | None = None,
+    scopes: list[str] | None = None,
+    **kwargs,
+) -> dict:
     if not task and query:
         task = {"text": query, "kind": "tool_recall"}
     elif not task:
         task = {"text": "", "kind": "tool_recall"}
-    memories = mem_runtime.recall(db, owner, task, limit=max(1, min(RESULT_LIMIT_MAX, int(limit or 8))), query_vector=query_vector)
-    return {"memories": [mem_views.render_compact(m) for m in memories], "grouped": {"all": [mem_views.render_compact(m) for m in memories]}, "total": len(memories)}
+    memories = mem_runtime.recall(
+        db,
+        owner,
+        task,
+        limit=max(1, min(RESULT_LIMIT_MAX, int(limit or 8))),
+        scopes=scopes,
+        query_vector=query_vector,
+    )
+    return {
+        "memories": [mem_views.render_compact(m) for m in memories],
+        "grouped": {"all": [mem_views.render_compact(m) for m in memories]},
+        "total": len(memories),
+    }
 
 
 def remember(db, owner: str, *, content: str, explicit_user: bool = False, **kwargs) -> dict:
     if not content or not content.strip():
         raise ValueError("memory content is empty")
-    evaluation = mem_runtime.evaluate(db, owner, observation={"summary": _safe_text(content, 600), "content": _safe_text(content, 4000)}, explicit_user=explicit_user)
+    evaluation = mem_runtime.evaluate(
+        db,
+        owner,
+        observation={"summary": _safe_text(content, 600), "content": _safe_text(content, 4000)},
+        explicit_user=explicit_user,
+    )
     applied = mem_runtime.apply_plan(db, owner, evaluation.get("plan") or [])
     db.flush()
     return {"decision": evaluation.get("reason"), "applied": applied}
 
 
-def forget(db, owner: str, *, memory_id: str | None = None, query: str | None = None, reason: str = "explicit forget", **kwargs) -> dict:
+def forget(
+    db,
+    owner: str,
+    *,
+    memory_id: str | None = None,
+    query: str | None = None,
+    reason: str = "explicit forget",
+    **kwargs,
+) -> dict:
     target_id = memory_id or kwargs.get("id")
     if not target_id:
         if not query:

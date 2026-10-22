@@ -5,8 +5,18 @@ import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
 import { useSearch } from "@/lib/useSearch";
 import { Card, Field, Row, Section } from "@/components/layout";
-import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton } from "@/components/shared";
-import { DeleteIconButton, SearchEmptyState, SearchForm, SectionHeading } from "@/components/common";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  ListSkeleton,
+} from "@/components/shared";
+import {
+  DeleteIconButton,
+  SearchEmptyState,
+  SearchForm,
+  SectionHeading,
+} from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/dialog";
@@ -21,7 +31,10 @@ import { AssociationsView } from "./AssociationsView";
  * a meaning of its own instead of falling through one `active`-or-else
  * branch. The label itself stays the row's real `lifecycle_state`.
  */
-const LIFECYCLE_TONE: Record<string, "success" | "warning" | "danger" | "neutral" | "info"> = {
+const LIFECYCLE_TONE: Record<
+  string,
+  "success" | "warning" | "danger" | "neutral" | "info"
+> = {
   active: "success",
   established: "success",
   candidate: "info",
@@ -33,8 +46,18 @@ const LIFECYCLE_TONE: Record<string, "success" | "warning" | "danger" | "neutral
 
 /** §2 `roles`, in §2's order — the values the form is allowed to write. */
 const ROLES = [
-  "fact", "decision", "preference", "goal", "constraint", "experience",
-  "failure", "solution", "observation", "hypothesis", "question", "unknown",
+  "fact",
+  "decision",
+  "preference",
+  "goal",
+  "constraint",
+  "experience",
+  "failure",
+  "solution",
+  "observation",
+  "hypothesis",
+  "question",
+  "unknown",
 ] as const;
 
 /** §2 `scopes`, in §2's order. */
@@ -42,14 +65,19 @@ const SCOPES = ["working", "task", "project", "user", "world"] as const;
 
 export function MemoryPane() {
   const queryClient = useQueryClient();
-  const memories = useQuery({ queryKey: ["memories"], queryFn: api.listMemories });
+  const memories = useQuery({
+    queryKey: ["memories"],
+    queryFn: api.listMemories,
+  });
   const [draftTitle, setDraftTitle] = useState("");
   const [draftBody, setDraftBody] = useState("");
   const [draftRole, setDraftRole] = useState("fact");
   const [draftScope, setDraftScope] = useState("user");
   const search = useSearch((q, n) => api.searchMemories(q, n), 20);
   /** The §4 screen currently open, and the row a pointer badge jumped to. */
-  const [associationsFor, setAssociationsFor] = useState<MemoryView | null>(null);
+  const [associationsFor, setAssociationsFor] = useState<MemoryView | null>(
+    null,
+  );
   const [focusId, setFocusId] = useState<string | null>(null);
 
   const rows = useMemo(() => memories.data ?? [], [memories.data]);
@@ -78,12 +106,17 @@ export function MemoryPane() {
   };
 
   const create = useMutation({
-    mutationFn: () => api.createMemory({
-      title: draftTitle, body: draftBody, role: draftRole, scope: draftScope,
-    }),
+    mutationFn: () =>
+      api.createMemory({
+        title: draftTitle,
+        body: draftBody,
+        role: draftRole,
+        scope: draftScope,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["memories"] });
-      setDraftTitle(""); setDraftBody("");
+      setDraftTitle("");
+      setDraftBody("");
     },
   });
 
@@ -113,8 +146,9 @@ export function MemoryPane() {
   // The card holds the row as it looked when it was opened; re-read it from
   // the list so a title or lifecycle that just changed (a resolve, a restore)
   // is not shown stale while the edges underneath it refresh.
-  const associationsSubject =
-    associationsFor ? (byId.get(associationsFor.id) ?? associationsFor) : null;
+  const associationsSubject = associationsFor
+    ? (byId.get(associationsFor.id) ?? associationsFor)
+    : null;
 
   return (
     <Section>
@@ -125,14 +159,20 @@ export function MemoryPane() {
             value={draftTitle}
             onChange={(e) => setDraftTitle(e.target.value)}
           />
-          <Select value={draftRole} onChange={(e) => setDraftRole(e.target.value)}>
+          <Select
+            value={draftRole}
+            onChange={(e) => setDraftRole(e.target.value)}
+          >
             {ROLES.map((role) => (
               <option key={role} value={role}>
                 {role}
               </option>
             ))}
           </Select>
-          <Select value={draftScope} onChange={(e) => setDraftScope(e.target.value)}>
+          <Select
+            value={draftScope}
+            onChange={(e) => setDraftScope(e.target.value)}
+          >
             {SCOPES.map((scope) => (
               <option key={scope} value={scope}>
                 {scope}
@@ -140,7 +180,11 @@ export function MemoryPane() {
             ))}
           </Select>
         </div>
-        <Textarea placeholder={t("本文…")} value={draftBody} onChange={(e) => setDraftBody(e.target.value)} />
+        <Textarea
+          placeholder={t("本文…")}
+          value={draftBody}
+          onChange={(e) => setDraftBody(e.target.value)}
+        />
         <Row>
           <Button
             variant="primary"
@@ -154,7 +198,11 @@ export function MemoryPane() {
       </Card>
 
       <Card title={t("検索")} icon={<Search size={13} />}>
-        <Field hint={t("agent は毎回の Run 開始時に Memory を検索し、関連するものをコンテキストへ注入します。")}>
+        <Field
+          hint={t(
+            "agent は毎回の Run 開始時に Memory を検索し、関連するものをコンテキストへ注入します。",
+          )}
+        >
           <SearchForm
             value={search.query}
             onChange={search.setQuery}
@@ -177,18 +225,33 @@ export function MemoryPane() {
         {search.hits && search.hits.length > 0 && (
           <ul className="flex flex-col gap-2 text-xs">
             {search.hits.map((h) => (
-              <li key={h.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
+              <li
+                key={h.id}
+                className="border-t border-line pt-2 first:border-0 first:pt-0"
+              >
                 <Row className="gap-1.5">
-                  <strong className="text-sm font-medium text-fg">{h.title}</strong>
-                  <Badge size="sm" className="font-mono">{h.role}</Badge>
-                  <Badge size="sm" className="font-mono">{h.scope}</Badge>
+                  <strong className="text-sm font-medium text-fg">
+                    {h.title}
+                  </strong>
+                  <Badge size="sm" className="font-mono">
+                    {h.role}
+                  </Badge>
+                  <Badge size="sm" className="font-mono">
+                    {h.scope}
+                  </Badge>
                   <Badge size="sm" className="font-mono">
                     {tf("score {n}", { n: h.score.toFixed(3) })}
                   </Badge>
                   {h.selection_reason && (
                     // §4's own value: the row came in on an edge, not on the
                     // query. Shown untranslated so it matches `debug.memory_ids`.
-                    <Badge size="sm" tone="brand" title={t("クエリに一致せず、リンクから展開された行（§4）")}>
+                    <Badge
+                      size="sm"
+                      tone="brand"
+                      title={t(
+                        "クエリに一致せず、リンクから展開された行（§4）",
+                      )}
+                    >
                       {h.selection_reason}
                     </Badge>
                   )}
@@ -215,7 +278,10 @@ export function MemoryPane() {
       ) : memories.isError ? (
         <ErrorBox error={memories.error} />
       ) : rows.length === 0 ? (
-        <EmptyState icon={<Brain size={22} />} title={t("まだ Memory がありません。")} />
+        <EmptyState
+          icon={<Brain size={22} />}
+          title={t("まだ Memory がありません。")}
+        />
       ) : (
         rows.map((m: MemoryView) => (
           <Card
@@ -226,27 +292,45 @@ export function MemoryPane() {
             <Row align="between">
               <strong className="text-sm font-medium text-fg">{m.title}</strong>
               <Row className="flex-nowrap gap-1">
-                <Badge size="sm" className="font-mono">{m.role}</Badge>
-                <Badge size="sm" className="font-mono">{m.scope}</Badge>
-                <Badge size="sm" className="font-mono">{m.source_kind}</Badge>
+                <Badge size="sm" className="font-mono">
+                  {m.role}
+                </Badge>
+                <Badge size="sm" className="font-mono">
+                  {m.scope}
+                </Badge>
+                <Badge size="sm" className="font-mono">
+                  {m.source_kind}
+                </Badge>
                 <Badge
                   tone={LIFECYCLE_TONE[m.lifecycle_state] ?? "neutral"}
                   size="sm"
                 >
                   {m.lifecycle_state}
                 </Badge>
-                {m.pinned && <Badge tone="brand" size="sm">{t("ピン留め")}</Badge>}
+                {m.pinned && (
+                  <Badge tone="brand" size="sm">
+                    {t("ピン留め")}
+                  </Badge>
+                )}
                 {m.verification === "verified" && (
-                  <Badge tone="success" size="sm">{t("検証済み")}</Badge>
+                  <Badge tone="success" size="sm">
+                    {t("検証済み")}
+                  </Badge>
                 )}
                 {m.verification === "pending" && (
-                  <Badge tone="info" size="sm">{t("検証待ち")}</Badge>
+                  <Badge tone="info" size="sm">
+                    {t("検証待ち")}
+                  </Badge>
                 )}
                 {m.verification === "disputed" && (
-                  <Badge tone="danger" size="sm">{t("検証で矛盾")}</Badge>
+                  <Badge tone="danger" size="sm">
+                    {t("検証で矛盾")}
+                  </Badge>
                 )}
                 {m.verification === "rejected" && (
-                  <Badge tone="warning" size="sm">{t("検証却下")}</Badge>
+                  <Badge tone="warning" size="sm">
+                    {t("検証却下")}
+                  </Badge>
                 )}
                 {m.link_count ? (
                   <Badge tone="neutral" size="sm" className="font-mono">
@@ -257,9 +341,15 @@ export function MemoryPane() {
             </Row>
             <p className="m-0 text-sm text-muted">{m.body}</p>
             <Row className="text-2xs text-faint">
-              <span className="font-mono">{tf("confidence {n}", { n: m.confidence.toFixed(2) })}</span>
-              <span className="font-mono">{tf("salience {n}", { n: m.salience.toFixed(2) })}</span>
-              <span className="font-mono">{tf("strength {n}", { n: m.strength.toFixed(2) })}</span>
+              <span className="font-mono">
+                {tf("confidence {n}", { n: m.confidence.toFixed(2) })}
+              </span>
+              <span className="font-mono">
+                {tf("salience {n}", { n: m.salience.toFixed(2) })}
+              </span>
+              <span className="font-mono">
+                {tf("strength {n}", { n: m.strength.toFixed(2) })}
+              </span>
               <span>{new Date(m.updated_at).toLocaleString()}</span>
             </Row>
             {(m.superseded_by_id || m.disputed_by_id) && (
@@ -291,10 +381,22 @@ export function MemoryPane() {
                 onResolved={refresh}
               />
             )}
-            {verify.isError && <ErrorBox error={verify.error} className="text-xs" />}
+            {verify.isError && (
+              <ErrorBox error={verify.error} className="text-xs" />
+            )}
             <Row align="end">
-              <Button size="sm" disabled={verify.isPending} onClick={() => verify.mutate(m.id)} title={t("有効としてマーク")}>
-                {verify.isPending ? <Spinner size={12} /> : <CheckCircle2 size={12} />} {t("検証する")}
+              <Button
+                size="sm"
+                disabled={verify.isPending}
+                onClick={() => verify.mutate(m.id)}
+                title={t("有効としてマーク")}
+              >
+                {verify.isPending ? (
+                  <Spinner size={12} />
+                ) : (
+                  <CheckCircle2 size={12} />
+                )}{" "}
+                {t("検証する")}
               </Button>
               <Button
                 size="icon-sm"
@@ -315,10 +417,7 @@ export function MemoryPane() {
                   <span className="font-mono text-2xs">{m.link_count}</span>
                 ) : null}
               </Button>
-              <RevisionsButton
-                id={m.id}
-                onRestored={refresh}
-              />
+              <RevisionsButton id={m.id} onRestored={refresh} />
               <DeleteIconButton
                 title={t("Memory を削除しますか？")}
                 description={m.title}
@@ -362,14 +461,23 @@ function Pointer({
       <Badge size="sm" tone={tone}>
         {label}
       </Badge>
-      <span className={known ? "min-w-0 truncate text-brand" : "min-w-0 truncate font-mono text-muted"}>
+      <span
+        className={
+          known
+            ? "min-w-0 truncate text-brand"
+            : "min-w-0 truncate font-mono text-muted"
+        }
+      >
         {shown}
       </span>
     </>
   );
   if (!known) {
     return (
-      <span className="inline-flex max-w-full items-center gap-1.5" title={targetId}>
+      <span
+        className="inline-flex max-w-full items-center gap-1.5"
+        title={targetId}
+      >
         {inner}
       </span>
     );
@@ -424,12 +532,15 @@ function ResolveConflict({
     prefer: string | null,
     resolution: string,
   ) => {
-    if (!(await confirm({
-      title: t("矛盾を解決しますか？"),
-      description,
-      confirmLabel: t("解決"),
-      tone: "danger",
-    }))) return;
+    if (
+      !(await confirm({
+        title: t("矛盾を解決しますか？"),
+        description,
+        confirmLabel: t("解決"),
+        tone: "danger",
+      }))
+    )
+      return;
     setPending(true);
     setError(null);
     try {
@@ -444,8 +555,8 @@ function ResolveConflict({
       const adoptedThis = done.winner === memory.id;
       setOutcome(
         tf("{winner} を採用し、{loser} は {state} になりました。", {
-          winner: adoptedThis ? t("この Memory") : otherTitle ?? done.winner,
-          loser: adoptedThis ? otherTitle ?? done.loser : t("この Memory"),
+          winner: adoptedThis ? t("この Memory") : (otherTitle ?? done.winner),
+          loser: adoptedThis ? (otherTitle ?? done.loser) : t("この Memory"),
           state: done.loser_state,
         }),
       );
@@ -466,7 +577,9 @@ function ResolveConflict({
         <Badge size="sm" tone="danger">
           {t("未解決の矛盾")}
         </Badge>
-        <span className="text-2xs text-faint">{tf("相手: {name}", { name: other })}</span>
+        <span className="text-2xs text-faint">
+          {tf("相手: {name}", { name: other })}
+        </span>
       </Row>
       {error != null && <ErrorBox error={error} className="text-xs" />}
       {outcome && <p className="m-0 text-xs text-muted">{outcome}</p>}
@@ -476,7 +589,10 @@ function ResolveConflict({
           disabled={pending}
           onClick={() =>
             void resolve(
-              tf("相手の「{name}」を採用し、この Memory は superseded になります。", { name: other }),
+              tf(
+                "相手の「{name}」を採用し、この Memory は superseded になります。",
+                { name: other },
+              ),
               null,
               "resolve",
             )
@@ -490,7 +606,10 @@ function ResolveConflict({
           disabled={pending}
           onClick={() =>
             void resolve(
-              tf("この Memory を採用し、相手の「{name}」は superseded になります。", { name: other }),
+              tf(
+                "この Memory を採用し、相手の「{name}」は superseded になります。",
+                { name: other },
+              ),
               memory.id,
               "resolve",
             )
@@ -504,7 +623,10 @@ function ResolveConflict({
           disabled={pending}
           onClick={() =>
             void resolve(
-              tf("相手の「{name}」を採用し、この Memory は expired になります。", { name: other }),
+              tf(
+                "相手の「{name}」を採用し、この Memory は expired になります。",
+                { name: other },
+              ),
               null,
               "dismiss",
             )
@@ -522,7 +644,13 @@ function ResolveConflict({
   );
 }
 
-function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => void }) {
+function RevisionsButton({
+  id,
+  onRestored,
+}: {
+  id: string;
+  onRestored: () => void;
+}) {
   const { confirm, dialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const revisions = useQuery({
@@ -532,8 +660,12 @@ function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => voi
   });
 
   const restore = useMutation({
-    mutationFn: (revisionId: string) => api.restoreMemoryRevision(id, revisionId),
-    onSuccess: () => { setOpen(false); onRestored(); },
+    mutationFn: (revisionId: string) =>
+      api.restoreMemoryRevision(id, revisionId),
+    onSuccess: () => {
+      setOpen(false);
+      onRestored();
+    },
   });
 
   if (!open) {
@@ -558,25 +690,33 @@ function RevisionsButton({ id, onRestored }: { id: string; onRestored: () => voi
       {!revisions.isPending && (revisions.data ?? []).length === 0 && (
         <span className="text-faint">{t("まだ改訂がありません。")}</span>
       )}
-      {restore.isError && <ErrorBox error={restore.error} className="text-xs" />}
-      {revisions.isError && <ErrorBox error={revisions.error} className="text-xs" />}
+      {restore.isError && (
+        <ErrorBox error={restore.error} className="text-xs" />
+      )}
+      {revisions.isError && (
+        <ErrorBox error={revisions.error} className="text-xs" />
+      )}
       {(revisions.data ?? []).map((r) => (
         <Row key={r.id} align="between">
-          <span className="text-muted">{new Date(r.created_at).toLocaleString()}</span>
+          <span className="text-muted">
+            {new Date(r.created_at).toLocaleString()}
+          </span>
           <Button
             size="sm"
             disabled={restore.isPending}
             onClick={async () => {
               // Overwrites the current body with no undo, so it confirms like any
               // other destructive action rather than firing on one click.
-              if (await confirm({
-                title: t("この版に戻しますか？"),
-                description: tf("{at} の内容で上書きされます。", {
-                  at: new Date(r.created_at).toLocaleString(),
-                }),
-                confirmLabel: t("復元する"),
-                tone: "danger",
-              })) {
+              if (
+                await confirm({
+                  title: t("この版に戻しますか？"),
+                  description: tf("{at} の内容で上書きされます。", {
+                    at: new Date(r.created_at).toLocaleString(),
+                  }),
+                  confirmLabel: t("復元する"),
+                  tone: "danger",
+                })
+              ) {
                 restore.mutate(r.id);
               }
             }}

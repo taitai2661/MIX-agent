@@ -19,7 +19,9 @@ describe("SurfaceSwitcher", () => {
 
   it("shows the active surface label in the trigger", () => {
     render(<SurfaceSwitcher />);
-    expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent("チャット");
+    expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent(
+      "チャット",
+    );
   });
 
   it("reflects a switch to the desktop-agent surface", () => {
@@ -27,7 +29,9 @@ describe("SurfaceSwitcher", () => {
       useUi.setState({ surface: "desktop-agent", mode: "agent" });
     });
     render(<SurfaceSwitcher />);
-    expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent("エージェント");
+    expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent(
+      "エージェント",
+    );
   });
 
   it("switching surfaces snaps the run mode to one the surface allows", async () => {

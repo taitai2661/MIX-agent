@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  SURFACE_MODES, defaultModeForSurface, surfaceForMode, useUi,
-  type RunMode, type Surface, type ThreadFilter,
+  SURFACE_MODES,
+  defaultModeForSurface,
+  surfaceForMode,
+  useUi,
+  type RunMode,
+  type Surface,
+  type ThreadFilter,
 } from "./ui";
 
 const SURFACE_KEY = "mix-agent-surface";

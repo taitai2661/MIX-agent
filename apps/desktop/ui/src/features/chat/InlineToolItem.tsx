@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { useActiveRoot } from "@/lib/queries";
 import { describeToolCall, type ToolActivity } from "@/lib/runEvents";
@@ -73,7 +73,10 @@ export const InlineToolItem = memo(function InlineToolItem({
 
     // Otherwise build from arguments
     if (tool.arguments && typeof tool.arguments === "object") {
-      return buildDiffFromArgs(tool.name, tool.arguments as Record<string, unknown>);
+      return buildDiffFromArgs(
+        tool.name,
+        tool.arguments as Record<string, unknown>,
+      );
     }
     return null;
   }, [tool.name, tool.arguments, tool.result]);
@@ -96,14 +99,21 @@ export const InlineToolItem = memo(function InlineToolItem({
 
   const handleDiscard = async (path: string) => {
     if (!activeRoot) return;
-    if (!window.confirm(t("「{path}」の変更を元に戻しますか？", { path }))) return;
+    if (!window.confirm(tf("「{path}」の変更を元に戻しますか？", { path })))
+      return;
     setBusy(true);
     try {
       await api.gitRestore(activeRoot, path);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["git", "status", activeRoot] }),
-        queryClient.invalidateQueries({ queryKey: ["git", "diff", activeRoot] }),
-        queryClient.invalidateQueries({ queryKey: ["files", "tree", activeRoot] }),
+        queryClient.invalidateQueries({
+          queryKey: ["git", "status", activeRoot],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["git", "diff", activeRoot],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["files", "tree", activeRoot],
+        }),
       ]);
     } catch (err) {
       console.error("Failed to discard file:", err);
@@ -179,7 +189,9 @@ export const InlineToolItem = memo(function InlineToolItem({
                 {diffData?.path ? (
                   <div className="flex min-w-0 items-center gap-1.5">
                     <FileCode size={11} className="shrink-0 text-brand" />
-                    <span className="truncate font-medium text-fg">{diffData.path}</span>
+                    <span className="truncate font-medium text-fg">
+                      {diffData.path}
+                    </span>
                   </div>
                 ) : (
                   <span />

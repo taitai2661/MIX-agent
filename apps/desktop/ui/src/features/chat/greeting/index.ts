@@ -33,7 +33,11 @@ export {
 } from "./history";
 export { compatible, pickFragment } from "./compose";
 export { suggestionsFor } from "./suggestions";
-export { greetingText, suggestionLabelId, suggestionPromptId } from "./translate";
+export {
+  greetingText,
+  suggestionLabelId,
+  suggestionPromptId,
+} from "./translate";
 export type {
   Activity,
   DayKind,
@@ -68,7 +72,12 @@ export function welcomeFrom(
 ): Welcome {
   const composed = compose(signals, recent, random);
   // 見出しで使った部品は提案側でも再利用しないよう、同じ除外集合を渡します。
-  const suggestions = suggestionsFor(signals, [...recent, ...composed.used], 3, random);
+  const suggestions = suggestionsFor(
+    signals,
+    [...recent, ...composed.used],
+    3,
+    random,
+  );
   return {
     id: composed.used.join("/"),
     title: composed.title,
@@ -109,7 +118,11 @@ export function nextVisit(
   now: Date = new Date(),
 ): VisitResult {
   const history = readHistory();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const midnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
   const signals = buildSignals({
     now,
     conversationCount: workspace.conversationCount,
@@ -127,7 +140,10 @@ export function nextVisit(
     {
       visits: history.visits + 1,
       lastVisitAt: now.getTime(),
-      firstSeenTodayAt: history.firstSeenTodayAt < midnight ? now.getTime() : history.firstSeenTodayAt,
+      firstSeenTodayAt:
+        history.firstSeenTodayAt < midnight
+          ? now.getTime()
+          : history.firstSeenTodayAt,
       recent: history.recent,
     },
     welcome.used,
@@ -137,9 +153,15 @@ export function nextVisit(
 }
 
 /** 提案を送信欄に差し込むため、`usePromptInsert` の引数へ変換します。 */
-export function promptDetail(suggestion: Suggestion): { text: string; mode?: Suggestion["mode"] } {
+export function promptDetail(suggestion: Suggestion): {
+  text: string;
+  mode?: Suggestion["mode"];
+} {
   // 提案の文言も表示言語へ翻訳してから差し込みます。ラベルだけ翻訳して
   // 本文が日本語のまま送信欄へ入ると、英語 UI で言語が混ざります。
-  const text = greetingText(suggestionPromptId(suggestion.id), suggestion.prompt);
+  const text = greetingText(
+    suggestionPromptId(suggestion.id),
+    suggestion.prompt,
+  );
   return suggestion.mode ? { text, mode: suggestion.mode } : { text };
 }

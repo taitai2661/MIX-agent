@@ -1,11 +1,24 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ChevronDown, ChevronRight, Download, Plus, Radar, Search, Terminal,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Plus,
+  Radar,
+  Search,
+  Terminal,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
-import { DataTable, Field, Row, Section, td, tdStrong } from "@/components/layout";
+import {
+  DataTable,
+  Field,
+  Row,
+  Section,
+  td,
+  tdStrong,
+} from "@/components/layout";
 import { ErrorBadge, ErrorBox } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -93,7 +106,8 @@ export function LocalRuntimeScan({
   const manualResult = probe.isSuccess ? [probe.data as LocalRuntimeView] : [];
   const rows = [...online, ...offline, ...manualResult];
 
-  const toggle = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggle = (key: string) =>
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <Section>
@@ -103,9 +117,7 @@ export function LocalRuntimeScan({
           disabled={scan.isFetching}
           onClick={() => void scan.refetch()}
         >
-          {scan.isFetching
-            ? <Spinner size={12} />
-            : <Radar size={12} />}
+          {scan.isFetching ? <Spinner size={12} /> : <Radar size={12} />}
           {scan.isFetching ? t("検出中…") : t("検出")}
         </Button>
         {intro && !scan.data && !scan.isFetching && (
@@ -131,7 +143,9 @@ export function LocalRuntimeScan({
         <p key={o.port} className="m-0 text-xs text-warning">
           {o.note
             ? tf("{port} 番: {note}", { port: o.port, note: o.note })
-            : tf("{port} 番は応答していますが、LLM サーバーではありません", { port: o.port })}
+            : tf("{port} 番は応答していますが、LLM サーバーではありません", {
+                port: o.port,
+              })}
         </p>
       ))}
 
@@ -149,17 +163,23 @@ export function LocalRuntimeScan({
             const key = rowKey(r);
             const open = expanded[key] === true;
             const hasModels = r.models.length > 0;
-            const isManual = probe.isSuccess && rowKey(probe.data as LocalRuntimeView) === key;
+            const isManual =
+              probe.isSuccess && rowKey(probe.data as LocalRuntimeView) === key;
             return (
               <>
                 <td className={tdStrong}>
                   <div className="flex flex-col gap-0.5">
                     <span>{r.label}</span>
                     {r.version && (
-                      <span className="font-mono text-xs text-faint">v{r.version}</span>
+                      <span className="font-mono text-xs text-faint">
+                        v{r.version}
+                      </span>
                     )}
                     {!r.online && r.install_hint && (
-                      <span className="font-mono text-xs text-faint" title={r.install_hint}>
+                      <span
+                        className="font-mono text-xs text-faint"
+                        title={r.install_hint}
+                      >
                         {r.install_hint}
                       </span>
                     )}
@@ -196,16 +216,27 @@ export function LocalRuntimeScan({
                         onClick={() => toggle(key)}
                         aria-expanded={open}
                       >
-                        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        {open ? (
+                          <ChevronDown size={12} />
+                        ) : (
+                          <ChevronRight size={12} />
+                        )}
                         {r.models.length}
                       </button>
                       {open && (
                         <ul className="m-0 flex max-h-52 list-none flex-col gap-1 overflow-y-auto p-0">
                           {r.models.map((m) => (
-                            <li key={m.id} className="flex flex-wrap items-center gap-1.5 text-xs">
+                            <li
+                              key={m.id}
+                              className="flex flex-wrap items-center gap-1.5 text-xs"
+                            >
                               <span className="font-mono text-fg">{m.id}</span>
-                              {m.parameter_size && <Badge size="sm">{m.parameter_size}</Badge>}
-                              {m.quantization && <Badge size="sm">{m.quantization}</Badge>}
+                              {m.parameter_size && (
+                                <Badge size="sm">{m.parameter_size}</Badge>
+                              )}
+                              {m.quantization && (
+                                <Badge size="sm">{m.quantization}</Badge>
+                              )}
                               {m.context_window > 0 && (
                                 <span className="text-faint">
                                   {`ctx ${Math.round(m.context_window / 1024)}k`}
@@ -224,7 +255,11 @@ export function LocalRuntimeScan({
                   {r.online ? (
                     <Button
                       size="sm"
-                      disabled={!hasModels || importRuntime.isPending || imported[key] === true}
+                      disabled={
+                        !hasModels ||
+                        importRuntime.isPending ||
+                        imported[key] === true
+                      }
                       title={
                         imported[key] === true
                           ? t("取り込み済み")
@@ -234,13 +269,19 @@ export function LocalRuntimeScan({
                       }
                       onClick={() => importRuntime.mutate(r)}
                     >
+                      {imported[key] === true ? (
+                        <Download size={12} />
+                      ) : (
+                        <Plus size={12} />
+                      )}
                       {imported[key] === true
-                        ? <Download size={12} />
-                        : <Plus size={12} />}
-                      {imported[key] === true ? t("取り込み済み") : t("取り込む")}
+                        ? t("取り込み済み")
+                        : t("取り込む")}
                     </Button>
                   ) : isManual ? null : (
-                    <span className="text-xs text-faint">{t("起動してください")}</span>
+                    <span className="text-xs text-faint">
+                      {t("起動してください")}
+                    </span>
                   )}
                 </td>
               </>
@@ -264,7 +305,9 @@ export function LocalRuntimeScan({
           <Separator />
           <Field
             label="Base URL"
-            hint={t("Swagger や任意のポートで起動中のサーバーも指定できます。例: http://192.168.1.10:11434/v1")}
+            hint={t(
+              "Swagger や任意のポートで起動中のサーバーも指定できます。例: http://192.168.1.10:11434/v1",
+            )}
           >
             <Input
               placeholder="http://127.0.0.1:1234/v1"
@@ -276,10 +319,11 @@ export function LocalRuntimeScan({
             />
           </Field>
           <Row>
-            <Button disabled={!manualUrl.trim() || probe.isPending} onClick={() => probe.mutate()}>
-              {probe.isPending
-                ? <Spinner size={12} />
-                : <Search size={12} />}
+            <Button
+              disabled={!manualUrl.trim() || probe.isPending}
+              onClick={() => probe.mutate()}
+            >
+              {probe.isPending ? <Spinner size={12} /> : <Search size={12} />}
               {t("テスト")}
             </Button>
             {probe.isSuccess && (

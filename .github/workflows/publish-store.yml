@@ -183,11 +183,11 @@ jobs:
           legacy="mix-agent-zimaos-legacy-${RELEASE_TAG}.zip"
           tar -czf "$bundle" -C dist .
           cp dist/store/main.zip "$legacy"
+          notes_file="docs/release-notes-${RELEASE_TAG}.md"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$bundle" "$legacy" --clobber
           elif [[ -n "${REQUESTED_TAG:-}" ]]; then
-            notes_file="docs/release-notes-${RELEASE_TAG}.md"
             if [[ -f "$notes_file" ]]; then
               gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --notes-file "$notes_file"
             else
@@ -195,4 +195,13 @@ jobs:
             fi
           else
             echo "Release $RELEASE_TAG does not exist yet; store is published but release assets are skipped."
+            exit 0
+          fi
+
+          # The desktop-release workflow creates the same GitHub Release in
+          # parallel and passes no body, so whichever workflow got there first
+          # decides the notes. Re-apply the release notes file here so the
+          # published body always matches docs/release-notes-<tag>.md.
+          if [[ -f "$notes_file" ]]; then
+            gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
           fi

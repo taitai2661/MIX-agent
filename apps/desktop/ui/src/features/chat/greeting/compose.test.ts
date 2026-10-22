@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { setLanguage } from "@/lib/i18n";
-import { compatible, compose, contextCandidates, noteCandidates, openingCandidates, pickFragment } from "./compose";
+import {
+  compatible,
+  compose,
+  contextCandidates,
+  noteCandidates,
+  openingCandidates,
+  pickFragment,
+} from "./compose";
 import { openings } from "./pools";
 import { buildSignals } from "./signals";
 import type { Fragment, Signals } from "./types";
@@ -8,7 +15,9 @@ import type { Fragment, Signals } from "./types";
 // 祝日・行事の候補は表示言語に依存するため、このファイルは日本語に固定する。
 beforeEach(() => setLanguage("ja"));
 
-function signals(overrides: Partial<Parameters<typeof buildSignals>[0]> = {}): Signals {
+function signals(
+  overrides: Partial<Parameters<typeof buildSignals>[0]> = {},
+): Signals {
   const now = overrides.now ?? new Date(2026, 5, 10, 14, 0);
   return buildSignals({
     now,
@@ -31,11 +40,36 @@ function sequence(values: number[]): () => number {
   return () => values[index++ % values.length];
 }
 
-const question: Fragment = { id: "q", text: "EWFew？", tone: "polite", form: "question" };
-const questionCasual: Fragment = { id: "q2", text: "EWFew？", tone: "casual", form: "question" };
-const statement: Fragment = { id: "s", text: "EWFew。", tone: "polite", form: "declarative" };
-const casual: Fragment = { id: "c", text: "EWFew。", tone: "casual", form: "declarative" };
-const calm: Fragment = { id: "k", text: "EWFew。", tone: "calm", form: "declarative" };
+const question: Fragment = {
+  id: "q",
+  text: "EWFew？",
+  tone: "polite",
+  form: "question",
+};
+const questionCasual: Fragment = {
+  id: "q2",
+  text: "EWFew？",
+  tone: "casual",
+  form: "question",
+};
+const statement: Fragment = {
+  id: "s",
+  text: "EWFew。",
+  tone: "polite",
+  form: "declarative",
+};
+const casual: Fragment = {
+  id: "c",
+  text: "EWFew。",
+  tone: "casual",
+  form: "declarative",
+};
+const calm: Fragment = {
+  id: "k",
+  text: "EWFew。",
+  tone: "calm",
+  form: "declarative",
+};
 
 describe("文体の互換判定", () => {
   it("疑問文のあとには疑問文をつなげない", () => {
@@ -60,7 +94,13 @@ describe("文体の互換判定", () => {
 describe("部品の抽選", () => {
   it("直近で使った部品を除外する", () => {
     const pool = openings.morning;
-    expect(pickFragment(pool, new Set(pool.map((fragment) => fragment.id)), () => 0.5)?.id).toBeDefined();
+    expect(
+      pickFragment(
+        pool,
+        new Set(pool.map((fragment) => fragment.id)),
+        () => 0.5,
+      )?.id,
+    ).toBeDefined();
   });
 
   it("空のプールでは undefined を返す", () => {
@@ -80,14 +120,20 @@ describe("部品の抽選", () => {
       { ...statement, id: "common", weight: 9 },
     ];
     let common = 0;
-    for (let i = 0; i < 200; i++) if (pickFragment(pool, new Set(), () => i / 200)?.id === "common") common++;
+    for (let i = 0; i < 200; i++)
+      if (pickFragment(pool, new Set(), () => i / 200)?.id === "common")
+        common++;
     expect(common).toBeGreaterThan(150);
   });
 });
 
 describe("候補の組み立て", () => {
   it("初回ははじめましての文を候補に入れる", () => {
-    expect(openingCandidates(signals({ lastVisitAt: 0 })).some((f) => f.id.startsWith("ft-"))).toBe(true);
+    expect(
+      openingCandidates(signals({ lastVisitAt: 0 })).some((f) =>
+        f.id.startsWith("ft-"),
+      ),
+    ).toBe(true);
   });
 
   it("初回ははじめましての文だけに絞る", () => {
@@ -98,19 +144,25 @@ describe("候補の組み立て", () => {
   it("再訪ならおかえりなさいの文を候補に入れる", () => {
     const later = new Date(2026, 5, 10, 14, 0);
     expect(
-      openingCandidates(signals({ now: later, lastVisitAt: later.getTime() - 3 * 86_400_000 })).some((f) =>
-        f.id.startsWith("rt-"),
-      ),
+      openingCandidates(
+        signals({ now: later, lastVisitAt: later.getTime() - 3 * 86_400_000 }),
+      ).some((f) => f.id.startsWith("rt-")),
     ).toBe(true);
   });
 
   it("リロードではおかえりなさいを出さない", () => {
     const now = new Date(2026, 5, 10, 14, 0);
-    expect(openingCandidates(signals({ now, lastVisitAt: now.getTime() - 60_000 })).some((f) => f.id.startsWith("rt-"))).toBe(false);
+    expect(
+      openingCandidates(
+        signals({ now, lastVisitAt: now.getTime() - 60_000 }),
+      ).some((f) => f.id.startsWith("rt-")),
+    ).toBe(false);
   });
 
   it("祝日は状況節の候補の最優先になる", () => {
-    const candidates = contextCandidates(signals({ now: new Date(2026, 4, 5, 15, 0) }));
+    const candidates = contextCandidates(
+      signals({ now: new Date(2026, 4, 5, 15, 0) }),
+    );
     const holiday = candidates.find((f) => f.id === "hl-9");
     expect(holiday?.text).toBe("こどもの日です。");
     expect(candidates[0].weight).toBeGreaterThan(1);
@@ -149,7 +201,9 @@ describe("見出しの合成", () => {
   it("疑問符が連続することがない", () => {
     for (let i = 0; i < 300; i++) {
       const { title } = compose(signals(), [], () => i / 300);
-      expect(title.filter((part) => part.endsWith("？")).length).toBeLessThanOrEqual(1);
+      expect(
+        title.filter((part) => part.endsWith("？")).length,
+      ).toBeLessThanOrEqual(1);
     }
   });
 
@@ -167,9 +221,11 @@ describe("見出しの合成", () => {
   });
 
   it("直近の部品をすべて指定しても作り続けられる", () => {
-    const all = [...openingCandidates(signals()), ...contextCandidates(signals()), ...noteCandidates(signals())].map(
-      (fragment) => fragment.id,
-    );
+    const all = [
+      ...openingCandidates(signals()),
+      ...contextCandidates(signals()),
+      ...noteCandidates(signals()),
+    ].map((fragment) => fragment.id);
     const composed = compose(signals(), all, sequence([0.5, 0.5, 0.5]));
     expect(composed.title.length).toBeGreaterThanOrEqual(2);
   });

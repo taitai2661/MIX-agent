@@ -5,13 +5,19 @@ import { t } from "@/lib/i18n";
 import { useRunEvents } from "@/lib/runStore";
 import { isBusy, isTerminal } from "@/lib/runEvents";
 import {
-  CONVERSATIONS_QUERY_KEY, useConversations, useModels, useProjects,
+  CONVERSATIONS_QUERY_KEY,
+  useConversations,
+  useModels,
+  useProjects,
 } from "@/lib/queries";
 import { useUi } from "@/lib/ui";
 import { getLastModelForSurface } from "@/lib/modelPrefs";
 import type { ModelView, RunView } from "@/lib/types";
 import { nextVisit, type Welcome } from "./greeting";
-import { ChatComposerProvider, useChatComposerContext } from "./ChatComposerContext";
+import {
+  ChatComposerProvider,
+  useChatComposerContext,
+} from "./ChatComposerContext";
 import { Composer, type DraftAttachment } from "./Composer";
 import { Transcript } from "./Transcript";
 import { ErrorBox } from "@/components/shared";
@@ -67,7 +73,8 @@ function ChatPaneBody() {
   const temporaryNewRef = useRef<string | null>(null);
 
   const activeModelId = modelId || "auto";
-  const activeConversationId = conversationId ?? conversations.data?.[0]?.id ?? null;
+  const activeConversationId =
+    conversationId ?? conversations.data?.[0]?.id ?? null;
 
   useEffect(() => {
     // `auto` is the default pick and is valid without any model in the list.
@@ -80,17 +87,22 @@ function ChatPaneBody() {
     // not the same as "the list is empty", so the reset waits for the query
     // to settle.
     if (models.data === undefined) return;
-    if (!modelId || (modelId !== "auto" && !models.data.some((m) => m.id === modelId))) {
+    if (
+      !modelId ||
+      (modelId !== "auto" && !models.data.some((m) => m.id === modelId))
+    ) {
       const remembered = getLastModelForSurface(surface);
       const next =
-        (remembered === "auto" ? "auto" : models.data.find((m) => m.id === remembered)?.id) ??
-        "auto";
+        (remembered === "auto"
+          ? "auto"
+          : models.data.find((m) => m.id === remembered)?.id) ?? "auto";
       if (next !== modelId) setModelId(next);
     }
   }, [modelId, models.data, setModelId, surface]);
 
   useEffect(() => {
-    if (!conversationId && conversations.data?.[0]) setConversationId(conversations.data[0].id);
+    if (!conversationId && conversations.data?.[0])
+      setConversationId(conversations.data[0].id);
   }, [conversationId, conversations.data, setConversationId]);
 
   // Opening a project-scoped thread moves the file tree / diff scope with it.
@@ -99,7 +111,10 @@ function ChatPaneBody() {
     [conversations.data, activeConversationId],
   );
   useEffect(() => {
-    if (activeConversation?.project_id && activeConversation.project_id !== activeProjectId) {
+    if (
+      activeConversation?.project_id &&
+      activeConversation.project_id !== activeProjectId
+    ) {
       setActiveProjectId(activeConversation.project_id);
     }
   }, [activeConversation?.project_id, activeProjectId, setActiveProjectId]);
@@ -128,7 +143,10 @@ function ChatPaneBody() {
       const createdConversation = !target;
       if (!target) {
         const created = await api.createConversation({
-          mode, model_id: activeModelId, title: content.slice(0, 40), workspace_id: null,
+          mode,
+          model_id: activeModelId,
+          title: content.slice(0, 40),
+          workspace_id: null,
           project_id: activeProjectId,
         });
         setConversationId(created.id);
@@ -160,7 +178,9 @@ function ChatPaneBody() {
     onSuccess: ({ runId, conversationId, purged }) => {
       if (purged) temporaryNewRef.current = conversationId;
       startRun(runId, conversationId);
-      void queryClient.invalidateQueries({ queryKey: ["messages", conversationId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["messages", conversationId],
+      });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     },
   });
@@ -173,7 +193,13 @@ function ChatPaneBody() {
   // everything after it, then starts a fresh Run, so this mirrors `sendMessage`
   // exactly: adopt the new run and refresh the transcript.
   const editMessage = useMutation({
-    mutationFn: async ({ messageId, content }: { messageId: string; content: string }) => {
+    mutationFn: async ({
+      messageId,
+      content,
+    }: {
+      messageId: string;
+      content: string;
+    }) => {
       if (!activeConversationId) throw new Error("no conversation");
       return api.editMessage({
         conversation_id: activeConversationId,
@@ -186,8 +212,12 @@ function ChatPaneBody() {
     },
     onSuccess: (out) => {
       startRun(out.run_id, activeConversationId);
-      void queryClient.invalidateQueries({ queryKey: ["messages", activeConversationId] });
-      void queryClient.invalidateQueries({ queryKey: ["runs", activeConversationId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["messages", activeConversationId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["runs", activeConversationId],
+      });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     },
   });
@@ -204,7 +234,14 @@ function ChatPaneBody() {
     void queryClient.invalidateQueries({ queryKey: ["diagnostics"] });
     const timer = window.setTimeout(() => clearLive(), 1500);
     return () => window.clearTimeout(timer);
-  }, [status, liveRunId, liveConversationId, activeConversationId, queryClient, clearLive]);
+  }, [
+    status,
+    liveRunId,
+    liveConversationId,
+    activeConversationId,
+    queryClient,
+    clearLive,
+  ]);
 
   // A temporary run in a brand-new thread deletes that thread. Wait until the
   // refreshed list no longer carries it before letting go, so the clear cannot
@@ -248,7 +285,8 @@ function ChatPaneBody() {
       ? liveTimeline
       : null;
 
-  const busy = liveForThisConversation != null && isBusy(liveForThisConversation.status);
+  const busy =
+    liveForThisConversation != null && isBusy(liveForThisConversation.status);
 
   // Stable identities for the memoized `Composer`. Inline arrows here meant a
   // fresh prop on every store flush, so the composer — with its model, mode and
@@ -308,7 +346,10 @@ function ChatPaneBody() {
     setWelcome(
       nextVisit({
         conversationCount: rows.length,
-        messageCount: rows.reduce((sum, row) => sum + (row.message_count || 0), 0),
+        messageCount: rows.reduce(
+          (sum, row) => sum + (row.message_count || 0),
+          0,
+        ),
         projectCount: projects.data?.length ?? 0,
         lastActivityAt: stamps.length ? Math.max(...stamps) : null,
         surface,
@@ -320,20 +361,20 @@ function ChatPaneBody() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PaneErrorBoundary name="Transcript" resetKeys={[activeConversationId]}>
-      <Transcript
-        messages={visibleMessages}
-        runs={runById}
-        models={models.data ?? EMPTY_MODELS}
-        live={liveForThisConversation}
-        liveRunId={liveForThisConversation ? liveRunId : null}
-        loading={messages.isPending}
-        error={messages.isError ? messages.error : null}
-        welcome={welcome}
-        onEditMessage={onEditMessage}
-        onRetry={onRetry}
-        editDisabled={busy}
-        retryDisabled={busy || editMessage.isPending}
-      />
+        <Transcript
+          messages={visibleMessages}
+          runs={runById}
+          models={models.data ?? EMPTY_MODELS}
+          live={liveForThisConversation}
+          liveRunId={liveForThisConversation ? liveRunId : null}
+          loading={messages.isPending}
+          error={messages.isError ? messages.error : null}
+          welcome={welcome}
+          onEditMessage={onEditMessage}
+          onRetry={onRetry}
+          editDisabled={busy}
+          retryDisabled={busy || editMessage.isPending}
+        />
       </PaneErrorBoundary>
       {(sendMessage.isError ||
         editMessage.isError ||
@@ -342,10 +383,15 @@ function ChatPaneBody() {
         <div className="mx-auto w-full max-w-content shrink-0 px-4 pb-1 sm:px-6">
           <ErrorBox
             error={
-              sendMessage.error ?? editMessage.error ?? cancel.error ?? projectError
+              sendMessage.error ??
+              editMessage.error ??
+              cancel.error ??
+              projectError
             }
             action={
-              sendMessage.isError || editMessage.isError ? t("再試行") : undefined
+              sendMessage.isError || editMessage.isError
+                ? t("再試行")
+                : undefined
             }
             onAction={
               sendMessage.isError || editMessage.isError
@@ -361,16 +407,16 @@ function ChatPaneBody() {
         </div>
       )}
       <div className="shrink-0">
-      {/* Model/mode/project state comes from `ChatComposerProvider` above —
+        {/* Model/mode/project state comes from `ChatComposerProvider` above —
           only the run mutations stay drilled. */}
-      <PaneErrorBoundary name="Composer" resetKeys={[activeConversationId]}>
-      <Composer
-        busy={busy}
-        onSend={onSend}
-        onStop={onStop}
-        draftKey={activeConversationId ?? "none"}
-      />
-      </PaneErrorBoundary>
+        <PaneErrorBoundary name="Composer" resetKeys={[activeConversationId]}>
+          <Composer
+            busy={busy}
+            onSend={onSend}
+            onStop={onStop}
+            draftKey={activeConversationId ?? "none"}
+          />
+        </PaneErrorBoundary>
       </div>
     </div>
   );

@@ -18,7 +18,13 @@ def redact(value):
 
 
 def context_limit(item):
-    for key in ("context_length", "context_window", "max_context_length", "max_context_tokens", "inputTokenLimit"):
+    for key in (
+        "context_length",
+        "context_window",
+        "max_context_length",
+        "max_context_tokens",
+        "inputTokenLimit",
+    ):
         value = item.get(key)
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             return value
@@ -28,24 +34,34 @@ def context_limit(item):
     # ``limits.context``.  Both spellings are documented wire shapes.
     for key in ("limits", "limit"):
         limits = item.get(key)
-        if (isinstance(limits, dict) and isinstance(limits.get("context"), int)
-                and not isinstance(limits["context"], bool) and limits["context"] > 0):
+        if (
+            isinstance(limits, dict)
+            and isinstance(limits.get("context"), int)
+            and not isinstance(limits["context"], bool)
+            and limits["context"] > 0
+        ):
             return limits["context"]
     return None
 
 
 def _record(values, source, confidence):
     stamp = datetime.now(UTC).isoformat()
-    return {key: {"value": value, "source": source, "confidence": confidence, "resolved_at": stamp}
-            for key, value in values.items() if value is not None}
+    return {
+        key: {"value": value, "source": source, "confidence": confidence, "resolved_at": stamp}
+        for key, value in values.items()
+        if value is not None
+    }
 
 
-async def resolve(kind, model_id, provider_item, resolver_ids=("provider_api", "models_dev"),
-                  *, preset_id=None):
+async def resolve(
+    kind, model_id, provider_item, resolver_ids=("provider_api", "models_dev"), *, preset_id=None
+):
     """Return normalized effective metadata and all non-manual candidates."""
     candidates = {}
-    api_values = {"context_window": context_limit(provider_item),
-                  "max_output_tokens": provider_item.get("max_output_tokens") or provider_item.get("outputTokenLimit")}
+    api_values = {
+        "context_window": context_limit(provider_item),
+        "max_output_tokens": provider_item.get("max_output_tokens") or provider_item.get("outputTokenLimit"),
+    }
     if "provider_api" in resolver_ids and any(value is not None for value in api_values.values()):
         candidates["provider_api"] = _record(api_values, "provider_api", "official")
     external = {}
@@ -57,4 +73,8 @@ async def resolve(kind, model_id, provider_item, resolver_ids=("provider_api", "
     for source in ("provider_api", "models_dev"):
         for field, evidence in candidates.get(source, {}).items():
             effective.setdefault(field, evidence)
-    return {"provider_metadata": redact(provider_item), "metadata_candidates": candidates, "metadata": effective}
+    return {
+        "provider_metadata": redact(provider_item),
+        "metadata_candidates": candidates,
+        "metadata": effective,
+    }

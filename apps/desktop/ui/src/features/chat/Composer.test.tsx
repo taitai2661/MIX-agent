@@ -5,8 +5,26 @@ import { setLanguage } from "@/lib/i18n";
 import { Composer } from "./Composer";
 
 const models = [
-  { id: "p:vision", label: "Vision Model", provider_id: "p", context_window: 128000, supports_vision: true, supports_tool_calling: true, supports_reasoning: true, auto_candidate: true },
-  { id: "p:text", label: "Text Model", provider_id: "p", context_window: 128000, supports_vision: false, supports_tool_calling: true, supports_reasoning: true, auto_candidate: true },
+  {
+    id: "p:vision",
+    label: "Vision Model",
+    provider_id: "p",
+    context_window: 128000,
+    supports_vision: true,
+    supports_tool_calling: true,
+    supports_reasoning: true,
+    auto_candidate: true,
+  },
+  {
+    id: "p:text",
+    label: "Text Model",
+    provider_id: "p",
+    context_window: 128000,
+    supports_vision: false,
+    supports_tool_calling: true,
+    supports_reasoning: true,
+    auto_candidate: true,
+  },
 ];
 
 // jsdom reports en-US; pin the language so placeholders are deterministic.
@@ -18,13 +36,22 @@ describe("Composer", () => {
     const user = userEvent.setup();
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={onSend} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
       />,
     );
     const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
     await user.type(box, "こんにちは{Enter}");
-    expect(onSend).toHaveBeenCalledWith("こんにちは", [], { temporaryMode: false, allowTools: false });
+    expect(onSend).toHaveBeenCalledWith("こんにちは", [], {
+      temporaryMode: false,
+      allowTools: false,
+    });
     expect((box as HTMLTextAreaElement).value).toBe("");
   });
 
@@ -33,13 +60,24 @@ describe("Composer", () => {
     const user = userEvent.setup();
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={onSend} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
       />,
     );
-    await user.type(screen.getByPlaceholderText("MIX-agent に話しかける…"), "a{Shift>}{Enter}{/Shift}b");
+    await user.type(
+      screen.getByPlaceholderText("MIX-agent に話しかける…"),
+      "a{Shift>}{Enter}{/Shift}b",
+    );
     expect(onSend).not.toHaveBeenCalled();
-    expect(screen.getByPlaceholderText("MIX-agent に話しかける…")).toHaveValue("a\nb");
+    expect(screen.getByPlaceholderText("MIX-agent に話しかける…")).toHaveValue(
+      "a\nb",
+    );
   });
 
   it("does not send while busy and shows stop", async () => {
@@ -47,11 +85,20 @@ describe("Composer", () => {
     const user = userEvent.setup();
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy onSend={onSend} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy
+        onSend={onSend}
+        onStop={() => {}}
       />,
     );
-    await user.type(screen.getByPlaceholderText("MIX-agent に話しかける…"), "x{Enter}");
+    await user.type(
+      screen.getByPlaceholderText("MIX-agent に話しかける…"),
+      "x{Enter}",
+    );
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /停止/ })).toBeInTheDocument();
   });
@@ -59,8 +106,14 @@ describe("Composer", () => {
   it("disables send when no model is configured", () => {
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={[]} modelId="" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={[]}
+        modelId=""
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /送信/ })).toBeDisabled();
@@ -74,15 +127,26 @@ describe("Composer", () => {
     const user = userEvent.setup();
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:deleted" setModelId={() => {}}
-        busy={false} onSend={onSend} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:deleted"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
       />,
     );
-    await user.type(screen.getByPlaceholderText("MIX-agent に話しかける…"), "hello{Enter}");
+    await user.type(
+      screen.getByPlaceholderText("MIX-agent に話しかける…"),
+      "hello{Enter}",
+    );
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /送信/ })).toBeDisabled();
     expect(
-      screen.getByText("選択したモデルのプロバイダーが削除されています。モデルを再選択してください。"),
+      screen.getByText(
+        "選択したモデルのプロバイダーが削除されています。モデルを再選択してください。",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -92,8 +156,14 @@ describe("Composer", () => {
   it("does not report a stale model while the list is still empty", () => {
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={[]} modelId="p:deleted" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={[]}
+        modelId="p:deleted"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
       />,
     );
     expect(screen.queryByText("選択したモデルが利用できません")).toBeNull();
@@ -107,20 +177,38 @@ describe("Composer", () => {
     const user = userEvent.setup();
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={[]} modelId="auto" setModelId={() => {}}
-        busy={false} onSend={onSend} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={[]}
+        modelId="auto"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
       />,
     );
-    await user.type(screen.getByPlaceholderText("MIX-agent に話しかける…"), "hello{Enter}");
-    expect(onSend).toHaveBeenCalledWith("hello", [], { temporaryMode: false, allowTools: false });
+    await user.type(
+      screen.getByPlaceholderText("MIX-agent に話しかける…"),
+      "hello{Enter}",
+    );
+    expect(onSend).toHaveBeenCalledWith("hello", [], {
+      temporaryMode: false,
+      allowTools: false,
+    });
   });
 
   it("renders a static mode badge when only one mode is allowed (desktop-agent surface)", () => {
     render(
       <Composer
-        mode="agent" setMode={() => {}} allowedModes={["agent"]}
-        models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}}
+        mode="agent"
+        setMode={() => {}}
+        allowedModes={["agent"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
       />,
     );
     // The badge text appears but no trigger button is present.
@@ -131,9 +219,15 @@ describe("Composer", () => {
   it("renders the mode dropdown trigger when more than one mode is allowed", () => {
     render(
       <Composer
-        mode="chat" setMode={() => {}} allowedModes={["chat", "thinking"]}
-        models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        allowedModes={["chat", "thinking"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
       />,
     );
     // Trigger button is a plain <button> with aria-label="モード".
@@ -143,29 +237,67 @@ describe("Composer", () => {
   it("hides the project picker on the chat surface", () => {
     render(
       <Composer
-        mode="chat" setMode={() => {}} allowedModes={["chat", "thinking"]}
-        models={models} modelId="p:text" setModelId={() => {}}
-        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: "/tmp/demo", additionalPaths: [], sources: [], created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }]}
+        mode="chat"
+        setMode={() => {}}
+        allowedModes={["chat", "thinking"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        projects={[
+          {
+            id: "p1",
+            name: "demo",
+            instructions: "",
+            rootPath: "/tmp/demo",
+            additionalPaths: [],
+            sources: [],
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ]}
         projectId={null}
         onProjectChange={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
       />,
     );
-    expect(screen.queryByRole("button", { name: "プロジェクトを選択" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "プロジェクトを選択" }),
+    ).toBeNull();
   });
 
   it("shows the project picker on the desktop-agent surface", () => {
     render(
       <Composer
-        mode="agent" setMode={() => {}} allowedModes={["agent"]}
-        models={models} modelId="p:text" setModelId={() => {}}
-        projects={[{ id: "p1", name: "demo", instructions: "", rootPath: "/tmp/demo", additionalPaths: [], sources: [], created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }]}
+        mode="agent"
+        setMode={() => {}}
+        allowedModes={["agent"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        projects={[
+          {
+            id: "p1",
+            name: "demo",
+            instructions: "",
+            rootPath: "/tmp/demo",
+            additionalPaths: [],
+            sources: [],
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ]}
         projectId="p1"
         onProjectChange={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
       />,
     );
-    expect(screen.getByRole("button", { name: "プロジェクトを選択" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "プロジェクトを選択" }),
+    ).toBeInTheDocument();
   });
 
   it("sends on Cmd+Enter even with Shift held", async () => {
@@ -173,39 +305,76 @@ describe("Composer", () => {
     const user = userEvent.setup();
     render(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={onSend} onStop={() => {}}
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
       />,
     );
     const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
     await user.type(box, "hello");
     fireEvent.keyDown(box, { key: "Enter", shiftKey: true, metaKey: true });
-    expect(onSend).toHaveBeenCalledWith("hello", [], { temporaryMode: false, allowTools: false });
+    expect(onSend).toHaveBeenCalledWith("hello", [], {
+      temporaryMode: false,
+      allowTools: false,
+    });
   });
 
   it("scopes drafts per conversation key", async () => {
     const user = userEvent.setup();
     const { rerender, unmount } = render(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}} draftKey="thread-a"
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+        draftKey="thread-a"
       />,
     );
-    await user.type(screen.getByPlaceholderText("MIX-agent に話しかける…"), "draft-a");
+    await user.type(
+      screen.getByPlaceholderText("MIX-agent に話しかける…"),
+      "draft-a",
+    );
     rerender(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}} draftKey="thread-b"
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+        draftKey="thread-b"
       />,
     );
-    expect(screen.getByPlaceholderText("MIX-agent に話しかける…")).toHaveValue("");
+    expect(screen.getByPlaceholderText("MIX-agent に話しかける…")).toHaveValue(
+      "",
+    );
     rerender(
       <Composer
-        mode="chat" setMode={() => {}} models={models} modelId="p:text" setModelId={() => {}}
-        busy={false} onSend={() => {}} onStop={() => {}} draftKey="thread-a"
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+        draftKey="thread-a"
       />,
     );
-    expect(screen.getByPlaceholderText("MIX-agent に話しかける…")).toHaveValue("draft-a");
+    expect(screen.getByPlaceholderText("MIX-agent に話しかける…")).toHaveValue(
+      "draft-a",
+    );
     unmount();
   });
 });

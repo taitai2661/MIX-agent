@@ -93,7 +93,10 @@ export function SegmentedOption<T extends string>({
       {...props}
     >
       {icon && (
-        <span className="inline-flex shrink-0 items-center justify-center text-current" aria-hidden="true">
+        <span
+          className="inline-flex shrink-0 items-center justify-center text-current"
+          aria-hidden="true"
+        >
           {icon}
         </span>
       )}

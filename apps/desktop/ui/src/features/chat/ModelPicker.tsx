@@ -1,4 +1,11 @@
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Brain,
   Check,
@@ -27,7 +34,11 @@ import { ListboxSkeleton } from "@/components/common";
 import { EmptyState } from "@/components/shared";
 import { SectionLabel } from "@/components/layout";
 import { Switch } from "@/components/ui/switch";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { SearchField } from "@/components/ui/input";
 import { DropdownMenuTriggerButton } from "@/components/ui/dropdown-menu";
 
@@ -36,11 +47,23 @@ import { DropdownMenuTriggerButton } from "@/components/ui/dropdown-menu";
  * A model's three booleans are the reason to pick one over another, but three
  * text badges do not fit beside a long label in a 20rem popover. Icons do, so
  * each carries its name in an `aria-label` and a `title` for the pointer. */
-const Capabilities = memo(function Capabilities({ model }: { model: ModelView }) {
+const Capabilities = memo(function Capabilities({
+  model,
+}: {
+  model: ModelView;
+}) {
   const caps = [
     model.supports_vision && { key: "vision", Icon: Eye, label: t("Vision") },
-    model.supports_tool_calling && { key: "tools", Icon: Wrench, label: t("ツール") },
-    model.supports_reasoning && { key: "reasoning", Icon: Brain, label: t("推論") },
+    model.supports_tool_calling && {
+      key: "tools",
+      Icon: Wrench,
+      label: t("ツール"),
+    },
+    model.supports_reasoning && {
+      key: "reasoning",
+      Icon: Brain,
+      label: t("推論"),
+    },
   ].filter(Boolean) as { key: string; Icon: typeof Eye; label: string }[];
 
   if (caps.length === 0) return null;
@@ -88,7 +111,10 @@ function AutoRowLabel() {
 const AutoRowLabelMemo = memo(AutoRowLabel);
 
 function providerLabel(model: ModelView, providers: ProviderView[]): string {
-  return providers.find((p) => p.id === model.provider_id)?.label ?? model.provider_id;
+  return (
+    providers.find((p) => p.id === model.provider_id)?.label ??
+    model.provider_id
+  );
 }
 
 export function ModelPicker({
@@ -129,9 +155,10 @@ export function ModelPicker({
   const [recents, setRecents] = useState<string[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  const selected = value === AUTO_MODEL_ID
-    ? null
-    : (models.find((m) => m.id === value) ?? null);
+  const selected =
+    value === AUTO_MODEL_ID
+      ? null
+      : (models.find((m) => m.id === value) ?? null);
   const isAutoSelected = value === AUTO_MODEL_ID;
 
   // Preferences live in `localStorage`; refresh them whenever the popover opens
@@ -162,8 +189,9 @@ export function ModelPicker({
       t("Auto").toLocaleLowerCase().includes(needle);
     const matches = (m: ModelView) => {
       if (!needle) return true;
-      return [m.label, m.id, providerLabel(m, providers)]
-        .some((v) => v.toLocaleLowerCase().includes(needle));
+      return [m.label, m.id, providerLabel(m, providers)].some((v) =>
+        v.toLocaleLowerCase().includes(needle),
+      );
     };
 
     if (needle) {
@@ -189,7 +217,12 @@ export function ModelPicker({
     const pushModel = (model: ModelView) => {
       if (seen.has(model.id)) return;
       seen.add(model.id);
-      out.push({ kind: "model", key: model.id, model, provider: providerLabel(model, providers) });
+      out.push({
+        kind: "model",
+        key: model.id,
+        model,
+        provider: providerLabel(model, providers),
+      });
     };
 
     const favoriteModels = favorites
@@ -204,7 +237,11 @@ export function ModelPicker({
       .map((id) => byId.get(id))
       .filter((m): m is ModelView => m != null && !favorites.includes(m.id));
     if (recentModels.length > 0) {
-      out.push({ kind: "header", key: "h:recents", label: t("最近使ったモデル") });
+      out.push({
+        kind: "header",
+        key: "h:recents",
+        label: t("最近使ったモデル"),
+      });
       recentModels.forEach(pushModel);
     }
 
@@ -239,14 +276,17 @@ export function ModelPicker({
   }, [query, open]);
 
   useEffect(() => {
-    if (active >= optionRows.length) setActive(Math.max(0, optionRows.length - 1));
+    if (active >= optionRows.length)
+      setActive(Math.max(0, optionRows.length - 1));
   }, [active, optionRows.length]);
 
   // Keep the highlighted row inside the scroll viewport. `scrollIntoView` is
   // not implemented in jsdom, so the optional call keeps the test suite quiet.
   useEffect(() => {
     if (!open) return;
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`);
+    const el = listRef.current?.querySelector<HTMLElement>(
+      `[data-index="${active}"]`,
+    );
     el?.scrollIntoView?.({ block: "nearest" });
   }, [active, open]);
 
@@ -284,8 +324,12 @@ export function ModelPicker({
 
   const triggerLabel = isAutoSelected
     ? t("Auto")
-    : (selected?.label
-      ?? (pending ? t("読み込み中…") : models.length === 0 ? t("モデル未設定") : t("モデル")));
+    : (selected?.label ??
+      (pending
+        ? t("読み込み中…")
+        : models.length === 0
+          ? t("モデル未設定")
+          : t("モデル")));
 
   let optionIndex = -1;
 
@@ -296,11 +340,19 @@ export function ModelPicker({
           aria-label={t("モデルを選択")}
           aria-expanded={open}
           title={selected?.label ?? triggerLabel}
-          className={cn("border-transparent bg-transparent hover:bg-hover", className)}
+          className={cn(
+            "border-transparent bg-transparent hover:bg-hover",
+            className,
+          )}
         >
-          <span className="min-w-0 flex-1 truncate text-start">{triggerLabel}</span>
+          <span className="min-w-0 flex-1 truncate text-start">
+            {triggerLabel}
+          </span>
           {isAutoSelected && (
-            <span className="flex shrink-0 items-center text-brand" title={t("リクエストごとに最適なモデルを選択")}>
+            <span
+              className="flex shrink-0 items-center text-brand"
+              title={t("リクエストごとに最適なモデルを選択")}
+            >
               <Sparkles size={12} aria-hidden="true" />
             </span>
           )}
@@ -408,7 +460,11 @@ export function ModelPicker({
                   >
                     <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
                       {isSelected && (
-                        <Check size={13} className="text-brand" aria-hidden="true" />
+                        <Check
+                          size={13}
+                          className="text-brand"
+                          aria-hidden="true"
+                        />
                       )}
                     </span>
                     <AutoRowLabelMemo />
@@ -445,7 +501,11 @@ export function ModelPicker({
                   >
                     <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
                       {isSelected && (
-                        <Check size={13} className="text-brand" aria-hidden="true" />
+                        <Check
+                          size={13}
+                          className="text-brand"
+                          aria-hidden="true"
+                        />
                       )}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -456,7 +516,12 @@ export function ModelPicker({
                         <Capabilities model={row.model} />
                       </span>
                       <span className="mt-0.5 flex items-center gap-2 text-2xs text-faint">
-                        <span className="min-w-0 truncate font-mono" title={row.model.id}>{shortModelId(row.model.id)}</span>
+                        <span
+                          className="min-w-0 truncate font-mono"
+                          title={row.model.id}
+                        >
+                          {shortModelId(row.model.id)}
+                        </span>
                         <span className="ms-auto shrink-0 font-mono">
                           {formatContext(row.model.context_window)}
                         </span>
@@ -470,12 +535,24 @@ export function ModelPicker({
                     // Keep focus in the search box so arrow-key travel is not
                     // interrupted when toggling a favourite with the pointer.
                     onMouseDown={(e) => e.preventDefault()}
-                    aria-label={isFavorite ? t("お気に入りから外す") : t("お気に入りに追加")}
-                    title={isFavorite ? t("お気に入りから外す") : t("お気に入りに追加")}
+                    aria-label={
+                      isFavorite
+                        ? t("お気に入りから外す")
+                        : t("お気に入りに追加")
+                    }
+                    title={
+                      isFavorite
+                        ? t("お気に入りから外す")
+                        : t("お気に入りに追加")
+                    }
                     selected={isFavorite}
                     className="-me-0.5 mt-0.5 text-faint"
                   >
-                    <Star size={13} fill={isFavorite ? "currentColor" : "none"} aria-hidden="true" />
+                    <Star
+                      size={13}
+                      fill={isFavorite ? "currentColor" : "none"}
+                      aria-hidden="true"
+                    />
                   </Button>
                 </div>
               );
@@ -502,11 +579,17 @@ export function ModelPicker({
             {temporary && (
               <>
                 <p className="mt-1 text-2xs text-faint">
-                  {t("この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します。")}
+                  {t(
+                    "この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します。",
+                  )}
                 </p>
                 <label className="mt-2 flex items-center justify-between gap-2 text-xs text-fg">
                   <span className="inline-flex items-center gap-1.5">
-                    <Wrench size={12} className="text-muted" aria-hidden="true" />
+                    <Wrench
+                      size={12}
+                      className="text-muted"
+                      aria-hidden="true"
+                    />
                     {t("Toolを許可")}
                   </span>
                   <Switch

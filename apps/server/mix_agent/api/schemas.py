@@ -15,8 +15,15 @@ class RecordView(BaseModel):
 
 ChatMode = Literal["chat", "thinking", "agent"]
 RunStatus = Literal[
-    "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
-    "completed", "failed", "cancelled", "interrupted",
+    "queued",
+    "running",
+    "waiting_approval",
+    "paused",
+    "budget_extension_pending",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
 ]
 ApprovalDecision = Literal["once", "always", "denied"]
 ApprovalStatus = Literal["pending", "once", "always", "denied", "expired"]
@@ -372,7 +379,9 @@ class SessionRevocationInput(Input):
 class ProviderInput(Input):
     name: str = Field(min_length=1, max_length=100)
     # kind remains accepted for records created before the catalog existed.
-    kind: Literal["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"] | None = None
+    kind: (
+        Literal["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"] | None
+    ) = None
     preset_id: str | None = Field(default=None, max_length=100)
     base_url: str = Field(default="", max_length=2000)
     api_key: str | None = Field(default=None, max_length=2000)
@@ -499,8 +508,15 @@ class MemoryInput(Input):
 
 class MemoryEvidenceInput(Input):
     kind: Literal[
-        "user_message", "conversation", "tool_result", "browser",
-        "file", "code_change", "external", "agent_action", "observation",
+        "user_message",
+        "conversation",
+        "tool_result",
+        "browser",
+        "file",
+        "code_change",
+        "external",
+        "agent_action",
+        "observation",
     ]
     ref: str = Field(default="", max_length=500)
     summary: str = Field(default="", max_length=2000)

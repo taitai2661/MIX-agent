@@ -181,7 +181,9 @@ describe("i18n key coverage", () => {
 
   it("scans the sources with fs (no import.meta.glob)", () => {
     expect(sources.length).toBeGreaterThan(30);
-    expect(sources.some((f) => f.endsWith(path.join("lib", "i18n.ts")))).toBe(false);
+    expect(sources.some((f) => f.endsWith(path.join("lib", "i18n.ts")))).toBe(
+      false,
+    );
     expect(sources.some((f) => f.endsWith(".test.tsx"))).toBe(false);
   });
 
@@ -216,11 +218,14 @@ describe("i18n key coverage", () => {
       const code = fs.readFileSync(file, "utf8");
       let match: RegExpExecArray | null;
       ANY_STRING.lastIndex = 0;
-      while ((match = ANY_STRING.exec(code)) !== null) referenced.add(unescape(match[2]));
+      while ((match = ANY_STRING.exec(code)) !== null)
+        referenced.add(unescape(match[2]));
     }
 
     const allow = new Set(ORPHAN_ALLOWLIST);
-    const unexpected = [...dict.keys()].filter((k) => !referenced.has(k) && !allow.has(k)).sort();
+    const unexpected = [...dict.keys()]
+      .filter((k) => !referenced.has(k) && !allow.has(k))
+      .sort();
     expect(unexpected).toEqual([]);
   });
 

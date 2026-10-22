@@ -363,8 +363,10 @@ def test_memory_revision_restore(signed):
     revisions = signed.get("/api/v1/memories/" + key + "/revisions").json()
     assert revisions[0]["data"]["previous"]["content"] == "日本語を好む"
     assert signed.delete("/api/v1/memories/" + key).status_code == 200
+    # §3: `forget` is a hard delete — the row is gone and only the revision
+    # survives, which is what makes the restore below possible.
     deleted = signed.get("/api/v1/memories?q=日本語").json()
-    assert deleted[0]["data"]["deleted"] is True
+    assert deleted == []
     assert (
         signed.post(
             "/api/v1/memories/" + key + "/restore/" + revisions[0]["id"]
@@ -392,7 +394,9 @@ def test_memory_recall_ranks_pinned_relevant_entries_and_blocks_secrets(signed):
     assert rows[0]["data"]["pinned"] is True
     assert "category" not in rows[0]["data"]
     assert rows[0]["data"]["lifecycle_state"] == "established"
-    assert rows[0]["data"]["strength"] > 0.8
+    # The duplicate reinforced the row it already had (§3): the same words
+    # arriving again are evidence, so its strength grew past §1's default.
+    assert rows[0]["data"]["strength"] > 0.6
     rejected = signed.post("/api/v1/memories", json={"content": "api_key=not-for-memory"})
     assert rejected.status_code == 422
 
@@ -598,13 +602,17 @@ def test_memory_scope_is_a_soft_retrieval_signal(signed):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         service.change(db, owner, "user preference", confidence=.9)
-        service.change(db, owner, "agent-only decision", scope="agent:one", confidence=.9)
+        # §2's vocabulary: an unknown scope falls back to the row default, so
+        # the second memory needs a real scope to be distinguishable at all.
+        service.change(db, owner, "agent-only decision", scope="task", confidence=.9)
         db.commit()
+        # A scope is a *soft* signal: the other scope stays retrievable, it
+        # only ranks lower.
         user_ranked = service.search(db, owner, scopes=["user"])
-        agent_ranked = service.search(db, owner, scopes=["agent:one"])
+        task_ranked = service.search(db, owner, scopes=["task"])
         assert {row["content"] for row in user_ranked} == {"user preference", "agent-only decision"}
         assert user_ranked[0]["content"] == "user preference"
-        assert agent_ranked[0]["content"] == "agent-only decision"
+        assert task_ranked[0]["content"] == "agent-only decision"
 
 
 def test_message_retry_and_saved_selection(signed, monkeypatch):
@@ -858,6 +866,10 @@ def test_delete_message_tail_defers_artifact_unlink_until_commit(signed, tmp_pat
         db.add_all([kept, doomed])
         db.flush()
         kept_id, doomed_id, artifact_id = kept.id, doomed.id, artifact.id
+        # The rows have to exist before the rollback below: the test proves
+        # that the *deletion* is transactional, so what survives it is the
+        # committed conversation, not an uncommitted insert.
+        db.commit()
 
         paths = routes._delete_message_tail(db, conversation, doomed_id)
         # Nothing is unlinked here: the replacement Run's transaction may still

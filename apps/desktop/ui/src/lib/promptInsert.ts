@@ -31,7 +31,12 @@ export const usePromptInsert = create<PromptInsertState>((set) => ({
   request: null,
   insertPrompt: (text, mode) =>
     set((s) => ({
-      request: { text, mode, append: false, nonce: (s.request?.nonce ?? 0) + 1 },
+      request: {
+        text,
+        mode,
+        append: false,
+        nonce: (s.request?.nonce ?? 0) + 1,
+      },
     })),
   appendPrompt: (text) =>
     set((s) => ({
@@ -39,7 +44,11 @@ export const usePromptInsert = create<PromptInsertState>((set) => ({
     })),
   insertFileReference: (path) =>
     set((s) => ({
-      request: { text: `@${path} `, append: true, nonce: (s.request?.nonce ?? 0) + 1 },
+      request: {
+        text: `@${path} `,
+        append: true,
+        nonce: (s.request?.nonce ?? 0) + 1,
+      },
     })),
 }));
 

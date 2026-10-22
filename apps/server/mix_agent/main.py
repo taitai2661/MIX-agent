@@ -34,6 +34,7 @@ async def lifespan(app):
     task = asyncio.create_task(scheduler())
     memory_task = asyncio.create_task(memory_scheduler())
     from mix_agent.push import worker as push_worker
+
     push_task = asyncio.create_task(push_worker())
     yield
     task.cancel()
@@ -51,7 +52,7 @@ async def lifespan(app):
     )
 
 
-app = FastAPI(title="MIX agent", version="0.3.5", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.4.0", lifespan=lifespan)
 
 
 @app.middleware("http")

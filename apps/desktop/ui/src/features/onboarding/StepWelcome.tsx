@@ -1,4 +1,10 @@
-import { FolderTree, Globe, MessageSquare, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  FolderTree,
+  Globe,
+  MessageSquare,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { t } from "@/lib/i18n";
 import { useApplySettings } from "@/lib/settings";
 import { useUi } from "@/lib/ui";
@@ -13,7 +19,11 @@ import { Button } from "@/components/ui/button";
 const CAPABILITIES = [
   { Icon: MessageSquare, title: "チャット", body: "質問、対談、アイデア出し" },
   { Icon: Sparkles, title: "思考モード", body: "長い推論の過程をテーブルで" },
-  { Icon: FolderTree, title: "エージェント", body: "フォルダの中のファイルを読み書き" },
+  {
+    Icon: FolderTree,
+    title: "エージェント",
+    body: "フォルダの中のファイルを読み書き",
+  },
   { Icon: Globe, title: "ブラウザ操作", body: "実際にブラウザを操作して検証" },
 ];
 
@@ -44,7 +54,9 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
         <Sparkles size={22} aria-hidden="true" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-xl font-semibold tracking-tight text-fg">{t("ようこそ")}</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-fg">
+          {t("ようこそ")}
+        </h2>
         <p className="text-sm text-muted">
           {t("ローカルで動く AI ワークスペースです。")}
         </p>
@@ -68,9 +80,15 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
       </ul>
 
       <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface/60 px-3.5 py-3">
-        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-brand" aria-hidden="true" />
+        <ShieldCheck
+          size={16}
+          className="mt-0.5 shrink-0 text-brand"
+          aria-hidden="true"
+        />
         <div className="flex flex-col gap-0.5 text-xs">
-          <span className="font-medium text-fg">{t("ローカル実行と安全設計")}</span>
+          <span className="font-medium text-fg">
+            {t("ローカル実行と安全設計")}
+          </span>
           <span className="text-muted leading-relaxed">
             {t(
               "会話履歴や設定はあなたの端末ローカルに安全に保存されます。ファイルの編集やシェル実行などの操作は、必ず事前に承認を求める安全設計になっています。",
@@ -82,8 +100,16 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-faint">{t("表示言語")}</span>
         <Row>
-          <LanguageChoice language="ja" active={locale === "ja"} onChoose={chooseLanguage} />
-          <LanguageChoice language="en" active={locale === "en"} onChoose={chooseLanguage} />
+          <LanguageChoice
+            language="ja"
+            active={locale === "ja"}
+            onChoose={chooseLanguage}
+          />
+          <LanguageChoice
+            language="en"
+            active={locale === "en"}
+            onChoose={chooseLanguage}
+          />
         </Row>
       </div>
 

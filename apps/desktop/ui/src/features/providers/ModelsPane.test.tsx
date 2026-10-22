@@ -10,12 +10,46 @@ import { ModelsPane } from "./ModelsPane";
 vi.mock("@/lib/api", () => ({
   api: {
     listModels: vi.fn(async () => [
-      { id: "openai:gpt-4o", provider_id: "openai", label: "GPT-4o", context_window: 128000, supports_vision: true, supports_tool_calling: true, supports_reasoning: false, auto_candidate: true },
-      { id: "anthropic:claude", provider_id: "anthropic", label: "Claude Sonnet", context_window: 200000, supports_vision: true, supports_tool_calling: true, supports_reasoning: true, auto_candidate: false },
+      {
+        id: "openai:gpt-4o",
+        provider_id: "openai",
+        label: "GPT-4o",
+        context_window: 128000,
+        supports_vision: true,
+        supports_tool_calling: true,
+        supports_reasoning: false,
+        auto_candidate: true,
+      },
+      {
+        id: "anthropic:claude",
+        provider_id: "anthropic",
+        label: "Claude Sonnet",
+        context_window: 200000,
+        supports_vision: true,
+        supports_tool_calling: true,
+        supports_reasoning: true,
+        auto_candidate: false,
+      },
     ]),
     listProviders: vi.fn(async () => [
-      { id: "openai", kind: "openai", label: "OpenAI", base_url: null, enabled: true, has_api_key: true, preset: null },
-      { id: "anthropic", kind: "anthropic", label: "Anthropic", base_url: null, enabled: true, has_api_key: true, preset: null },
+      {
+        id: "openai",
+        kind: "openai",
+        label: "OpenAI",
+        base_url: null,
+        enabled: true,
+        has_api_key: true,
+        preset: null,
+      },
+      {
+        id: "anthropic",
+        kind: "anthropic",
+        label: "Anthropic",
+        base_url: null,
+        enabled: true,
+        has_api_key: true,
+        preset: null,
+      },
     ]),
     verifyTools: vi.fn(async () => ({})),
     setModelAuto: vi.fn(async () => ({})),
@@ -27,7 +61,9 @@ const mockedApi = vi.mocked(api);
 beforeAll(() => setLanguage("ja"));
 
 function renderPane() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <ModelsPane />
@@ -52,7 +88,10 @@ describe("ModelsPane", () => {
     const user = userEvent.setup();
     renderPane();
     await screen.findByText("GPT-4o");
-    await user.type(screen.getByRole("textbox", { name: "モデルを検索" }), "claude");
+    await user.type(
+      screen.getByRole("textbox", { name: "モデルを検索" }),
+      "claude",
+    );
     expect(screen.queryByText("GPT-4o")).toBeNull();
     expect(screen.getByText("Claude Sonnet")).toBeInTheDocument();
   });
@@ -61,7 +100,9 @@ describe("ModelsPane", () => {
     mockedApi.listModels.mockResolvedValueOnce([]);
     const user = userEvent.setup();
     renderPane();
-    await user.click(await screen.findByRole("button", { name: "プロバイダーを追加" }));
+    await user.click(
+      await screen.findByRole("button", { name: "プロバイダーを追加" }),
+    );
     await waitFor(() => expect(useUi.getState().settingsTab).toBe("providers"));
   });
 
@@ -69,11 +110,16 @@ describe("ModelsPane", () => {
     const user = userEvent.setup();
     renderPane();
     await screen.findByText("GPT-4o");
-    const switches = await screen.findAllByRole("switch", { name: "Auto候補にする" });
+    const switches = await screen.findAllByRole("switch", {
+      name: "Auto候補にする",
+    });
     expect(switches).toHaveLength(2);
     await user.click(switches[1]);
     await waitFor(() =>
-      expect(mockedApi.setModelAuto).toHaveBeenCalledWith("anthropic:claude", true),
+      expect(mockedApi.setModelAuto).toHaveBeenCalledWith(
+        "anthropic:claude",
+        true,
+      ),
     );
   });
 });

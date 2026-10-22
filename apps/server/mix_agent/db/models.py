@@ -108,26 +108,23 @@ class Feedback(Record, Base):
 
 class AutoReliabilityEvent(Record, Base):
     """A privacy-minimal, time-bounded record of an Auto provider attempt."""
+
     __tablename__ = "auto_reliability_events"
-    __table_args__ = (
-        Index("auto_reliability_owner_created", "owner_id", "created_at"),
-    )
+    __table_args__ = (Index("auto_reliability_owner_created", "owner_id", "created_at"),)
 
 
 class PerformanceEvent(Record, Base):
     """A privacy-minimal, time-bounded measurement of a completed answer."""
+
     __tablename__ = "performance_events"
-    __table_args__ = (
-        Index("performance_event_owner_created", "owner_id", "created_at"),
-    )
+    __table_args__ = (Index("performance_event_owner_created", "owner_id", "created_at"),)
 
 
 class ModelUsageEvent(Record, Base):
     """A privacy-minimal, time-bounded record of one model call's token usage."""
+
     __tablename__ = "model_usage_events"
-    __table_args__ = (
-        Index("model_usage_owner_created", "owner_id", "created_at"),
-    )
+    __table_args__ = (Index("model_usage_owner_created", "owner_id", "created_at"),)
 
 
 class ScheduledJob(Record, Base):
@@ -215,24 +212,42 @@ class Memory(Record, Base):
     # Validated against ``memory/types.py`` (spec §2) before every write; an
     # unknown value never reaches the column.
     lifecycle_state: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="established", server_default="established",
+        String(20),
+        nullable=False,
+        default="established",
+        server_default="established",
     )
     superseded_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
     disputed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
     confidence: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.7, server_default="0.7",
+        Float,
+        nullable=False,
+        default=0.7,
+        server_default="0.7",
     )
     salience: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.5, server_default="0.5",
+        Float,
+        nullable=False,
+        default=0.5,
+        server_default="0.5",
     )
     role: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="fact", server_default="fact",
+        String(20),
+        nullable=False,
+        default="fact",
+        server_default="fact",
     )
     scope: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="user", server_default="user",
+        String(20),
+        nullable=False,
+        default="user",
+        server_default="user",
     )
     source_kind: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="agent", server_default="agent",
+        String(20),
+        nullable=False,
+        default="agent",
+        server_default="agent",
     )
     __table_args__ = (
         Index("memory_owner_updated", "owner_id", "updated_at"),
@@ -273,10 +288,14 @@ class MemoryLink(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
     source_memory_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False,
+        String(36),
+        ForeignKey("memories.id", ondelete="CASCADE"),
+        nullable=False,
     )
     target_memory_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False,
+        String(36),
+        ForeignKey("memories.id", ondelete="CASCADE"),
+        nullable=False,
     )
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.2, server_default="0.2")
@@ -287,7 +306,10 @@ class MemoryLink(Base):
         # Spec §4: (owner, source, target, kind) is unique — a duplicate upsert
         # updates one row instead of adding a second edge.
         UniqueConstraint(
-            "owner_id", "source_memory_id", "target_memory_id", "kind",
+            "owner_id",
+            "source_memory_id",
+            "target_memory_id",
+            "kind",
             name="uq_memory_links_owner_source_target_kind",
         ),
         Index("memory_link_owner_source", "owner_id", "source_memory_id"),
@@ -352,9 +374,15 @@ class Run(Record, Base):
             "one_active_run",
             "conversation_id",
             unique=True,
-            postgresql_where=status.in_([
-                "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
-            ]),
+            postgresql_where=status.in_(
+                [
+                    "queued",
+                    "running",
+                    "waiting_approval",
+                    "paused",
+                    "budget_extension_pending",
+                ]
+            ),
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'waiting_approval', 'paused', "

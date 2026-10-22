@@ -1,5 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { formatBytes, formatContext, formatDuration, relativeTime, threadGroup } from "./format";
+import {
+  formatBytes,
+  formatContext,
+  formatDuration,
+  relativeTime,
+  threadGroup,
+} from "./format";
 import { setLanguage } from "./i18n";
 
 // relativeTime() routes through t(); jsdom reports en-US, so pin the display
@@ -8,7 +14,8 @@ beforeAll(() => setLanguage("ja"));
 
 // Local-time construction keeps the tests independent of the machine timezone.
 const NOW = new Date(2026, 0, 15, 12, 0, 0);
-const minutesAgo = (n: number) => new Date(NOW.getTime() - n * 60_000).toISOString();
+const minutesAgo = (n: number) =>
+  new Date(NOW.getTime() - n * 60_000).toISOString();
 const local = (y: number, m: number, d: number, h = 12) =>
   new Date(y, m, d, h, 0, 0).toISOString();
 

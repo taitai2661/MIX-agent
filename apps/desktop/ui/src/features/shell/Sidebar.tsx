@@ -289,10 +289,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
         {/* Surface filter. The store has held `threadFilter` all along; this
             is the control that finally drives it, so an agent-workspace user
             can hide the plain chat threads (and vice versa). */}
-        <Segmented
-          aria-label={t("スレッドを絞り込む")}
-          className="w-full"
-        >
+        <Segmented aria-label={t("スレッドを絞り込む")} className="w-full">
           {THREAD_FILTERS.map((filter) => (
             <SegmentedOption
               key={filter}
@@ -343,7 +340,8 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                           className={cn(
                             "group relative flex flex-col gap-1 rounded-lg py-2 pe-2 ps-2.5",
                             "transition-colors duration-100 hover:bg-hover",
-                            conversationId === c.id && "bg-brand-soft ring-1 ring-brand/20 ring-inset",
+                            conversationId === c.id &&
+                              "bg-brand-soft ring-1 ring-brand/20 ring-inset",
                           )}
                         >
                           {renaming === c.id ? (

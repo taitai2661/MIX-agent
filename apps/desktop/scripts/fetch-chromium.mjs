@@ -11,20 +11,27 @@
  * Source: the official Chrome for Testing endpoints, so no extra npm
  * dependency and no guessing at CDN paths.
  *
- * Usage:  node scripts/fetch-chromium.mjs [--force] [--version <x>]
+ * Usage:  node scripts/fetch-chromium.mjs [--force] [--version <x>] [--cft <platform>]
  * Env:    MIX_SKIP_CHROMIUM=1 skips the download entirely (dev only; release
  *         CI sets MIX_REQUIRE_CHROMIUM=1 to fail closed instead of shipping
  *         browser-less).
  *         MIX_REQUIRE_CHROMIUM=1 fails when the bundle would be skipped/missing.
  *         MIX_CHROMIUM_CHANNEL=beta|canary|dev picks a non-stable channel.
  *         MIX_CHROMIUM_VERSION=<x> pins the version (CI sets this).
+ *         MIX_CHROMIUM_CFT=<platform> pins the Chrome-for-Testing platform
+ *         (mac-arm64 / mac-x64 / win32 / win64 / win-arm64 / linux64). The
+ *         release matrix cross-builds several targets from one runner, so the
+ *         runner's own arch is not necessarily the bundle's arch; without
+ *         this an Intel bundle would ship an arm64 Chromium, or the reverse.
  *         MIX_CHROMIUM_EXPECTED_VERSION=<x> refuses to float past this version:
  *         when MIX_CHROMIUM_VERSION is unset, the resolved latest-good must
  *         equal this value or the fetch aborts. Set it to the last reviewed
  *         version so an unpinned local/dev run fails loudly instead of
  *         silently shipping a newer Chromium (release CI always pins
  *         MIX_CHROMIUM_VERSION, so this is a dev-only backstop).
- *         MIX_CHROMIUM_SHA256 / MIX_CHROMIUM_SIZE verify the zip.
+ *         MIX_CHROMIUM_SHA256 / MIX_CHROMIUM_SIZE verify the zip. Each CfT
+ *         platform ships its own zip, so CI sets these per target
+ *         (MIX_CHROMIUM_SHA256_MAC_X64 and friends).
  */
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -41,8 +48,18 @@ const force = args.includes("--force");
 const pinned = args.includes("--version")
   ? args[args.indexOf("--version") + 1]
   : process.env.MIX_CHROMIUM_VERSION ?? null;
+// Explicit Chrome-for-Testing platform, e.g. "mac-x64" for an Intel macOS
+// bundle built on an Apple Silicon runner. The release matrix builds several
+// targets from the same runner label, so the runner's arch is not necessarily
+// the bundle's arch.
+const cftPinned = args.includes("--cft")
+  ? args[args.indexOf("--cft") + 1]
+  : process.env.MIX_CHROMIUM_CFT ?? null;
 
 /** @typedef {"mac"|"win"|"linux"} Platform */
+
+/** CfT platform ids Chrome for Testing actually publishes. */
+const CFT_PLATFORMS = ["mac-arm64", "mac-x64", "win32", "win64", "win-arm64", "linux64"];
 
 function detectPlatform() {
   if (os.platform() === "darwin") return "mac";
@@ -52,8 +69,26 @@ function detectPlatform() {
 
 /** Chrome for Testing platform identifier, which folds in the CPU arch.
  * NOTE: win-arm64 maps to "win-arm64" (not "win64"); CfT ships
- * chrome-win-arm64.zip for ARM Windows. Untested in CI (no win-arm64 runner). */
+ * chrome-win-arm64.zip for ARM Windows. Untested in CI (no win-arm64 runner).
+ *
+ * An explicit pin (MIX_CHROMIUM_CFT / --cft) wins over the runner's arch:
+ * a cross-built bundle needs the *target* arch, not the host's.
+ */
 function cftPlatform(platform) {
+  if (cftPinned) {
+    if (!CFT_PLATFORMS.includes(cftPinned)) {
+      throw new Error(
+        `[chromium] unknown CfT platform "${cftPinned}" (expected one of ${CFT_PLATFORMS.join(", ")})`,
+      );
+    }
+    const prefix = platform === "mac" ? "mac" : platform === "win" ? "win" : "linux";
+    if (!cftPinned.startsWith(prefix)) {
+      throw new Error(
+        `[chromium] CfT platform "${cftPinned}" does not match the host platform "${platform}"`,
+      );
+    }
+    return cftPinned;
+  }
   const arm = os.arch() === "arm64";
   if (platform === "mac") return arm ? "mac-arm64" : "mac-x64";
   if (platform === "win") return arm ? "win-arm64" : "win32";

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MIX agent",
-    "version": "0.3.5"
+    "version": "0.4.0"
   },
   "paths": {
     "/health": {
@@ -1893,6 +1893,65 @@
         }
       }
     },
+    "/api/v1/conversations/{key}/messages/{message_id}/edit": {
+      "post": {
+        "summary": "Edit Message",
+        "description": "Replace a user turn and regenerate from it.\n\nThe edited turn and every turn after it are removed together with the new\nRun, so the regenerated Run is built from the surviving prefix alone and a\nfailure while building it leaves the original conversation intact. Keeping\nlater replies would leave them answering wording the user never sent.",
+        "operationId": "edit_message_api_v1_conversations__key__messages__message_id__edit_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Message Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/messages/{key}/feedback": {
       "put": {
         "summary": "Set Message Feedback",
@@ -2550,6 +2609,7 @@
     "/api/v1/memories": {
       "get": {
         "summary": "Memories",
+        "description": "Flat listing. ``state`` narrows it to one §2 ``lifecycle_state``.\n\nA value outside §2 is a **422**, not an empty list: answering \"nothing\nmatched\" for a typo is the same failure mode as ignoring ``state``\noutright, which is what this parameter used to do.",
         "operationId": "memories_api_v1_memories_get",
         "parameters": [
           {
@@ -2635,9 +2695,60 @@
         }
       }
     },
+    "/api/v1/memories/{key}/resolve": {
+      "post": {
+        "summary": "Resolve Memory Conflict",
+        "description": "Spec §3 ``resolve_conflict`` over HTTP: settle a dispute in place.\n\nThe UI reaches this from a row that §1 already reports as ``disputed``.\nEverything the settlement does stays §3's: the adopted row goes back to\n``active``, the rejected one becomes ``superseded`` (``expired`` for\n``dismiss``) and points at the winner, both rows keep a revision first, and\n§4's mirrors follow in the same transaction.\n\n``prefer`` is passed through untouched and **left alone when the client\ndoes not send it**: §3's default — the memory ``disputed_by_id`` points at\nis the one already stored, and it wins — is decided here, not in the form.",
+        "operationId": "resolve_memory_conflict_api_v1_memories__key__resolve_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryResolveConflictInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResolveConflictView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memories/{key}/associations": {
       "get": {
         "summary": "Memory Associations",
+        "description": "Spec §4: the `memory_links` edges touching one memory (§9 #3).\n\nBoth directions, owner-scoped through the same `own()` guard every other\n`/memories/{key}` route uses, so an edge can never be enumerated by\nguessing another owner's ids. Returns the flat edge dicts (source,\ntarget, kind, weight, coactivation_count) — §4 is the contract for the\nshape, not the trace view.",
         "operationId": "memory_associations_api_v1_memories__key__associations_get",
         "parameters": [
           {
@@ -2684,6 +2795,45 @@
             "schema": {
               "type": "string",
               "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memories-debug/reembed": {
+      "post": {
+        "summary": "Debug Reembed",
+        "description": "Backfill embeddings for rows written before this feature existed.\n\nKept behind the debug namespace: it spends provider quota, so it is an\noperator action rather than something the UI should trigger implicitly.",
+        "operationId": "debug_reembed_api_v1_memories_debug_reembed_post",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
             }
           }
         ],
@@ -5556,6 +5706,11 @@
             "minLength": 1,
             "title": "Content"
           },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned",
+            "default": false
+          },
           "scope": {
             "type": "string",
             "maxLength": 100,
@@ -5574,66 +5729,50 @@
             ],
             "title": "Gist"
           },
-          "strength": {
+          "role": {
             "anyOf": [
               {
-                "type": "number",
-                "maximum": 1.0,
-                "minimum": 0.0
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Strength"
+            "title": "Role"
           },
-          "confidence": {
+          "source_kind": {
             "anyOf": [
               {
-                "type": "number",
-                "maximum": 1.0,
-                "minimum": 0.0
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Confidence"
+            "title": "Source Kind"
           },
-          "salience": {
+          "role_metadata": {
             "anyOf": [
               {
-                "type": "number",
-                "maximum": 1.0,
-                "minimum": 0.0
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Salience"
+            "title": "Role Metadata"
           },
-          "lifecycle_state": {
+          "verification": {
             "anyOf": [
               {
-                "type": "string",
-                "enum": [
-                  "candidate",
-                  "active",
-                  "superseded",
-                  "expired",
-                  "archived",
-                  "disputed",
-                  "latent",
-                  "established",
-                  "deleted"
-                ]
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Lifecycle State"
+            "title": "Verification"
           },
           "entities": {
             "anyOf": [
@@ -5689,79 +5828,6 @@
             ],
             "title": "Metadata"
           },
-          "role": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "fact",
-                  "decision",
-                  "preference",
-                  "goal",
-                  "constraint",
-                  "experience",
-                  "failure",
-                  "solution",
-                  "observation",
-                  "hypothesis",
-                  "question"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Role"
-          },
-          "source_kind": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "user",
-                  "agent",
-                  "tool",
-                  "browser",
-                  "external",
-                  "consolidation"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Kind"
-          },
-          "role_metadata": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Role Metadata"
-          },
-          "verification": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "unverified",
-                  "pending",
-                  "verified",
-                  "disputed",
-                  "rejected"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verification"
-          },
           "importance": {
             "type": "integer",
             "maximum": 5.0,
@@ -5781,10 +5847,55 @@
             ],
             "title": "Category"
           },
-          "pinned": {
-            "type": "boolean",
-            "title": "Pinned",
-            "default": false
+          "strength": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strength"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "salience": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salience"
+          },
+          "lifecycle_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle State"
           }
         },
         "additionalProperties": false,
@@ -5792,7 +5903,75 @@
         "required": [
           "content"
         ],
-        "title": "MemoryInput"
+        "title": "MemoryInput",
+        "description": "ChatGPT-style flat input: content only (+ compat extras ignored)."
+      },
+      "MemoryResolveConflictInput": {
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "resolved",
+              "prefer_a",
+              "prefer_b",
+              "merge",
+              "dismiss"
+            ],
+            "title": "Resolution",
+            "default": "resolved"
+          },
+          "prefer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 36
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prefer"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "MemoryResolveConflictInput",
+        "description": "Spec §3 ``resolve_conflict`` over HTTP, shaped like §7.2's writes.\n\n``resolution`` is the reason recorded on the RESOLVE event: everything but\nthe ``dismiss`` family leaves the rejected row ``superseded`` (§3),\n``dismiss`` leaves it ``expired``. ``\"resolved\"`` is the value §3's own\nsettlement uses when it has nothing more specific to say.\n\n``prefer`` names the row that wins and must be one of the two conflicting\nmemories. **Omitting it is §3's default** — the memory ``disputed_by_id``\npoints at (the one already stored) wins — and the UI must not pre-fill it\njust because one side is showing: the default is a spec contract, not an\nunset form field."
+      },
+      "MemoryResolveConflictView": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "const": "resolved",
+            "title": "Decision",
+            "default": "resolved"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "loser_id": {
+            "type": "string",
+            "title": "Loser Id"
+          },
+          "loser_state": {
+            "type": "string",
+            "title": "Loser State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "loser_id",
+          "loser_state",
+          "reason"
+        ],
+        "title": "MemoryResolveConflictView",
+        "description": "§7.2's response keys (``decision`` / ``id`` / ``reason``) + §3's outcome."
       },
       "MessageDataView": {
         "properties": {
@@ -6964,6 +7143,18 @@
             },
             "type": "array",
             "title": "Checkpoints"
+          },
+          "context_trace": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Trace"
           }
         },
         "type": "object",
@@ -7337,6 +7528,11 @@
             "minimum": 1.0,
             "title": "Memory Result Limit",
             "default": 8
+          },
+          "memory_link_embedding_neighbors": {
+            "type": "boolean",
+            "title": "Memory Link Embedding Neighbors",
+            "default": false
           }
         },
         "additionalProperties": false,

@@ -23,7 +23,8 @@ describe("modelPrefs", () => {
   });
 
   it("keeps recents newest-first, without duplicates and capped", () => {
-    for (let i = 0; i < MAX_RECENT_MODELS + 2; i += 1) recordRecentModel(`m${i}`);
+    for (let i = 0; i < MAX_RECENT_MODELS + 2; i += 1)
+      recordRecentModel(`m${i}`);
     recordRecentModel("m2");
     const recents = getRecentModels();
     expect(recents[0]).toBe("m2");

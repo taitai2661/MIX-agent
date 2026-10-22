@@ -51,14 +51,24 @@ export function CopyButton({
         <Copy size={13} />
       )}
       <span aria-live="polite" className="sr-only">
-        {copied ? t("コピーしました") : failed ? t("コピーできませんでした") : ""}
+        {copied
+          ? t("コピーしました")
+          : failed
+            ? t("コピーできませんでした")
+            : ""}
       </span>
     </Button>
   );
 }
 
 /** Fenced-code renderer body: header with language + copy button. */
-export function CodeBlock({ language, code }: { language: string; code: string }) {
+export function CodeBlock({
+  language,
+  code,
+}: {
+  language: string;
+  code: string;
+}) {
   const [expanded, setExpanded] = useState(false);
   const lineCount = code.split("\n").length;
   const collapsible = lineCount > 30 || code.length > 6000;
@@ -78,13 +88,20 @@ export function CodeBlock({ language, code }: { language: string; code: string }
               aria-expanded={expanded}
               className="h-6 px-2 text-2xs"
             >
-              {expanded ? t("折りたたむ") : tf("すべて表示 ({n})", { n: lineCount })}
+              {expanded
+                ? t("折りたたむ")
+                : tf("すべて表示 ({n})", { n: lineCount })}
             </Button>
           )}
           <CopyButton value={code} label={t("コピー")} />
         </span>
       </div>
-      <pre className={cn("overflow-x-auto px-3.5 py-3", collapsed && "max-h-80 overflow-y-auto")}>
+      <pre
+        className={cn(
+          "overflow-x-auto px-3.5 py-3",
+          collapsed && "max-h-80 overflow-y-auto",
+        )}
+      >
         <code className="font-mono text-xs leading-5 text-fg">{code}</code>
       </pre>
     </div>

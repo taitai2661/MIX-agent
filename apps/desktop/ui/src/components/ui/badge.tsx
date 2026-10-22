@@ -32,9 +32,17 @@ export interface BadgeProps
   asChild?: boolean;
 }
 
-export function Badge({ className, tone, size, asChild = false, ...props }: BadgeProps) {
+export function Badge({
+  className,
+  tone,
+  size,
+  asChild = false,
+  ...props
+}: BadgeProps) {
   const Comp = asChild ? Slot : "span";
-  return <Comp className={cn(badgeVariants({ tone, size }), className)} {...props} />;
+  return (
+    <Comp className={cn(badgeVariants({ tone, size }), className)} {...props} />
+  );
 }
 
 export { badgeVariants };

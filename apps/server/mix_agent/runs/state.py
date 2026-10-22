@@ -39,8 +39,15 @@ NON_TERMINAL_STATES = RUN_STATES - TERMINAL_STATES
 TRANSITIONS = {
     "queued": frozenset({"running", "cancelled", "failed"}),
     "running": frozenset(
-        {"waiting_approval", "paused", "budget_extension_pending",
-         "completed", "failed", "cancelled", "interrupted"}
+        {
+            "waiting_approval",
+            "paused",
+            "budget_extension_pending",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+        }
     ),
     "paused": frozenset({"queued", "cancelled"}),
     "budget_extension_pending": frozenset({"running", "cancelled", "failed"}),
@@ -63,11 +70,7 @@ def is_valid_status(status) -> bool:
 
 def can_transition(from_status, to_status) -> bool:
     """Return whether the transition is allowed by the state machine."""
-    return (
-        to_status in RUN_STATES
-        and from_status in RUN_STATES
-        and to_status in TRANSITIONS[from_status]
-    )
+    return to_status in RUN_STATES and from_status in RUN_STATES and to_status in TRANSITIONS[from_status]
 
 
 def validate_transition(from_status, to_status, *, expected_from=None):

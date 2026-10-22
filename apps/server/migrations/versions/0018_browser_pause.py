@@ -13,12 +13,18 @@ def upgrade():
     if "ck_runs_status_valid" in checks:
         op.drop_constraint("ck_runs_status_valid", "runs", type_="check")
     op.create_check_constraint(
-        "ck_runs_status_valid", "runs",
+        "ck_runs_status_valid",
+        "runs",
         "status IN ('queued', 'running', 'waiting_approval', 'paused', 'completed', 'failed', 'cancelled', 'interrupted')",
     )
     op.drop_index("one_active_run", table_name="runs")
-    op.create_index("one_active_run", "runs", ["conversation_id"], unique=True,
-                    postgresql_where=sa.text("status IN ('queued', 'running', 'waiting_approval', 'paused')"))
+    op.create_index(
+        "one_active_run",
+        "runs",
+        ["conversation_id"],
+        unique=True,
+        postgresql_where=sa.text("status IN ('queued', 'running', 'waiting_approval', 'paused')"),
+    )
 
 
 def downgrade():

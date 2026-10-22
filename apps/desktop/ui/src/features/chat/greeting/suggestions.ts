@@ -49,7 +49,8 @@ function buildCandidates(signals: Signals): Candidate[] {
       {
         id: "sg-diff",
         label: "直前の変更を確認して",
-        prompt: "いま残っている変更を差分で見せてください。意図と合致しているか確認します。",
+        prompt:
+          "いま残っている変更を差分で見せてください。意図と合致しているか確認します。",
         weight: 4,
       },
       {
@@ -79,7 +80,8 @@ function buildCandidates(signals: Signals): Candidate[] {
       {
         id: "sg-instructions",
         label: "プロジェクトの指示を読み直す",
-        prompt: "このプロジェクトの指示を一覧し、抜けや矛盾がないか確認してください。",
+        prompt:
+          "このプロジェクトの指示を一覧し、抜けや矛盾がないか確認してください。",
         weight: 4,
       },
       {
@@ -118,7 +120,8 @@ function buildCandidates(signals: Signals): Candidate[] {
     candidates.push({
       id: "sg-tidy",
       label: "最近のスレッドを整理する",
-      prompt: "最近のスレッドを一覧して、タイトルと内容がずれているものを提案してください。",
+      prompt:
+        "最近のスレッドを一覧して、タイトルと内容がずれているものを提案してください。",
       weight: 3,
     });
 
@@ -154,12 +157,18 @@ export function suggestionsFor(
       random,
     ),
   ];
-  return order
-    .slice(0, count)
-    .map((item) => ({ id: item.id, label: item.label, prompt: item.prompt, mode: item.mode }));
+  return order.slice(0, count).map((item) => ({
+    id: item.id,
+    label: item.label,
+    prompt: item.prompt,
+    mode: item.mode,
+  }));
 }
 
-function weightedOrder(pool: readonly Candidate[], random: () => number): Candidate[] {
+function weightedOrder(
+  pool: readonly Candidate[],
+  random: () => number,
+): Candidate[] {
   const remaining = [...pool];
   const ordered: Candidate[] = [];
   while (remaining.length) {

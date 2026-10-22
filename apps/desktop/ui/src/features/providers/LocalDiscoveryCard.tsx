@@ -14,8 +14,12 @@ export function LocalDiscoveryCard() {
   return (
     <Card title={t("ローカル LLM を検出")} icon={<Radar size={13} />}>
       <LocalRuntimeScan
-        intro={t("LM Studio や Ollama などのローカル推論サーバーを自動で探します。")}
-        emptyHint={t("この PC で検出できるランタイムはありません。下の手動指定か、上のプリセットから追加してください。")}
+        intro={t(
+          "LM Studio や Ollama などのローカル推論サーバーを自動で探します。",
+        )}
+        emptyHint={t(
+          "この PC で検出できるランタイムはありません。下の手動指定か、上のプリセットから追加してください。",
+        )}
         showManualProbe
       />
     </Card>

@@ -18,7 +18,10 @@ export const PopoverAnchor = PopoverPrimitive.Anchor;
 export const PopoverContent = forwardRef<
   React.ComponentRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(function PopoverContent({ className, align = "start", sideOffset = 6, ...props }, ref) {
+>(function PopoverContent(
+  { className, align = "start", sideOffset = 6, ...props },
+  ref,
+) {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content

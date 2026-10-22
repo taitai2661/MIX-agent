@@ -14,11 +14,15 @@ const STORAGE_KEY = "mix-agent-theme";
 const QUERY = "(prefers-color-scheme: dark)";
 
 export function normalizeTheme(value: unknown): Theme {
-  return value === "light" || value === "dark" || value === "system" ? value : "system";
+  return value === "light" || value === "dark" || value === "system"
+    ? value
+    : "system";
 }
 
 function prefersDark(): boolean {
-  return typeof window !== "undefined" && window.matchMedia?.(QUERY).matches === true;
+  return (
+    typeof window !== "undefined" && window.matchMedia?.(QUERY).matches === true
+  );
 }
 
 export function resolveTheme(theme: Theme): ResolvedTheme {

@@ -20,7 +20,9 @@ export function GeneralSettings() {
       <Card title={t("セットアップガイド")} icon={<Compass size={13} />}>
         <Row align="between">
           <p className="m-0 max-w-md text-xs text-muted">
-            {t("モデル提供元の追加方法と、作業フォルダの選び方を確認できます。")}
+            {t(
+              "モデル提供元の追加方法と、作業フォルダの選び方を確認できます。",
+            )}
           </p>
           <Button size="sm" onClick={onboarding.reopen}>
             <Compass size={12} /> {t("もう一度見る")}
@@ -30,7 +32,10 @@ export function GeneralSettings() {
 
       <Card title={t("初期設定")} icon={<Zap size={13} />}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("モデル")} hint={t("新しいスレッドで既定で使うモデル")}>
+          <Field
+            label={t("モデル")}
+            hint={t("新しいスレッドで既定で使うモデル")}
+          >
             <ModelPicker
               models={models.data ?? []}
               value={data.default_model_id ?? ""}

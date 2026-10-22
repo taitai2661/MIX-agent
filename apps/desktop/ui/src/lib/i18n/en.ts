@@ -196,7 +196,8 @@ export const en: Record<string, string> = {
   "変更": "Changes",
   "変更はありません": "No changes",
   "差分はありません": "No differences",
-  "未追跡ファイルは差分に含まれません": "Untracked files are not part of a diff",
+  "未追跡ファイルは差分に含まれません":
+    "Untracked files are not part of a diff",
   "git リポジトリではありません": "Not a git repository",
   "作業ツリー": "Working tree",
   "ステージ済み": "Staged",
@@ -773,7 +774,7 @@ export const en: Record<string, string> = {
   "ステージに追加": "Stage",
   "変更を元に戻す": "Discard changes",
   "変更を破棄": "Discard changes",
-  "「{path}」の変更を元に戻しますか？": "Discard changes in \"{path}\"?",
+  "「{path}」の変更を元に戻しますか？": 'Discard changes in "{path}"?',
   "差分パネルで開く": "Open in changes panel",
   "差分パネル": "Changes panel",
   "破棄": "Discard",

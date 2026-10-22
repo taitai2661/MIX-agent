@@ -21,10 +21,22 @@ from collections.abc import Iterable
 # ``_is_write`` checks this set first so a stale or missing ``risk`` field on a
 # persisted call record cannot let a destructive tool slip past as a read.
 WRITE_TOOLS = {
-    "write_file", "edit_file", "delete_file", "run_terminal",
-    "create_artifact", "web_clip_save", "knowledge_add", "knowledge_delete",
-    "memory_add", "memory_update", "memory_delete", "skill_add", "skill_update",
-    "schedule_create", "schedule_update", "schedule_delete",
+    "write_file",
+    "edit_file",
+    "delete_file",
+    "run_terminal",
+    "create_artifact",
+    "web_clip_save",
+    "knowledge_add",
+    "knowledge_delete",
+    "memory_add",
+    "memory_update",
+    "memory_delete",
+    "skill_add",
+    "skill_update",
+    "schedule_create",
+    "schedule_update",
+    "schedule_delete",
 }
 
 DESTRUCTIVE_TERMINAL_PATTERNS = (
@@ -40,10 +52,22 @@ DESTRUCTIVE_TERMINAL_PATTERNS = (
 
 # Tools that count as a positive post-change verification.
 CHECK_TOOLS = {
-    "read_file", "files_list", "search_files", "workspace_check", "browser_read",
-    "browser_screenshot", "browser_extract", "web_search", "web_fetch",
-    "web_fetch_pdf", "knowledge_search", "memory_search", "skill_search",
-    "skill_resource", "schedule_list", "process_list",
+    "read_file",
+    "files_list",
+    "search_files",
+    "workspace_check",
+    "browser_read",
+    "browser_screenshot",
+    "browser_extract",
+    "web_search",
+    "web_fetch",
+    "web_fetch_pdf",
+    "knowledge_search",
+    "memory_search",
+    "skill_search",
+    "skill_resource",
+    "schedule_list",
+    "process_list",
 }
 
 PHASE_PREFIX = "phase:"
@@ -60,7 +84,7 @@ def phase_name(plan_step: str) -> str | None:
         return None
     text = plan_step.strip()
     if text.lower().startswith(PHASE_PREFIX):
-        name = text[len(PHASE_PREFIX):].strip()
+        name = text[len(PHASE_PREFIX) :].strip()
         return name or None
     return None
 
@@ -220,17 +244,12 @@ def collect_issues(run, calls: list) -> list[str]:
     if not plan.get("verification"):
         issues.append("成果を確認した根拠が記録されていません。")
 
-    write_indices = [
-        index for index, call in enumerate(completed)
-        if _is_write(call)
-    ]
+    write_indices = [index for index, call in enumerate(completed) if _is_write(call)]
     if write_indices:
         # Most recent write must be paired with a successful check tool that
         # landed strictly after it in the call log.
         last_write = write_indices[-1]
-        if not any(
-            _is_check(call) for call in completed[last_write + 1:]
-        ):
+        if not any(_is_check(call) for call in completed[last_write + 1 :]):
             issues.append("最後の変更後に成功した確認結果がありません。")
 
     # Risk-specific checks: walk completed calls in order.
@@ -239,9 +258,8 @@ def collect_issues(run, calls: list) -> list[str]:
         if tool_id == "delete_file":
             # After a delete, expect files_list or search_files to confirm.
             if not any(
-                (other.data or {}).get("tool_id") in {"files_list", "search_files"}
-                and _call_succeeded(other)
-                for other in completed[index + 1:]
+                (other.data or {}).get("tool_id") in {"files_list", "search_files"} and _call_succeeded(other)
+                for other in completed[index + 1 :]
             ):
                 issues.append("削除後に files_list または search_files で状態を確認してください。")
         elif tool_id == "write_file":
@@ -250,12 +268,9 @@ def collect_issues(run, calls: list) -> list[str]:
                     "write_file は既存ファイルの上書きです。"
                     "事前に read_file で対象ファイルの内容を確認してください。"
                 )
-        elif _destructive_terminal(call) and not any(
-            _is_check(other) for other in completed[index + 1:]
-        ):
+        elif _destructive_terminal(call) and not any(_is_check(other) for other in completed[index + 1 :]):
             issues.append(
-                "破壊的なターミナル操作 (rm / mv / git reset 等) の後に"
-                "状態確認の check Tool が必要です。"
+                "破壊的なターミナル操作 (rm / mv / git reset 等) の後に状態確認の check Tool が必要です。"
             )
 
     # Phase verification: each phase must have its own evidence.

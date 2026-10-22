@@ -3,9 +3,17 @@ import { ShieldCheck, ShieldX } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
-import { PENDING_APPROVALS_QUERY_KEY, usePendingApprovals } from "@/lib/queries";
+import {
+  PENDING_APPROVALS_QUERY_KEY,
+  usePendingApprovals,
+} from "@/lib/queries";
 import { Card, Row, Section } from "@/components/layout";
-import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  ListSkeleton,
+} from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -18,7 +26,8 @@ export function ApprovalsPane() {
   const decide = useMutation({
     mutationFn: (input: { id: string; grant: boolean; remember: boolean }) =>
       api.decideApproval(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY }),
   });
 
   const items = pending.data ?? [];
@@ -38,8 +47,12 @@ export function ApprovalsPane() {
         items.map((p: PendingApprovalView) => (
           <Card key={p.approval_id} className="border-warning">
             <div className="flex items-center justify-between gap-2">
-              <strong className="font-mono text-sm font-medium text-fg">{p.tool_name}</strong>
-              <Badge tone="warning" size="sm">{relativeTime(p.created_at)}</Badge>
+              <strong className="font-mono text-sm font-medium text-fg">
+                {p.tool_name}
+              </strong>
+              <Badge tone="warning" size="sm">
+                {relativeTime(p.created_at)}
+              </Badge>
             </div>
             <div className="my-1">
               <ApprovalDiffView
@@ -56,14 +69,26 @@ export function ApprovalsPane() {
               <Button
                 size="sm"
                 disabled={decide.isPending}
-                onClick={() => decide.mutate({ id: p.approval_id, grant: false, remember: false })}
+                onClick={() =>
+                  decide.mutate({
+                    id: p.approval_id,
+                    grant: false,
+                    remember: false,
+                  })
+                }
               >
                 <ShieldX size={12} /> {t("拒否")}
               </Button>
               <Button
                 size="sm"
                 disabled={decide.isPending}
-                onClick={() => decide.mutate({ id: p.approval_id, grant: true, remember: true })}
+                onClick={() =>
+                  decide.mutate({
+                    id: p.approval_id,
+                    grant: true,
+                    remember: true,
+                  })
+                }
               >
                 {t("常に許可")}
               </Button>
@@ -71,9 +96,20 @@ export function ApprovalsPane() {
                 variant="primary"
                 size="sm"
                 disabled={decide.isPending}
-                onClick={() => decide.mutate({ id: p.approval_id, grant: true, remember: false })}
+                onClick={() =>
+                  decide.mutate({
+                    id: p.approval_id,
+                    grant: true,
+                    remember: false,
+                  })
+                }
               >
-                {decide.isPending ? <Spinner size={12} /> : <ShieldCheck size={12} />} {t("今回のみ許可")}
+                {decide.isPending ? (
+                  <Spinner size={12} />
+                ) : (
+                  <ShieldCheck size={12} />
+                )}{" "}
+                {t("今回のみ許可")}
               </Button>
             </Row>
           </Card>

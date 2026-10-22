@@ -49,7 +49,7 @@ Download the installer for your operating system from [GitHub Releases](https://
   - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
   - Intel Mac: `mix-agent-desktop_*_x64.dmg`
   - Open the downloaded `.dmg` and drag & drop `MIX-agent Desktop` into your `Applications` folder.
-  - *(For self-signed or unnotarized builds)* If macOS displays a gatekeeper warning on first launch, right-click (or Control-click) the application icon and select "Open", or run `xattr -cr "/Applications/MIX-agent Desktop.app"` in Terminal.
+  - **The macOS build for v0.4.0 is unsigned and unnotarized** (no Apple Developer certificate is configured in the release environment). macOS shows a Gatekeeper warning on first launch. Right-click (or Control-click) the application icon and select "Open", or run `xattr -cr "/Applications/MIX-agent Desktop.app"` in Terminal.
 - **Windows**: `*.msi` or `*.exe` installer
 - **Linux**: `*.deb` or `*.AppImage` package
 
@@ -117,7 +117,9 @@ State is stored in Docker volumes. `docker compose down` stops the containers, b
 - **Docker Container Images**: Published to GitHub Container Registry (GHCR)
 - **ZimaOS / CasaOS Store Archives**: `mix-agent-zimaos-store-*.tar.gz`
 
-The latest version is [v0.3.5](docs/release-notes-v0.3.5.md). The publishing procedure is summarized in the [release checklist](docs/release-checklist.md).
+The Desktop edition keeps its own version line and is at `0.1.0` as of v0.4.0. Its installers are attached to the same GitHub Release, but the version shown inside the app stays `0.1.0`.
+
+The latest version is [v0.4.0](docs/release-notes-v0.4.0.md). The publishing procedure is summarized in the [release checklist](docs/release-checklist.md).
 
 ## Features
 

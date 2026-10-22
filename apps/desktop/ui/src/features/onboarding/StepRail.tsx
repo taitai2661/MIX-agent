@@ -31,7 +31,10 @@ export function StepRail({
   onSelect: (index: number) => void;
 }) {
   return (
-    <ol className="flex items-center gap-1.5" aria-label={t("セットアップの進行状況")}>
+    <ol
+      className="flex items-center gap-1.5"
+      aria-label={t("セットアップの進行状況")}
+    >
       {steps.map((step, index) => {
         const done = index < current;
         const reachable = index <= furthest;

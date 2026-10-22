@@ -1,10 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowDown, CornerDownLeft, ShieldCheck, Sparkles,
-} from "lucide-react";
+import { ArrowDown, CornerDownLeft, ShieldCheck, Sparkles } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { type RunTimeline } from "@/lib/runEvents";
-import { promptDetail, welcomeTitle, welcomeNote, greetingText, suggestionLabelId, type Suggestion, type Welcome } from "./greeting";
+import {
+  promptDetail,
+  welcomeTitle,
+  welcomeNote,
+  greetingText,
+  suggestionLabelId,
+  type Suggestion,
+  type Welcome,
+} from "./greeting";
 import { usePromptInsert } from "@/lib/promptInsert";
 import { LiveBlock } from "./LiveBlock";
 import type { MessageView, ModelView, RunView } from "@/lib/types";
@@ -68,10 +74,13 @@ export function Transcript({
     });
   };
 
-  useEffect(() => () => {
-    if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
-    if (stickRafRef.current) window.cancelAnimationFrame(stickRafRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
+      if (stickRafRef.current) window.cancelAnimationFrame(stickRafRef.current);
+    },
+    [],
+  );
 
   // Sending a message while scrolled up left the user staring at old history
   // while the answer streamed off-screen. A newly added user turn always
@@ -100,7 +109,8 @@ export function Transcript({
   }, [contentKey, stuck]);
 
   const livePersisted =
-    !!liveRunId && messages.some((m) => m.run_id === liveRunId && m.role === "assistant");
+    !!liveRunId &&
+    messages.some((m) => m.run_id === liveRunId && m.role === "assistant");
   const showLive = !!live && !livePersisted;
 
   // The last assistant message of each Run: its error is rendered under that
@@ -125,7 +135,9 @@ export function Transcript({
     );
     return new Set(
       [...runs.values()]
-        .filter((run) => !!run.error && !linked.has(run.id) && run.id !== liveRunId)
+        .filter(
+          (run) => !!run.error && !linked.has(run.id) && run.id !== liveRunId,
+        )
         .map((run) => run.id),
     );
   }, [runs, messages, liveRunId]);
@@ -134,7 +146,11 @@ export function Transcript({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} className="stable-scroll h-full overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="stable-scroll h-full overflow-y-auto overscroll-contain"
+      >
         <div
           className="mx-auto flex w-full max-w-content flex-col gap-6 px-4 py-8 sm:px-6"
           role="log"
@@ -146,7 +162,9 @@ export function Transcript({
           aria-relevant="additions"
         >
           {error != null && <ErrorBox error={error} />}
-          {isEmpty && !error && <Welcome welcome={welcome} hasModels={models.length > 0} />}
+          {isEmpty && !error && (
+            <Welcome welcome={welcome} hasModels={models.length > 0} />
+          )}
           {!isEmpty && loading && messages.length === 0 && !showLive && (
             <ListSkeleton rows={1} />
           )}
@@ -193,7 +211,6 @@ export function Transcript({
   );
 }
 
-
 function Welcome({
   welcome,
   hasModels,
@@ -220,7 +237,9 @@ function Welcome({
             {welcomeTitle(welcome)}
           </h2>
         ) : (
-          <h2 className="text-2xl font-semibold tracking-tight text-fg">MIX-agent</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-fg">
+            MIX-agent
+          </h2>
         )}
         {welcome && (
           <p className="mx-auto flex max-w-md items-center justify-center gap-1.5 text-xs text-faint">
@@ -236,7 +255,9 @@ function Welcome({
             <span>{t("モデル提供元が接続されていません")}</span>
           </div>
           <p className="text-xs text-muted">
-            {t("会話を始めるには、Ollamaなどのローカルモデルを検出するか、APIキーを設定してください。")}
+            {t(
+              "会話を始めるには、Ollamaなどのローカルモデルを検出するか、APIキーを設定してください。",
+            )}
           </p>
           <Button
             variant="primary"
@@ -250,7 +271,10 @@ function Welcome({
         <WelcomeSuggestions suggestions={welcome.suggestions} />
       ) : (
         <p className="mx-auto max-w-md text-sm text-muted">
-          {hintWithKeys(t("何でも質問してください。/ でコマンド、⌘K で検索。"), ["/", "⌘K"])}
+          {hintWithKeys(
+            t("何でも質問してください。/ でコマンド、⌘K で検索。"),
+            ["/", "⌘K"],
+          )}
         </p>
       )}
     </div>
@@ -259,7 +283,11 @@ function Welcome({
 
 /** Context-driven starters. Each one fills the composer, like the quick
  * prompts it replaces, so nothing is sent without an explicit keystroke. */
-function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[] }) {
+function WelcomeSuggestions({
+  suggestions,
+}: {
+  suggestions: readonly Suggestion[];
+}) {
   const insertPrompt = usePromptInsert((s) => s.insertPrompt);
   return (
     <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
@@ -276,7 +304,9 @@ function WelcomeSuggestions({ suggestions }: { suggestions: readonly Suggestion[
           <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
             <CornerDownLeft size={12} aria-hidden="true" />
           </span>
-          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">{greetingText(suggestionLabelId(suggestion.id), suggestion.label)}</span>
+          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">
+            {greetingText(suggestionLabelId(suggestion.id), suggestion.label)}
+          </span>
         </Button>
       ))}
     </div>

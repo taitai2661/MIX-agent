@@ -2,17 +2,33 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  ChevronLeft, FileText, Folder, FolderOpen, MessageSquare, Plus, Trash2,
+  ChevronLeft,
+  FileText,
+  Folder,
+  FolderOpen,
+  MessageSquare,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
-import { CONVERSATIONS_QUERY_KEY, PROJECTS_QUERY_KEY, useConversations, useProjects } from "@/lib/queries";
+import {
+  CONVERSATIONS_QUERY_KEY,
+  PROJECTS_QUERY_KEY,
+  useConversations,
+  useProjects,
+} from "@/lib/queries";
 import { pruneStaleActiveProject, useUi } from "@/lib/ui";
 import { Card, Field, ListRow, Page, Row } from "@/components/layout";
 import { DeleteIconButton } from "@/components/common";
-import { EmptyState, ErrorBadge, ErrorBox, ListSkeleton } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  ListSkeleton,
+} from "@/components/shared";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
@@ -40,7 +56,9 @@ export function ProjectsPane() {
   const [draftName, setDraftName] = useState("");
   const [draftRoot, setDraftRoot] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
-  const [instructionsDraft, setInstructionsDraft] = useState<string | null>(null);
+  const [instructionsDraft, setInstructionsDraft] = useState<string | null>(
+    null,
+  );
   const [sourceDraft, setSourceDraft] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
 
@@ -114,7 +132,11 @@ export function ProjectsPane() {
     setChatError(null);
     try {
       const created = await api.createConversation({
-        mode, model_id: modelId, title: null, workspace_id: null, project_id: selected.id,
+        mode,
+        model_id: modelId,
+        title: null,
+        workspace_id: null,
+        project_id: selected.id,
       });
       invalidate();
       setActiveProjectId(selected.id);
@@ -171,8 +193,11 @@ export function ProjectsPane() {
             {t("このフォルダがエージェントの作業ディレクトリになります")}
           </p>
           <p className="m-0 text-xs text-faint">
-            <FileText size={11} className="me-0.5 inline-block align-[-1.5px]" /> AGENTS.md /{" "}
-            CLAUDE.md {t("を検出すると自動で読み込みます")}
+            <FileText
+              size={11}
+              className="me-0.5 inline-block align-[-1.5px]"
+            />{" "}
+            AGENTS.md / CLAUDE.md {t("を検出すると自動で読み込みます")}
           </p>
         </Card>
 
@@ -212,7 +237,9 @@ export function ProjectsPane() {
                       description={item.slice(0, 120)}
                       onDelete={() =>
                         update.mutate({
-                          sources: selected.sources.filter((_, i) => i !== index),
+                          sources: selected.sources.filter(
+                            (_, i) => i !== index,
+                          ),
                         })
                       }
                     />
@@ -232,12 +259,14 @@ export function ProjectsPane() {
             <Button
               size="sm"
               disabled={
-                !sourceDraft.trim()
-                || selected.sources.length >= SOURCES_MAX
-                || update.isPending
+                !sourceDraft.trim() ||
+                selected.sources.length >= SOURCES_MAX ||
+                update.isPending
               }
               onClick={() => {
-                update.mutate({ sources: [...selected.sources, sourceDraft.trim()] });
+                update.mutate({
+                  sources: [...selected.sources, sourceDraft.trim()],
+                });
                 setSourceDraft("");
               }}
             >
@@ -251,7 +280,11 @@ export function ProjectsPane() {
 
         <Card title={t("紐づく会話")} icon={<MessageSquare size={13} />}>
           <Row>
-            <Button variant="primary" size="sm" onClick={() => void newChatInProject()}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void newChatInProject()}
+            >
               <Plus size={12} /> {t("このプロジェクトで新しいチャット")}
             </Button>
           </Row>
@@ -271,8 +304,12 @@ export function ProjectsPane() {
                       setView("chat");
                     }}
                   >
-                    <span className="w-full truncate text-sm font-medium text-fg">{c.title}</span>
-                    <span className="text-xs text-faint">{relativeTime(c.updated_at)}</span>
+                    <span className="w-full truncate text-sm font-medium text-fg">
+                      {c.title}
+                    </span>
+                    <span className="text-xs text-faint">
+                      {relativeTime(c.updated_at)}
+                    </span>
                   </ListRow>
                 </li>
               ))}
@@ -286,12 +323,14 @@ export function ProjectsPane() {
             variant="danger"
             disabled={remove.isPending}
             onClick={async () => {
-              if (await confirm({
-                title: t("プロジェクトを削除しますか？"),
-                description: t("会話は残ります。"),
-                confirmLabel: t("削除"),
-                tone: "danger",
-              })) {
+              if (
+                await confirm({
+                  title: t("プロジェクトを削除しますか？"),
+                  description: t("会話は残ります。"),
+                  confirmLabel: t("削除"),
+                  tone: "danger",
+                })
+              ) {
                 remove.mutate(selected.id);
               }
             }}
@@ -307,7 +346,10 @@ export function ProjectsPane() {
   }
 
   return (
-    <Page title={t("プロジェクト")} sub={t("プロジェクト単位の資料と指示を管理します。")}>
+    <Page
+      title={t("プロジェクト")}
+      sub={t("プロジェクト単位の資料と指示を管理します。")}
+    >
       <Card title={t("作成")} icon={<Folder size={13} />}>
         {/* Not wrapped in `Field`: its `<label>` would swallow the picker
             button's accessible name. */}
@@ -325,7 +367,10 @@ export function ProjectsPane() {
             {t("このフォルダがエージェントの作業ディレクトリになります")}
           </span>
         </div>
-        <Field label={t("名前")} hint={t("未入力の場合はフォルダ名が使われます")}>
+        <Field
+          label={t("名前")}
+          hint={t("未入力の場合はフォルダ名が使われます")}
+        >
           <Input
             maxLength={NAME_MAX}
             placeholder={t("Project 名")}
@@ -353,7 +398,11 @@ export function ProjectsPane() {
       ) : projects.isError ? (
         <ErrorBox error={projects.error} />
       ) : list.length === 0 ? (
-        <EmptyState icon={<Folder size={22} />} title={t("プロジェクト")} sub={t("まだありません。")} />
+        <EmptyState
+          icon={<Folder size={22} />}
+          title={t("プロジェクト")}
+          sub={t("まだありません。")}
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {list.map((p) => (
@@ -366,11 +415,15 @@ export function ProjectsPane() {
                 >
                   <span className="truncate">{p.name}</span>
                   {p.rootPath && (
-                    <span className="truncate text-xs font-normal text-faint">{p.rootPath}</span>
+                    <span className="truncate text-xs font-normal text-faint">
+                      {p.rootPath}
+                    </span>
                   )}
                 </button>
                 <Row className="flex-nowrap gap-2">
-                  <span className="text-xs text-faint">{relativeTime(p.updated_at)}</span>
+                  <span className="text-xs text-faint">
+                    {relativeTime(p.updated_at)}
+                  </span>
                   <DeleteIconButton
                     title={t("プロジェクトを削除しますか？")}
                     description={t("会話は残ります。")}
@@ -379,7 +432,9 @@ export function ProjectsPane() {
                 </Row>
               </Row>
               {p.instructions && (
-                <p className="m-0 whitespace-pre-wrap text-xs text-muted">{p.instructions}</p>
+                <p className="m-0 whitespace-pre-wrap text-xs text-muted">
+                  {p.instructions}
+                </p>
               )}
             </Card>
           ))}

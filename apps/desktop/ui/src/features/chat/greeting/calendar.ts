@@ -18,8 +18,16 @@ export function dayNumber(year: number, month: number, day: number): number {
   return Math.round(Date.UTC(year, month - 1, day) / MS_DAY);
 }
 
-export function calendarDate(date: Date): { year: number; month: number; day: number } {
-  return { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate() };
+export function calendarDate(date: Date): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+  };
 }
 
 /** 日番号の日の日本標準時 0:00 (= 前日 15:00 UTC) をユリウス日へ。 */
@@ -36,7 +44,9 @@ function solarLongitude(jd: number): number {
     (0.019993 - 0.000101 * t) * Math.sin(2 * anomaly * RAD) +
     0.000289 * Math.sin(3 * anomaly * RAD);
   const omega = 125.04 - 1934.136 * t;
-  return mod360(meanLongitude + center - 0.00569 - 0.00478 * Math.sin(omega * RAD));
+  return mod360(
+    meanLongitude + center - 0.00569 - 0.00478 * Math.sin(omega * RAD),
+  );
 }
 
 const SOLAR_TERMS: readonly (readonly [number, string])[] = [
@@ -104,7 +114,12 @@ function termsOfYear(year: number): Map<string, number> {
   return result;
 }
 
-function nthWeekday(year: number, month: number, weekday: number, nth: number): number {
+function nthWeekday(
+  year: number,
+  month: number,
+  weekday: number,
+  nth: number,
+): number {
   const first = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
   return 1 + ((weekday - first + 7) % 7) + (nth - 1) * 7;
 }
@@ -141,7 +156,8 @@ function holidaysOfYear(year: number): Map<number, Entry> {
   add(11, 3, "文化の日");
   add(11, 23, "勤労感謝の日");
 
-  const isSunday = (number: number) => new Date(number * MS_DAY).getUTCDay() === 0;
+  const isSunday = (number: number) =>
+    new Date(number * MS_DAY).getUTCDay() === 0;
   const result = new Map(fixed);
   for (const [number] of fixed) {
     if (!isSunday(number)) continue;
@@ -149,7 +165,11 @@ function holidaysOfYear(year: number): Map<number, Entry> {
     while (result.has(target) || isSunday(target)) target++;
     result.set(target, { name: "振替休日", kind: "substitute" });
   }
-  for (let number = dayNumber(year, 1, 3); number <= dayNumber(year, 12, 30); number++) {
+  for (
+    let number = dayNumber(year, 1, 3);
+    number <= dayNumber(year, 12, 30);
+    number++
+  ) {
     if (result.has(number)) continue;
     if (new Date(number * MS_DAY).getUTCDay() === 1) continue;
     const before = result.get(number - 1);
@@ -189,7 +209,11 @@ export function holidayOf(date: Date): Entry | null {
   const { year, month, day } = calendarDate(date);
   const number = dayNumber(year, month, day);
   // 振替休日が年をまたぐことがあるので、前の年の地図を参照します。
-  return holidaysOfYear(year).get(number) ?? holidaysOfYear(year - 1).get(number) ?? null;
+  return (
+    holidaysOfYear(year).get(number) ??
+    holidaysOfYear(year - 1).get(number) ??
+    null
+  );
 }
 
 /** その日の季節の行事（祝日と重ならない日のみ）。 */
@@ -207,13 +231,17 @@ export function solarTermOf(date: Date): Entry | null {
   for (const name of termsOfYear(year).keys()) {
     const current = termsOfYear(year).get(name);
     const previous = termsOfYear(year - 1).get(name);
-    if (current === number || previous === number) return { name, kind: "term" };
+    if (current === number || previous === number)
+      return { name, kind: "term" };
   }
   return null;
 }
 
 /** 次の二十四節気を日数つきで返します。 */
-export function upcomingSolarTerm(date: Date): { name: string; inDays: number } {
+export function upcomingSolarTerm(date: Date): {
+  name: string;
+  inDays: number;
+} {
   const { year, month, day } = calendarDate(date);
   const today = dayNumber(year, month, day);
   const terms = termsOfYear(year);

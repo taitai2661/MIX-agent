@@ -44,12 +44,18 @@ export const DEFAULT_SETTINGS: SettingsView = {
  * finishes (which would make a later Save persist them). */
 export function useSettingsForm() {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: SETTINGS_QUERY_KEY, queryFn: api.getSettings });
+  const query = useQuery({
+    queryKey: SETTINGS_QUERY_KEY,
+    queryFn: api.getSettings,
+  });
   const loaded = query.data !== undefined;
   const data = query.data ?? DEFAULT_SETTINGS;
   const patch = (next: Partial<SettingsView>) => {
     if (!loaded) return;
-    queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, { ...data, ...next });
+    queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, {
+      ...data,
+      ...next,
+    });
   };
   // Settled, not loaded: a failed `get_settings` leaves `loaded` false forever,
   // and a caller gating on it would hang rather than fall back to defaults.
@@ -67,7 +73,8 @@ export function useApplySettings() {
   return async (patch: Partial<SettingsView>): Promise<void> => {
     try {
       const base =
-        queryClient.getQueryData<SettingsView>(SETTINGS_QUERY_KEY) ?? (await api.getSettings());
+        queryClient.getQueryData<SettingsView>(SETTINGS_QUERY_KEY) ??
+        (await api.getSettings());
       const next: SettingsView = { ...base, ...patch };
       queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, next);
       await api.updateSettings(next);

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { activityOf, buildSignals, dayKind, dayOfYear, gapOf, partOfDay, seasonOf, workloadOf } from "./signals";
+import {
+  activityOf,
+  buildSignals,
+  dayKind,
+  dayOfYear,
+  gapOf,
+  partOfDay,
+  seasonOf,
+  workloadOf,
+} from "./signals";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -47,13 +56,34 @@ describe("曜日と季節", () => {
 
   it("季節と季内の位置を返す", () => {
     // 3月-5月は春、6月-8月は夏、9月-11月は秋、12月-2月は冬。
-    expect(seasonOf(new Date(2026, 2, 15))).toEqual({ season: "spring", seasonPhase: "early" });
-    expect(seasonOf(new Date(2026, 4, 15))).toEqual({ season: "spring", seasonPhase: "late" });
-    expect(seasonOf(new Date(2026, 6, 15))).toEqual({ season: "summer", seasonPhase: "mid" });
-    expect(seasonOf(new Date(2026, 7, 15))).toEqual({ season: "summer", seasonPhase: "late" });
-    expect(seasonOf(new Date(2026, 8, 15))).toEqual({ season: "autumn", seasonPhase: "early" });
-    expect(seasonOf(new Date(2026, 0, 15))).toEqual({ season: "winter", seasonPhase: "mid" });
-    expect(seasonOf(new Date(2026, 11, 15))).toEqual({ season: "winter", seasonPhase: "early" });
+    expect(seasonOf(new Date(2026, 2, 15))).toEqual({
+      season: "spring",
+      seasonPhase: "early",
+    });
+    expect(seasonOf(new Date(2026, 4, 15))).toEqual({
+      season: "spring",
+      seasonPhase: "late",
+    });
+    expect(seasonOf(new Date(2026, 6, 15))).toEqual({
+      season: "summer",
+      seasonPhase: "mid",
+    });
+    expect(seasonOf(new Date(2026, 7, 15))).toEqual({
+      season: "summer",
+      seasonPhase: "late",
+    });
+    expect(seasonOf(new Date(2026, 8, 15))).toEqual({
+      season: "autumn",
+      seasonPhase: "early",
+    });
+    expect(seasonOf(new Date(2026, 0, 15))).toEqual({
+      season: "winter",
+      seasonPhase: "mid",
+    });
+    expect(seasonOf(new Date(2026, 11, 15))).toEqual({
+      season: "winter",
+      seasonPhase: "early",
+    });
   });
 
   it("年内の日数を返す", () => {
@@ -136,16 +166,27 @@ describe("シグナルの組み立て", () => {
   });
 
   it("年の出だしと終わりの時期を区別する", () => {
-    expect(signals({ now: new Date(2026, 0, 3), lastMessageAt: null }).yearProgress).toBe("start");
-    expect(signals({ now: new Date(2026, 5, 10), lastMessageAt: null }).yearProgress).toBeNull();
-    expect(signals({ now: new Date(2026, 11, 28), lastMessageAt: null }).yearProgress).toBe("end");
+    expect(
+      signals({ now: new Date(2026, 0, 3), lastMessageAt: null }).yearProgress,
+    ).toBe("start");
+    expect(
+      signals({ now: new Date(2026, 5, 10), lastMessageAt: null }).yearProgress,
+    ).toBeNull();
+    expect(
+      signals({ now: new Date(2026, 11, 28), lastMessageAt: null })
+        .yearProgress,
+    ).toBe("end");
   });
 
   it("その日の最初の訪問だけを firstToday とする", () => {
     const now = new Date(2026, 5, 10, 12, 0);
     const midnight = new Date(2026, 5, 10).getTime();
     expect(signals({ now, firstSeenTodayAt: 0 }).firstToday).toBe(true);
-    expect(signals({ now, firstSeenTodayAt: midnight + HOUR }).firstToday).toBe(false);
-    expect(signals({ now, firstSeenTodayAt: midnight - DAY }).firstToday).toBe(true);
+    expect(signals({ now, firstSeenTodayAt: midnight + HOUR }).firstToday).toBe(
+      false,
+    );
+    expect(signals({ now, firstSeenTodayAt: midnight - DAY }).firstToday).toBe(
+      true,
+    );
   });
 });

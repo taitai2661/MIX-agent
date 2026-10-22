@@ -1,4 +1,11 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   FolderTree,
@@ -20,19 +27,29 @@ import { ChatPane } from "./features/chat/ChatPane";
 // wait on the agents/projects/schedules/settings/file-tree code. Each lands
 // in its own chunk (see `manualChunks` in vite.config.ts).
 const AgentsPane = lazy(() =>
-  import("./features/agents/AgentsPane").then((m) => ({ default: m.AgentsPane })),
+  import("./features/agents/AgentsPane").then((m) => ({
+    default: m.AgentsPane,
+  })),
 );
 const ProjectsPane = lazy(() =>
-  import("./features/projects/ProjectsPane").then((m) => ({ default: m.ProjectsPane })),
+  import("./features/projects/ProjectsPane").then((m) => ({
+    default: m.ProjectsPane,
+  })),
 );
 const SchedulesPane = lazy(() =>
-  import("./features/schedules/SchedulesPane").then((m) => ({ default: m.SchedulesPane })),
+  import("./features/schedules/SchedulesPane").then((m) => ({
+    default: m.SchedulesPane,
+  })),
 );
 const SettingsPane = lazy(() =>
-  import("./features/settings/SettingsPane").then((m) => ({ default: m.SettingsPane })),
+  import("./features/settings/SettingsPane").then((m) => ({
+    default: m.SettingsPane,
+  })),
 );
 const FileTreePane = lazy(() =>
-  import("./features/files/FileTreePane").then((m) => ({ default: m.FileTreePane })),
+  import("./features/files/FileTreePane").then((m) => ({
+    default: m.FileTreePane,
+  })),
 );
 import { Sidebar } from "./features/shell/Sidebar";
 import { RightPanel } from "./features/shell/RightPanel";
@@ -58,7 +75,11 @@ import { StatusDot } from "./components/ui/status";
 /** Fallback while a code-split pane loads (see the `lazy` imports above). */
 function PaneFallback() {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center" role="status" aria-busy="true">
+    <div
+      className="flex min-h-0 flex-1 items-center justify-center"
+      role="status"
+      aria-busy="true"
+    >
       <Spinner size={16} label={t("読み込み中…")} />
     </div>
   );
@@ -266,66 +287,78 @@ export function App() {
         </h1>
 
         <div className="flex shrink-0 items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => setPaletteOpen(true)}
-          aria-label={t("コマンドを検索…")}
-          aria-keyshortcuts="meta+k ctrl+k"
-          title={`${t("コマンドパレット")} · ⌘K`}
-          className={
-            "hidden h-7 min-w-44 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 " +
-            "text-xs text-faint shadow-xs transition-colors duration-100 hover:border-line-strong hover:text-muted md:flex"
-          }
-        >
-          <Search size={13} aria-hidden="true" />
-          <span className="flex-1 text-start">{t("検索")}</span>
-          <Kbd>⌘K</Kbd>
-        </button>
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label={t("コマンドを検索…")}
+            aria-keyshortcuts="meta+k ctrl+k"
+            title={`${t("コマンドパレット")} · ⌘K`}
+            className={
+              "hidden h-7 min-w-44 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 " +
+              "text-xs text-faint shadow-xs transition-colors duration-100 hover:border-line-strong hover:text-muted md:flex"
+            }
+          >
+            <Search size={13} aria-hidden="true" />
+            <span className="flex-1 text-start">{t("検索")}</span>
+            <Kbd>⌘K</Kbd>
+          </button>
 
-        <HealthIndicator />
+          <HealthIndicator />
 
-        {view === "chat" && agentSurface && (
-          <div className="flex items-center gap-1 border-s border-line ps-1.5">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={toggleFileTree}
-              title={`${t("ファイルツリー")} · ⌘⇧E`}
-              aria-label={t("ファイルツリー")}
-              aria-pressed={fileTreeOpen}
-            >
-              <FolderTree size={16} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() =>
-                setRightPanel(rightPanel === "none" ? "activity" : "none")
-              }
-              title={
-                rightPanel === "none"
-                  ? t("アクティビティを表示")
-                  : t("サイドパネルを閉じる")
-              }
-              aria-label={
-                rightPanel === "none"
-                  ? t("アクティビティを表示")
-                  : t("サイドパネルを閉じる")
-              }
-              aria-pressed={rightPanel !== "none"}
-            >
-              <PanelRight size={16} />
-            </Button>
-          </div>
-        )}
+          {view === "chat" && agentSurface && (
+            <div className="flex items-center gap-1 border-s border-line ps-1.5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleFileTree}
+                title={`${t("ファイルツリー")} · ⌘⇧E`}
+                aria-label={t("ファイルツリー")}
+                aria-pressed={fileTreeOpen}
+              >
+                <FolderTree size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  setRightPanel(rightPanel === "none" ? "activity" : "none")
+                }
+                title={
+                  rightPanel === "none"
+                    ? t("アクティビティを表示")
+                    : t("サイドパネルを閉じる")
+                }
+                aria-label={
+                  rightPanel === "none"
+                    ? t("アクティビティを表示")
+                    : t("サイドパネルを閉じる")
+                }
+                aria-pressed={rightPanel !== "none"}
+              >
+                <PanelRight size={16} />
+              </Button>
+            </div>
+          )}
         </div>
       </header>
 
       <div ref={setShellRow} className="relative flex min-h-0 min-w-0 flex-1">
         <Sidebar cap={panelCap} />
-        <section id="main-content" tabIndex={-1} aria-label={view === "chat" ? (threadTitle ?? t("チャット")) : t(VIEW_TITLES[view])} className="flex min-w-0 flex-1 flex-col bg-bg outline-none">
+        <section
+          id="main-content"
+          tabIndex={-1}
+          aria-label={
+            view === "chat"
+              ? (threadTitle ?? t("チャット"))
+              : t(VIEW_TITLES[view])
+          }
+          className="flex min-w-0 flex-1 flex-col bg-bg outline-none"
+        >
           {update && (
-            <div className="flex shrink-0 items-center gap-3 border-b border-brand/20 bg-brand-soft px-4 py-2 text-xs text-fg" role="status">
+            <div
+              className="flex shrink-0 items-center gap-3 border-b border-brand/20 bg-brand-soft px-4 py-2 text-xs text-fg"
+              role="status"
+            >
               <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand/15 text-brand">
                 <Sparkles size={14} aria-hidden="true" />
               </span>
@@ -370,7 +403,9 @@ export function App() {
           {createThread.isError && (
             <div className="shrink-0 border-b border-line px-3 py-2">
               <ErrorBox
-                error={createThread.error || t("スレッドを作成できませんでした")}
+                error={
+                  createThread.error || t("スレッドを作成できませんでした")
+                }
               />
             </div>
           )}

@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, inspect, or_, select
+from sqlalchemy import and_, inspect, or_, select
 
 from mix_agent.db.models import Memory, MemoryActionEvent, MemoryLink, MemoryRevision, now
 from mix_agent.memory import embeddings as mem_embeddings
@@ -74,7 +74,9 @@ SENSITIVE_VALUE = re.compile(
     r")\s*[:=：]\s*[^\s,;]+",
     re.IGNORECASE,
 )
-STOP_WORDS = frozenset({"これ", "それ", "ため", "です", "ます", "する", "した", "して", "with", "that", "this", "from", "your"})
+STOP_WORDS = frozenset(
+    {"これ", "それ", "ため", "です", "ます", "する", "した", "して", "with", "that", "this", "from", "your"}
+)
 
 # --- memory spec §2 `ranking` -------------------------------------------------
 # Checked against the Desktop edition's constants by scripts/check-memory-parity.py.
@@ -88,6 +90,12 @@ MIN_SCORE = 0.10
 RESULT_LIMIT_DEFAULT = 8
 RESULT_LIMIT_MAX = 30
 ITEM_CHAR_LIMIT = 600
+# §1: `scope` is one of the eight columns search reads, and a caller's
+# preferred scopes are a **soft** signal — a row in another scope stays
+# retrievable, it only ranks lower. The factor is the one v0.3.5 shipped;
+# a hard filter would hide a memory the user still wants to find.
+SCOPE_MATCH_FACTOR = 1.0
+SCOPE_MISMATCH_FACTOR = 0.82
 # -----------------------------------------------------------------------------
 
 # Rows considered per search. Ranking (especially the vector term) is brute
@@ -248,7 +256,12 @@ def explicit_forget_candidate(content):
 
 
 def redact_sensitive(content):
-    value = re.sub(r"-----BEGIN [^-]+PRIVATE KEY-----.*?-----END [^-]+PRIVATE KEY-----", "[REDACTED SECRET]", content or "", flags=re.DOTALL | re.IGNORECASE)
+    value = re.sub(
+        r"-----BEGIN [^-]+PRIVATE KEY-----.*?-----END [^-]+PRIVATE KEY-----",
+        "[REDACTED SECRET]",
+        content or "",
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     return SENSITIVE_VALUE.sub("[REDACTED SECRET]", value)
 
 
@@ -280,6 +293,19 @@ def scope_value(value):
     """Validated spec §2 ``scope``, or ``None`` when unusable."""
     scope = str(value or "").strip().lower()
     return scope if scope in SCOPES else None
+
+
+def scope_weight(row, preferred) -> float:
+    """The soft scope signal for one row.
+
+    A row whose §2 scope is one of the caller's preferred scopes keeps the
+    full weight; a row in any other scope is damped instead of dropped, so
+    a scope hint reorders the results without hiding anything.
+    """
+    if not preferred:
+        return SCOPE_MATCH_FACTOR
+    scope = scope_value(getattr(row, "scope", None)) or SCOPE_USER
+    return SCOPE_MATCH_FACTOR if scope in preferred else SCOPE_MISMATCH_FACTOR
 
 
 def source_kind_value(value):
@@ -357,7 +383,14 @@ def _event(db, owner, run_id, action, memory_id, before, after, reason, candidat
     # `after` is the id the action moved *to* (RESOLVE's winner): §1's log has
     # to be able to reconstruct a two-row transition on its own.
     related = after if isinstance(after, str) and after else None
-    db.add(MemoryActionEvent(owner_id=owner, run_id=run_id if run_id and run_id != "explicit-user-request" else None, candidate_index=candidate_index, data={"action": action, "memory_id": memory_id, "related_memory_id": related, "reason": reason}))
+    db.add(
+        MemoryActionEvent(
+            owner_id=owner,
+            run_id=run_id if run_id and run_id != "explicit-user-request" else None,
+            candidate_index=candidate_index,
+            data={"action": action, "memory_id": memory_id, "related_memory_id": related, "reason": reason},
+        )
+    )
 
 
 def _normalize(text: str) -> str:
@@ -397,7 +430,11 @@ def change(db, owner, content=None, memory_id=None, delete=False, source_run=Non
         row = db.get(Memory, memory_id)
         if not row or row.owner_id != owner:
             raise ValueError("Memory not found")
-        db.add(MemoryRevision(owner_id=owner, data={"memory_id": row.id, "previous": {"id": row.id, **_trace_data(row)}}))
+        db.add(
+            MemoryRevision(
+                owner_id=owner, data={"memory_id": row.id, "previous": {"id": row.id, **_trace_data(row)}}
+            )
+        )
         if delete:
             # §4: the edges go with the row (FK cascade), and every row that
             # pointed *at* it loses that pointer in the same transaction —
@@ -416,7 +453,14 @@ def change(db, owner, content=None, memory_id=None, delete=False, source_run=Non
             # rank this row with a vector for content it no longer holds.
             data.pop("embedding", None)
             data.pop("embedding_model", None)
-            data.update({"content": row.content, "pinned": pinned or data.get("pinned", False), "source_run": source_run or data.get("source_run"), "source": data.get("source", "user")})
+            data.update(
+                {
+                    "content": row.content,
+                    "pinned": pinned or data.get("pinned", False),
+                    "source_run": source_run or data.get("source_run"),
+                    "source": data.get("source", "user"),
+                }
+            )
             if role:
                 data["role"] = role
             if strength is not None:
@@ -445,12 +489,19 @@ def change(db, owner, content=None, memory_id=None, delete=False, source_run=Non
         content = content[:10000]
     normalized = _normalize(content)
     existing = None
-    for row in db.scalars(select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)):
+    for row in db.scalars(
+        select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)
+    ):
         if _normalize(_content(row)) == normalized:
             existing = row
             break
     if existing:
-        existing.updated_at = now()
+        # A repeated fact reinforces the row it already has (§3): the same
+        # words arriving again are evidence, not a second memory. The event
+        # below says REINFORCE, so the row itself has to be reinforced —
+        # bumping only `updated_at` recorded the activation without any of
+        # its effect.
+        reinforce_row(existing)
         if role:
             # A repeated fact is a chance to attach the role it was stored
             # without the first time; the row itself is never duplicated.
@@ -470,7 +521,14 @@ def change(db, owner, content=None, memory_id=None, delete=False, source_run=Non
         source_kind=source_kind or ("user" if source == "user" else SOURCE_AGENT),
         confidence=DEFAULT_CONFIDENCE if confidence is None else confidence,
         salience=(1.0 if pinned else DEFAULT_SALIENCE) if salience is None else salience,
-        data={"content": content, "pinned": pinned, "source": source, "source_run": source_run, **({"role": role} if role else {}), **({"strength": strength} if strength is not None else {})},
+        data={
+            "content": content,
+            "pinned": pinned,
+            "source": source,
+            "source_run": source_run,
+            **({"role": role} if role else {}),
+            **({"strength": strength} if strength is not None else {}),
+        },
     )
     db.add(row)
     db.flush()
@@ -482,14 +540,16 @@ def change(db, owner, content=None, memory_id=None, delete=False, source_run=Non
     return {"id": row.id, **_trace_data(row)}
 
 
-def _score(query_terms: set[str], row_terms: set[str], updated_at, query_vec=None, stored_vec=None) -> tuple[float, dict]:
+def _score(
+    query_terms: set[str], row_terms: set[str], updated_at, query_vec=None, stored_vec=None
+) -> tuple[float, dict]:
     overlap = len(query_terms & row_terms) / max(1, len(query_terms)) if query_terms else 0.0
     try:
         ts = updated_at
         if ts is not None and ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
         age_days = max(0.0, (datetime.now(UTC) - ts).total_seconds() / 86400) if ts else 365.0
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable timestamp falls back to the default age
         age_days = 365.0
     recency = 1 / (1 + age_days / 180)
     vector = mem_embeddings.cosine01(query_vec, stored_vec)
@@ -498,8 +558,16 @@ def _score(query_terms: set[str], row_terms: set[str], updated_at, query_vec=Non
     # vector term existed — introducing embedding must not demote old rows.
     if vector is None:
         value = LEXICAL_WEIGHT_WITHOUT_VECTOR * overlap + RECENCY_WEIGHT_WITHOUT_VECTOR * recency
-        return value, {"lexical": round(overlap, 4), "recency": round(recency, 4), "weights": "without_vector"}
-    value = LEXICAL_WEIGHT_WITH_VECTOR * overlap + VECTOR_WEIGHT_WITH_VECTOR * vector + RECENCY_WEIGHT_WITH_VECTOR * recency
+        return value, {
+            "lexical": round(overlap, 4),
+            "recency": round(recency, 4),
+            "weights": "without_vector",
+        }
+    value = (
+        LEXICAL_WEIGHT_WITH_VECTOR * overlap
+        + VECTOR_WEIGHT_WITH_VECTOR * vector
+        + RECENCY_WEIGHT_WITH_VECTOR * recency
+    )
     return value, {
         "lexical": round(overlap, 4),
         "vector": round(vector, 4),
@@ -508,13 +576,25 @@ def _score(query_terms: set[str], row_terms: set[str], updated_at, query_vec=Non
     }
 
 
-def rank(query_terms: set[str], candidates, *, query_vector=None, limit: int = RESULT_LIMIT_DEFAULT) -> list[dict]:
+def rank(
+    query_terms: set[str],
+    candidates,
+    *,
+    query_vector=None,
+    limit: int = RESULT_LIMIT_DEFAULT,
+    scope_factor=None,
+) -> list[dict]:
     """Score, threshold, sort and cap candidates. Pure: no database, no I/O.
 
     ``candidates`` yields ``(row_terms, updated_at, stored_vector, payload)``.
     This is the whole of spec §5.1/§5.2 extracted from :func:`search` so the
     ranking contract in ``tests/fixtures/memory_recall_cases.json`` can be
     asserted directly rather than re-derived inside each test.
+
+    ``scope_factor`` is an optional ``payload -> float`` damping function:
+    the caller's preferred scopes are a soft signal (§1), applied to the
+    score before the threshold. It is absent from the shared fixture, which
+    pins the ranking formula itself.
     """
     if not query_terms:
         return []
@@ -526,6 +606,8 @@ def rank(query_terms: set[str], candidates, *, query_vector=None, limit: int = R
         if not retrievable(payload):
             continue
         value, breakdown = _score(query_terms, row_terms, updated_at, query_vector, stored_vec)
+        if scope_factor is not None:
+            value = value * scope_factor(payload)
         # An exact lexical hit survives even a low combined score, so a genuine
         # word match is never discarded for being old.
         if value >= MIN_SCORE or query_terms & row_terms:
@@ -536,36 +618,78 @@ def rank(query_terms: set[str], candidates, *, query_vector=None, limit: int = R
         scored = []
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return [
-        {"payload": item[2], "relevance": round(item[0], 4), "breakdown": item[3]}
-        for item in scored[:limit]
+        {"payload": item[2], "relevance": round(item[0], 4), "breakdown": item[3]} for item in scored[:limit]
     ]
 
 
-def search(db, owner, query="", scopes=None, *, settings=None, debug=False, activate=False, query_vector=None, **kwargs):
+def search(
+    db,
+    owner,
+    query="",
+    scopes=None,
+    *,
+    settings=None,
+    debug=False,
+    activate=False,
+    query_vector=None,
+    **kwargs,
+):
     limit = RESULT_LIMIT_DEFAULT
     try:
         limit = max(1, min(RESULT_LIMIT_MAX, int((settings or {}).get("result_limit", RESULT_LIMIT_DEFAULT))))
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - a malformed setting falls back to the default limit
         pass
     query = (query or "").strip()
     query_terms = terms(query)
-    rows = list(db.scalars(select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(CANDIDATE_LIMIT)))
+    rows = list(
+        db.scalars(
+            select(Memory)
+            .where(Memory.owner_id == owner)
+            .order_by(Memory.updated_at.desc())
+            .limit(CANDIDATE_LIMIT)
+        )
+    )
     # Spec §3: retrieval only sees retrievable lifecycles (§2), plus every
     # pinned row whatever its lifecycle. The listing endpoints keep showing
     # the rest — a superseded memory is hidden from recall, not from review.
     candidates = [row for row in rows if retrievable(row)]
     expansion = {"added": [], "edges": [], "cutoff": None}
     seeds: list[dict] = []
+    # §1: the caller's preferred scopes are a soft signal, not a filter.
+    preferred = [str(scope).strip().lower() for scope in (scopes or []) if str(scope or "").strip()]
     if not query_terms:
-        seeds = [{"id": r.id, **_trace_data(r), "relevance": 0.0, "selection_reason": "recent"} for r in candidates[:limit]]
+        # No query: the order is recency, with the scope hint first so a
+        # caller that asked for a scope sees it at the top.
+        ordered = sorted(
+            candidates,
+            key=lambda row: (
+                scope_weight(row, preferred),
+                getattr(row, "updated_at", None) or row.created_at,
+            ),
+            reverse=True,
+        )
+        seeds = [
+            {"id": r.id, **_trace_data(r), "relevance": 0.0, "selection_reason": "recent"}
+            for r in ordered[:limit]
+        ]
         result = seeds
         mode = "recent"
     else:
-        ranked = rank(query_terms, (
-            (terms(_content(row)), getattr(row, "updated_at", None) or row.created_at,
-             mem_embeddings.row_vector(row.data), row)
-            for row in candidates
-        ), query_vector=query_vector, limit=limit)
+        ranked = rank(
+            query_terms,
+            (
+                (
+                    terms(_content(row)),
+                    getattr(row, "updated_at", None) or row.created_at,
+                    mem_embeddings.row_vector(row.data),
+                    row,
+                )
+                for row in candidates
+            ),
+            query_vector=query_vector,
+            limit=limit,
+            scope_factor=(lambda row: scope_weight(row, preferred)) if preferred else None,
+        )
         hits = [item["payload"] for item in ranked]
         if activate:
             # §1/§3 reactivation: a hit is exactly when a memory should be
@@ -580,8 +704,12 @@ def search(db, owner, query="", scopes=None, *, settings=None, debug=False, acti
             # injection searches without `activate`, so it cannot.
             _coactivate(db, owner, hits)
         seeds = [
-            {"id": item["payload"].id, **_trace_data(item["payload"]), "relevance": item["relevance"],
-             "selection_reason": "語彙が一致" if item["breakdown"]["lexical"] >= 0.4 else "文脈から関連"}
+            {
+                "id": item["payload"].id,
+                **_trace_data(item["payload"]),
+                "relevance": item["relevance"],
+                "selection_reason": "語彙が一致" if item["breakdown"]["lexical"] >= 0.4 else "文脈から関連",
+            }
             for item in ranked
         ]
         # §4: one hop past the seeds, degree- and count-capped. Linked rows
@@ -598,19 +726,23 @@ def search(db, owner, query="", scopes=None, *, settings=None, debug=False, acti
                 # "flat" while nothing was pulled in through a link, "depth"
                 # once §4's one hop actually added rows. `ranking_mode` and
                 # the `association_*` keys below are the additive signal.
-                "considered": len(candidates), "kept": len(result),
+                "considered": len(candidates),
+                "kept": len(result),
                 "stop_reason": "depth" if expansion["edges"] else "flat",
                 "ranking_mode": mode,
                 "lifecycle_excluded": len(rows) - len(candidates),
                 "elapsed_ms": 0.0,
-                "auto": {}, "trace": [], "seed_ids": [r["id"] for r in seeds],
+                "auto": {},
+                "trace": [],
+                "seed_ids": [r["id"] for r in seeds],
                 # §5.3 debug key, now carrying the rows §4 added: each entry is
                 # {source, target, activation} (+ `kind`), source = a seed.
                 "association_expansion": expansion["edges"],
                 "association_expansion_count": len(expansion["edges"]),
                 "association_cutoff": expansion["cutoff"],
                 "budget_exhausted": False,
-                "honored_settings": [], "ignored_settings": [],
+                "honored_settings": [],
+                "ignored_settings": [],
                 "query_vector": bool(query_vector),
                 "weights": {
                     "lexical": with_vector,
@@ -640,7 +772,14 @@ def list_traces(db, owner, query="", state=None, limit=200):
     """
     if state is not None and state not in LIFECYCLES:
         raise ValueError(f"unknown lifecycle_state: {state!r}")
-    rows = list(db.scalars(select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(min(limit, 500))))
+    rows = list(
+        db.scalars(
+            select(Memory)
+            .where(Memory.owner_id == owner)
+            .order_by(Memory.updated_at.desc())
+            .limit(min(limit, 500))
+        )
+    )
     qterms = terms(query)
     if qterms:
         rows = [r for r in rows if qterms & terms(_content(r))]
@@ -837,7 +976,9 @@ def associations_for(db, owner, memory_id, limit=20):
                 MemoryLink.owner_id == owner,
                 or_(MemoryLink.source_memory_id == memory_id, MemoryLink.target_memory_id == memory_id),
             )
-            .order_by(MemoryLink.weight.desc(), MemoryLink.coactivation_count.desc(), MemoryLink.updated_at.desc())
+            .order_by(
+                MemoryLink.weight.desc(), MemoryLink.coactivation_count.desc(), MemoryLink.updated_at.desc()
+            )
             .limit(max(1, int(limit or 20)))
         )
     )
@@ -886,8 +1027,12 @@ def _coactivate(db, owner, rows) -> int:
                     MemoryLink.owner_id == owner,
                     MemoryLink.kind == REL_RELATES_TO,
                     or_(
-                        and_(MemoryLink.source_memory_id == source_id, MemoryLink.target_memory_id == target_id),
-                        and_(MemoryLink.source_memory_id == target_id, MemoryLink.target_memory_id == source_id),
+                        and_(
+                            MemoryLink.source_memory_id == source_id, MemoryLink.target_memory_id == target_id
+                        ),
+                        and_(
+                            MemoryLink.source_memory_id == target_id, MemoryLink.target_memory_id == source_id
+                        ),
                     ),
                 )
             )
@@ -901,7 +1046,9 @@ def _coactivate(db, owner, rows) -> int:
     return created
 
 
-def _expand_links(db, owner, seeds, *, degree_limit=LINK_DEGREE_LIMIT, total_limit=LINK_EXPANSION_LIMIT) -> dict:
+def _expand_links(
+    db, owner, seeds, *, degree_limit=LINK_DEGREE_LIMIT, total_limit=LINK_EXPANSION_LIMIT
+) -> dict:
     """§4: exactly one hop out of the seed rows — never two.
 
     The seeds are the rows the query actually matched; a linked row is
@@ -928,7 +1075,9 @@ def _expand_links(db, owner, seeds, *, degree_limit=LINK_DEGREE_LIMIT, total_lim
                 MemoryLink.owner_id == owner,
                 or_(MemoryLink.source_memory_id.in_(seed_ids), MemoryLink.target_memory_id.in_(seed_ids)),
             )
-            .order_by(MemoryLink.weight.desc(), MemoryLink.coactivation_count.desc(), MemoryLink.updated_at.desc())
+            .order_by(
+                MemoryLink.weight.desc(), MemoryLink.coactivation_count.desc(), MemoryLink.updated_at.desc()
+            )
         )
     )
     reached: dict[str, tuple[MemoryLink, str]] = {}
@@ -985,7 +1134,11 @@ def suggest_links(db, owner, memory_ids, *, limit=LINK_SUGGEST_LIMIT) -> int:
     ids = [str(item) for item in (memory_ids or []) if item]
     if not ids or not _links_available(db):
         return 0
-    pool = list(db.scalars(select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)))
+    pool = list(
+        db.scalars(
+            select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(200)
+        )
+    )
     created = 0
     for memory_id in ids:
         row = db.get(Memory, memory_id)
@@ -998,7 +1151,12 @@ def suggest_links(db, owner, memory_ids, *, limit=LINK_SUGGEST_LIMIT) -> int:
         for item in rank(
             query_terms,
             (
-                (terms(_content(other)), other.updated_at or other.created_at, mem_embeddings.row_vector(other.data), other)
+                (
+                    terms(_content(other)),
+                    other.updated_at or other.created_at,
+                    mem_embeddings.row_vector(other.data),
+                    other,
+                )
                 for other in matches
             ),
             limit=limit,
@@ -1008,8 +1166,9 @@ def suggest_links(db, owner, memory_ids, *, limit=LINK_SUGGEST_LIMIT) -> int:
     return created
 
 
-def embedding_neighbor_links(db, owner, memory_ids, *, top_k=LINK_NEIGHBOR_TOP_K,
-                             minimum=LINK_NEIGHBOR_MIN_SIMILARITY) -> int:
+def embedding_neighbor_links(
+    db, owner, memory_ids, *, top_k=LINK_NEIGHBOR_TOP_K, minimum=LINK_NEIGHBOR_MIN_SIMILARITY
+) -> int:
     """§4 source (3): §5 embedding neighbours — **既定オフ**.
 
     :func:`jobs._apply` only calls this when the ``memory_link_embedding_
@@ -1024,7 +1183,10 @@ def embedding_neighbor_links(db, owner, memory_ids, *, top_k=LINK_NEIGHBOR_TOP_K
     pool = [
         row
         for row in db.scalars(
-            select(Memory).where(Memory.owner_id == owner).order_by(Memory.updated_at.desc()).limit(CANDIDATE_LIMIT)
+            select(Memory)
+            .where(Memory.owner_id == owner)
+            .order_by(Memory.updated_at.desc())
+            .limit(CANDIDATE_LIMIT)
         )
         if row.id not in ids and retrievable(row)
     ]
@@ -1045,7 +1207,12 @@ def embedding_neighbor_links(db, owner, memory_ids, *, top_k=LINK_NEIGHBOR_TOP_K
         scored.sort(key=lambda item: item[0], reverse=True)
         for similarity, other in scored[:top_k]:
             _edge, is_new = _upsert_link(
-                db, owner, row.id, other.id, REL_RELATES_TO, weight=max(LINK_DEFAULT_WEIGHT, round(similarity, 2)),
+                db,
+                owner,
+                row.id,
+                other.id,
+                REL_RELATES_TO,
+                weight=max(LINK_DEFAULT_WEIGHT, round(similarity, 2)),
             )
             created += 1 if is_new else 0
     return created
@@ -1059,11 +1226,16 @@ def _detach_pointers(db, owner, memory_id) -> None:
     exists must go too — otherwise the mirror would claim a link for a row
     that is not there.
     """
-    for name, column in (("superseded_by_id", Memory.superseded_by_id), ("disputed_by_id", Memory.disputed_by_id)):
+    for name, column in (
+        ("superseded_by_id", Memory.superseded_by_id),
+        ("disputed_by_id", Memory.disputed_by_id),
+    ):
         for row in list(db.scalars(select(Memory).where(Memory.owner_id == owner, column == memory_id))):
             setattr(row, name, None)
             db.flush()
             sync_links(db, row)
+
+
 # -----------------------------------------------------------------------------
 
 
@@ -1131,8 +1303,17 @@ def resolve_conflict(db, owner, *, winner_id: str, loser_id: str, resolution: st
             raise ValueError("Memory not found")
     if winner.id == loser.id:
         raise ValueError("resolution needs two distinct memories")
-    db.add(MemoryRevision(owner_id=owner, data={"memory_id": winner.id, "previous": {"id": winner.id, **_trace_data(winner)}}))
-    db.add(MemoryRevision(owner_id=owner, data={"memory_id": loser.id, "previous": {"id": loser.id, **_trace_data(loser)}}))
+    db.add(
+        MemoryRevision(
+            owner_id=owner,
+            data={"memory_id": winner.id, "previous": {"id": winner.id, **_trace_data(winner)}},
+        )
+    )
+    db.add(
+        MemoryRevision(
+            owner_id=owner, data={"memory_id": loser.id, "previous": {"id": loser.id, **_trace_data(loser)}}
+        )
+    )
     dismissed = str(resolution or "").strip().lower() in ("dismiss", "dismissed", "rejected", "discard")
     winner.lifecycle_state = LIFECYCLE_ACTIVE
     winner.disputed_by_id = None
@@ -1148,7 +1329,9 @@ def resolve_conflict(db, owner, *, winner_id: str, loser_id: str, resolution: st
     sync_links(db, winner)
     sync_links(db, loser)
     return {
-        "winner": winner.id, "loser": loser.id, "loser_state": loser.lifecycle_state,
+        "winner": winner.id,
+        "loser": loser.id,
+        "loser_state": loser.lifecycle_state,
         "resolution": resolution,
     }
 
@@ -1198,7 +1381,11 @@ def decay(db, owner=None, limit=200) -> int:
     for row in db.scalars(statement):
         if is_pinned(row):
             continue
-        anchor = _as_utc((row.data or {}).get("last_decay_at")) or _as_utc(row.updated_at) or _as_utc(row.created_at)
+        anchor = (
+            _as_utc((row.data or {}).get("last_decay_at"))
+            or _as_utc(row.updated_at)
+            or _as_utc(row.created_at)
+        )
         if anchor is None:
             continue
         elapsed = (datetime.now(UTC) - anchor).total_seconds() / 86400
@@ -1220,9 +1407,10 @@ def decay(db, owner=None, limit=200) -> int:
         row.salience = salience
         if archived:
             row.lifecycle_state = LIFECYCLE_ARCHIVED
-            _event(db, row.owner_id, None, "DECAY", row.id, None, None, f"archived after {elapsed:.0f} days idle")
+            _event(
+                db, row.owner_id, None, "DECAY", row.id, None, None, f"archived after {elapsed:.0f} days idle"
+            )
         touched += 1
     if touched:
         db.flush()
     return touched
-

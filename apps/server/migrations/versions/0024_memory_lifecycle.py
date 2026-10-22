@@ -46,8 +46,18 @@ down_revision = "0022"
 # Spec §2 vocabulary, inlined so the SQL below can validate against it without
 # importing the implementation (parity keeps these and types.py in step).
 ROLES = (
-    "fact", "decision", "preference", "goal", "constraint", "experience",
-    "failure", "solution", "observation", "hypothesis", "question", "unknown",
+    "fact",
+    "decision",
+    "preference",
+    "goal",
+    "constraint",
+    "experience",
+    "failure",
+    "solution",
+    "observation",
+    "hypothesis",
+    "question",
+    "unknown",
 )
 SCOPES = ("working", "task", "project", "user", "world")
 SOURCES = ("user", "agent", "tool", "browser", "external", "consolidation")
@@ -64,7 +74,7 @@ CONSTRAINTS = (
 
 
 def _quoted(values) -> str:
-    return ", ".join("'{}'".format(value) for value in values)
+    return ", ".join(f"'{value}'" for value in values)
 
 
 def upgrade():
@@ -100,46 +110,61 @@ def upgrade():
 
     # --- 2. backfill. No try/except: a failure must be visible. -------------
     # lifecycle: a flat row was never superseded / disputed / archived.
-    bind.execute(sa.text(
-        "UPDATE memories SET lifecycle_state = 'established' "
-        "WHERE lifecycle_state IS NULL OR lifecycle_state = ''"
-    ))
+    bind.execute(
+        sa.text(
+            "UPDATE memories SET lifecycle_state = 'established' "
+            "WHERE lifecycle_state IS NULL OR lifecycle_state = ''"
+        )
+    )
     # Legacy vocabulary of §2.1 (only reachable on a database that kept a
     # pre-0022 column value), mapped rather than silently reclassified.
-    bind.execute(sa.text("UPDATE memories SET lifecycle_state = 'candidate' WHERE lifecycle_state = 'latent'"))
+    bind.execute(
+        sa.text("UPDATE memories SET lifecycle_state = 'candidate' WHERE lifecycle_state = 'latent'")
+    )
     bind.execute(sa.text("UPDATE memories SET lifecycle_state = 'expired' WHERE lifecycle_state = 'deleted'"))
 
     # role: data.role (the §6 extractor, Phase 2) wins, and only a §2 role may
     # be stored — anything else falls back to §1's default.
     role_list = _quoted(ROLES)
-    bind.execute(sa.text(
-        "UPDATE memories SET role = data->>'role' "
-        f"WHERE data->>'role' IN ({role_list}) AND role IS DISTINCT FROM data->>'role'"
-    ))
-    bind.execute(sa.text(
-        "UPDATE memories SET role = 'fact' "
-        f"WHERE role IS NULL OR role = '' OR role NOT IN ({role_list})"
-    ))
+    bind.execute(
+        sa.text(
+            "UPDATE memories SET role = data->>'role' "
+            f"WHERE data->>'role' IN ({role_list}) AND role IS DISTINCT FROM data->>'role'"
+        )
+    )
+    bind.execute(
+        sa.text(
+            f"UPDATE memories SET role = 'fact' WHERE role IS NULL OR role = '' OR role NOT IN ({role_list})"
+        )
+    )
 
     # scope: §1's default for rows that predate the column.
-    bind.execute(sa.text(
-        f"UPDATE memories SET scope = 'user' WHERE scope IS NULL OR scope = '' OR scope NOT IN ({_quoted(SCOPES)})"
-    ))
+    bind.execute(
+        sa.text(
+            f"UPDATE memories SET scope = 'user' WHERE scope IS NULL OR scope = '' OR scope NOT IN ({_quoted(SCOPES)})"
+        )
+    )
 
     # source_kind: data.source is 'user' (explicit) or 'auto' (extracted);
     # 'auto' is not a §2 source, so it maps to §1's 'agent'.
-    bind.execute(sa.text(
-        "UPDATE memories SET source_kind = 'agent' "
-        "WHERE data->>'source' = 'auto' AND source_kind IS DISTINCT FROM 'agent'"
-    ))
-    bind.execute(sa.text(
-        "UPDATE memories SET source_kind = data->>'source' "
-        f"WHERE data->>'source' IN ({_quoted(SOURCES)}) AND source_kind IS DISTINCT FROM data->>'source'"
-    ))
-    bind.execute(sa.text(
-        "UPDATE memories SET source_kind = 'agent' "
-        f"WHERE source_kind IS NULL OR source_kind = '' OR source_kind NOT IN ({_quoted(SOURCES)})"
-    ))
+    bind.execute(
+        sa.text(
+            "UPDATE memories SET source_kind = 'agent' "
+            "WHERE data->>'source' = 'auto' AND source_kind IS DISTINCT FROM 'agent'"
+        )
+    )
+    bind.execute(
+        sa.text(
+            "UPDATE memories SET source_kind = data->>'source' "
+            f"WHERE data->>'source' IN ({_quoted(SOURCES)}) AND source_kind IS DISTINCT FROM data->>'source'"
+        )
+    )
+    bind.execute(
+        sa.text(
+            "UPDATE memories SET source_kind = 'agent' "
+            f"WHERE source_kind IS NULL OR source_kind = '' OR source_kind NOT IN ({_quoted(SOURCES)})"
+        )
+    )
 
     # confidence / salience: §1 defaults for rows that predate the columns.
     bind.execute(sa.text("UPDATE memories SET confidence = 0.7 WHERE confidence IS NULL"))
@@ -147,11 +172,13 @@ def upgrade():
     # §3: pinned rows are exempt from decay, so they start at full salience.
     # (`pinned` is a JSON boolean or a 1/0; lower() keeps the cast from ever
     # raising on a hand-edited row — a bad value must not fail the migration.)
-    bind.execute(sa.text(
-        "UPDATE memories SET salience = 1.0 "
-        "WHERE lower(COALESCE(data->>'pinned', '')) IN ('true', '1') "
-        "AND salience IS DISTINCT FROM 1.0"
-    ))
+    bind.execute(
+        sa.text(
+            "UPDATE memories SET salience = 1.0 "
+            "WHERE lower(COALESCE(data->>'pinned', '')) IN ('true', '1') "
+            "AND salience IS DISTINCT FROM 1.0"
+        )
+    )
 
     # superseded_by_id / disputed_by_id have no historical source: a flat row
     # was never superseded and never disputed.
@@ -159,8 +186,11 @@ def upgrade():
     # --- 3. constraints last: SET NOT NULL fails if a row was missed --------
     for name, type_, default in CONSTRAINTS:
         op.alter_column(
-            "memories", name,
-            existing_type=type_, server_default=default, nullable=False,
+            "memories",
+            name,
+            existing_type=type_,
+            server_default=default,
+            nullable=False,
         )
     for name in ("superseded_by_id", "disputed_by_id"):
         op.alter_column("memories", name, existing_type=sa.String(36), nullable=True)

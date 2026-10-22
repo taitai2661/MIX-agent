@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { getLanguage, setLanguage, type Language } from "./i18n";
 import { storedTheme, storeTheme, type Theme } from "./theme";
-import { getBoolean, getString, removeKey, setBoolean, setString } from "./storage";
+import {
+  getBoolean,
+  getString,
+  removeKey,
+  setBoolean,
+  setString,
+} from "./storage";
 
 export type View = "chat" | "agents" | "projects" | "schedules" | "settings";
 
@@ -34,9 +40,21 @@ export const SURFACE_MODES: Record<Surface, RunMode[]> = {
 
 /** Tabs inside the Settings pane (see features/settings/SettingsPane.tsx). */
 export type SettingsTab =
-  | "appearance" | "general" | "network" | "updates" | "backup"
-  | "providers" | "models" | "tools" | "approvals" | "mcp"
-  | "memory" | "knowledge" | "skills" | "browser" | "diagnostics";
+  | "appearance"
+  | "general"
+  | "network"
+  | "updates"
+  | "backup"
+  | "providers"
+  | "models"
+  | "tools"
+  | "approvals"
+  | "mcp"
+  | "memory"
+  | "knowledge"
+  | "skills"
+  | "browser"
+  | "diagnostics";
 
 export type RightPanel = "none" | "activity" | "diff" | "changes" | "file";
 
@@ -157,8 +175,11 @@ function readBoolean(key: string, fallback: boolean): boolean {
 function readRightPanel(): RightPanel {
   const stored = getString(RIGHT_PANEL_KEY);
   if (
-    stored === "none" || stored === "activity" || stored === "diff"
-    || stored === "changes" || stored === "file"
+    stored === "none" ||
+    stored === "activity" ||
+    stored === "diff" ||
+    stored === "changes" ||
+    stored === "file"
   ) {
     return stored;
   }
@@ -169,14 +190,27 @@ function readRightPanel(): RightPanel {
 }
 
 const SETTING_TABS: SettingsTab[] = [
-  "appearance", "general", "network", "updates", "backup",
-  "providers", "models", "tools", "approvals", "mcp",
-  "memory", "knowledge", "skills", "browser", "diagnostics",
+  "appearance",
+  "general",
+  "network",
+  "updates",
+  "backup",
+  "providers",
+  "models",
+  "tools",
+  "approvals",
+  "mcp",
+  "memory",
+  "knowledge",
+  "skills",
+  "browser",
+  "diagnostics",
 ];
 
 function readSettingsTab(): SettingsTab {
   const stored = getString(SETTINGS_TAB_KEY);
-  if (stored && SETTING_TABS.includes(stored as SettingsTab)) return stored as SettingsTab;
+  if (stored && SETTING_TABS.includes(stored as SettingsTab))
+    return stored as SettingsTab;
   return "appearance";
 }
 
@@ -188,7 +222,8 @@ function readSurface(): Surface {
 
 function readThreadFilter(): ThreadFilter {
   const stored = getString(THREAD_FILTER_KEY);
-  if (stored && THREAD_FILTERS.includes(stored as ThreadFilter)) return stored as ThreadFilter;
+  if (stored && THREAD_FILTERS.includes(stored as ThreadFilter))
+    return stored as ThreadFilter;
   return "all";
 }
 
@@ -294,7 +329,8 @@ export const useUi = create<UiState>((set) => ({
   diffTarget: null,
   openDiff: (diffTarget) => set({ diffTarget, rightPanel: "diff" }),
   filePreviewPath: null,
-  openFilePreview: (filePreviewPath) => set({ filePreviewPath, rightPanel: "file" }),
+  openFilePreview: (filePreviewPath) =>
+    set({ filePreviewPath, rightPanel: "file" }),
   gitDiffPath: null,
   setGitDiffPath: (gitDiffPath) => set({ gitDiffPath }),
   locale: getLanguage(),
@@ -312,7 +348,8 @@ export const useUi = create<UiState>((set) => ({
   shortcutsOpen: false,
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   onboardingForcedOpen: false,
-  setOnboardingForcedOpen: (onboardingForcedOpen) => set({ onboardingForcedOpen }),
+  setOnboardingForcedOpen: (onboardingForcedOpen) =>
+    set({ onboardingForcedOpen }),
 }));
 
 // Cross-tab sync: another tab changing persisted UI state should reflect

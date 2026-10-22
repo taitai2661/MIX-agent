@@ -47,7 +47,9 @@ describe("Transcript user-message editing", () => {
 
     expect(onEditMessage).toHaveBeenCalledWith("m-1", "直したメッセージ");
     // On success the editor closes and the read-only bubble comes back.
-    expect(screen.queryByRole("textbox", { name: "メッセージを編集" })).toBeNull();
+    expect(
+      screen.queryByRole("textbox", { name: "メッセージを編集" }),
+    ).toBeNull();
     expect(screen.getByText("元のメッセージ")).toBeInTheDocument();
   });
 
@@ -87,7 +89,9 @@ describe("Transcript user-message editing", () => {
         editDisabled
       />,
     );
-    expect(screen.getByRole("button", { name: "メッセージを編集" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "メッセージを編集" }),
+    ).toBeDisabled();
   });
 
   it("keeps the editor open when the caller rejects", async () => {
@@ -113,9 +117,9 @@ describe("Transcript user-message editing", () => {
 
     expect(onEditMessage).toHaveBeenCalled();
     // The typed text survives a failed save instead of being thrown away.
-    expect(screen.getByRole("textbox", { name: "メッセージを編集" })).toHaveValue(
-      "残したい",
-    );
+    expect(
+      screen.getByRole("textbox", { name: "メッセージを編集" }),
+    ).toHaveValue("残したい");
   });
 
   it("offers a retry on a failed run", async () => {

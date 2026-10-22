@@ -85,7 +85,9 @@ export function AssociationsView({
         <EmptyState
           icon={<Link2 size={22} />}
           title={t("リンクはまだありません。")}
-          sub={t("想起のたびに関連する Memory と結び、上書き・矛盾の鏡は §3 の遷移が書き込みます。")}
+          sub={t(
+            "想起のたびに関連する Memory と結び、上書き・矛盾の鏡は §3 の遷移が書き込みます。",
+          )}
         />
       ) : (
         <>
@@ -174,7 +176,9 @@ function EdgeGroup({
                 />
               </Row>
               <Row className="gap-2 text-2xs text-faint">
-                <span className="font-mono">{tf("weight {w}", { w: link.weight.toFixed(2) })}</span>
+                <span className="font-mono">
+                  {tf("weight {w}", { w: link.weight.toFixed(2) })}
+                </span>
                 <span className="font-mono">
                   {tf("coactivation {n}", { n: link.coactivation_count })}
                 </span>
@@ -220,7 +224,10 @@ function Endpoint({
           {isSubject ? t("この Memory") : label}
         </button>
       ) : (
-        <span className="max-w-[16rem] truncate font-mono text-xs text-muted" title={id}>
+        <span
+          className="max-w-[16rem] truncate font-mono text-xs text-muted"
+          title={id}
+        >
           {label}
         </span>
       )}

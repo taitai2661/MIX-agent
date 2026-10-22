@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Bot, CornerDownLeft, FolderTree, Keyboard, MessageSquare, PanelLeft, Plus, Search, Settings2, Sparkles,
+  Bot,
+  CornerDownLeft,
+  FolderTree,
+  Keyboard,
+  MessageSquare,
+  PanelLeft,
+  Plus,
+  Search,
+  Settings2,
+  Sparkles,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -103,33 +112,41 @@ export function CommandPalette() {
     // `t()` reads the display language from module state, so mention `locale`
     // to recompute the labels on a language switch.
     void locale;
-    const views: PaletteItem[] = (Object.keys(VIEW_LABELS) as View[]).map((id) => ({
-      id: `view:${id}`,
-      label: t(VIEW_LABELS[id]!),
-      icon: <Search size={15} />,
-      kind: "view",
-      run: () => setView(id),
-    }));
-    const settingsTabs: PaletteItem[] = SETTINGS_TARGETS.map(({ tab, label }) => ({
-      id: `settings:${tab}`,
-      label: t(label),
-      hint: t("設定"),
-      icon: <Settings2 size={15} />,
-      kind: "settings",
-      run: () => openSettings(tab),
-    }));
-    const threads: PaletteItem[] = (conversations.data ?? []).slice(0, 30).map((c) => ({
-      id: `thread:${c.id}`,
-      label: c.title,
-      hint: t("チャット"),
-      icon: <MessageSquare size={15} />,
-      kind: "thread",
-      run: () => {
-        setConversationId(c.id);
-        setView("chat");
-      },
-    }));
-    const surfaces: PaletteItem[] = (["chat", "desktop-agent"] as Surface[]).map((id) => ({
+    const views: PaletteItem[] = (Object.keys(VIEW_LABELS) as View[]).map(
+      (id) => ({
+        id: `view:${id}`,
+        label: t(VIEW_LABELS[id]!),
+        icon: <Search size={15} />,
+        kind: "view",
+        run: () => setView(id),
+      }),
+    );
+    const settingsTabs: PaletteItem[] = SETTINGS_TARGETS.map(
+      ({ tab, label }) => ({
+        id: `settings:${tab}`,
+        label: t(label),
+        hint: t("設定"),
+        icon: <Settings2 size={15} />,
+        kind: "settings",
+        run: () => openSettings(tab),
+      }),
+    );
+    const threads: PaletteItem[] = (conversations.data ?? [])
+      .slice(0, 30)
+      .map((c) => ({
+        id: `thread:${c.id}`,
+        label: c.title,
+        hint: t("チャット"),
+        icon: <MessageSquare size={15} />,
+        kind: "thread",
+        run: () => {
+          setConversationId(c.id);
+          setView("chat");
+        },
+      }));
+    const surfaces: PaletteItem[] = (
+      ["chat", "desktop-agent"] as Surface[]
+    ).map((id) => ({
       id: `surface:${id}`,
       label: id === "chat" ? t("チャット") : t("エージェント"),
       hint: t("サーフェスを切り替え"),
@@ -137,17 +154,19 @@ export function CommandPalette() {
       kind: "surface",
       run: () => setSurface(id),
     }));
-    const modelItems: PaletteItem[] = (models.data ?? []).slice(0, 30).map((m) => ({
-      id: `model:${m.id}`,
-      label: m.label,
-      hint: t("モデル"),
-      icon: <Sparkles size={15} />,
-      kind: "model",
-      run: () => {
-        setModelId(m.id);
-        setView("chat");
-      },
-    }));
+    const modelItems: PaletteItem[] = (models.data ?? [])
+      .slice(0, 30)
+      .map((m) => ({
+        id: `model:${m.id}`,
+        label: m.label,
+        hint: t("モデル"),
+        icon: <Sparkles size={15} />,
+        kind: "model",
+        run: () => {
+          setModelId(m.id);
+          setView("chat");
+        },
+      }));
     return [
       {
         id: "action:new-thread",
@@ -285,7 +304,11 @@ export function CommandPalette() {
       >
         <DialogTitle className="sr-only">{t("コマンドパレット")}</DialogTitle>
         <div className="flex shrink-0 items-center gap-2.5 border-b border-line bg-inset px-3.5">
-          <Search size={15} className="shrink-0 text-faint" aria-hidden="true" />
+          <Search
+            size={15}
+            className="shrink-0 text-faint"
+            aria-hidden="true"
+          />
           <input
             // APG dialog pattern: the palette opens for typing; focus must
             // start in the query, not on the body behind it.
@@ -330,23 +353,41 @@ export function CommandPalette() {
                     setOpen(false);
                   }}
                 >
-                  <span className="shrink-0 text-faint" aria-hidden="true">{item.icon}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                  <span className="shrink-0 text-faint" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {item.label}
+                  </span>
                   {item.keys ? (
                     <Kbd className="ms-auto shrink-0">{item.keys}</Kbd>
                   ) : item.hint ? (
-                    <span className="ms-auto shrink-0 text-xs text-faint">{item.hint}</span>
+                    <span className="ms-auto shrink-0 text-xs text-faint">
+                      {item.hint}
+                    </span>
                   ) : (
-                    <span className="ms-auto shrink-0 text-2xs text-faint/70">{t(KIND_LABEL[item.kind])}</span>
+                    <span className="ms-auto shrink-0 text-2xs text-faint/70">
+                      {t(KIND_LABEL[item.kind])}
+                    </span>
                   )}
-                  {i === selected && <CornerDownLeft size={12} className="shrink-0 text-faint" aria-hidden="true" />}
+                  {i === selected && (
+                    <CornerDownLeft
+                      size={12}
+                      className="shrink-0 text-faint"
+                      aria-hidden="true"
+                    />
+                  )}
                 </ListRow>
               ))}
               {filtered.length === 0 && (
                 <EmptyState
                   compact
                   title={t("一致する項目がありません")}
-                  sub={query.trim() ? t("別のキーワードで検索してください") : undefined}
+                  sub={
+                    query.trim()
+                      ? t("別のキーワードで検索してください")
+                      : undefined
+                  }
                 />
               )}
             </>

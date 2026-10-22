@@ -1,4 +1,12 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setLanguage } from "@/lib/i18n";
@@ -8,14 +16,57 @@ import type { ModelView, ProviderView } from "@/lib/types";
 import { ModelPicker } from "./ModelPicker";
 
 const providers: ProviderView[] = [
-  { id: "openai", kind: "openai", label: "OpenAI", base_url: null, enabled: true, has_api_key: true, preset: null },
-  { id: "anthropic", kind: "anthropic", label: "Anthropic", base_url: null, enabled: true, has_api_key: true, preset: null },
+  {
+    id: "openai",
+    kind: "openai",
+    label: "OpenAI",
+    base_url: null,
+    enabled: true,
+    has_api_key: true,
+    preset: null,
+  },
+  {
+    id: "anthropic",
+    kind: "anthropic",
+    label: "Anthropic",
+    base_url: null,
+    enabled: true,
+    has_api_key: true,
+    preset: null,
+  },
 ];
 
 const models: ModelView[] = [
-  { id: "openai:gpt-4o", provider_id: "openai", label: "GPT-4o", context_window: 128000, supports_vision: true, supports_tool_calling: true, supports_reasoning: false, auto_candidate: true },
-  { id: "openai:o3", provider_id: "openai", label: "o3", context_window: 200000, supports_vision: true, supports_tool_calling: true, supports_reasoning: true, auto_candidate: true },
-  { id: "anthropic:claude", provider_id: "anthropic", label: "Claude Sonnet", context_window: 200000, supports_vision: true, supports_tool_calling: true, supports_reasoning: true, auto_candidate: false },
+  {
+    id: "openai:gpt-4o",
+    provider_id: "openai",
+    label: "GPT-4o",
+    context_window: 128000,
+    supports_vision: true,
+    supports_tool_calling: true,
+    supports_reasoning: false,
+    auto_candidate: true,
+  },
+  {
+    id: "openai:o3",
+    provider_id: "openai",
+    label: "o3",
+    context_window: 200000,
+    supports_vision: true,
+    supports_tool_calling: true,
+    supports_reasoning: true,
+    auto_candidate: true,
+  },
+  {
+    id: "anthropic:claude",
+    provider_id: "anthropic",
+    label: "Claude Sonnet",
+    context_window: 200000,
+    supports_vision: true,
+    supports_tool_calling: true,
+    supports_reasoning: true,
+    auto_candidate: false,
+  },
 ];
 
 beforeAll(() => setLanguage("ja"));
@@ -32,17 +83,31 @@ describe("ModelPicker", () => {
 
   it("shows the selected model in the trigger", () => {
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={() => {}} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={() => {}}
+        providers={providers}
+      />,
     );
-    expect(screen.getByRole("button", { name: "モデルを選択" })).toHaveTextContent("GPT-4o");
+    expect(
+      screen.getByRole("button", { name: "モデルを選択" }),
+    ).toHaveTextContent("GPT-4o");
   });
 
   it("shows Auto in the trigger and lists it first", async () => {
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="auto" onChange={() => {}} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="auto"
+        onChange={() => {}}
+        providers={providers}
+      />,
     );
-    expect(screen.getByRole("button", { name: "モデルを選択" })).toHaveTextContent("Auto");
+    expect(
+      screen.getByRole("button", { name: "モデルを選択" }),
+    ).toHaveTextContent("Auto");
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
     const list = await screen.findByRole("listbox");
     const options = within(list).getAllByRole("option");
@@ -53,7 +118,12 @@ describe("ModelPicker", () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={onChange} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={onChange}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
     const list = await screen.findByRole("listbox");
@@ -64,7 +134,12 @@ describe("ModelPicker", () => {
   it("filters the list with the search field", async () => {
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={() => {}} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={() => {}}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
     await user.type(screen.getByRole("combobox"), "claude");
@@ -77,7 +152,12 @@ describe("ModelPicker", () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={onChange} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={onChange}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
     await user.click(await screen.findByText("Claude Sonnet"));
@@ -89,7 +169,12 @@ describe("ModelPicker", () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={onChange} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={onChange}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
     const combobox = screen.getByRole("combobox");
@@ -102,7 +187,12 @@ describe("ModelPicker", () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={onChange} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={onChange}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
     const combobox = screen.getByRole("combobox");
@@ -118,27 +208,40 @@ describe("ModelPicker", () => {
   it("toggles favourites from the keyboard with aria-pressed state", async () => {
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={() => {}} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={() => {}}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
-    const star = (await screen.findAllByRole("button", { name: "お気に入りに追加" }))[0];
+    const star = (
+      await screen.findAllByRole("button", { name: "お気に入りに追加" })
+    )[0];
     expect(star).toHaveAttribute("aria-pressed", "false");
     star.focus();
     await user.keyboard("{Enter}");
     expect(getFavoriteModels()).toContain("openai:gpt-4o");
-    expect(await screen.findByRole("button", { name: "お気に入りから外す" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(
+      await screen.findByRole("button", { name: "お気に入りから外す" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("pins a model to favourites", async () => {
     const user = userEvent.setup();
     render(
-      <ModelPicker models={models} value="openai:gpt-4o" onChange={() => {}} providers={providers} />,
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={() => {}}
+        providers={providers}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
-    const star = (await screen.findAllByRole("button", { name: "お気に入りに追加" }))[1];
+    const star = (
+      await screen.findAllByRole("button", { name: "お気に入りに追加" })
+    )[1];
     await user.click(star);
     expect(getFavoriteModels()).toContain("openai:o3");
     expect(await screen.findByText("お気に入り")).toBeInTheDocument();
@@ -146,9 +249,13 @@ describe("ModelPicker", () => {
 
   it("offers to add a provider when nothing is configured", async () => {
     const user = userEvent.setup();
-    render(<ModelPicker models={[]} value="" onChange={() => {}} providers={[]} />);
+    render(
+      <ModelPicker models={[]} value="" onChange={() => {}} providers={[]} />,
+    );
     await user.click(screen.getByRole("button", { name: "モデルを選択" }));
-    await user.click(await screen.findByRole("button", { name: "プロバイダーを追加" }));
+    await user.click(
+      await screen.findByRole("button", { name: "プロバイダーを追加" }),
+    );
     await waitFor(() => expect(useUi.getState().settingsTab).toBe("providers"));
   });
 

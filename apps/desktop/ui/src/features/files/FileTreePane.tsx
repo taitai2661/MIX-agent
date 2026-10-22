@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { useActiveProject, gitStatusKey, useGitStatus } from "@/lib/queries";
 import { usePromptInsert } from "@/lib/promptInsert";
@@ -179,7 +179,9 @@ const DirRows = memo(function DirRows({
               className={rowClass}
               onClick={() => ctx.onOpenFile(childPath)}
               title={
-                status ? `${entry.name} — ${gitStatusLabel(status)}` : entry.name
+                status
+                  ? `${entry.name} — ${gitStatusLabel(status)}`
+                  : entry.name
               }
             >
               <span className="w-3 shrink-0" />
@@ -199,7 +201,7 @@ const DirRows = memo(function DirRows({
                 e.stopPropagation();
                 ctx.onAddToChat(childPath);
               }}
-              title={t("チャットに入力 (@{path})", { path: childPath })}
+              title={tf("チャットに入力 (@{path})", { path: childPath })}
               aria-label={t("チャットに入力")}
               className="absolute right-1 hidden h-5 w-5 items-center justify-center rounded bg-surface/80 text-muted shadow-xs hover:bg-surface hover:text-brand group-hover/row:flex"
             >
@@ -262,7 +264,15 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
       onOpenFile: openFilePreview,
       onAddToChat: (path: string) => insertFileReference(path),
     }),
-    [root, expanded, toggle, gitMap, showHidden, openFilePreview, insertFileReference],
+    [
+      root,
+      expanded,
+      toggle,
+      gitMap,
+      showHidden,
+      openFilePreview,
+      insertFileReference,
+    ],
   );
 
   const refresh = () => {
@@ -272,81 +282,81 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
   };
 
   return (
-      <aside
-        aria-label={t("ファイルツリー")}
-        data-side-panel=""
-        style={panelStyle(FILE_TREE_WIDTH, cap)}
-        className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-sidebar"
-      >
-        <PanelHeader
-          icon={<FolderTree size={14} />}
-          title={project ? project.name : t("プロジェクト")}
-          onClose={toggleFileTree}
-          trailing={
-            <>
-              {git.data?.available && git.data.branch && (
-                // Branch names are as long as the team wants them to be, and the
-                // title next to them only has `flex-1`. `shrink-0` with no width
-                // of its own meant a long branch pushed the header — and the
-                // panel's right edge — out of the window, so the badge gives up
-                // width instead and the name goes to an ellipsis.
-                <Badge
-                  tone="neutral"
-                  size="sm"
-                  className="min-w-0 max-w-28 shrink font-mono"
-                  title={git.data.branch}
-                >
-                  <span className="min-w-0 truncate">{git.data.branch}</span>
-                </Badge>
-              )}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title={
-                  showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
-                }
-                aria-label={
-                  showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
-                }
-                onClick={() => setShowHidden((v) => !v)}
+    <aside
+      aria-label={t("ファイルツリー")}
+      data-side-panel=""
+      style={panelStyle(FILE_TREE_WIDTH, cap)}
+      className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-sidebar"
+    >
+      <PanelHeader
+        icon={<FolderTree size={14} />}
+        title={project ? project.name : t("プロジェクト")}
+        onClose={toggleFileTree}
+        trailing={
+          <>
+            {git.data?.available && git.data.branch && (
+              // Branch names are as long as the team wants them to be, and the
+              // title next to them only has `flex-1`. `shrink-0` with no width
+              // of its own meant a long branch pushed the header — and the
+              // panel's right edge — out of the window, so the badge gives up
+              // width instead and the name goes to an ellipsis.
+              <Badge
+                tone="neutral"
+                size="sm"
+                className="min-w-0 max-w-28 shrink font-mono"
+                title={git.data.branch}
               >
-                {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title={t("更新")}
-                aria-label={t("更新")}
-                onClick={refresh}
-              >
-                <RefreshCw size={12} />
-              </Button>
-            </>
+                <span className="min-w-0 truncate">{git.data.branch}</span>
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={
+                showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
+              }
+              aria-label={
+                showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
+              }
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t("更新")}
+              aria-label={t("更新")}
+              onClick={refresh}
+            >
+              <RefreshCw size={12} />
+            </Button>
+          </>
+        }
+      />
+
+      {root ? (
+        <div className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
+          <DirRows path="" depth={0} ctx={ctx} />
+        </div>
+      ) : (
+        <EmptyState
+          compact
+          className="flex flex-1 flex-col items-center justify-center"
+          title={t("プロジェクトにフォルダを設定してください")}
+          action={
+            <Button size="sm" onClick={() => setView("projects")}>
+              {t("プロジェクト")}
+            </Button>
           }
         />
+      )}
 
-        {root ? (
-          <div className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
-            <DirRows path="" depth={0} ctx={ctx} />
-          </div>
-        ) : (
-          <EmptyState
-            compact
-            className="flex flex-1 flex-col items-center justify-center"
-            title={t("プロジェクトにフォルダを設定してください")}
-            action={
-              <Button size="sm" onClick={() => setView("projects")}>
-                {t("プロジェクト")}
-              </Button>
-            }
-          />
-        )}
-
-        {root && git.isError && (
-          <div className="p-2">
-            <ErrorAlert error={t("git を利用できません")} />
-          </div>
-        )}
-      </aside>
+      {root && git.isError && (
+        <div className="p-2">
+          <ErrorAlert error={t("git を利用できません")} />
+        </div>
+      )}
+    </aside>
   );
 }

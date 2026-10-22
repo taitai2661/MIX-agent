@@ -178,8 +178,9 @@ def default_provider(db, owner_id):
     """Most recent provider record for the owner."""
     from mix_agent.db.models import Provider
 
-    return db.scalar(select(Provider).where(Provider.owner_id == owner_id)
-                     .order_by(Provider.created_at.desc()).limit(1))
+    return db.scalar(
+        select(Provider).where(Provider.owner_id == owner_id).order_by(Provider.created_at.desc()).limit(1)
+    )
 
 
 async def embed_memory(db, memory_id: str, provider=None, key=None) -> bool:
@@ -221,7 +222,11 @@ async def embed_contents(db, memory_ids, provider=None, key=None) -> int:
     from mix_agent.auth.security import read_secret
     from mix_agent.db.models import Memory
 
-    rows = [row for row in (db.get(Memory, mid) for mid in list(memory_ids or [])[:EMBED_BATCH_SIZE]) if row is not None]
+    rows = [
+        row
+        for row in (db.get(Memory, mid) for mid in list(memory_ids or [])[:EMBED_BATCH_SIZE])
+        if row is not None
+    ]
     if not rows:
         return 0
     if provider is None:
@@ -254,8 +259,12 @@ async def embed_pending(db, owner_id: str, provider=None, key=None, limit: int =
     if provider is None:
         return 0
     wire_provider = {**provider.data, "id": provider.id}
-    rows = db.scalars(select(Memory).where(Memory.owner_id == owner_id)
-                      .order_by(Memory.updated_at.desc()).limit(BACKFILL_SCAN_LIMIT)).all()
+    rows = db.scalars(
+        select(Memory)
+        .where(Memory.owner_id == owner_id)
+        .order_by(Memory.updated_at.desc())
+        .limit(BACKFILL_SCAN_LIMIT)
+    ).all()
     done = 0
     for row in rows:
         if done >= limit:

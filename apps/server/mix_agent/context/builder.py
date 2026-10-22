@@ -208,7 +208,9 @@ def build_initial(
     # against a slice of the memory budget so the most important buckets
     # (decisions, failures) keep priority over generic facts.
     memory_included, memory_excluded, memory_block, memory_groups = _render_memory(
-        memories or [], budgets["memory"], model_id,
+        memories or [],
+        budgets["memory"],
+        model_id,
     )
     skills_included, skills_excluded = _fit_block(skills or [], budgets["skills"], model_id)
     knowledge_included, knowledge_excluded = _fit_block(knowledge or [], budgets["knowledge"], model_id)
@@ -342,7 +344,11 @@ def _render_memory(
     if not memories or budget <= 0:
         return [], [{"id": m.get("id"), "reason": "no_budget"} for m in memories], "", {"all": 0}
     included, excluded = _fit_block(
-        [{"id": m.get("id"), "content": str(m.get("content", ""))[:ITEM_CHAR_LIMIT]} for m in memories if m.get("id")],
+        [
+            {"id": m.get("id"), "content": str(m.get("content", ""))[:ITEM_CHAR_LIMIT]}
+            for m in memories
+            if m.get("id")
+        ],
         budget,
         model_id,
     )

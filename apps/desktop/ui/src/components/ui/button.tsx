@@ -31,7 +31,8 @@ const buttonVariants = cva(
           "bg-brand text-on-solid shadow-xs hover:bg-brand-hover active:scale-[0.98] active:shadow-none",
         // `on-solid`, not a literal `white`: in dark mode every solid fill in
         // the palette is a light tint, so text on top of one has to be dark.
-        danger: "bg-danger text-on-solid shadow-xs hover:opacity-90 active:scale-[0.98] active:shadow-none",
+        danger:
+          "bg-danger text-on-solid shadow-xs hover:opacity-90 active:scale-[0.98] active:shadow-none",
         // The destructive *quiet* action. Nine call sites were open-coding
         // `variant="ghost" className="text-danger hover:text-danger"`; as a
         // variant the danger tint is no longer optional, and it is a token

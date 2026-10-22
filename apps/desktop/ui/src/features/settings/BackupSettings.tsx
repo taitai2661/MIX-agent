@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import {
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 import { Archive, Download, FolderOpen, RefreshCw, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -47,10 +50,13 @@ export function BackupSettings() {
       } else {
         const out = await api.restoreBackup({ source: restorePath, password });
         setResult(
-          tf("{tables} テーブルを検証しました（{date}）。復元データを読み込むためにアプリを再起動します。", {
-            tables: out.tables,
-            date: new Date(out.created_at).toLocaleString(),
-          }),
+          tf(
+            "{tables} テーブルを検証しました（{date}）。復元データを読み込むためにアプリを再起動します。",
+            {
+              tables: out.tables,
+              date: new Date(out.created_at).toLocaleString(),
+            },
+          ),
         );
         // Decided by the operation, not by the wording of the message — a
         // translated string must not be able to hide the restart button.

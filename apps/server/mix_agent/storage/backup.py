@@ -49,8 +49,16 @@ async def create(db, password):
     check_idle(db)
     workspace = await runner_request("execution", "/snapshot", {})
     mcp = await runner_request("mcp", "/snapshot", {})
-    managed_ids = [row.id for row in db.scalars(select(MCPConnection)) if row.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi")]
-    managed_mcp = await runner_request("manager", "/v1/snapshot", {"resource_ids": managed_ids}) if managed_ids else {"volumes": {}}
+    managed_ids = [
+        row.id
+        for row in db.scalars(select(MCPConnection))
+        if row.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi")
+    ]
+    managed_mcp = (
+        await runner_request("manager", "/v1/snapshot", {"resource_ids": managed_ids})
+        if managed_ids
+        else {"volumes": {}}
+    )
     tables = {}
     for table in Base.metadata.sorted_tables:
         rows = [dict(row) for row in db.execute(select(table)).mappings()]
@@ -149,8 +157,16 @@ async def restore(db, raw, password, recovering=False):
         journal.write_text(json.dumps({"phase": "restoring"}))
     old_workspace = await runner_request("execution", "/snapshot", {})
     old_mcp = await runner_request("mcp", "/snapshot", {})
-    managed_ids = [row.id for row in db.scalars(select(MCPConnection)) if row.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi")]
-    old_managed = await runner_request("manager", "/v1/snapshot", {"resource_ids": managed_ids}) if managed_ids else {"volumes": {}}
+    managed_ids = [
+        row.id
+        for row in db.scalars(select(MCPConnection))
+        if row.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi")
+    ]
+    old_managed = (
+        await runner_request("manager", "/v1/snapshot", {"resource_ids": managed_ids})
+        if managed_ids
+        else {"volumes": {}}
+    )
     stage = config.DATA / ("restore-" + str(uuid4()))
     stage.mkdir()
     for name, content in payload["artifacts"].items():

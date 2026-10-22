@@ -70,14 +70,18 @@ export function StepFolder({
   return (
     <div className="flex flex-col gap-3">
       <p className="m-0 text-xs text-muted">
-        {t("MIX-agent がファイルを読む・書く場所です。プロジェクトを作ると、そのフォルダの中だけが対象になります。")}
+        {t(
+          "MIX-agent がファイルを読む・書く場所です。プロジェクトを作ると、そのフォルダの中だけが対象になります。",
+        )}
       </p>
 
       {existing ? (
         <Row>
           <Folder size={12} className="text-muted" />
           <span className="text-xs text-fg">{existing.name}</span>
-          <code className="min-w-0 truncate font-mono text-xs text-faint">{existing.rootPath}</code>
+          <code className="min-w-0 truncate font-mono text-xs text-faint">
+            {existing.rootPath}
+          </code>
         </Row>
       ) : (
         <>
@@ -94,11 +98,16 @@ export function StepFolder({
               </Button>
             </Row>
             <span className="text-xs text-faint">
-              {t("既存のフォルダを選んでください（新しいフォルダは作成されません）")}
+              {t(
+                "既存のフォルダを選んでください（新しいフォルダは作成されません）",
+              )}
             </span>
           </div>
 
-          <Field label={t("プロジェクト名")} hint={t("未入力の場合はフォルダ名が使われます")}>
+          <Field
+            label={t("プロジェクト名")}
+            hint={t("未入力の場合はフォルダ名が使われます")}
+          >
             <Input
               placeholder={t("Project 名")}
               value={name}
@@ -126,9 +135,7 @@ export function StepFolder({
           }}
           disabled={!existing && !root}
         >
-          {create.isPending
-            ? <Spinner size={12} />
-            : <Folder size={12} />}
+          {create.isPending ? <Spinner size={12} /> : <Folder size={12} />}
           {existing ? t("このプロジェクトを使う") : t("このフォルダを使う")}
         </Button>
         <Button variant="ghost" onClick={onSkip}>

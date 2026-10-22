@@ -52,7 +52,12 @@ export function Onboarding({
       <header className="app-titlebar flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-bg/85 px-3 backdrop-blur-md">
         <span className="truncate text-sm font-medium text-fg">MIX-agent</span>
         {step > WELCOME && (
-          <StepRail steps={STEPS} current={step} furthest={furthest} onSelect={onRailSelect} />
+          <StepRail
+            steps={STEPS}
+            current={step}
+            furthest={furthest}
+            onSelect={onRailSelect}
+          />
         )}
         <span className="flex-1" />
         <Button
@@ -90,7 +95,9 @@ export function Onboarding({
             />
           )}
 
-          {step === 2 && <StepStart projectName={projectName} onStart={onComplete} />}
+          {step === 2 && (
+            <StepStart projectName={projectName} onStart={onComplete} />
+          )}
         </div>
       </main>
 
@@ -104,7 +111,9 @@ export function Onboarding({
             <ArrowLeft size={12} /> {t("戻る")}
           </Button>
           <span className="flex-1" />
-          <span className="text-xs text-faint">{t("設定はあとから変更できます")}</span>
+          <span className="text-xs text-faint">
+            {t("設定はあとから変更できます")}
+          </span>
         </footer>
       )}
     </div>

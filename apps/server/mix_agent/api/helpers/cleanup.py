@@ -3,6 +3,7 @@
 These functions were extracted from mix_agent.api.routes to keep the route
 module manageable.  They are re-exported from routes.py for backward compat.
 """
+
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -30,9 +31,7 @@ def _collect_used_artifact_ids(db, owner_id: str) -> set:
     for run in db.scalars(select(Run).where(Run.owner_id == owner_id)):
         used.update(_run_context_artifact_ids(run))
         used.update(
-            item.get("artifact_id")
-            for item in run.data.get("browser_frames", [])
-            if item.get("artifact_id")
+            item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id")
         )
     return used
 
@@ -79,10 +78,14 @@ def _conversation_artifact_ids(messages, runs=None):
     ids = set()
     for message in messages:
         ids.update(message.data.get("artifact_ids", []))
-        ids.update(item.get("artifact_id") for item in message.data.get("artifacts", []) if item.get("artifact_id"))
+        ids.update(
+            item.get("artifact_id") for item in message.data.get("artifacts", []) if item.get("artifact_id")
+        )
     for run in runs or []:
         ids.update(_run_context_artifact_ids(run))
-        ids.update(item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id"))
+        ids.update(
+            item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id")
+        )
     return ids
 
 
@@ -176,15 +179,23 @@ def purge_temporary_run(db, run):
     run_id = run.id
     messages = list(db.scalars(select(Message).where(Message.data["run_id"].as_string() == run_id)))
     artifact_ids = set(run.data.get("temporary_artifact_ids", []))
-    artifact_ids.update(item.get("artifact_id") for item in run.data.get("artifacts", []) if item.get("artifact_id"))
+    artifact_ids.update(
+        item.get("artifact_id") for item in run.data.get("artifacts", []) if item.get("artifact_id")
+    )
     artifact_ids.update(_run_context_artifact_ids(run))
-    artifact_ids.update(item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id"))
+    artifact_ids.update(
+        item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id")
+    )
     for message in messages:
         artifact_ids.update(message.data.get("artifact_ids", []))
         db.delete(message)
     message_ids = [message.id for message in messages]
-    for model, column, value in ((Feedback, Feedback.message_id, message_ids), (Approval, Approval.run_id, [run_id]),
-                                 (ToolCall, ToolCall.run_id, [run_id]), (Event, Event.run_id, [run_id])):
+    for model, column, value in (
+        (Feedback, Feedback.message_id, message_ids),
+        (Approval, Approval.run_id, [run_id]),
+        (ToolCall, ToolCall.run_id, [run_id]),
+        (Event, Event.run_id, [run_id]),
+    ):
         if not value:
             continue
         for row in list(db.scalars(select(model).where(column.in_(value)))):
@@ -211,12 +222,18 @@ def purge_conversation(db, conversation):
     messages = list(db.scalars(select(Message).where(Message.conversation_id == conversation.id)))
     artifact_ids = _conversation_artifact_ids(messages, runs)
     if run_ids:
-        for approval in db.scalars(select(Approval).where(Approval.run_id.in_(run_ids))): db.delete(approval)
-        for call in db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_ids))): db.delete(call)
-        for event in db.scalars(select(Event).where(Event.run_id.in_(run_ids))): db.delete(event)
-        for run in runs: db.delete(run)
-    for feedback in db.scalars(select(Feedback).where(Feedback.message_id.in_([m.id for m in messages]))): db.delete(feedback)
-    for message in messages: db.delete(message)
+        for approval in db.scalars(select(Approval).where(Approval.run_id.in_(run_ids))):
+            db.delete(approval)
+        for call in db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_ids))):
+            db.delete(call)
+        for event in db.scalars(select(Event).where(Event.run_id.in_(run_ids))):
+            db.delete(event)
+        for run in runs:
+            db.delete(run)
+    for feedback in db.scalars(select(Feedback).where(Feedback.message_id.in_([m.id for m in messages]))):
+        db.delete(feedback)
+    for message in messages:
+        db.delete(message)
     db.flush()
     # Compute surviving artifact references once instead of rescanning every
     # message and run for each candidate artifact.
@@ -239,13 +256,14 @@ def purge_expired_conversations(db):
             continue
         try:
             from datetime import datetime
+
             if datetime.fromisoformat(deleted_at) <= cutoff:
                 expired_ids.append(conversation.id)
         except ValueError:
             continue
     # Purge in bounded batches so a large cleanup never holds one huge transaction.
     for start in range(0, len(expired_ids), 100):
-        batch = expired_ids[start:start + 100]
+        batch = expired_ids[start : start + 100]
         for conversation in db.scalars(select(Conversation).where(Conversation.id.in_(batch))):
             purge_conversation(db, conversation)
         db.commit()

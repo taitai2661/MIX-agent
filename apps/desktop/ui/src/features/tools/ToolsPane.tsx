@@ -3,7 +3,12 @@ import { Wrench } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { DataTable, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState, ErrorBox, ErrorBadge, TableSkeleton } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBox,
+  ErrorBadge,
+  TableSkeleton,
+} from "@/components/shared";
 import { SectionHeading } from "@/components/common";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Select } from "@/components/ui/input";
@@ -18,15 +23,26 @@ function permissionTone(p: string): NonNullable<BadgeProps["tone"]> {
 export function ToolsPane() {
   const queryClient = useQueryClient();
   const tools = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
-  const rules = useQuery({ queryKey: ["permission_rules"], queryFn: api.listPermissionRules });
+  const rules = useQuery({
+    queryKey: ["permission_rules"],
+    queryFn: api.listPermissionRules,
+  });
   const setRule = useMutation({
-    mutationFn: (input: { tool_id: string; scope: string; decision: string; pattern: string | null; workspace_id?: string | null }) =>
-      api.setPermissionRule(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["permission_rules"] }),
+    mutationFn: (input: {
+      tool_id: string;
+      scope: string;
+      decision: string;
+      pattern: string | null;
+      workspace_id?: string | null;
+    }) => api.setPermissionRule(input),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["permission_rules"] }),
   });
 
   const globalDecisionFor = (toolId: string) =>
-    rules.data?.find((r: PermissionRuleView) => r.tool_id === toolId && r.scope === "global")?.decision ?? "ask";
+    rules.data?.find(
+      (r: PermissionRuleView) => r.tool_id === toolId && r.scope === "global",
+    )?.decision ?? "ask";
 
   const list = tools.data ?? [];
   const allRules = rules.data ?? [];
@@ -38,7 +54,11 @@ export function ToolsPane() {
       ) : tools.isError ? (
         <ErrorBox error={tools.error} />
       ) : list.length === 0 ? (
-        <EmptyState icon={<Wrench size={22} />} title={t("ツール")} sub={t("まだ登録されていません。")} />
+        <EmptyState
+          icon={<Wrench size={22} />}
+          title={t("ツール")}
+          sub={t("まだ登録されていません。")}
+        />
       ) : (
         <>
           <DataTable
@@ -50,12 +70,18 @@ export function ToolsPane() {
               <>
                 <td className={`${tdStrong} font-mono`}>{tool.id}</td>
                 <td className={`${td} max-w-96`}>
-                  <Wrench size={12} className="me-1 inline-block align-[-1px] text-faint" />
+                  <Wrench
+                    size={12}
+                    className="me-1 inline-block align-[-1px] text-faint"
+                  />
                   {tool.description}
                 </td>
                 <td className={td}>
                   <span className="inline-flex items-center gap-1.5">
-                    <Badge tone={permissionTone(tool.default_permission)} size="sm">
+                    <Badge
+                      tone={permissionTone(tool.default_permission)}
+                      size="sm"
+                    >
                       {tool.mixed
                         ? `${tool.default_permission} / ask`
                         : tool.default_permission}
@@ -101,7 +127,10 @@ export function ToolsPane() {
               <SectionHeading>{t("スコープ付きルール")}</SectionHeading>
               <ul className="flex flex-col divide-y divide-line rounded-xl border border-line bg-surface shadow-xs">
                 {allRules.map((rule) => (
-                  <li key={rule.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+                  <li
+                    key={rule.id}
+                    className="flex items-center gap-3 px-3 py-1.5 text-xs"
+                  >
                     <span className="font-mono text-fg">{rule.tool_id}</span>
                     <Badge tone={permissionTone(rule.decision)} size="sm">
                       {rule.scope} · {rule.decision}
@@ -110,7 +139,9 @@ export function ToolsPane() {
                       {rule.pattern ? `pattern: ${rule.pattern}` : "*"}
                     </span>
                     {rule.workspace_id && (
-                      <span className="font-mono text-faint">ws {rule.workspace_id.slice(0, 8)}</span>
+                      <span className="font-mono text-faint">
+                        ws {rule.workspace_id.slice(0, 8)}
+                      </span>
                     )}
                   </li>
                 ))}

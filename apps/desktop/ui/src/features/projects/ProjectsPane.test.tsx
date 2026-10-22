@@ -28,7 +28,9 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => "/tmp/demo") }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(async () => "/tmp/demo"),
+}));
 
 const mockedApi = vi.mocked(api);
 const mockedOpen = vi.mocked(openDialog);
@@ -66,7 +68,9 @@ describe("ProjectsPane creation", () => {
 
     await user.click(screen.getByRole("button", { name: "フォルダを選択" }));
     expect(mockedOpen).toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByText("/tmp/demo")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("/tmp/demo")).toBeInTheDocument(),
+    );
 
     const create = screen.getByRole("button", { name: "作成" });
     await waitFor(() => expect(create).toBeEnabled());

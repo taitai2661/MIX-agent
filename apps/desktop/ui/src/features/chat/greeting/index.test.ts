@@ -1,7 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { setLanguage } from "@/lib/i18n";
-import { emptyHistory, readHistory, remember, writeHistory, type WelcomeHistory } from "./history";
-import { promptDetail, welcomeFrom, welcomeTitle, type WorkspaceSnapshot } from "./index";
+import {
+  emptyHistory,
+  readHistory,
+  remember,
+  writeHistory,
+  type WelcomeHistory,
+} from "./history";
+import {
+  promptDetail,
+  welcomeFrom,
+  welcomeTitle,
+  type WorkspaceSnapshot,
+} from "./index";
 import { notes } from "./pools";
 import { buildSignals } from "./signals";
 
@@ -51,7 +62,12 @@ function fakeStorage(value: string | null = null, fail = false): Storage {
 
 describe("訪問履歴の保存", () => {
   it("空の状態を既定にする", () => {
-    expect(readHistory(fakeStorage())).toEqual({ visits: 0, lastVisitAt: 0, firstSeenTodayAt: 0, recent: [] });
+    expect(readHistory(fakeStorage())).toEqual({
+      visits: 0,
+      lastVisitAt: 0,
+      firstSeenTodayAt: 0,
+      recent: [],
+    });
     expect(readHistory(null)).toEqual(emptyHistory());
   });
 
@@ -62,7 +78,12 @@ describe("訪問履歴の保存", () => {
 
   it("保存と読み出しが一致する", () => {
     const store = fakeStorage();
-    const history: WelcomeHistory = { visits: 3, lastVisitAt: 100, firstSeenTodayAt: 50, recent: ["a", "b"] };
+    const history: WelcomeHistory = {
+      visits: 3,
+      lastVisitAt: 100,
+      firstSeenTodayAt: 50,
+      recent: ["a", "b"],
+    };
     writeHistory(history, store);
     expect(readHistory(store)).toEqual(history);
   });
@@ -75,9 +96,19 @@ describe("訪問履歴の保存", () => {
 
   it("不正な型を安全に捨てる", () => {
     const store = fakeStorage(
-      JSON.stringify({ visits: "many", lastMessageAt: null, firstSeenTodayAt: [], recent: ["ok", 3, null] }),
+      JSON.stringify({
+        visits: "many",
+        lastMessageAt: null,
+        firstSeenTodayAt: [],
+        recent: ["ok", 3, null],
+      }),
     );
-    expect(readHistory(store)).toEqual({ visits: 0, lastVisitAt: 0, firstSeenTodayAt: 0, recent: ["ok"] });
+    expect(readHistory(store)).toEqual({
+      visits: 0,
+      lastVisitAt: 0,
+      firstSeenTodayAt: 0,
+      recent: ["ok"],
+    });
   });
 
   it("使うたびに先頭に足し、長さ 24 で頭打ちにする", () => {
@@ -130,7 +161,11 @@ describe("文面の組み立て", () => {
   it("履歴を溜めても枯渇しない", () => {
     let recent: string[] = [];
     for (let visit = 0; visit < 40; visit++) {
-      const welcome = welcomeFrom(signals({ now: new Date(2026, 5, 10 + visit, 10 + (visit % 12), 5) }), recent, () => 0.5);
+      const welcome = welcomeFrom(
+        signals({ now: new Date(2026, 5, 10 + visit, 10 + (visit % 12), 5) }),
+        recent,
+        () => 0.5,
+      );
       recent = [...welcome.used, ...recent].slice(0, 24);
       expect(welcome.title.length).toBeGreaterThanOrEqual(2);
       expect(welcome.suggestions).toHaveLength(3);
@@ -150,9 +185,32 @@ describe("文面の組み立て", () => {
   it("Desktop-Agent では補足が実行モデルを語る", () => {
     // returning / night / agent / project の補足の重みは同じなので、
     // Agent 用以外をすべて除外して、選び方によらず Agent 用の文になることを確認します。
-    const agentOnly = ["nt-15", "nt-16", "nt-13", "nt-14", "nt-1", "nt-6", "nt-20", "nt-21", "nt-10", "nt-11", "nt-12", "nt-7", "nt-8", "nt-9", "nt-2", "nt-3", "nt-4", "nt-5"];
+    const agentOnly = [
+      "nt-15",
+      "nt-16",
+      "nt-13",
+      "nt-14",
+      "nt-1",
+      "nt-6",
+      "nt-20",
+      "nt-21",
+      "nt-10",
+      "nt-11",
+      "nt-12",
+      "nt-7",
+      "nt-8",
+      "nt-9",
+      "nt-2",
+      "nt-3",
+      "nt-4",
+      "nt-5",
+    ];
     for (const random of [0, 0.25, 0.5, 0.75, 0.999]) {
-      const welcome = welcomeFrom(signals({ surface: "desktop-agent" }), agentOnly, () => random);
+      const welcome = welcomeFrom(
+        signals({ surface: "desktop-agent" }),
+        agentOnly,
+        () => random,
+      );
       expect(["nt-17", "nt-18", "nt-19"], welcome.note).toContain(
         welcome.note.length ? welcomeNoteId(welcome.note) : "",
       );
@@ -171,7 +229,11 @@ describe("文面の組み立て", () => {
   it("英語表示では日本の祝日の文を出さない", () => {
     setLanguage("en");
     for (let i = 0; i < 20; i++) {
-      const welcome = welcomeFrom(signals({ now: new Date(2026, 4, 5, 9, 0) }), [], () => i / 20);
+      const welcome = welcomeFrom(
+        signals({ now: new Date(2026, 4, 5, 9, 0) }),
+        [],
+        () => i / 20,
+      );
       expect(welcome.titleIds).not.toContain("hl-9"); // こどもの日
       expect(welcome.title.join("")).not.toContain("こどもの日です。");
     }
@@ -206,7 +268,8 @@ describe("言語ごとの結合", () => {
     const joined = welcomeTitle(welcome);
     expect(joined).toContain(" ");
     expect(joined).not.toContain(welcome.title[0]);
-    for (const sentence of joined.split(/(?<=[.?!]) /)) expect(sentence).toMatch(/[.?!]$/);
+    for (const sentence of joined.split(/(?<=[.?!]) /))
+      expect(sentence).toMatch(/[.?!]$/);
   });
 
   it("言語を切り替えると見出しだけが変わり、部品は同じ", () => {
@@ -221,8 +284,12 @@ describe("言語ごとの結合", () => {
 
 describe("送信欄への差込み", () => {
   it("モード指定があれば付け、無ければ省略する", () => {
-    expect(promptDetail({ id: "a", label: "l", prompt: "p" })).toEqual({ text: "p" });
-    expect(promptDetail({ id: "b", label: "l", prompt: "p", mode: "thinking" })).toEqual({
+    expect(promptDetail({ id: "a", label: "l", prompt: "p" })).toEqual({
+      text: "p",
+    });
+    expect(
+      promptDetail({ id: "b", label: "l", prompt: "p", mode: "thinking" }),
+    ).toEqual({
       text: "p",
       mode: "thinking",
     });
@@ -235,7 +302,9 @@ describe("送信欄への差込み", () => {
       label: "このコードの意図と動作を、日本語で要約して",
       prompt: "このコードの意図と動作を、日本語で要約して",
     });
-    expect(detail.text).toBe("Summarise what this code does and why, in Japanese");
+    expect(detail.text).toBe(
+      "Summarise what this code does and why, in Japanese",
+    );
   });
 });
 

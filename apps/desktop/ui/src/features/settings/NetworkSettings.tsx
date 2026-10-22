@@ -19,7 +19,9 @@ export function NetworkSettings() {
             placeholder="example.com, *.openai.com"
             value={data.egress_allowlist.join("\n")}
             onChange={(e) =>
-              patch({ egress_allowlist: e.target.value.split(/\r?\n/).filter(Boolean) })
+              patch({
+                egress_allowlist: e.target.value.split(/\r?\n/).filter(Boolean),
+              })
             }
           />
         </Field>

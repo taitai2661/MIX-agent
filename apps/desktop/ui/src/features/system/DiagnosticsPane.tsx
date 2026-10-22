@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Copy, Download, FileText, Lock, Terminal } from "lucide-react";
+import {
+  Activity,
+  Copy,
+  Download,
+  FileText,
+  Lock,
+  Terminal,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { Card, Row, Section } from "@/components/layout";
@@ -9,12 +16,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ErrorAlert, ListSkeleton } from "@/components/shared";
 
-function Check({ label, ok, children }: { label: string; ok: boolean; children?: React.ReactNode }) {
+function Check({
+  label,
+  ok,
+  children,
+}: {
+  label: string;
+  ok: boolean;
+  children?: React.ReactNode;
+}) {
   return (
     <Card>
       <Row align="between">
         <strong className="text-sm font-medium text-fg">{label}</strong>
-        <Badge tone={ok ? "success" : "danger"} size="sm">{ok ? t("OK") : t("失敗")}</Badge>
+        <Badge tone={ok ? "success" : "danger"} size="sm">
+          {ok ? t("OK") : t("失敗")}
+        </Badge>
       </Row>
       {children}
     </Card>
@@ -77,17 +94,31 @@ export function DiagnosticsPane() {
       ) : (
         <>
           <div className="flex items-center justify-between pb-1">
-            <h3 className="text-sm font-semibold text-fg">{t("システム診断")}</h3>
+            <h3 className="text-sm font-semibold text-fg">
+              {t("システム診断")}
+            </h3>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setShowLogs(!showLogs)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowLogs(!showLogs)}
+              >
                 <Terminal size={13} className="mr-1" />
                 {showLogs ? t("ログを隠す") : t("最近のログ")}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => void handleCopyReport()}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void handleCopyReport()}
+              >
                 <Copy size={13} className="mr-1" />
                 {copied ? t("コピー完了") : t("診断をコピー")}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => void handleDownloadReport()}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void handleDownloadReport()}
+              >
                 <Download size={13} className="mr-1" />
                 {t("書き出し")}
               </Button>
@@ -118,10 +149,7 @@ export function DiagnosticsPane() {
                       : t("Keychainの状態は不明")}
                 </span>
               </div>
-              <Badge
-                tone={d.db_encrypted ? "success" : "warning"}
-                size="sm"
-              >
+              <Badge tone={d.db_encrypted ? "success" : "warning"} size="sm">
                 {d.db_encrypted ? t("暗号化済み") : t("保留中")}
               </Badge>
             </Row>
@@ -136,10 +164,18 @@ export function DiagnosticsPane() {
 
           <Card title={t("件数")} icon={<Activity size={13} />}>
             <Row className="gap-1.5">
-              <Badge size="sm">{t("プロバイダー")}: {d.provider_count}</Badge>
-              <Badge size="sm">{t("モデル")}: {d.model_count}</Badge>
-              <Badge size="sm">{t("メモリー")}: {d.memory_count}</Badge>
-              <Badge size="sm">{t("スキル")}: {d.skill_count}</Badge>
+              <Badge size="sm">
+                {t("プロバイダー")}: {d.provider_count}
+              </Badge>
+              <Badge size="sm">
+                {t("モデル")}: {d.model_count}
+              </Badge>
+              <Badge size="sm">
+                {t("メモリー")}: {d.memory_count}
+              </Badge>
+              <Badge size="sm">
+                {t("スキル")}: {d.skill_count}
+              </Badge>
               <Badge tone={d.active_runs > 0 ? "warning" : "neutral"} size="sm">
                 {t("実行中のRun")}: {d.active_runs}
               </Badge>
@@ -149,7 +185,9 @@ export function DiagnosticsPane() {
           {showLogs && (
             <Card title={t("最近の実行ログ")} icon={<FileText size={13} />}>
               {recentLogs.isPending ? (
-                <div className="py-2 text-xs text-muted">{t("ログ読み込み中...")}</div>
+                <div className="py-2 text-xs text-muted">
+                  {t("ログ読み込み中...")}
+                </div>
               ) : recentLogs.isError ? (
                 <ErrorAlert error={recentLogs.error} />
               ) : (
@@ -164,4 +202,3 @@ export function DiagnosticsPane() {
     </Section>
   );
 }
-

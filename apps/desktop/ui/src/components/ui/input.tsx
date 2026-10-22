@@ -15,23 +15,31 @@ const control = [
   "disabled:opacity-45 disabled:cursor-not-allowed",
 ].join(" ");
 
-export const Input = forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  function Input({ className, ...props }, ref) {
-    return <input ref={ref} className={cn(control, "h-control", className)} {...props} />;
-  },
-);
+export const Input = forwardRef<
+  HTMLInputElement,
+  React.ComponentProps<"input">
+>(function Input({ className, ...props }, ref) {
+  return (
+    <input
+      ref={ref}
+      className={cn(control, "h-control", className)}
+      {...props}
+    />
+  );
+});
 
-export const Textarea = forwardRef<HTMLTextAreaElement, React.ComponentProps<"textarea">>(
-  function Textarea({ className, ...props }, ref) {
-    return (
-      <textarea
-        ref={ref}
-        className={cn(control, "min-h-16 resize-y py-1.5 leading-5", className)}
-        {...props}
-      />
-    );
-  },
-);
+export const Textarea = forwardRef<
+  HTMLTextAreaElement,
+  React.ComponentProps<"textarea">
+>(function Textarea({ className, ...props }, ref) {
+  return (
+    <textarea
+      ref={ref}
+      className={cn(control, "min-h-16 resize-y py-1.5 leading-5", className)}
+      {...props}
+    />
+  );
+});
 
 /**
  * Wraps a native `<select>`. Deliberately not a Radix listbox: the app has
@@ -49,11 +57,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, React.ComponentProps<"te
 export const SearchField = forwardRef<
   HTMLInputElement,
   Omit<React.ComponentProps<"input">, "className"> & {
-  icon?: ReactNode;
-  onClear?: () => void;
-  /** Only needed alongside `onClear`; required so the clear button always has
-   *  an accessible name, which is the whole reason it is not a bare glyph. */
-  clearLabel?: string;
+    icon?: ReactNode;
+    onClear?: () => void;
+    /** Only needed alongside `onClear`; required so the clear button always has
+     *  an accessible name, which is the whole reason it is not a bare glyph. */
+    clearLabel?: string;
   }
 >(function SearchField({ icon, onClear, clearLabel, ...props }, ref) {
   return (
@@ -102,20 +110,21 @@ const chevron = {
   maskSize: "12px 12px",
 } as const;
 
-export const Select = forwardRef<HTMLSelectElement, React.ComponentProps<"select">>(
-  function Select({ className, ...props }, ref) {
-    return (
-      <select
-        ref={ref}
-        className={cn(
-          control,
-          "h-control cursor-pointer appearance-none pr-7 text-fg",
-          "has-[option:checked]:text-fg",
-          className,
-        )}
-        style={chevron}
-        {...props}
-      />
-    );
-  },
-);
+export const Select = forwardRef<
+  HTMLSelectElement,
+  React.ComponentProps<"select">
+>(function Select({ className, ...props }, ref) {
+  return (
+    <select
+      ref={ref}
+      className={cn(
+        control,
+        "h-control cursor-pointer appearance-none pr-7 text-fg",
+        "has-[option:checked]:text-fg",
+        className,
+      )}
+      style={chevron}
+      {...props}
+    />
+  );
+});

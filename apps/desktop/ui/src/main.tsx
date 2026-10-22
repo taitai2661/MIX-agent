@@ -1,9 +1,4 @@
-import {
-  Component,
-  StrictMode,
-  type ErrorInfo,
-  type ReactNode,
-} from "react";
+import { Component, StrictMode, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
@@ -56,7 +51,11 @@ class AppErrorBoundary extends Component<BoundaryProps, BoundaryState> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("MIX-agent Desktop crashed while rendering", error, info.componentStack);
+    console.error(
+      "MIX-agent Desktop crashed while rendering",
+      error,
+      info.componentStack,
+    );
   }
 
   render(): ReactNode {
@@ -64,7 +63,9 @@ class AppErrorBoundary extends Component<BoundaryProps, BoundaryState> {
     if (!error) return this.props.children;
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-        <h1 className="text-lg font-semibold text-fg">{t("インターフェースの起動に失敗しました")}</h1>
+        <h1 className="text-lg font-semibold text-fg">
+          {t("インターフェースの起動に失敗しました")}
+        </h1>
         <p className="max-w-lg text-sm text-danger">{error.message}</p>
         {error.stack && (
           <pre className="max-h-64 max-w-3xl overflow-auto rounded-lg bg-inset p-3 text-start font-mono text-xs leading-4 text-muted">

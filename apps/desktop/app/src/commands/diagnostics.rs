@@ -147,9 +147,7 @@ pub async fn get_recent_logs(lines: Option<usize>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn export_diagnostics(
-    state: State<'_, AppState>,
-) -> Result<DiagnosticsExport, String> {
+pub async fn export_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsExport, String> {
     let report = collect_diagnostics(state).await?;
     let recent_logs = get_recent_logs(Some(300)).await.unwrap_or_default();
     Ok(DiagnosticsExport {
@@ -160,4 +158,3 @@ pub async fn export_diagnostics(
         recent_logs,
     })
 }
-

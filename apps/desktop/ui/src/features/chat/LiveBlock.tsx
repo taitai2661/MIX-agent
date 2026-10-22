@@ -110,7 +110,8 @@ const InlineTools = memo(function InlineTools({
           defaultOpen={
             tool.status === "running" ||
             tool.status === "error" ||
-            (idx === tools.length - 1 && (tool.name === "edit" || tool.name === "terminal"))
+            (idx === tools.length - 1 &&
+              (tool.name === "edit" || tool.name === "terminal"))
           }
         />
       ))}

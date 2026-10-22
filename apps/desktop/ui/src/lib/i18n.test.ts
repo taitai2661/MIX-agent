@@ -23,11 +23,19 @@ describe("i18n", () => {
 
   it("interpolates placeholders", () => {
     setLanguage("ja");
-    expect(tf("ステップ上限 {steps} / ツール上限 {calls} に到達しました。", { steps: 300, calls: 750 }))
-      .toBe("ステップ上限 300 / ツール上限 750 に到達しました。");
+    expect(
+      tf("ステップ上限 {steps} / ツール上限 {calls} に到達しました。", {
+        steps: 300,
+        calls: 750,
+      }),
+    ).toBe("ステップ上限 300 / ツール上限 750 に到達しました。");
     setLanguage("en");
-    expect(tf("ステップ上限 {steps} / ツール上限 {calls} に到達しました。", { steps: 1, calls: 2 }))
-      .toBe("Reached the step limit (1) / tool limit (2).");
+    expect(
+      tf("ステップ上限 {steps} / ツール上限 {calls} に到達しました。", {
+        steps: 1,
+        calls: 2,
+      }),
+    ).toBe("Reached the step limit (1) / tool limit (2).");
   });
 
   it("detects the browser language", () => {
@@ -40,12 +48,15 @@ describe("i18n", () => {
   it("translates relativeTime labels", async () => {
     const { relativeTime } = await import("./format");
     const now = new Date(2026, 0, 15, 12, 0, 0);
-    const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+    const ago = (minutes: number) =>
+      new Date(now.getTime() - minutes * 60_000).toISOString();
     setLanguage("en");
     expect(relativeTime(ago(0), now)).toBe("Just now");
     expect(relativeTime(ago(30), now)).toBe("30 min ago");
     expect(relativeTime(ago(5 * 60), now)).toBe("5h ago");
-    expect(relativeTime(new Date(2026, 0, 12, 12).toISOString(), now)).toBe("3d ago");
+    expect(relativeTime(new Date(2026, 0, 12, 12).toISOString(), now)).toBe(
+      "3d ago",
+    );
     setLanguage("ja");
     expect(relativeTime(ago(30), now)).toBe("30分前");
   });

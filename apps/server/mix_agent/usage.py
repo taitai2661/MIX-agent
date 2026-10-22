@@ -18,7 +18,12 @@ RETENTION = timedelta(days=90)
 _INPUT_KEYS = ("input_tokens", "prompt_tokens", "promptTokenCount", "prompt_token_count")
 _OUTPUT_KEYS = ("output_tokens", "completion_tokens", "candidatesTokenCount", "candidates_token_count")
 _TOTAL_KEYS = ("total_tokens", "totalTokenCount", "total_token_count")
-_CACHED_KEYS = ("cache_read_input_tokens", "cachedContentTokenCount", "cached_tokens", "cached_content_token_count")
+_CACHED_KEYS = (
+    "cache_read_input_tokens",
+    "cachedContentTokenCount",
+    "cached_tokens",
+    "cached_content_token_count",
+)
 
 
 def _count(source, keys):
@@ -57,8 +62,18 @@ def token_usage(usage):
     }
 
 
-def record(db, owner_id, model_data, provider_id, mode, usage, *, run_id=None,
-           input_estimate=None, model_record_id=None):
+def record(
+    db,
+    owner_id,
+    model_data,
+    provider_id,
+    mode,
+    usage,
+    *,
+    run_id=None,
+    input_estimate=None,
+    model_record_id=None,
+):
     """Store one model call's usage with its resolved price snapshot.
 
     Falls back to the locally estimated input token count only when the provider
@@ -66,20 +81,32 @@ def record(db, owner_id, model_data, provider_id, mode, usage, *, run_id=None,
     measured from estimated usage.
     """
     current = now()
-    db.execute(delete(ModelUsageEvent).where(
-        ModelUsageEvent.owner_id == owner_id,
-        ModelUsageEvent.created_at < current - RETENTION,
-    ))
+    db.execute(
+        delete(ModelUsageEvent).where(
+            ModelUsageEvent.owner_id == owner_id,
+            ModelUsageEvent.created_at < current - RETENTION,
+        )
+    )
     tokens = token_usage(usage)
     source = "provider"
-    estimate = int(input_estimate) if isinstance(input_estimate, int) and not isinstance(input_estimate, bool) and input_estimate and input_estimate > 0 else None
+    estimate = (
+        int(input_estimate)
+        if isinstance(input_estimate, int)
+        and not isinstance(input_estimate, bool)
+        and input_estimate
+        and input_estimate > 0
+        else None
+    )
     if isinstance(input_estimate, str) and input_estimate.isdigit():
         estimate = int(input_estimate)
     if tokens is None or (not tokens["input_tokens"] and not tokens["output_tokens"]):
         if estimate:
             tokens = {
-                "input_tokens": estimate, "output_tokens": 0, "cached_tokens": 0,
-                "reasoning_tokens": 0, "total_tokens": estimate,
+                "input_tokens": estimate,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": estimate,
             }
             source = "estimated"
         else:

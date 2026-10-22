@@ -23,8 +23,10 @@ const LAST_KEY = "mix-agent-last-model";
 export const MAX_RECENT_MODELS = 6;
 
 function isStringList(value: unknown): value is string[] {
-  return Array.isArray(value)
-    && value.every((item): item is string => typeof item === "string");
+  return (
+    Array.isArray(value) &&
+    value.every((item): item is string => typeof item === "string")
+  );
 }
 
 function readList(key: string): string[] {
@@ -43,7 +45,9 @@ function writeList(key: string, value: string[]): void {
 /// to be a `window` CustomEvent (`mix:model-prefs`); a tiny zustand store
 /// carries the same signal without an ad-hoc event bus, so subscribers work
 /// in tests and non-DOM environments too. */
-const useModelPrefsVersion = create<{ version: number }>(() => ({ version: 0 }));
+const useModelPrefsVersion = create<{ version: number }>(() => ({
+  version: 0,
+}));
 
 function notify(): void {
   useModelPrefsVersion.setState((s) => ({ version: s.version + 1 }));

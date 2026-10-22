@@ -3,8 +3,12 @@ import { useUi, type Surface } from "@/lib/ui";
 import { t } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
 interface SurfaceMeta {
@@ -15,8 +19,18 @@ interface SurfaceMeta {
 }
 
 const SURFACES: SurfaceMeta[] = [
-  { id: "chat", label: "チャット", hint: "作成、学習、探索", Icon: MessageSquare },
-  { id: "desktop-agent", label: "エージェント", hint: "ビルド、デバッグ、リリース", Icon: Bot },
+  {
+    id: "chat",
+    label: "チャット",
+    hint: "作成、学習、探索",
+    Icon: MessageSquare,
+  },
+  {
+    id: "desktop-agent",
+    label: "エージェント",
+    hint: "ビルド、デバッグ、リリース",
+    Icon: Bot,
+  },
 ];
 
 export function SurfaceSwitcher() {
@@ -53,8 +67,16 @@ export function SurfaceSwitcher() {
               description={t(s.hint)}
             >
               <s.Icon size={15} className="shrink-0 text-faint" />
-              <span className="min-w-0 flex-1 truncate font-medium">{t(s.label)}</span>
-              {selected && <Check size={14} className="ms-auto shrink-0 text-brand" aria-hidden="true" />}
+              <span className="min-w-0 flex-1 truncate font-medium">
+                {t(s.label)}
+              </span>
+              {selected && (
+                <Check
+                  size={14}
+                  className="ms-auto shrink-0 text-brand"
+                  aria-hidden="true"
+                />
+              )}
             </DropdownMenuItem>
           );
         })}

@@ -13,7 +13,12 @@ import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
 import { CodeBlock } from "@/components/CopyButton";
 import { Card, Row, Section } from "@/components/layout";
-import { EmptyState, ErrorBox, ListSkeleton, payloadBlock } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBox,
+  ListSkeleton,
+  payloadBlock,
+} from "@/components/shared";
 import { DeleteIconButton } from "@/components/common";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -258,9 +263,7 @@ export function SkillsPane() {
               </Row>
             </Row>
             <p className="m-0 text-xs text-muted">{s.description}</p>
-            <pre className={`${payloadBlock} max-h-60`}>
-              {s.body_markdown}
-            </pre>
+            <pre className={`${payloadBlock} max-h-60`}>{s.body_markdown}</pre>
             {selected === s.name && <ResourceList name={s.name} />}
           </Card>
         ))

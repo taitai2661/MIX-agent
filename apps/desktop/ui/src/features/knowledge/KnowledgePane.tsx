@@ -5,9 +5,26 @@ import { BookOpen, FileText, Search, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { useSearch } from "@/lib/useSearch";
-import { Card, DataTable, Row, Section, td, tdStrong } from "@/components/layout";
-import { EmptyState, ErrorBadge, ErrorBox, TableSkeleton } from "@/components/shared";
-import { DeleteIconButton, SearchEmptyState, SearchForm, SectionHeading } from "@/components/common";
+import {
+  Card,
+  DataTable,
+  Row,
+  Section,
+  td,
+  tdStrong,
+} from "@/components/layout";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  TableSkeleton,
+} from "@/components/shared";
+import {
+  DeleteIconButton,
+  SearchEmptyState,
+  SearchForm,
+  SectionHeading,
+} from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -15,7 +32,10 @@ import type { KnowledgeDocView } from "@/lib/types";
 
 export function KnowledgePane() {
   const queryClient = useQueryClient();
-  const docs = useQuery({ queryKey: ["knowledge"], queryFn: api.listKnowledge });
+  const docs = useQuery({
+    queryKey: ["knowledge"],
+    queryFn: api.listKnowledge,
+  });
   const [text, setText] = useState("");
   const [filename, setFilename] = useState("pasted.md");
   const search = useSearch((q, n) => api.searchKnowledge(q, n), 10);
@@ -57,7 +77,12 @@ export function KnowledgePane() {
             onClick={async () => {
               const picked = await open({
                 multiple: false,
-                filters: [{ name: "Text", extensions: ["md", "txt", "json", "yaml", "yml"] }],
+                filters: [
+                  {
+                    name: "Text",
+                    extensions: ["md", "txt", "json", "yaml", "yml"],
+                  },
+                ],
               });
               if (typeof picked === "string") fromFile.mutate(picked);
             }}
@@ -107,10 +132,17 @@ export function KnowledgePane() {
         {search.hits && search.hits.length > 0 && (
           <ul className="flex flex-col gap-2 text-xs">
             {search.hits.map((h) => (
-              <li key={h.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
+              <li
+                key={h.id}
+                className="border-t border-line pt-2 first:border-0 first:pt-0"
+              >
                 <Row className="gap-1.5">
-                  <strong className="text-sm font-medium text-fg">{h.filename}</strong>
-                  <Badge size="sm" className="font-mono">{h.score.toFixed(2)}</Badge>
+                  <strong className="text-sm font-medium text-fg">
+                    {h.filename}
+                  </strong>
+                  <Badge size="sm" className="font-mono">
+                    {h.score.toFixed(2)}
+                  </Badge>
                 </Row>
                 <p className="m-0 text-muted">{h.text.slice(0, 200)}</p>
               </li>
@@ -125,7 +157,10 @@ export function KnowledgePane() {
       ) : docs.isError ? (
         <ErrorBox error={docs.error} />
       ) : (docs.data ?? []).length === 0 ? (
-        <EmptyState icon={<BookOpen size={22} />} title={t("まだドキュメントがありません。")} />
+        <EmptyState
+          icon={<BookOpen size={22} />}
+          title={t("まだドキュメントがありません。")}
+        />
       ) : (
         <DataTable
           columns={[t("ファイル名"), t("チャンク"), t("登録日時"), ""]}

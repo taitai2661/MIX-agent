@@ -4,7 +4,13 @@ import { Cloud, MonitorCog, Plug } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
-import { MODELS_QUERY_KEY, PROVIDERS_QUERY_KEY, useModels, useProviderPresets, useProviders } from "@/lib/queries";
+import {
+  MODELS_QUERY_KEY,
+  PROVIDERS_QUERY_KEY,
+  useModels,
+  useProviderPresets,
+  useProviders,
+} from "@/lib/queries";
 import { Field, Row } from "@/components/layout";
 import { ErrorBox } from "@/components/shared";
 import { Alert } from "@/components/ui/alert";
@@ -30,12 +36,14 @@ export function StepProvider({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex flex-col gap-4">
       <Segmented aria-label={t("モデル提供元の種類")} className="w-full">
-        {(
-          [
-            { id: "local" as const, label: t("この PC で動かす"), Icon: MonitorCog },
-            { id: "cloud" as const, label: t("クラウド API"), Icon: Cloud },
-          ]
-        ).map((opt) => (
+        {[
+          {
+            id: "local" as const,
+            label: t("この PC で動かす"),
+            Icon: MonitorCog,
+          },
+          { id: "cloud" as const, label: t("クラウド API"), Icon: Cloud },
+        ].map((opt) => (
           <SegmentedOption
             key={opt.id}
             value={opt.id}
@@ -50,9 +58,11 @@ export function StepProvider({ onDone }: { onDone: () => void }) {
         ))}
       </Segmented>
 
-      {tab === "local"
-        ? <StepProviderLocal onDone={onDone} />
-        : <StepProviderCloud onDone={onDone} />}
+      {tab === "local" ? (
+        <StepProviderLocal onDone={onDone} />
+      ) : (
+        <StepProviderCloud onDone={onDone} />
+      )}
     </div>
   );
 }
@@ -67,7 +77,9 @@ function StepProviderLocal({ onDone }: { onDone: () => void }) {
       </p>
       <LocalRuntimeScan
         intro={t("LM Studio や Ollama などが起動中か調べます。")}
-        emptyHint={t("見つかりませんでした。LM Studio か Ollama を起動してからもう一度検出するか、「クラウド API」タブを使ってください。")}
+        emptyHint={t(
+          "見つかりませんでした。LM Studio か Ollama を起動してからもう一度検出するか、「クラウド API」タブを使ってください。",
+        )}
         onImported={onDone}
       />
     </div>
@@ -134,7 +146,9 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex flex-col gap-3">
       <Alert tone="info">
-        {t("API キーは OS の資格情報ストレージに保存され、設定画面には表示されません。")}
+        {t(
+          "API キーは OS の資格情報ストレージに保存され、設定画面には表示されません。",
+        )}
       </Alert>
 
       {!reusable ? (
@@ -144,7 +158,9 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
               value={presetSlug}
               onChange={(e) => {
                 setPresetSlug(e.target.value);
-                const next = presets.data?.find((p) => p.slug === e.target.value);
+                const next = presets.data?.find(
+                  (p) => p.slug === e.target.value,
+                );
                 if (next) setBaseUrl(next.default_url || "");
               }}
               disabled={presets.isPending}
@@ -153,7 +169,9 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
                 {presets.isPending ? t("読み込み中…") : t("選択してください…")}
               </option>
               {(presets.data ?? []).map((p) => (
-                <option key={p.slug} value={p.slug}>{p.label}</option>
+                <option key={p.slug} value={p.slug}>
+                  {p.label}
+                </option>
               ))}
             </Select>
           </Field>
@@ -185,7 +203,9 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
         <Row>
           <Plug size={12} className="text-muted" />
           <span className="text-xs text-fg">{reusable.label}</span>
-          <code className="font-mono text-xs text-faint">{reusable.base_url ?? "—"}</code>
+          <code className="font-mono text-xs text-faint">
+            {reusable.base_url ?? "—"}
+          </code>
         </Row>
       )}
 
@@ -202,9 +222,7 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
           }
           onClick={() => connect.mutate()}
         >
-          {connect.isPending
-            ? <Spinner size={12} />
-            : <Plug size={12} />}
+          {connect.isPending ? <Spinner size={12} /> : <Plug size={12} />}
           {connect.isPending ? t("確認中…") : t("接続してモデル一覧を取得")}
         </Button>
         {(models.data?.length ?? 0) > 0 && (

@@ -113,7 +113,8 @@ export function SettingsPane() {
   // "保存しました" badge stayed lit forever: editing afterwards still showed a
   // saved state the moment before the user changed the value.
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-  const dirty = savedSnapshot !== null && JSON.stringify(data) !== savedSnapshot;
+  const dirty =
+    savedSnapshot !== null && JSON.stringify(data) !== savedSnapshot;
   // Saving before `get_settings` resolves would replace the stored row with
   // the defaults rendered in the form.
   const canSave = loaded && !settings.isError && !update.isPending;
@@ -163,7 +164,9 @@ export function SettingsPane() {
           <div className="mx-auto flex w-full max-w-content items-center gap-3">
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-base font-semibold tracking-tight text-fg">
-                {t(ALL_TABS.find((tab) => tab.id === activeTab)?.label ?? "設定")}
+                {t(
+                  ALL_TABS.find((tab) => tab.id === activeTab)?.label ?? "設定",
+                )}
               </h1>
             </div>
             <div className="flex shrink-0 items-center gap-2">

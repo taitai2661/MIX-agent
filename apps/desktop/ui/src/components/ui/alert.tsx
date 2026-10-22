@@ -50,7 +50,9 @@ export function Alert({
       className={cn(alertVariants({ tone }), className)}
       {...props}
     >
-      {!hideIcon && <Icon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />}
+      {!hideIcon && (
+        <Icon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+      )}
       <div className="min-w-0 flex-1">{children}</div>
       {action}
     </div>

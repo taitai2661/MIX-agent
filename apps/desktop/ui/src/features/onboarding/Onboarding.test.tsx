@@ -68,7 +68,9 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => "/tmp/demo") }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(async () => "/tmp/demo"),
+}));
 
 const mockedApi = vi.mocked(api);
 
@@ -107,8 +109,12 @@ const PRESET = {
   notes: "",
 };
 
-function renderWizard(props: Partial<React.ComponentProps<typeof Onboarding>> = {}) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderWizard(
+  props: Partial<React.ComponentProps<typeof Onboarding>> = {},
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const onComplete = props.onComplete ?? vi.fn();
   const onDefer = props.onDefer ?? vi.fn();
   const view = render(
@@ -132,7 +138,9 @@ async function reachFolderStep(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByTestId("onboarding-provider-tab-cloud"));
   await user.selectOptions(screen.getByRole("combobox"), "openai");
   await user.type(screen.getByPlaceholderText("sk-…"), "sk-test");
-  await user.click(screen.getByRole("button", { name: "接続してモデル一覧を取得" }));
+  await user.click(
+    screen.getByRole("button", { name: "接続してモデル一覧を取得" }),
+  );
   await screen.findByRole("button", { name: "フォルダを選択" });
 }
 
@@ -141,8 +149,12 @@ describe("Onboarding", () => {
     const user = userEvent.setup();
     renderWizard();
 
-    expect(screen.getByRole("heading", { name: "ようこそ" })).toBeInTheDocument();
-    expect(screen.queryByTestId("onboarding-step-provider")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "ようこそ" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-step-provider"),
+    ).not.toBeInTheDocument();
 
     await reachProviderStep(user);
     expect(screen.getByTestId("onboarding-step-provider")).toBeInTheDocument();
@@ -189,17 +201,23 @@ describe("Onboarding", () => {
     await reachProviderStep(user);
     await user.click(screen.getByTestId("onboarding-provider-tab-cloud"));
 
-    const connect = screen.getByRole("button", { name: "接続してモデル一覧を取得" });
+    const connect = screen.getByRole("button", {
+      name: "接続してモデル一覧を取得",
+    });
     expect(connect).toBeDisabled();
 
     await user.selectOptions(screen.getByRole("combobox"), "openai");
     // Picking a preset fills the base URL, so it must not have to be typed.
-    expect(screen.getByDisplayValue("https://api.openai.com/v1")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("https://api.openai.com/v1"),
+    ).toBeInTheDocument();
 
     // The preset declares that it needs a key, so connecting without one would
     // come back as an opaque HTTP 401.
     expect(connect).toBeDisabled();
-    expect(screen.getByText("このプロバイダーでは API キーが必要です")).toBeInTheDocument();
+    expect(
+      screen.getByText("このプロバイダーでは API キーが必要です"),
+    ).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText("sk-…"), "sk-test");
     expect(connect).toBeEnabled();
@@ -220,10 +238,14 @@ describe("Onboarding", () => {
     await user.click(screen.getByTestId("onboarding-provider-tab-cloud"));
     await user.selectOptions(screen.getByRole("combobox"), "openai");
     await user.type(screen.getByPlaceholderText("sk-…"), "sk-wrong");
-    await user.click(screen.getByRole("button", { name: "接続してモデル一覧を取得" }));
+    await user.click(
+      screen.getByRole("button", { name: "接続してモデル一覧を取得" }),
+    );
 
     await screen.findByText("model discovery returned 401");
-    expect(screen.queryByRole("button", { name: "フォルダを選択" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "フォルダを選択" }),
+    ).not.toBeInTheDocument();
   });
 
   it("creates the project from the picked folder and makes it active", async () => {
@@ -232,7 +254,9 @@ describe("Onboarding", () => {
     await reachFolderStep(user);
 
     await user.click(screen.getByRole("button", { name: "フォルダを選択" }));
-    await waitFor(() => expect(screen.getByText("/tmp/demo")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("/tmp/demo")).toBeInTheDocument(),
+    );
 
     const use = screen.getByRole("button", { name: "このフォルダを使う" });
     expect(use).toBeEnabled();
@@ -261,7 +285,9 @@ describe("Onboarding", () => {
 
     await screen.findByRole("heading", { name: "準備ができました" });
     expect(mockedApi.createProject).not.toHaveBeenCalled();
-    expect(screen.getByText(/未設定（チャットはプロジェクトなしで始まります）/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/未設定（チャットはプロジェクトなしで始まります）/),
+    ).toBeInTheDocument();
   });
 
   it("opens the first thread and finishes", async () => {
@@ -280,20 +306,26 @@ describe("Onboarding", () => {
     ]);
     const { onComplete } = renderWizard();
     await reachFolderStep(user);
-    await user.click(screen.getByRole("button", { name: "このプロジェクトを使う" }));
+    await user.click(
+      screen.getByRole("button", { name: "このプロジェクトを使う" }),
+    );
     await screen.findByRole("heading", { name: "準備ができました" });
 
     await user.click(screen.getByRole("button", { name: "チャットを始める" }));
 
     await waitFor(() => expect(onComplete).toHaveBeenCalled());
-    await waitFor(() => expect(mockedApi.createConversation).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(mockedApi.createConversation).toHaveBeenCalled(),
+    );
   });
 
   it("hands the skip button to the caller rather than writing settings itself", async () => {
     const user = userEvent.setup();
     const { onDefer } = renderWizard();
 
-    await user.click(screen.getAllByRole("button", { name: "あとで設定する" })[0]);
+    await user.click(
+      screen.getAllByRole("button", { name: "あとで設定する" })[0],
+    );
 
     expect(onDefer).toHaveBeenCalled();
     // `App` owns the gate's `complete`, which is what persists the flag.
@@ -310,6 +342,8 @@ describe("Onboarding", () => {
     await user.click(screen.getByRole("button", { name: "検出" }));
     await waitFor(() => expect(mockedApi.scanLocalRuntimes).toHaveBeenCalled());
     // An empty result has to point at the other tab rather than dead-ending.
-    expect(screen.getByText(/「クラウド API」タブを使ってください/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/「クラウド API」タブを使ってください/),
+    ).toBeInTheDocument();
   });
 });

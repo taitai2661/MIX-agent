@@ -74,10 +74,12 @@ export function ModelsPane() {
   const groups = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     const list = (models.data ?? []).filter((m) => {
-      if (providerFilter !== "all" && m.provider_id !== providerFilter) return false;
+      if (providerFilter !== "all" && m.provider_id !== providerFilter)
+        return false;
       if (!needle) return true;
-      return [m.label, m.id, providerLabel(m.provider_id)]
-        .some((v) => v.toLocaleLowerCase().includes(needle));
+      return [m.label, m.id, providerLabel(m.provider_id)].some((v) =>
+        v.toLocaleLowerCase().includes(needle),
+      );
     });
     const byProvider = new Map<string, ModelView[]>();
     for (const model of list) {
@@ -106,7 +108,11 @@ export function ModelsPane() {
           title={t("モデルがありません")}
           sub={t("プロバイダーを追加してモデルを取得してください")}
           action={
-            <Button variant="primary" size="sm" onClick={() => openSettings("providers")}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => openSettings("providers")}
+            >
               {t("プロバイダーを追加")}
             </Button>
           }
@@ -159,7 +165,14 @@ export function ModelsPane() {
             <div className="flex flex-col gap-4">
               {groups.map(([providerId, rows]) => (
                 <div key={providerId} className="flex flex-col gap-2">
-                  <SectionLabel className="px-0 pb-0" trailing={<Badge size="sm" className="font-mono">{rows.length}</Badge>}>
+                  <SectionLabel
+                    className="px-0 pb-0"
+                    trailing={
+                      <Badge size="sm" className="font-mono">
+                        {rows.length}
+                      </Badge>
+                    }
+                  >
                     {providerLabel(providerId)}
                   </SectionLabel>
                   <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-xs divide-y divide-line">
@@ -174,21 +187,34 @@ export function ModelsPane() {
                               {m.label}
                             </span>
                           </div>
-                          <div className="truncate font-mono text-2xs text-faint" title={m.id}>
+                          <div
+                            className="truncate font-mono text-2xs text-faint"
+                            title={m.id}
+                          >
                             {shortModelId(m.id)}
                           </div>
                         </div>
                         <CapabilityRow model={m} />
                         <div className="flex items-center gap-2 text-2xs text-muted">
-                          <span className="text-faint">{t("コンテキスト")}</span>
-                          <span className="font-mono">{formatContext(m.context_window)}</span>
+                          <span className="text-faint">
+                            {t("コンテキスト")}
+                          </span>
+                          <span className="font-mono">
+                            {formatContext(m.context_window)}
+                          </span>
                         </div>
                         <label className="flex items-center gap-1.5 text-2xs text-muted">
-                          <Zap size={11} className="text-faint" aria-hidden="true" />
+                          <Zap
+                            size={11}
+                            className="text-faint"
+                            aria-hidden="true"
+                          />
                           {t("Auto")}
                           <Switch
                             checked={m.auto_candidate}
-                            onCheckedChange={(checked) => void toggleAuto(m.id, checked)}
+                            onCheckedChange={(checked) =>
+                              void toggleAuto(m.id, checked)
+                            }
                             aria-label={t("Auto候補にする")}
                           />
                         </label>
@@ -212,7 +238,9 @@ export function ModelsPane() {
 
       <p className="inline-flex items-start gap-1 text-xs text-muted">
         <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-        {t("モデルの対応機能は確認結果をもとに表示されます。誤りがあれば再確認してください。")}
+        {t(
+          "モデルの対応機能は確認結果をもとに表示されます。誤りがあれば再確認してください。",
+        )}
       </p>
     </Section>
   );

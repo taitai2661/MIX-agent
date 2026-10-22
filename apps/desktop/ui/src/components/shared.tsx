@@ -62,7 +62,11 @@ export function ErrorBox({
               onClick={() => setExpanded((prev) => !prev)}
               className="mt-1 inline-flex items-center gap-1 font-mono text-2xs text-faint transition hover:text-muted"
             >
-              {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              {expanded ? (
+                <ChevronDown size={11} />
+              ) : (
+                <ChevronRight size={11} />
+              )}
               <span>{expanded ? t("詳細を折りたたむ") : t("詳細を表示")}</span>
             </button>
             {expanded && (
@@ -88,7 +92,13 @@ export function ErrorBox({
  * "this mutation failed" read differently at the call site, but it is the same
  * visual now.
  */
-export function ErrorAlert({ error, className }: { error: unknown; className?: string }) {
+export function ErrorAlert({
+  error,
+  className,
+}: {
+  error: unknown;
+  className?: string;
+}) {
   return <ErrorBox error={error} className={className} />;
 }
 
@@ -125,9 +135,15 @@ export function EmptyState({
         className,
       )}
     >
-      {icon && <div className="mb-1 grid size-9 place-items-center rounded-xl bg-inset text-faint">{icon}</div>}
+      {icon && (
+        <div className="mb-1 grid size-9 place-items-center rounded-xl bg-inset text-faint">
+          {icon}
+        </div>
+      )}
       <strong className="text-sm font-semibold text-fg">{title}</strong>
-      {sub && <span className="max-w-sm text-xs leading-5 text-muted">{sub}</span>}
+      {sub && (
+        <span className="max-w-sm text-xs leading-5 text-muted">{sub}</span>
+      )}
       {action && <div className="mt-2">{action}</div>}
     </div>
   );
@@ -165,7 +181,15 @@ export function ErrorBadge({ error }: { error: unknown }) {
  * and then repainted a frame later. A table-shaped skeleton is the honest
  * placeholder: it says the rows are coming, not that there are none.
  */
-export function TableSkeleton({ rows = 4, className, label }: { rows?: number; className?: string; label?: string }) {
+export function TableSkeleton({
+  rows = 4,
+  className,
+  label,
+}: {
+  rows?: number;
+  className?: string;
+  label?: string;
+}) {
   return (
     <div
       role="status"
@@ -195,9 +219,22 @@ export function TableSkeleton({ rows = 4, className, label }: { rows?: number; c
 }
 
 /** Skeleton placeholder for a card-shaped list (agents, providers, runtimes). */
-export function ListSkeleton({ rows = 3, className, label }: { rows?: number; className?: string; label?: string }) {
+export function ListSkeleton({
+  rows = 3,
+  className,
+  label,
+}: {
+  rows?: number;
+  className?: string;
+  label?: string;
+}) {
   return (
-    <div role="status" aria-busy="true" aria-label={label} className={cn("flex flex-col gap-3", className)}>
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label={label}
+      className={cn("flex flex-col gap-3", className)}
+    >
       {label && <span className="sr-only">{label}</span>}
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="rounded-xl border border-line p-3">

@@ -53,7 +53,10 @@ def eviction_text(messages: list[dict]) -> str:
     ordered_entries = list(reversed(kept_rev))
     if truncated:
         ordered_entries = [
-            {"role": "system", "content": f"[{truncated} older evicted messages already covered by the previous summary - omitted to bound cost]"},
+            {
+                "role": "system",
+                "content": f"[{truncated} older evicted messages already covered by the previous summary - omitted to bound cost]",
+            },
             *ordered_entries,
         ]
     return json.dumps(ordered_entries, ensure_ascii=False)

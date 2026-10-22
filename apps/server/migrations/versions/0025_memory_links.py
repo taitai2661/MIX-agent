@@ -50,7 +50,12 @@ down_revision = "0024"
 # Spec §2 `relation_kinds`, inlined so the backfill can validate the kind it
 # writes without importing the implementation (parity keeps these in step).
 RELATION_KINDS = (
-    "supports", "contradicts", "derived_from", "supersedes", "caused_by", "relates_to",
+    "supports",
+    "contradicts",
+    "derived_from",
+    "supersedes",
+    "caused_by",
+    "relates_to",
 )
 SUPERSEDES = "supersedes"
 CONTRADICTS = "contradicts"
@@ -102,7 +107,10 @@ def upgrade():
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
             sa.UniqueConstraint(
-                "owner_id", "source_memory_id", "target_memory_id", "kind",
+                "owner_id",
+                "source_memory_id",
+                "target_memory_id",
+                "kind",
                 name="uq_memory_links_owner_source_target_kind",
             ),
         )
@@ -119,16 +127,18 @@ def upgrade():
             raise RuntimeError(f"spec §2 does not define the relation kind {kind!r}")
         # `column` and `kind` come from this module's own tuple, never from
         # data; the SQL is built from them so a schema surprise fails loudly.
-        bind.execute(sa.text(
-            f"INSERT INTO memory_links "
-            f"(id, owner_id, source_memory_id, target_memory_id, kind, "
-            f" weight, coactivation_count, created_at, updated_at) "
-            f"SELECT gen_random_uuid()::text, m.owner_id, m.{column}, m.id, '{kind}', "
-            f" 0.2, 0, now(), now() "
-            f"FROM memories m "
-            f"JOIN memories peer ON peer.id = m.{column} AND peer.owner_id = m.owner_id "
-            f"ON CONFLICT DO NOTHING"
-        ))
+        bind.execute(
+            sa.text(
+                f"INSERT INTO memory_links "
+                f"(id, owner_id, source_memory_id, target_memory_id, kind, "
+                f" weight, coactivation_count, created_at, updated_at) "
+                f"SELECT gen_random_uuid()::text, m.owner_id, m.{column}, m.id, '{kind}', "
+                f" 0.2, 0, now(), now() "
+                f"FROM memories m "
+                f"JOIN memories peer ON peer.id = m.{column} AND peer.owner_id = m.owner_id "
+                f"ON CONFLICT DO NOTHING"
+            )
+        )
 
 
 def downgrade():

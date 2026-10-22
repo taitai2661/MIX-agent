@@ -26,7 +26,10 @@ export const MentionPopover = memo(function MentionPopover({
 
   const filesQuery = useQuery({
     queryKey: ["workspace_files_mention", rootPath, query],
-    queryFn: () => (rootPath ? api.findWorkspaceFiles(rootPath, query, 20) : Promise.resolve([])),
+    queryFn: () =>
+      rootPath
+        ? api.findWorkspaceFiles(rootPath, query, 20)
+        : Promise.resolve([]),
     enabled: !!rootPath,
     staleTime: 5_000,
   });

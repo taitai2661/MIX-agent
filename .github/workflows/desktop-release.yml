@@ -15,6 +15,14 @@ name: desktop-release
 # shipping browser-less. Linux/Windows jobs need the extra system libraries
 # Chromium links against.
 #
+# `cft` is the Chrome-for-Testing platform that matches the *bundle target*,
+# not the runner: the two macOS entries build from the same runner label, so
+# without it the Intel bundle would ship an arm64 Chromium (or the reverse).
+# Checksums are per CfT platform too — each one ships its own zip — so
+# MIX_CHROMIUM_SHA256_<KEY> / MIX_CHROMIUM_SIZE_<KEY> are optional secrets
+# and variables; when a target has none, the version assertion below is the
+# only gate.
+#
 # Auto-update: Phase 6 ships "release CI without updates" — the updater plugin
 # stays inactive (endpoints: [], active: false) and no .sig/latest.json is
 # published. To enable updates: set TAURI_SIGNING_PRIVATE_KEY, flip
@@ -58,17 +66,25 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             bundles: app,dmg
+            cft: mac-arm64
+            cft_key: MAC_ARM64
           - os: macos-latest
             target: x86_64-apple-darwin
             bundles: app,dmg
+            cft: mac-x64
+            cft_key: MAC_X64
           # Deferred: universal-macos (requires lipo of both targets; add when needed).
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: msi,nsis
+            cft: win32
+            cft_key: WIN32
           # Deferred: win-arm64 (CfT win-arm64 bundle untested; no ARM runner yet).
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
+            cft: linux64
+            cft_key: LINUX64
           # Deferred: aarch64-linux (no ARM Linux runner in CI yet).
 
     steps:
@@ -141,8 +157,9 @@ jobs:
         run: node scripts/fetch-chromium.mjs
         env:
           MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
-          MIX_CHROMIUM_SHA256: ${{ secrets.MIX_CHROMIUM_SHA256 }}
-          MIX_CHROMIUM_SIZE: ${{ vars.MIX_CHROMIUM_SIZE }}
+          MIX_CHROMIUM_CFT: ${{ matrix.cft }}
+          MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
+          MIX_CHROMIUM_SIZE: ${{ vars[format('MIX_CHROMIUM_SIZE_{0}', matrix.cft_key)] }}
           MIX_REQUIRE_CHROMIUM: "1"
 
       - name: Assert Chromium bundle present
@@ -165,10 +182,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Effective SHA/version gate: when MIX_CHROMIUM_SHA256 is set the fetch
+      # Effective SHA/version gate: when a per-target SHA is set the fetch
       # step above already hash-verified the zip; when unset, assert the
-      # recorded version equals the pinned MIX_CHROMIUM_VERSION (warn, don't
-      # pass silently, so a floating Latest shows up in the logs).
+      # recorded version equals the pinned MIX_CHROMIUM_VERSION and that the
+      # recorded platform is the one this matrix entry targets (warn, don't
+      # pass silently, so a floating Latest or a wrong-arch Chromium shows up
+      # in the logs).
       - name: Verify Chromium provenance
         working-directory: apps/desktop
         shell: bash
@@ -176,13 +195,17 @@ jobs:
           if [ -n "${MIX_CHROMIUM_SHA256:-}" ]; then
             echo "SHA pin present — zip was hash-verified by fetch-chromium.mjs."
           else
-            echo "::warning::MIX_CHROMIUM_SHA256 is not set — falling back to version assertion only."
+            echo "::warning::MIX_CHROMIUM_SHA256_${CFT_KEY} is not set — falling back to version and platform assertions only."
           fi
           jq -e --arg v "$MIX_CHROMIUM_VERSION" '.version == $v' \
             app/resources/chromium/chromium-version.json > /dev/null
+          jq -e --arg p "$MIX_CHROMIUM_CFT" '.platform == $p' \
+            app/resources/chromium/chromium-version.json > /dev/null
         env:
           MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
-          MIX_CHROMIUM_SHA256: ${{ secrets.MIX_CHROMIUM_SHA256 }}
+          MIX_CHROMIUM_CFT: ${{ matrix.cft }}
+          CFT_KEY: ${{ matrix.cft_key }}
+          MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
 
       # macOS signing certificate must be in the keychain BEFORE `tauri build`
       # so signing happens during bundling (post-hoc codesign invalidates it).

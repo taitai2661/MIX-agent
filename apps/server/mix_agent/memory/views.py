@@ -15,7 +15,9 @@ def _content(row: Memory) -> str:
     return data.get("content") or data.get("gist", "")
 
 
-def render(row: Memory, evidence_rows=None, *, trace=None, score=None, selection_reason=None, link_count=None) -> dict:
+def render(
+    row: Memory, evidence_rows=None, *, trace=None, score=None, selection_reason=None, link_count=None
+) -> dict:
     data = dict(row.data or {})
     view: dict[str, Any] = {
         "id": row.id,
@@ -24,7 +26,9 @@ def render(row: Memory, evidence_rows=None, *, trace=None, score=None, selection
         "pinned": bool(data.get("pinned", False)),
         "source": data.get("source", "user"),
         "created_at": row.created_at.isoformat() if row.created_at else None,
-        "updated_at": row.updated_at.isoformat() if getattr(row, "updated_at", None) and row.updated_at else None,
+        "updated_at": row.updated_at.isoformat()
+        if getattr(row, "updated_at", None) and row.updated_at
+        else None,
     }
     if score is not None:
         view["relevance"] = round(float(score), 4)
@@ -39,15 +43,17 @@ def render(row: Memory, evidence_rows=None, *, trace=None, score=None, selection
     # falling back to §1's own defaults for a row written before them. `role`
     # also keeps the `data.role` mirror, which §6's extractor wrote first.
     lifecycle = lifecycle_value(getattr(row, "lifecycle_state", None)) or "established"
-    view.update({
-        "role": role_value(getattr(row, "role", None)) or role_value(data.get("role")) or "fact",
-        "scope": scope_value(getattr(row, "scope", None)) or "user",
-        # legacy key + the §7.2 name: same value, no more `lifecycle: "active"`
-        # constants (that was a lie for anything the transition graph retired).
-        "lifecycle": lifecycle,
-        "lifecycle_state": lifecycle,
-        "source_kind": source_kind_value(getattr(row, "source_kind", None)) or "agent",
-    })
+    view.update(
+        {
+            "role": role_value(getattr(row, "role", None)) or role_value(data.get("role")) or "fact",
+            "scope": scope_value(getattr(row, "scope", None)) or "user",
+            # legacy key + the §7.2 name: same value, no more `lifecycle: "active"`
+            # constants (that was a lie for anything the transition graph retired).
+            "lifecycle": lifecycle,
+            "lifecycle_state": lifecycle,
+            "source_kind": source_kind_value(getattr(row, "source_kind", None)) or "agent",
+        }
+    )
     return view
 
 

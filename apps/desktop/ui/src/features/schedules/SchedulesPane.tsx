@@ -6,7 +6,12 @@ import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
 import type { Mode } from "@/lib/ui";
 import { Card, DataTable, Page, Row, td, tdStrong } from "@/components/layout";
-import { EmptyState, ErrorBadge, ErrorBox, TableSkeleton } from "@/components/shared";
+import {
+  EmptyState,
+  ErrorBadge,
+  ErrorBox,
+  TableSkeleton,
+} from "@/components/shared";
 import { DeleteIconButton, SectionHeading } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { YesNo } from "@/components/ui/status";
@@ -28,7 +33,10 @@ const PRESETS: Array<{ label: string; cron: string }> = [
 
 export function SchedulesPane() {
   const queryClient = useQueryClient();
-  const jobs = useQuery({ queryKey: ["schedule_jobs"], queryFn: api.listScheduleJobs });
+  const jobs = useQuery({
+    queryKey: ["schedule_jobs"],
+    queryFn: api.listScheduleJobs,
+  });
   const models = useModels();
   const [draftName, setDraftName] = useState("");
   const [draftCron, setDraftCron] = useState("0 9 * * *");
@@ -43,47 +51,74 @@ export function SchedulesPane() {
   useEffect(() => {
     const controller = new AbortController();
     const handle = setTimeout(() => {
-      if (!draftCron.trim()) { setPreview(null); setCronError(null); return; }
+      if (!draftCron.trim()) {
+        setPreview(null);
+        setCronError(null);
+        return;
+      }
       api.previewCron(draftCron).then(
-        (times) => { if (!controller.signal.aborted) { setPreview(times); setCronError(null); } },
-        (e) => { if (!controller.signal.aborted) { setPreview(null); setCronError(errorMessage(e)); } },
+        (times) => {
+          if (!controller.signal.aborted) {
+            setPreview(times);
+            setCronError(null);
+          }
+        },
+        (e) => {
+          if (!controller.signal.aborted) {
+            setPreview(null);
+            setCronError(errorMessage(e));
+          }
+        },
       );
     }, 300);
-    return () => { controller.abort(); clearTimeout(handle); };
+    return () => {
+      controller.abort();
+      clearTimeout(handle);
+    };
   }, [draftCron]);
 
   const create = useMutation({
-    mutationFn: () => api.createScheduleJob({
-      name: draftName,
-      cron: draftCron,
-      prompt: draftPrompt,
-      conversation_id: null,
-      model_id: draftModel || null,
-      mode: draftMode,
-    }),
+    mutationFn: () =>
+      api.createScheduleJob({
+        name: draftName,
+        cron: draftCron,
+        prompt: draftPrompt,
+        conversation_id: null,
+        model_id: draftModel || null,
+        mode: draftMode,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] });
-      setDraftName(""); setDraftPrompt("");
+      setDraftName("");
+      setDraftPrompt("");
     },
   });
 
   const toggle = useMutation({
     mutationFn: (args: { id: string; enabled: boolean }) =>
       api.setScheduleJobEnabled(args.id, args.enabled),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] }),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteScheduleJob(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] }),
   });
 
-  const disabled = !draftName.trim() || !draftCron.trim() || !draftPrompt.trim() || !!cronError;
+  const disabled =
+    !draftName.trim() ||
+    !draftCron.trim() ||
+    !draftPrompt.trim() ||
+    !!cronError;
 
   return (
     <Page
       title={t("スケジュール")}
-      sub={t("Cron で定期実行。アプリ起動中 (および次回起動時に 1 回) 自動実行されます。")}
+      sub={t(
+        "Cron で定期実行。アプリ起動中 (および次回起動時に 1 回) 自動実行されます。",
+      )}
     >
       <Card title={t("定期ジョブを追加")} icon={<Clock3 size={13} />}>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -118,10 +153,16 @@ export function SchedulesPane() {
         {cronError && <ErrorBox error={cronError} />}
         {preview && (
           <p className="m-0 text-xs text-muted">
-            {t("次回")}: {preview.slice(0, 3).map((ts) => {
-              const date = new Date(ts);
-              return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
-            }).join(" · ")}
+            {t("次回")}:{" "}
+            {preview
+              .slice(0, 3)
+              .map((ts) => {
+                const date = new Date(ts);
+                return Number.isNaN(date.getTime())
+                  ? "—"
+                  : date.toLocaleString();
+              })
+              .join(" · ")}
           </p>
         )}
 
@@ -133,7 +174,9 @@ export function SchedulesPane() {
         <div className="grid gap-2 sm:grid-cols-2">
           <Select
             aria-label={t("モード")}
-            value={draftMode} onChange={(e) => setDraftMode(e.target.value as Mode)}>
+            value={draftMode}
+            onChange={(e) => setDraftMode(e.target.value as Mode)}
+          >
             <option value="chat">{t("チャット")}</option>
             <option value="thinking">{t("思考")}</option>
             <option value="agent">{t("エージェント")}</option>
@@ -145,7 +188,9 @@ export function SchedulesPane() {
           >
             <option value="">{t("モデル: 会話の既定")}</option>
             {(models.data ?? []).map((m) => (
-              <option key={m.id} value={m.id}>{m.label ?? m.id}</option>
+              <option key={m.id} value={m.id}>
+                {m.label ?? m.id}
+              </option>
             ))}
           </Select>
         </div>
@@ -155,7 +200,8 @@ export function SchedulesPane() {
             disabled={disabled || create.isPending}
             onClick={() => create.mutate()}
           >
-            {create.isPending ? <Spinner size={12} /> : <Clock3 size={12} />} {t("登録")}
+            {create.isPending ? <Spinner size={12} /> : <Clock3 size={12} />}{" "}
+            {t("登録")}
           </Button>
           {create.isError && <ErrorBadge error={create.error} />}
         </Row>
@@ -167,7 +213,10 @@ export function SchedulesPane() {
       ) : jobs.isError ? (
         <ErrorBox error={jobs.error} />
       ) : (jobs.data ?? []).length === 0 ? (
-        <EmptyState icon={<Clock3 size={22} />} title={t("ジョブはまだありません。")} />
+        <EmptyState
+          icon={<Clock3 size={22} />}
+          title={t("ジョブはまだありません。")}
+        />
       ) : (
         <DataTable
           columns={[t("名前"), "Cron", t("状態"), t("次回"), t("最終実行"), ""]}
@@ -179,7 +228,12 @@ export function SchedulesPane() {
               <td className={tdStrong}>{j.name}</td>
               <td className={`${td} font-mono`}>{j.cron}</td>
               <td className={td}>
-                <YesNo value={j.enabled} onLabel={t("有効")} offLabel={t("停止中")} trueTone="success" />
+                <YesNo
+                  value={j.enabled}
+                  onLabel={t("有効")}
+                  offLabel={t("停止中")}
+                  trueTone="success"
+                />
               </td>
               <td className={td}>
                 {(() => {
@@ -201,10 +255,14 @@ export function SchedulesPane() {
                     variant="ghost"
                     size="icon-sm"
                     title={j.enabled ? t("停止") : t("有効にする")}
-                    aria-label={j.enabled
-                      ? tf("{name}を停止", { name: j.name })
-                      : tf("{name}を有効にする", { name: j.name })}
-                    onClick={() => toggle.mutate({ id: j.id, enabled: !j.enabled })}
+                    aria-label={
+                      j.enabled
+                        ? tf("{name}を停止", { name: j.name })
+                        : tf("{name}を有効にする", { name: j.name })
+                    }
+                    onClick={() =>
+                      toggle.mutate({ id: j.id, enabled: !j.enabled })
+                    }
                   >
                     {j.enabled ? <Pause size={13} /> : <Play size={13} />}
                   </Button>

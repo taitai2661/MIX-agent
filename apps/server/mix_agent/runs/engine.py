@@ -51,10 +51,10 @@ from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.reliability import classify_failure, retry_after, usage_scope
 from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import effective_capabilities, select_auto_model
-from mix_agent.usage import record as record_usage
 from mix_agent.runs.state import TERMINAL, can_transition, transition_run
 from mix_agent.tools.execute import execute, is_user_artifact, runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, permission, registry
+from mix_agent.usage import record as record_usage
 
 TASKS = {}
 PARALLEL_TOOL_LIMIT = 4
@@ -250,18 +250,29 @@ def _reject_tool_call(db, run, provider_call, available, *, error: str, code: st
     call.status = "completed"
     call.data = {**call.data, "result_activity": activity_result(name or "unknown", {})}
     content = json.dumps(model_tool_result({"error": error, "code": code, "type": code}), ensure_ascii=False)
-    update(run, history=[*run.data["history"], {
-        "role": "tool",
-        "call_id": provider_call.get("id") or "",
-        "name": name or "unknown",
-        "content": content,
-    }])
-    emit(db, run.id, "tool_result", {
-        "id": call.id,
-        "name": call.data["name"],
-        "result": {"error": error, "code": code, "type": code},
-        "activity": call.data["activity"],
-    })
+    update(
+        run,
+        history=[
+            *run.data["history"],
+            {
+                "role": "tool",
+                "call_id": provider_call.get("id") or "",
+                "name": name or "unknown",
+                "content": content,
+            },
+        ],
+    )
+    emit(
+        db,
+        run.id,
+        "tool_result",
+        {
+            "id": call.id,
+            "name": call.data["name"],
+            "result": {"error": error, "code": code, "type": code},
+            "activity": call.data["activity"],
+        },
+    )
     return {"code": code, "name": name, "available": known, "call_id": call.id}
 
 
@@ -280,7 +291,10 @@ def model_tool_result(result):
             "tool_definition_changed": "The tool definition changed before execution. Review it and make a new call if still needed.",
             "tool_timeout": "The tool did not finish before its time limit.",
         }
-        error["message"] = messages.get(error["code"], "The tool execution failed. Choose an appropriate next action or answer from the information already available.")
+        error["message"] = messages.get(
+            error["code"],
+            "The tool execution failed. Choose an appropriate next action or answer from the information already available.",
+        )
         return {
             "status": "failed",
             "error": error,
@@ -328,8 +342,14 @@ def is_transitional_only(content):
         if part.strip(" \t\r\n。.!！")
     ]
     acknowledgements = {
-        "承知しました", "了解しました", "かしこまりました", "わかりました",
-        "understood", "sure", "okay", "ok",
+        "承知しました",
+        "了解しました",
+        "かしこまりました",
+        "わかりました",
+        "understood",
+        "sure",
+        "okay",
+        "ok",
     }
     actions = [sentence for sentence in sentences if sentence.casefold() not in acknowledgements]
     if not actions:
@@ -364,9 +384,11 @@ def tool_attempts_for_fallback(history):
             result = json.loads(message.get("content", "{}"))
         except (TypeError, ValueError):
             result = {}
-        state = "失敗" if isinstance(result, dict) and (
-            result.get("error") or result.get("status") == "failed"
-        ) else "完了"
+        state = (
+            "失敗"
+            if isinstance(result, dict) and (result.get("error") or result.get("status") == "failed")
+            else "完了"
+        )
         name = message.get("name")
         if isinstance(name, str) and name:
             attempts.append(f"{name}（{state}）")
@@ -402,24 +424,49 @@ def agent_completion_issue(run, calls):
     if not completed and not plan:
         return None
     if not plan:
-        if all(call.data.get("risk") == "read" and not (call.data.get("result") or {}).get("error")
-               and (call.data.get("result") or {}).get("ok", True)
-               for call in completed):
+        if all(
+            call.data.get("risk") == "read"
+            and not (call.data.get("result") or {}).get("error")
+            and (call.data.get("result") or {}).get("ok", True)
+            for call in completed
+        ):
             return None
         return "作業計画と残作業が記録されていません。"
     if plan.get("pending"):
         return "未完了の作業があります: " + "、".join(plan["pending"][:5])
     if not plan.get("verification"):
         return "成果を確認した根拠が記録されていません。"
-    changes = [index for index, call in enumerate(completed)
-               if call.data.get("risk") != "read" and call.data.get("tool_id") != "update_plan"]
+    changes = [
+        index
+        for index, call in enumerate(completed)
+        if call.data.get("risk") != "read" and call.data.get("tool_id") != "update_plan"
+    ]
     if changes:
-        check_ids = {"read_file", "files_list", "search_files", "workspace_check", "browser_read", "browser_screenshot",
-                     "browser_extract", "web_search", "web_fetch", "web_fetch_pdf", "knowledge_search", "memory_search",
-                     "skill_search", "skill_resource", "schedule_list", "process_list"}
-        if not any(call.data.get("tool_id") in check_ids and isinstance(call.data.get("result"), dict)
-                   and not call.data["result"].get("error") and call.data["result"].get("ok", True)
-                   for call in completed[changes[-1] + 1:]):
+        check_ids = {
+            "read_file",
+            "files_list",
+            "search_files",
+            "workspace_check",
+            "browser_read",
+            "browser_screenshot",
+            "browser_extract",
+            "web_search",
+            "web_fetch",
+            "web_fetch_pdf",
+            "knowledge_search",
+            "memory_search",
+            "skill_search",
+            "skill_resource",
+            "schedule_list",
+            "process_list",
+        }
+        if not any(
+            call.data.get("tool_id") in check_ids
+            and isinstance(call.data.get("result"), dict)
+            and not call.data["result"].get("error")
+            and call.data["result"].get("ok", True)
+            for call in completed[changes[-1] + 1 :]
+        ):
             return "最後の変更後に成功した確認結果がありません。"
     return None
 
@@ -467,6 +514,7 @@ def emit(db, run_id, kind, data):
     db.add(Event(run_id=run_id, sequence=sequence, kind=kind, data=data))
     db.flush()
     from mix_agent.wakeups import mark
+
     mark(db, "run", run_id)
 
 
@@ -492,8 +540,12 @@ def finish(db, run, status, reason=None):
         return
     transition_run(db, run, status, reason=reason)
     update(run, reason=reason)
-    if status in {"failed", "cancelled", "interrupted"} and run.data.get("answer_evaluation", {}).get("status") not in {"provided", "needs_review"}:
-        update(run, answer_evaluation={"status": "unanswered", "reason": "最終回答の前に実行が終了しました。"})
+    if status in {"failed", "cancelled", "interrupted"} and run.data.get("answer_evaluation", {}).get(
+        "status"
+    ) not in {"provided", "needs_review"}:
+        update(
+            run, answer_evaluation={"status": "unanswered", "reason": "最終回答の前に実行が終了しました。"}
+        )
     if run.data.get("snapshot", {}).get("policy", {}).get("checkpointing"):
         update(
             run,
@@ -507,13 +559,19 @@ def finish(db, run, status, reason=None):
         if status in {"interrupted", "failed"}:
             try:
                 from mix_agent.runs import checkpoints as run_checkpoints
+
                 checkpoint = run_checkpoints.save(db, run, trigger=f"terminal:{status}")
-                emit(db, run.id, "checkpoint_saved", {
-                    "id": checkpoint.id,
-                    "step": checkpoint.step,
-                    "trigger": checkpoint.trigger,
-                    "tool_count": checkpoint.tool_count,
-                })
+                emit(
+                    db,
+                    run.id,
+                    "checkpoint_saved",
+                    {
+                        "id": checkpoint.id,
+                        "step": checkpoint.step,
+                        "trigger": checkpoint.trigger,
+                        "tool_count": checkpoint.tool_count,
+                    },
+                )
             except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                 db.rollback()
     scheduled_id = run.data.get("scheduled_run_id")
@@ -522,17 +580,30 @@ def finish(db, run, status, reason=None):
         if scheduled:
             retry = status == "failed" and int(scheduled.data.get("attempt", 0)) == 0
             scheduled.status = "retrying" if retry else ("completed" if status == "completed" else "failed")
-            scheduled.data = {**scheduled.data, "reason": reason, "finished_at": now().isoformat(),
-                              **({"attempt": 1, "retry_at": (now() + timedelta(seconds=30)).isoformat()} if retry else {})}
+            scheduled.data = {
+                **scheduled.data,
+                "reason": reason,
+                "finished_at": now().isoformat(),
+                **({"attempt": 1, "retry_at": (now() + timedelta(seconds=30)).isoformat()} if retry else {}),
+            }
             if retry:
                 from mix_agent.wakeups import mark
+
                 mark(db, "scheduler")
             from mix_agent.schedules import notify
+
             if not retry:
-                notify(db, run.owner_id, "schedule.completed" if status == "completed" else "schedule.failed", "定期実行: " + ("完了" if status == "completed" else "失敗"), scheduled)
+                notify(
+                    db,
+                    run.owner_id,
+                    "schedule.completed" if status == "completed" else "schedule.failed",
+                    "定期実行: " + ("完了" if status == "completed" else "失敗"),
+                    scheduled,
+                )
     db.commit()
     if run.data.get("temporary_mode"):
         from mix_agent.api.routes import purge_temporary_run
+
         purge_temporary_run(db, run)
         db.commit()
 
@@ -581,11 +652,21 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         *(attempt["model_record_id"] for attempt in attempts if attempt.get("model_record_id")),
     }
     model, selection = select_auto_model(
-        db, run.owner_id, routing["allowed_ids"], routing["content"], routing["mode"],
-        routing["artifact_mimes"], routing["tools_required"], routing["context_parts"],
-        routing["reserved_output_tokens"], request_key, routing["attachment_bytes"],
+        db,
+        run.owner_id,
+        routing["allowed_ids"],
+        routing["content"],
+        routing["mode"],
+        routing["artifact_mimes"],
+        routing["tools_required"],
+        routing["context_parts"],
+        routing["reserved_output_tokens"],
+        request_key,
+        routing["attachment_bytes"],
         excluded_model_ids=tuple(used_model_ids),
-        prefer_other_provider_than=(provider_id if classification in {"rate_limit", "provider_5xx", "timeout", "incomplete"} else None),
+        prefer_other_provider_than=(
+            provider_id if classification in {"rate_limit", "provider_5xx", "timeout", "incomplete"} else None
+        ),
         priority=routing.get("priority", "balanced"),
     )
     if not model:
@@ -595,8 +676,11 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         return None
     try:
         reasoning = resolve_reasoning(
-            provider.data["kind"], model.data["model_id"], effective_capabilities(model.data),
-            snapshot["mode"], snapshot.get("model_settings", {}),
+            provider.data["kind"],
+            model.data["model_id"],
+            effective_capabilities(model.data),
+            snapshot["mode"],
+            snapshot.get("model_settings", {}),
         )
     except ValueError:
         return None
@@ -609,19 +693,23 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         "reasoning": reasoning,
     }
     retry_number = len(failures) + 1
-    attempts = [*attempts, {
-        "model_record_id": previous_id,
-        "model_id": snapshot["model_id"],
-        "outcome": "provider_error",
-        "error_type": type(error).__name__,
-        "classification": classification,
-    }, {
-        "model_record_id": model.id,
-        "model_id": model.data["model_id"],
-        "outcome": "retry",
-        "retry_number": retry_number,
-        "retry_limit": retry_limit,
-    }]
+    attempts = [
+        *attempts,
+        {
+            "model_record_id": previous_id,
+            "model_id": snapshot["model_id"],
+            "outcome": "provider_error",
+            "error_type": type(error).__name__,
+            "classification": classification,
+        },
+        {
+            "model_record_id": model.id,
+            "model_id": model.data["model_id"],
+            "outcome": "retry",
+            "retry_number": retry_number,
+            "retry_limit": retry_limit,
+        },
+    ]
     selection["attempts"] = attempts
     # A retryable provider rejection produces no model output or tool work, so
     # it must not consume the conversation's execution-step budget.
@@ -629,19 +717,29 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         run,
         snapshot=updated_snapshot,
         auto_selection=selection,
-        auto_model_history=[*run.data.get("auto_model_history", []), {
-            "step": run.data.get("steps", 1), "from_model_record_id": previous_id,
-            "to_model_record_id": model.id, "model_id": model.data["model_id"],
-        }],
+        auto_model_history=[
+            *run.data.get("auto_model_history", []),
+            {
+                "step": run.data.get("steps", 1),
+                "from_model_record_id": previous_id,
+                "to_model_record_id": model.id,
+                "model_id": model.data["model_id"],
+            },
+        ],
         steps=max(0, run.data.get("steps", 0) - 1),
     )
-    emit(db, run.id, "model_rerouted", {
-        "from_model_record_id": previous_id,
-        "to_model_record_id": model.id,
-        "retry_number": retry_number,
-        "retry_limit": retry_limit,
-        "selection": selection,
-    })
+    emit(
+        db,
+        run.id,
+        "model_rerouted",
+        {
+            "from_model_record_id": previous_id,
+            "to_model_record_id": model.id,
+            "retry_number": retry_number,
+            "retry_limit": retry_limit,
+            "selection": selection,
+        },
+    )
     db.commit()
     # Cross-provider alternatives are immediate. When a Retry-After response left
     # only this provider, respect it before making the next distinct-model attempt.
@@ -657,7 +755,9 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
 def _extract_bad_request_detail(exc):
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
-        msg = body.get("message") or (body.get("error", {}).get("message") if isinstance(body.get("error"), dict) else None)
+        msg = body.get("message") or (
+            body.get("error", {}).get("message") if isinstance(body.get("error"), dict) else None
+        )
         if msg:
             return f"詳細: {msg} "
     msg = getattr(exc, "message", None)
@@ -692,18 +792,35 @@ def complete_tool_call(db, run, call, current, result):
         result.pop("frame_unavailable", None)
         if frame_bytes:
             try:
-                from mix_agent.tools.execute import save_artifact as _save_artifact
                 import base64
 
-                frame = _save_artifact(db, run.owner_id, base64.b64decode(frame_bytes), "browser-frame.png", "image/png", kind="browser-frame")
+                from mix_agent.tools.execute import save_artifact as _save_artifact
+
+                frame = _save_artifact(
+                    db,
+                    run.owner_id,
+                    base64.b64decode(frame_bytes),
+                    "browser-frame.png",
+                    "image/png",
+                    kind="browser-frame",
+                )
                 frames = list(run.data.get("browser_frames") or [])
                 from urllib.parse import urlsplit, urlunsplit
+
                 address = urlsplit(result.get("url", ""))
                 visible_url = urlunsplit((address.scheme, address.netloc, address.path, "", ""))[:2048]
-                frames.append({"artifact_id": frame["artifact_id"], "call_id": call.id, "url": visible_url, "tool": call.data["tool_id"]})
+                frames.append(
+                    {
+                        "artifact_id": frame["artifact_id"],
+                        "call_id": call.id,
+                        "url": visible_url,
+                        "tool": call.data["tool_id"],
+                    }
+                )
                 if len(frames) > 30:
-                    from mix_agent.db.models import Artifact
                     from mix_agent import config
+                    from mix_agent.db.models import Artifact
+
                     for old in frames[:-30]:
                         old_id = old["artifact_id"]
                         old_row = db.get(Artifact, old_id)
@@ -713,7 +830,7 @@ def complete_tool_call(db, run, call, current, result):
                     frames = frames[-30:]
                 update(run, browser_frames=frames)
                 emit(db, run.id, "browser_frame", frames[-1])
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - a screenshot failure must not fail the browser operation
                 pass  # A screenshot failure must not fail the browser operation.
     call.status = "completed"
     summary = activity_result((current or {}).get("id", call.data["tool_id"]), result)
@@ -757,16 +874,23 @@ def complete_tool_call(db, run, call, current, result):
             from mix_agent.tools.execute import save_artifact as _save_artifact
 
             artifact_info = _save_artifact(
-                db, run.owner_id, content.encode("utf-8"), "tool-result.json",
-                "application/json", kind="context-tool-output",
+                db,
+                run.owner_id,
+                content.encode("utf-8"),
+                "tool-result.json",
+                "application/json",
+                kind="context-tool-output",
             )
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             artifact_info = None
     if is_long:
         tool_ref = (artifact_info or {}).get("artifact_id")
         entry = tool_ref_message(
-            call.data["provider_call_id"], call.data["name"],
-            short_summary[:2000], tool_ref, True,
+            call.data["provider_call_id"],
+            call.data["name"],
+            short_summary[:2000],
+            tool_ref,
+            True,
         )
         history_entry = entry
     else:
@@ -824,6 +948,7 @@ def _maybe_record_phase_verification(db, run, call, result):
     update(run, agent_plan={**plan, "phase_verification": recorded})
     emit(db, run.id, "phase_advanced", {"phase": active, "verified": True})
 
+
 async def execute_prepared_calls(db, run, snapshot, prepared):
     """Run a consecutive, already-authorized batch and preserve its result order.
 
@@ -836,11 +961,16 @@ async def execute_prepared_calls(db, run, snapshot, prepared):
     """
     for call, current in prepared:
         call.status = "executing"
-        emit(db, run.id, "tool_started", {
-            "id": call.id,
-            "name": current["model_name"],
-            "activity": activity_summary(current["id"], call.data["arguments"]),
-        })
+        emit(
+            db,
+            run.id,
+            "tool_started",
+            {
+                "id": call.id,
+                "name": current["model_name"],
+                "activity": activity_summary(current["id"], call.data["arguments"]),
+            },
+        )
     db.commit()  # Write-ahead markers forbid replay after a crash.
 
     async def one(call, current):
@@ -920,9 +1050,7 @@ def _resolve_history_for_provider(db, run, history):
         resolved.append(entry)
     # Keep only the newest image-bearing message with actual images to avoid
     # resending past images every turn.
-    last_with_images = max(
-        (i for i, m in enumerate(resolved) if m.get("images")), default=None
-    )
+    last_with_images = max((i for i, m in enumerate(resolved) if m.get("images")), default=None)
     if last_with_images is not None:
         for i, m in enumerate(resolved):
             if m.get("images") and i != last_with_images:
@@ -941,8 +1069,8 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
     conversation to summary; system / current user / task state are kept last.
     Returns provider-ready history (refs resolved).
     """
-    from mix_agent.db.models import Model as _Model
     from mix_agent.context import tiered_summary as tiered
+    from mix_agent.db.models import Model as _Model
 
     history = run.data.get("history") or []
     # Checkpoint: keep structured task state alive even for legacy runs.
@@ -956,7 +1084,9 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             update(run, history=history)
     if run.data.get("summary") is None:
         tiered.install_summary(run.data, "", 0)
-    model_record = db.get(_Model, snapshot.get("model_record_id")) if snapshot.get("model_record_id") else None
+    model_record = (
+        db.get(_Model, snapshot.get("model_record_id")) if snapshot.get("model_record_id") else None
+    )
     model_data = dict((model_record.data if model_record else {}) or {})
     window_info = context_budget.resolve_window(model_data, snapshot)
     snapshot["context_window_info"] = window_info
@@ -985,7 +1115,10 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             summary_input = summary_merge_prompt(previous, evicted)
             async with asyncio.timeout(90):
                 async for event in Adapter(provider, key).stream(
-                    snapshot["model_id"], summary_input, [], "chat",
+                    snapshot["model_id"],
+                    summary_input,
+                    [],
+                    "chat",
                     {"max_output_tokens": 2048, "_session_id": run.conversation_id},
                 ):
                     if event["kind"] == "response":
@@ -997,13 +1130,18 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
                 new_covered = int((run.data.get("summary") or {}).get("covered_count", 0)) + len(evicted)
                 tiered.archive_summary(run.data, summary_text, new_covered)
                 summarized = [{"evicted": len(evicted), "tier": 0}]
-                emit(db, run.id, "context_summary", {
-                    "status": "completed",
-                    "summary": summary_text,
-                    "archive_rows": len(tiered.current_archive(run.data)),
-                })
+                emit(
+                    db,
+                    run.id,
+                    "context_summary",
+                    {
+                        "status": "completed",
+                        "summary": summary_text,
+                        "archive_rows": len(tiered.current_archive(run.data)),
+                    },
+                )
                 # Rewrite head summary line progressively (no full re-summarization).
-                head_text = (head[0].get("content") if head else "")
+                head_text = head[0].get("content") if head else ""
                 head_text = _replace_summary_block(head_text, summary_text)
                 if head:
                     head = [{**head[0], "content": head_text}]
@@ -1020,13 +1158,25 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
             # degraded, and let the next compaction opportunity retry. Continuing
             # with an over-budget history is recoverable; silently dropping the
             # evicted tail is not.
-            emit(db, run.id, "context_summary", {
-                "status": "failed", "evicted": len(evicted), "preserved": True,
-            })
-            update(run, context_compaction={
-                "status": "degraded", "reason": "summary_failed",
-                "uncompacted_messages": len(history), "covered_count": 0,
-            })
+            emit(
+                db,
+                run.id,
+                "context_summary",
+                {
+                    "status": "failed",
+                    "evicted": len(evicted),
+                    "preserved": True,
+                },
+            )
+            update(
+                run,
+                context_compaction={
+                    "status": "degraded",
+                    "reason": "summary_failed",
+                    "uncompacted_messages": len(history),
+                    "covered_count": 0,
+                },
+            )
             db.commit()
             raise ContextBudgetError(
                 "[history preserved] 要約の生成に失敗したため、古い会話を削除せず Context を"
@@ -1034,13 +1184,25 @@ async def _maybe_compact_context(db, run, snapshot, provider, key):
                 "Summary 対応が安定した Window サイズのモデルへ切り替えてください。"
             ) from None
         if not summary_text:
-            emit(db, run.id, "context_summary", {
-                "status": "failed", "evicted": len(evicted), "preserved": True,
-            })
-            update(run, context_compaction={
-                "status": "degraded", "reason": "summary_empty",
-                "uncompacted_messages": len(history), "covered_count": 0,
-            })
+            emit(
+                db,
+                run.id,
+                "context_summary",
+                {
+                    "status": "failed",
+                    "evicted": len(evicted),
+                    "preserved": True,
+                },
+            )
+            update(
+                run,
+                context_compaction={
+                    "status": "degraded",
+                    "reason": "summary_empty",
+                    "uncompacted_messages": len(history),
+                    "covered_count": 0,
+                },
+            )
             db.commit()
             raise ContextBudgetError(
                 "[history preserved] 要約が空のため、古い会話を削除せず Context を圧縮できませんでした"
@@ -1105,7 +1267,9 @@ def _persist_trace(db, run, snapshot, history, estimated, total, tool_cost, summ
 def _reevaluate_auto_model(db, run, snapshot, available):
     """Reconsider Auto only between provider calls; keep the Run's saved policy."""
     routing = run.data.get("auto_routing") or {}
-    if run.data.get("requested_model_id") != "auto" or not routing.get("dynamic_switching", snapshot.get("auto_dynamic_switching", True)):
+    if run.data.get("requested_model_id") != "auto" or not routing.get(
+        "dynamic_switching", snapshot.get("auto_dynamic_switching", True)
+    ):
         return snapshot
     history = run.data.get("history") or []
     content = routing.get("content", "")
@@ -1121,10 +1285,18 @@ def _reevaluate_auto_model(db, run, snapshot, available):
     context_parts = [str(item.get("content", "")) for item in history]
     tools_required = bool(available)
     model, selection = select_auto_model(
-        db, run.owner_id, routing["allowed_ids"], content, snapshot["mode"],
-        routing.get("artifact_mimes", []), tools_required, context_parts,
-        routing.get("reserved_output_tokens", 4096), run.request_key,
-        routing.get("attachment_bytes", 0), current_model_id=snapshot["model_record_id"],
+        db,
+        run.owner_id,
+        routing["allowed_ids"],
+        content,
+        snapshot["mode"],
+        routing.get("artifact_mimes", []),
+        tools_required,
+        context_parts,
+        routing.get("reserved_output_tokens", 4096),
+        run.request_key,
+        routing.get("attachment_bytes", 0),
+        current_model_id=snapshot["model_record_id"],
         priority=routing.get("priority", snapshot.get("auto_priority", "balanced")),
     )
     if not model:
@@ -1134,8 +1306,11 @@ def _reevaluate_auto_model(db, run, snapshot, available):
         return snapshot
     try:
         reasoning = resolve_reasoning(
-            provider.data["kind"], model.data["model_id"], effective_capabilities(model.data),
-            snapshot["mode"], snapshot.get("model_settings", {}),
+            provider.data["kind"],
+            model.data["model_id"],
+            effective_capabilities(model.data),
+            snapshot["mode"],
+            snapshot.get("model_settings", {}),
         )
     except ValueError:
         return snapshot
@@ -1145,20 +1320,34 @@ def _reevaluate_auto_model(db, run, snapshot, available):
     selection["attempts"] = run.data.get("auto_selection", {}).get("attempts", [])
     if model.id != previous:
         snapshot = {
-            **snapshot, "model_id": model.data["model_id"], "model_record_id": model.id,
-            "provider": provider.data, "provider_record_id": provider.id,
-            "reasoning": reasoning, "context_window_info": context_budget.resolve_window(model.data, snapshot),
-        }
-        changes = [*run.data.get("auto_model_history", []), {
-            "step": run.data.get("steps", 0) + 1,
-            "from_model_record_id": previous, "to_model_record_id": model.id,
+            **snapshot,
             "model_id": model.data["model_id"],
-        }]
+            "model_record_id": model.id,
+            "provider": provider.data,
+            "provider_record_id": provider.id,
+            "reasoning": reasoning,
+            "context_window_info": context_budget.resolve_window(model.data, snapshot),
+        }
+        changes = [
+            *run.data.get("auto_model_history", []),
+            {
+                "step": run.data.get("steps", 0) + 1,
+                "from_model_record_id": previous,
+                "to_model_record_id": model.id,
+                "model_id": model.data["model_id"],
+            },
+        ]
         update(run, snapshot=snapshot, auto_model_history=changes)
-        emit(db, run.id, "model_rerouted", {
-            "from_model_record_id": previous, "to_model_record_id": model.id,
-            "selection": selection,
-        })
+        emit(
+            db,
+            run.id,
+            "model_rerouted",
+            {
+                "from_model_record_id": previous,
+                "to_model_record_id": model.id,
+                "selection": selection,
+            },
+        )
     update(run, auto_selection=selection)
     db.commit()
     return snapshot
@@ -1181,9 +1370,7 @@ def _process_pending_tools(db, run, snapshot) -> list:
     calls = list(
         db.scalars(
             select(ToolCall)
-            .where(
-                ToolCall.run_id == run.id, ToolCall.status.in_(["pending", "waiting_approval"])
-            )
+            .where(ToolCall.run_id == run.id, ToolCall.status.in_(["pending", "waiting_approval"]))
             .order_by(ToolCall.created_at)
         )
     )
@@ -1194,11 +1381,19 @@ def _process_pending_tools(db, run, snapshot) -> list:
         current = registry(db, run.owner_id).get(call.data["tool_id"])
         result = None
         if not current or fingerprint(current) != call.data["tool_version"]:
-            result = {"error": "Tool definition changed", "code": "tool_definition_changed", "type": "tool_definition_changed"}
+            result = {
+                "error": "Tool definition changed",
+                "code": "tool_definition_changed",
+                "type": "tool_definition_changed",
+            }
         else:
             key = tool_attempt_key(current["id"], call.data["arguments"])
             if attempt_counts[key] >= SAME_TOOL_ARGUMENT_LIMIT:
-                result = {"error": "Tool loop detected", "code": "tool_loop_detected", "type": "tool_loop_detected"}
+                result = {
+                    "error": "Tool loop detected",
+                    "code": "tool_loop_detected",
+                    "type": "tool_loop_detected",
+                }
             else:
                 attempt_counts[key] += 1
                 try:
@@ -1208,7 +1403,11 @@ def _process_pending_tools(db, run, snapshot) -> list:
                 if decision == "deny":
                     result = {"error": "Tool denied", "code": "tool_denied", "type": "tool_denied"}
                 elif decision == "ask" and run.data.get("scheduled_run_id"):
-                    result = {"error": "Scheduled runs require an always-allowed tool", "code": "tool_denied", "type": "tool_denied"}
+                    result = {
+                        "error": "Scheduled runs require an always-allowed tool",
+                        "code": "tool_denied",
+                        "type": "tool_denied",
+                    }
                 elif decision == "ask":
                     approval = db.scalar(select(Approval).where(Approval.tool_call_id == call.id))
                     if not approval:
@@ -1229,11 +1428,9 @@ def _process_pending_tools(db, run, snapshot) -> list:
                         db.flush()
                         emit(db, run.id, "approval", {"id": approval.id, **approval.data})
                         from mix_agent.wakeups import mark
+
                         mark(db, "scheduler")
-                    if (
-                        approval.expires.replace(tzinfo=UTC) < now()
-                        and approval.status == "pending"
-                    ):
+                    if approval.expires.replace(tzinfo=UTC) < now() and approval.status == "pending":
                         approval.status = "expired"
                     if approval.status == "pending":
                         call.status = "waiting_approval"
@@ -1264,10 +1461,7 @@ def _handle_budget_limits(db, run, snapshot, steps, count, elapsed) -> "str | No
     step_limit_reached = steps >= step_limit
 
     # Budget extension: pause and ask the user before stopping when policy allows.
-    if (
-        snapshot.get("policy", {}).get("budget_extension")
-        and (tool_limit_reached or step_limit_reached)
-    ):
+    if snapshot.get("policy", {}).get("budget_extension") and (tool_limit_reached or step_limit_reached):
         extensions_used = int(run.data.get("budget_extensions_used", 0))
         extensions_max = int(snapshot.get("policy", {}).get("max_budget_extensions", 0))
         if extensions_used < extensions_max:
@@ -1284,33 +1478,71 @@ def _handle_budget_limits(db, run, snapshot, steps, count, elapsed) -> "str | No
                 },
                 budget_extensions_used=extensions_used + 1,
             )
-            emit(db, run.id, "budget_extension_requested", {
-                "tool_calls_used": count, "tool_calls_limit": call_limit,
-                "steps_used": steps, "steps_limit": step_limit,
-                "elapsed_seconds": int(elapsed), "max_seconds": int(seconds_limit),
-                "extensions_used": extensions_used + 1,
-                "extensions_max": extensions_max,
-            })
+            emit(
+                db,
+                run.id,
+                "budget_extension_requested",
+                {
+                    "tool_calls_used": count,
+                    "tool_calls_limit": call_limit,
+                    "steps_used": steps,
+                    "steps_limit": step_limit,
+                    "elapsed_seconds": int(elapsed),
+                    "max_seconds": int(seconds_limit),
+                    "extensions_used": extensions_used + 1,
+                    "extensions_max": extensions_max,
+                },
+            )
             transition_run(db, run, "budget_extension_pending")
             db.commit()
             return "budget_extension_pending"
 
     if tool_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
-        finish(db, run, "interrupted", agent_interruption_reason(run, "Tool Call数の上限に到達しました。途中成果を確認して再開してください。"))
+        finish(
+            db,
+            run,
+            "interrupted",
+            agent_interruption_reason(
+                run, "Tool Call数の上限に到達しました。途中成果を確認して再開してください。"
+            ),
+        )
         return "interrupted"
     if step_limit_reached and snapshot.get("policy", {}).get("checkpointing"):
-        finish(db, run, "interrupted", agent_interruption_reason(run, "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。"))
+        finish(
+            db,
+            run,
+            "interrupted",
+            agent_interruption_reason(
+                run, "モデル呼び出し回数の上限に到達しました。途中成果を確認して再開してください。"
+            ),
+        )
         return "interrupted"
     return None
 
 
-async def _handle_provider_stream(db, run, snapshot, send_history, available, tool_limit_reached, step_limit_reached, elapsed, mode):
+async def _handle_provider_stream(
+    db,
+    run,
+    snapshot,
+    send_history,
+    available,
+    tool_limit_reached,
+    step_limit_reached,
+    elapsed,
+    mode,
+    state=None,
+):
     """Stream one provider turn and return the final response event plus timing metadata.
 
     Handles text buffering, per-provider rate limiting, pinned-model transient
     retries, and Auto-model rerouting on retryable errors.  Exceptions that
     cannot be recovered are re-raised so the caller's outer handler decides
     how to finish the run.
+
+    ``state`` is an optional dict the caller passes in; it receives
+    ``first_output_at`` as soon as the first text token is visible, so the
+    caller's error handler still knows that output was already shown when
+    the provider fails mid-stream.
 
     Returns:
         ``(response, last_event, first_output_at, provider_started_at)``
@@ -1336,6 +1568,7 @@ async def _handle_provider_stream(db, run, snapshot, send_history, available, to
     model_settings["_session_id"] = run.conversation_id
 
     from mix_agent.auth.security import read_secret as _read_secret
+
     key = _read_secret(db, provider.get("secret_id"))
 
     try:
@@ -1343,10 +1576,21 @@ async def _handle_provider_stream(db, run, snapshot, send_history, available, to
         async with asyncio.timeout(max(1, seconds_limit - elapsed)):
             await wait_for_provider_slot({**provider, "id": snapshot.get("provider_record_id")})
             async for event in Adapter(provider, key).stream(
-                snapshot["model_id"], (
-                    [*send_history, {"role": "user", "content": "The step or tool-call limit for this response mode has been reached. Do not request more tools; answer the original request using the available information and recommend Long work mode if sustained work remains."}]
-                    if tool_limit_reached or step_limit_reached else send_history
-                ), available, mode, model_settings
+                snapshot["model_id"],
+                (
+                    [
+                        *send_history,
+                        {
+                            "role": "user",
+                            "content": "The step or tool-call limit for this response mode has been reached. Do not request more tools; answer the original request using the available information and recommend Long work mode if sustained work remains.",
+                        },
+                    ]
+                    if tool_limit_reached or step_limit_reached
+                    else send_history
+                ),
+                available,
+                mode,
+                model_settings,
             ):
                 if event["kind"] == "response":
                     if flush_stream_text(db, run.id, buffered_text):
@@ -1355,6 +1599,12 @@ async def _handle_provider_stream(db, run, snapshot, send_history, available, to
                 elif event["kind"] == "text":
                     if event.get("text") and first_output_at is None:
                         first_output_at = now()
+                        if state is not None:
+                            # Hand the visible-output state to the caller: a
+                            # provider that fails *after* the first token has
+                            # already shown the user something, and that must
+                            # survive the exception.
+                            state["first_output_at"] = first_output_at
                     buffered_text.append(event.get("text", ""))
                     if asyncio.get_running_loop().time() - last_text_flush_at >= STREAM_TEXT_FLUSH_SECONDS:
                         flush_stream_text(db, run.id, buffered_text)
@@ -1372,7 +1622,7 @@ async def _handle_provider_stream(db, run, snapshot, send_history, available, to
     except asyncio.CancelledError:
         flush_stream_text(db, run.id, buffered_text)
         raise
-    except Exception as exc:
+    except Exception:
         # A failed stream must still expose every fragment the
         # provider already produced before reporting its outcome.
         flush_stream_text(db, run.id, buffered_text)
@@ -1411,7 +1661,10 @@ def _process_provider_response(db, run, snapshot, response, available, mode, ste
                 # correct itself. Raising here used to fail a Run
                 # that may already have spent an hour of budget.
                 _reject_tool_call(
-                    db, run, c, available,
+                    db,
+                    run,
+                    c,
+                    available,
                     error="The requested tool is not available in this Run.",
                     code="tool_unavailable",
                 )
@@ -1420,14 +1673,20 @@ def _process_provider_response(db, run, snapshot, response, available, mode, ste
                 args = json.loads(c["arguments"]) if isinstance(c["arguments"], str) else c["arguments"]
             except (TypeError, ValueError):
                 _reject_tool_call(
-                    db, run, c, available,
+                    db,
+                    run,
+                    c,
+                    available,
                     error="The tool arguments were not valid JSON. Send a JSON object matching the tool schema.",
                     code="tool_arguments_invalid_json",
                 )
                 continue
             if not isinstance(args, dict):
                 _reject_tool_call(
-                    db, run, c, available,
+                    db,
+                    run,
+                    c,
+                    available,
                     error="The tool arguments must be a JSON object.",
                     code="tool_arguments_not_object",
                 )
@@ -1450,23 +1709,43 @@ def _process_provider_response(db, run, snapshot, response, available, mode, ste
             db.flush()
             if index >= remaining_calls:
                 complete_tool_call(
-                    db, run, call, tool,
-                    {"error": "Tool call limit reached", "code": "tool_call_limit_reached", "type": "tool_call_limit_reached"},
+                    db,
+                    run,
+                    call,
+                    tool,
+                    {
+                        "error": "Tool call limit reached",
+                        "code": "tool_call_limit_reached",
+                        "type": "tool_call_limit_reached",
+                    },
                 )
         update(run, tool_count=min(call_limit, count + len(tool_calls)))
         if snapshot.get("policy", {}).get("checkpointing"):
-            update(run, checkpoint={"status": "working", "steps": steps + 1, "tool_count": min(call_limit, count + len(tool_calls))})
+            update(
+                run,
+                checkpoint={
+                    "status": "working",
+                    "steps": steps + 1,
+                    "tool_count": min(call_limit, count + len(tool_calls)),
+                },
+            )
             # Persist a durable checkpoint at every step boundary so
             # the user can pick the most recent working state.
             try:
                 from mix_agent.runs import checkpoints as run_checkpoints
+
                 checkpoint = run_checkpoints.save(db, run, trigger="working")
-                emit(db, run.id, "checkpoint_saved", {
-                    "id": checkpoint.id,
-                    "step": checkpoint.step,
-                    "trigger": checkpoint.trigger,
-                    "tool_count": checkpoint.tool_count,
-                })
+                emit(
+                    db,
+                    run.id,
+                    "checkpoint_saved",
+                    {
+                        "id": checkpoint.id,
+                        "step": checkpoint.step,
+                        "trigger": checkpoint.trigger,
+                        "tool_count": checkpoint.tool_count,
+                    },
+                )
             except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                 db.rollback()
         db.commit()
@@ -1489,16 +1768,40 @@ def _process_provider_response(db, run, snapshot, response, available, mode, ste
             return "continue"
         message = {"role": "assistant", "content": answer_fallback(run.data["history"])}
         update(run, history=[*history, message])
-        update(run, answer_evaluation={"status": "needs_review", "reason": "自動補足で終了しました。依頼の達成を確認してください。"})
+        update(
+            run,
+            answer_evaluation={
+                "status": "needs_review",
+                "reason": "自動補足で終了しました。依頼の達成を確認してください。",
+            },
+        )
     else:
-        update(run, answer_evaluation={"status": "provided", "reason": "ユーザー向けの最終回答を確認しました。内容の正しさは自動判定していません。"})
-    issues = agent_completion_issues(run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at))))
+        update(
+            run,
+            answer_evaluation={
+                "status": "provided",
+                "reason": "ユーザー向けの最終回答を確認しました。内容の正しさは自動判定していません。",
+            },
+        )
+    issues = agent_completion_issues(
+        run, list(db.scalars(select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at)))
+    )
     if issues:
         repairs = run.data.get("agent_completion_repairs", 0)
         if run.data.get("agent_plan") and repairs < 1 and steps < snapshot.get("max_steps", 8):
-            update(run, agent_completion_repairs=repairs + 1,
-                   history=[*run.data["history"], {"role": "user", "content":
-                   "The task is not yet verified:\n- " + "\n- ".join(issues) + "\nContinue the work, update the plan with remaining tasks and verification, then answer. If blocked, report the blocker and remaining work."}])
+            update(
+                run,
+                agent_completion_repairs=repairs + 1,
+                history=[
+                    *run.data["history"],
+                    {
+                        "role": "user",
+                        "content": "The task is not yet verified:\n- "
+                        + "\n- ".join(issues)
+                        + "\nContinue the work, update the plan with remaining tasks and verification, then answer. If blocked, report the blocker and remaining work.",
+                    },
+                ],
+            )
             db.commit()
             return "continue"
         # Keep the model's useful partial answer visible even when
@@ -1506,17 +1809,26 @@ def _process_provider_response(db, run, snapshot, response, available, mode, ste
         # remains interrupted and the answer is explicitly marked
         # for review; silently discarding it made a successful
         # final response disappear because of a bookkeeping gate.
-        update(run, answer_evaluation={
-            "status": "needs_review",
-            "reason": "作業結果を自動確認できませんでした。回答と残作業を確認してください。",
-        })
-        db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data={
-            "role": "assistant",
-            "content": message["content"],
-            "run_id": run.id,
-            "artifacts": [a for a in run.data.get("artifacts", []) if is_user_artifact(a)],
-            "answer_evaluation": run.data["answer_evaluation"],
-        }))
+        update(
+            run,
+            answer_evaluation={
+                "status": "needs_review",
+                "reason": "作業結果を自動確認できませんでした。回答と残作業を確認してください。",
+            },
+        )
+        db.add(
+            Message(
+                owner_id=run.owner_id,
+                conversation_id=run.conversation_id,
+                data={
+                    "role": "assistant",
+                    "content": message["content"],
+                    "run_id": run.id,
+                    "artifacts": [a for a in run.data.get("artifacts", []) if is_user_artifact(a)],
+                    "answer_evaluation": run.data["answer_evaluation"],
+                },
+            )
+        )
         finish(db, run, "interrupted", agent_interruption_reason(run, issues[0]))
         return "interrupted"
     return "completed"
@@ -1545,16 +1857,34 @@ async def drive(run_id):
                 if run.status == "cancelled":
                     return
                 if run.data.get("browser_pause_requested"):
-                    update(run, browser_pause_requested=False, browser_manual_active=True, browser_paused_at=now().isoformat())
+                    update(
+                        run,
+                        browser_pause_requested=False,
+                        browser_manual_active=True,
+                        browser_paused_at=now().isoformat(),
+                    )
                     transition_run(db, run, "paused")
                     db.commit()
                     return
                 elapsed = (now() - run.created_at.replace(tzinfo=UTC)).total_seconds()
                 if elapsed >= snapshot.get("max_seconds", 900):
                     if snapshot.get("policy", {}).get("checkpointing"):
-                        finish(db, run, "interrupted", agent_interruption_reason(run, "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。"))
+                        finish(
+                            db,
+                            run,
+                            "interrupted",
+                            agent_interruption_reason(
+                                run,
+                                "実行時間の上限に到達しました。途中成果を確認して、必要なら予算を調整して再開してください。",
+                            ),
+                        )
                     else:
-                        finish(db, run, "completed", "このモードの実行時間上限に到達したため、取得済みの結果で終了しました。長い作業には長作業モードを使用してください。")
+                        finish(
+                            db,
+                            run,
+                            "completed",
+                            "このモードの実行時間上限に到達したため、取得済みの結果で終了しました。長い作業には長作業モードを使用してください。",
+                        )
                     return
 
                 # --- Phase 1: collect and dispatch pending tool calls ----------
@@ -1585,25 +1915,35 @@ async def drive(run_id):
                 if run.status == "cancelled":
                     return
                 if run.data.get("browser_pause_requested"):
-                    update(run, browser_pause_requested=False, browser_manual_active=True, browser_paused_at=now().isoformat())
+                    update(
+                        run,
+                        browser_pause_requested=False,
+                        browser_manual_active=True,
+                        browser_paused_at=now().isoformat(),
+                    )
                     transition_run(db, run, "paused")
                     db.commit()
                     return
 
                 # Periodic durable checkpoint so resume can pick a recent step.
                 from mix_agent.runs import checkpoints as run_checkpoints
-                if (
-                    snapshot.get("policy", {}).get("checkpointing")
-                    and run_checkpoints.should_checkpoint(snapshot, int(run.data.get("steps", 0)))
+
+                if snapshot.get("policy", {}).get("checkpointing") and run_checkpoints.should_checkpoint(
+                    snapshot, int(run.data.get("steps", 0))
                 ):
                     try:
                         checkpoint = run_checkpoints.save(db, run, trigger="interval")
-                        emit(db, run.id, "checkpoint_saved", {
-                            "id": checkpoint.id,
-                            "step": checkpoint.step,
-                            "trigger": checkpoint.trigger,
-                            "tool_count": checkpoint.tool_count,
-                        })
+                        emit(
+                            db,
+                            run.id,
+                            "checkpoint_saved",
+                            {
+                                "id": checkpoint.id,
+                                "step": checkpoint.step,
+                                "trigger": checkpoint.trigger,
+                                "tool_count": checkpoint.tool_count,
+                            },
+                        )
                         db.commit()
                     except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                         # A failed checkpoint must never break the drive loop.
@@ -1613,6 +1953,7 @@ async def drive(run_id):
                 if snapshot.get("policy", {}).get("stagnation_detection"):
                     try:
                         from mix_agent.runs import stagnation as run_stagnation
+
                         findings = run_stagnation.detect_stagnation(db, run)
                         if findings:
                             already = run.data.get("last_stagnation_step")
@@ -1625,19 +1966,32 @@ async def drive(run_id):
                                         history=[*run.data["history"], {"role": "user", "content": msg}],
                                         last_stagnation_step=current_step,
                                         stagnation_findings=[
-                                            {"code": f["code"], "severity": f.get("severity"),
-                                             "tool_id": f.get("tool_id"), "count": f.get("count")}
+                                            {
+                                                "code": f["code"],
+                                                "severity": f.get("severity"),
+                                                "tool_id": f.get("tool_id"),
+                                                "count": f.get("count"),
+                                            }
                                             for f in findings
                                         ],
                                     )
-                                    emit(db, run.id, "stagnation_detected", {
-                                        "findings": [
-                                            {"code": f["code"], "severity": f.get("severity"),
-                                             "tool_id": f.get("tool_id"), "count": f.get("count")}
-                                            for f in findings
-                                        ],
-                                        "step": current_step,
-                                    })
+                                    emit(
+                                        db,
+                                        run.id,
+                                        "stagnation_detected",
+                                        {
+                                            "findings": [
+                                                {
+                                                    "code": f["code"],
+                                                    "severity": f.get("severity"),
+                                                    "tool_id": f.get("tool_id"),
+                                                    "count": f.get("count"),
+                                                }
+                                                for f in findings
+                                            ],
+                                            "step": current_step,
+                                        },
+                                    )
                                     db.commit()
                     except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
                         db.rollback()
@@ -1670,35 +2024,59 @@ async def drive(run_id):
                 provider = snapshot["provider"]
                 # Credentials are resolved at use time, never copied into run snapshots.
                 key = read_secret(db, provider.get("secret_id"))
-                history = run.data["history"]
                 # Model-aware pre-send budget check with progressive compaction.
                 try:
                     send_history = await _maybe_compact_context(db, run, snapshot, provider, key)
                 except ContextBudgetError as exc:
                     finish(db, run, "interrupted", str(exc))
                     return
-                history = run.data["history"]
-                emit(db, run.id, "model_started", {
-                    "step": steps + 1,
-                    "mode": mode,
-                    "model_id": snapshot.get("model_id"),
-                    "model_record_id": snapshot.get("model_record_id"),
-                    "provider_id": snapshot.get("provider_record_id"),
-                })
+                emit(
+                    db,
+                    run.id,
+                    "model_started",
+                    {
+                        "step": steps + 1,
+                        "mode": mode,
+                        "model_id": snapshot.get("model_id"),
+                        "model_record_id": snapshot.get("model_record_id"),
+                        "provider_id": snapshot.get("provider_record_id"),
+                    },
+                )
                 update(run, steps=steps + 1)
                 db.commit()
 
                 # --- Phase 3: provider streaming -----------------------------
                 first_output_at = None
                 provider_started_at = now()
+                stream_state: dict = {}
                 try:
-                    response, _last_event, first_output_at, provider_started_at = await _handle_provider_stream(
-                        db, run, snapshot, send_history, available,
-                        tool_limit_reached, step_limit_reached, elapsed, mode,
+                    (
+                        response,
+                        _last_event,
+                        first_output_at,
+                        provider_started_at,
+                    ) = await _handle_provider_stream(
+                        db,
+                        run,
+                        snapshot,
+                        send_history,
+                        available,
+                        tool_limit_reached,
+                        step_limit_reached,
+                        elapsed,
+                        mode,
+                        state=stream_state,
                     )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    # A provider that failed *after* the first token already
+                    # showed the user something. The stream helper records
+                    # that in `stream_state`, because the exception path
+                    # never receives its return value — without it the
+                    # retry and reroute paths would replay the request and
+                    # the user would see the answer twice.
+                    first_output_at = stream_state.get("first_output_at", first_output_at)
                     retryable = (
                         is_retryable_provider_error(exc)
                         or is_nvidia_nim_function_not_found(provider, exc)
@@ -1708,15 +2086,24 @@ async def drive(run_id):
                     retry_until = retry_after(exc)
                     if run.data.get("requested_model_id") == "auto" and snapshot.get("provider_record_id"):
                         record_reliability(
-                            db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
+                            db,
+                            run.owner_id,
+                            snapshot["model_record_id"],
+                            snapshot["provider_record_id"],
                             usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))),
-                            "failure", classification, retry_until,
+                            "failure",
+                            classification,
+                            retry_until,
                             profile=run.data.get("auto_selection", {}).get("profile"),
                             required_tokens=run.data.get("auto_selection", {}).get("required_tokens"),
                         )
                     rerouted = (
-                        await reroute_after_provider_error(db, run, run.request_key, exc, classification, retry_until)
-                        if run.data.get("requested_model_id") == "auto" and retryable and first_output_at is None
+                        await reroute_after_provider_error(
+                            db, run, run.request_key, exc, classification, retry_until
+                        )
+                        if run.data.get("requested_model_id") == "auto"
+                        and retryable
+                        and first_output_at is None
                         else None
                     )
                     if rerouted:
@@ -1754,10 +2141,16 @@ async def drive(run_id):
                             continue
                     raise
 
-                model_record = db.get(Model, snapshot["model_record_id"]) if snapshot.get("model_record_id") else None
+                model_record = (
+                    db.get(Model, snapshot["model_record_id"]) if snapshot.get("model_record_id") else None
+                )
                 record_usage(
-                    db, run.owner_id, model_record.data if model_record else {},
-                    snapshot.get("provider_record_id"), mode, response.get("usage", {}),
+                    db,
+                    run.owner_id,
+                    model_record.data if model_record else {},
+                    snapshot.get("provider_record_id"),
+                    mode,
+                    response.get("usage", {}),
                     run_id=run.id,
                     input_estimate=(run.data.get("context_trace") or {}).get("estimated_input_tokens"),
                     model_record_id=snapshot.get("model_record_id"),
@@ -1766,10 +2159,18 @@ async def drive(run_id):
                     completed_at = now()
                     first_output_at = first_output_at or completed_at
                     record_reliability(
-                        db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
-                        usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))), "success",
-                        first_output_ms=max(1, round((first_output_at - provider_started_at).total_seconds() * 1000)),
-                        completion_ms=max(1, round((completed_at - provider_started_at).total_seconds() * 1000)),
+                        db,
+                        run.owner_id,
+                        snapshot["model_record_id"],
+                        snapshot["provider_record_id"],
+                        usage_scope(mode, bool(run.data.get("auto_routing", {}).get("tools_required"))),
+                        "success",
+                        first_output_ms=max(
+                            1, round((first_output_at - provider_started_at).total_seconds() * 1000)
+                        ),
+                        completion_ms=max(
+                            1, round((completed_at - provider_started_at).total_seconds() * 1000)
+                        ),
                         output_tokens=output_tokens(response.get("usage", {})),
                         profile=run.data.get("auto_selection", {}).get("profile"),
                         required_tokens=run.data.get("auto_selection", {}).get("required_tokens"),
@@ -1777,7 +2178,15 @@ async def drive(run_id):
 
                 # --- Phase 4: process provider response ----------------------
                 outcome = _process_provider_response(
-                    db, run, snapshot, response, available, mode, steps, count, call_limit,
+                    db,
+                    run,
+                    snapshot,
+                    response,
+                    available,
+                    mode,
+                    steps,
+                    count,
+                    call_limit,
                 )
                 if outcome == "continue":
                     continue
@@ -1785,7 +2194,15 @@ async def drive(run_id):
                     return
 
                 # outcome == "completed": finalise the run.
+                # The step helper may have replaced a non-user-facing answer
+                # with the safe fallback, and that substitution lives in the
+                # history — not in the raw provider response. Reading the
+                # final answer from the history keeps the persisted message
+                # and the answer the user actually receives the same text.
                 message = response["message"]
+                answered = [item for item in run.data.get("history", []) if item.get("role") == "assistant"]
+                if answered:
+                    message = answered[-1]
                 performance = None
                 output_count = output_tokens(response.get("usage", {}))
                 # A provider's final usage is authoritative.  The first visible
@@ -1793,10 +2210,18 @@ async def drive(run_id):
                 if output_count and first_output_at is not None:
                     completed_at = now()
                     generation_ms = max(1, round((completed_at - first_output_at).total_seconds() * 1000))
-                    first_output_ms = max(1, round((first_output_at - provider_started_at).total_seconds() * 1000))
+                    first_output_ms = max(
+                        1, round((first_output_at - provider_started_at).total_seconds() * 1000)
+                    )
                     event = record_performance(
-                        db, run.owner_id, snapshot["model_record_id"], snapshot["provider_record_id"],
-                        mode, output_count, generation_ms, first_output_ms,
+                        db,
+                        run.owner_id,
+                        snapshot["model_record_id"],
+                        snapshot["provider_record_id"],
+                        mode,
+                        output_count,
+                        generation_ms,
+                        first_output_ms,
                     )
                     db.add(event)
                     performance = {
@@ -1819,10 +2244,19 @@ async def drive(run_id):
                         **run.data["auto_selection"],
                         "model_record_id": snapshot["model_record_id"],
                         "model_id": snapshot["model_id"],
-                        "model_name": (selected_model.data.get("name") or snapshot["model_id"]) if selected_model else snapshot["model_id"],
+                        "model_name": (selected_model.data.get("name") or snapshot["model_id"])
+                        if selected_model
+                        else snapshot["model_id"],
                     }
                 db.add(Message(owner_id=run.owner_id, conversation_id=run.conversation_id, data=message_data))
-                user_content = next((item.get("content", "") for item in reversed(run.data["history"]) if item.get("role") == "user"), "")
+                user_content = next(
+                    (
+                        item.get("content", "")
+                        for item in reversed(run.data["history"])
+                        if item.get("role") == "user"
+                    ),
+                    "",
+                )
                 if not run.data.get("temporary_mode"):
                     # Synchronous Memory Evaluator pass: harvest any Task Memory
                     # the agent built up during the Run (Goals / Decisions /
@@ -1837,22 +2271,31 @@ async def drive(run_id):
                         # completed Run with no answer.
                         with db.begin_nested():
                             for observation in _collect_memory_observations(db, run, message["content"]):
-                                plan = evaluate(
-                                    db, run.owner_id,
-                                    task_id=run.id,
-                                    observation=observation,
-                                    explicit_user=bool(observation.get("explicit_user")),
-                                ).get("plan") or []
+                                plan = (
+                                    evaluate(
+                                        db,
+                                        run.owner_id,
+                                        task_id=run.id,
+                                        observation=observation,
+                                        explicit_user=bool(observation.get("explicit_user")),
+                                    ).get("plan")
+                                    or []
+                                )
                                 apply_plan(db, run.owner_id, plan, run_id=run.id)
-                    except Exception:  # noqa: BLE001 - synchronous memory writes must never block completion
+                    except Exception:  # noqa: BLE001, S110 - synchronous memory writes must never block completion
                         # begin_nested() rolls back only the memory SAVEPOINT.
                         pass
                     from mix_agent.memory.jobs import enqueue as enqueue_memory
-                    enqueue_memory(db, run, user_content, message["content"], run.data.get("memory_trace_ids", []))
+
+                    enqueue_memory(
+                        db, run, user_content, message["content"], run.data.get("memory_trace_ids", [])
+                    )
                 conversation = db.get(Conversation, run.conversation_id)
                 if conversation:
                     conversation.data = {**conversation.data, "last_message_at": now().isoformat()}
-                emit(db, run.id, "message", {"content": message["content"], "usage": response.get("usage", {})})
+                emit(
+                    db, run.id, "message", {"content": message["content"], "usage": response.get("usage", {})}
+                )
                 finish(db, run, "completed")
                 return
     except asyncio.CancelledError:
@@ -1885,7 +2328,7 @@ async def drive(run_id):
                 should_close = ended is None or ended.status in TERMINAL
             if should_close:
                 await runner_request("browser", "/browser-close", {"run_id": run_id}, timeout=5)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the browser may already be closed
             pass
 
 
@@ -1896,13 +2339,15 @@ async def scheduler():
             interrupted_browser_runs.append(run.id)
             finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
         from mix_agent.schedules import reconcile
+
         reconcile(db, launch)
     for interrupted_id in interrupted_browser_runs:
         try:
             await runner_request("browser", "/browser-close", {"run_id": interrupted_id}, timeout=5)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the browser may already be closed
             pass
     from mix_agent.wakeups import scheduler as wakeup
+
     seen = wakeup.revision
     while True:
         delay = 30.0  # durable fallback if a process-local signal is missed
@@ -1914,8 +2359,10 @@ async def scheduler():
             else:
                 with SessionLocal() as db:
                     from mix_agent.api.routes import purge_expired_conversations
+
                     purge_expired_conversations(db)
                     from mix_agent.schedules import tick
+
                     tick(db, launch)
                     # Confirm unknown/stale model capabilities in the background so
                     # Auto does not depend on a user-triggered check.  A hard
@@ -1923,12 +2370,14 @@ async def scheduler():
                     try:
                         from mix_agent import config
                         from mix_agent.api.routes import probe_due_models
+
                         await asyncio.wait_for(
                             probe_due_models(db), timeout=config.PROBE_TICK_TIMEOUT_SECONDS
                         )
                     except Exception:
                         db.rollback()
                         import logging
+
                         logging.getLogger(__name__).exception("capability probe pass failed")
                     current = now()
                     # Cron is minute-granular, so wake exactly for its next boundary.
@@ -1943,8 +2392,13 @@ async def scheduler():
                         if not approval or approval.expires.replace(tzinfo=UTC) < current:
                             launch(run.id)
                         else:
-                            delay = min(delay, max(0.05, (approval.expires.replace(tzinfo=UTC) - current).total_seconds()))
-                    for scheduled in db.scalars(select(ScheduledRun).where(ScheduledRun.status == "retrying")):
+                            delay = min(
+                                delay,
+                                max(0.05, (approval.expires.replace(tzinfo=UTC) - current).total_seconds()),
+                            )
+                    for scheduled in db.scalars(
+                        select(ScheduledRun).where(ScheduledRun.status == "retrying")
+                    ):
                         try:
                             retry_at = datetime.fromisoformat(scheduled.data.get("retry_at", ""))
                             delay = min(delay, max(0.05, (retry_at - current).total_seconds()))
@@ -1953,5 +2407,6 @@ async def scheduler():
         except Exception:
             delay = 30.0
             import logging
+
             logging.getLogger(__name__).exception("scheduler tick failed")
         seen = await wakeup.wait(seen, timeout=delay)

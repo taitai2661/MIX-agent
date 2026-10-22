@@ -155,7 +155,10 @@ export const DiffLines = memo(function DiffLines({
   lines: DiffLine[];
   split?: boolean;
 }) {
-  const splitRows = useMemo(() => (split ? buildSplitRows(lines) : []), [lines, split]);
+  const splitRows = useMemo(
+    () => (split ? buildSplitRows(lines) : []),
+    [lines, split],
+  );
 
   if (split) {
     return (
@@ -188,7 +191,9 @@ export const DiffLines = memo(function DiffLines({
                   <span className="select-none border-e border-line px-1.5 text-end text-faint">
                     {row.leftNo ?? ""}
                   </span>
-                  <span className="whitespace-pre-wrap break-all px-2">{row.leftText}</span>
+                  <span className="whitespace-pre-wrap break-all px-2">
+                    {row.leftText}
+                  </span>
                 </div>
                 {/* Right (New) */}
                 <div
@@ -201,7 +206,9 @@ export const DiffLines = memo(function DiffLines({
                   <span className="select-none border-e border-line px-1.5 text-end text-faint">
                     {row.rightNo ?? ""}
                   </span>
-                  <span className="whitespace-pre-wrap break-all px-2">{row.rightText}</span>
+                  <span className="whitespace-pre-wrap break-all px-2">
+                    {row.rightText}
+                  </span>
                 </div>
               </div>
             );
@@ -229,7 +236,9 @@ export const DiffLines = memo(function DiffLines({
             <span className="select-none border-e border-line px-1.5 text-end text-faint">
               {line.newNo ?? ""}
             </span>
-            <span className="whitespace-pre-wrap break-all px-2">{line.text}</span>
+            <span className="whitespace-pre-wrap break-all px-2">
+              {line.text}
+            </span>
           </div>
         ))}
       </div>
@@ -251,7 +260,8 @@ export function DiffView({
   const rootPath = useActiveRoot();
   const diff = useQuery({
     queryKey: ["file_diff", path, content, rootPath, oldString, newString],
-    queryFn: () => api.previewFileDiff(path, content, rootPath, oldString, newString),
+    queryFn: () =>
+      api.previewFileDiff(path, content, rootPath, oldString, newString),
     staleTime: 30_000,
   });
 
@@ -263,9 +273,16 @@ export function DiffView({
   // length: exactly `MAX_DIFF_LINES` lines is not truncated and must not show
   // the notice.
   const { lines, capped } = useMemo(() => {
-    if (!data) return { lines: [] as ReturnType<typeof parseUnifiedDiff>, capped: false };
+    if (!data)
+      return {
+        lines: [] as ReturnType<typeof parseUnifiedDiff>,
+        capped: false,
+      };
     const parsed = parseUnifiedDiff(data.unified_diff);
-    return { lines: parsed.slice(0, MAX_DIFF_LINES), capped: parsed.length > MAX_DIFF_LINES };
+    return {
+      lines: parsed.slice(0, MAX_DIFF_LINES),
+      capped: parsed.length > MAX_DIFF_LINES,
+    };
   }, [data]);
 
   if (diff.isPending) {
@@ -281,20 +298,35 @@ export function DiffView({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-1.5">
-        {data.is_new
-          ? <FilePlus2 size={13} className="shrink-0 text-success" />
-          : <FileDiff size={13} className="shrink-0 text-faint" />}
+        {data.is_new ? (
+          <FilePlus2 size={13} className="shrink-0 text-success" />
+        ) : (
+          <FileDiff size={13} className="shrink-0 text-faint" />
+        )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg">
           {data.path}
         </span>
-        {data.added > 0 && <Badge tone="success" size="sm">+{data.added}</Badge>}
-        {data.removed > 0 && <Badge tone="danger" size="sm">-{data.removed}</Badge>}
-        {data.is_new && <Badge tone="info" size="sm">{t("新規ファイル")}</Badge>}
+        {data.added > 0 && (
+          <Badge tone="success" size="sm">
+            +{data.added}
+          </Badge>
+        )}
+        {data.removed > 0 && (
+          <Badge tone="danger" size="sm">
+            -{data.removed}
+          </Badge>
+        )}
+        {data.is_new && (
+          <Badge tone="info" size="sm">
+            {t("新規ファイル")}
+          </Badge>
+        )}
       </div>
 
       {data.truncated && (
         <Alert tone="warning">
-          {t("差分")}: {shortId(path, 24)} — {t("バイナリまたは読み取れない旧内容")}
+          {t("差分")}: {shortId(path, 24)} —{" "}
+          {t("バイナリまたは読み取れない旧内容")}
         </Alert>
       )}
 
@@ -304,7 +336,9 @@ export function DiffView({
         <>
           <DiffLines lines={lines} />
           {capped && (
-            <p className="text-xs text-faint">{t("大きな差分のため先頭2000行のみ表示します")}</p>
+            <p className="text-xs text-faint">
+              {t("大きな差分のため先頭2000行のみ表示します")}
+            </p>
           )}
         </>
       )}

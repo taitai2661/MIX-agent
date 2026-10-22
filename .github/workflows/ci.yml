@@ -78,6 +78,12 @@ jobs:
           python-version: "3.12"
       - name: Memory spec parity check
         run: python3 scripts/check-memory-parity.py
+      # The greeting is duplicated by hand in both editions (fragments, id-keyed
+      # English maps, suggestion labels and prompts). Without this gate a
+      # fragment or suggestion can lose its English entry and silently fall
+      # back to Japanese.
+      - name: Greeting parity check
+        run: python3 scripts/check-greeting-parity.py
 
   desktop-fmt:
     # Lightweight single-OS fmt gate: rustfmt is platform-independent, so the
