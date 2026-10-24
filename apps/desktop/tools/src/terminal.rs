@@ -71,6 +71,138 @@ pub struct TerminalCommand {
     pub persistent: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellLaunchConfig {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub is_posix: bool,
+}
+
+/// Detect the best available shell for the current platform (OpenCode style).
+///
+/// On Windows, Git Bash (or MSYS2/Scoop) is preferred so the LLM gets a consistent
+/// POSIX environment (`ls`, `cat`, `grep`, `git`, etc.) rather than PowerShell syntax.
+/// On macOS and Linux, the user's `$SHELL` or standard POSIX shells are used.
+/// Can be overridden via the `MIX_SHELL` environment variable.
+pub fn detect_shell() -> ShellLaunchConfig {
+    detect_shell_inner(std::env::var("MIX_SHELL").ok().as_deref())
+}
+
+fn detect_shell_inner(mix_shell_override: Option<&str>) -> ShellLaunchConfig {
+    if let Some(custom) = mix_shell_override {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            let path = std::path::PathBuf::from(trimmed);
+            let is_posix = !path
+                .file_name()
+                .map(|f| {
+                    let s = f.to_string_lossy().to_ascii_lowercase();
+                    s.contains("powershell") || s.contains("pwsh") || s.contains("cmd")
+                })
+                .unwrap_or(false);
+            return ShellLaunchConfig {
+                program: path,
+                args: Vec::new(),
+                is_posix,
+            };
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(bash) = find_windows_bash() {
+            return ShellLaunchConfig {
+                program: bash,
+                args: vec!["--login".into(), "-i".into()],
+                is_posix: true,
+            };
+        }
+
+        // Fallback to PowerShell on Windows when no bash is found
+        ShellLaunchConfig {
+            program: std::path::PathBuf::from("powershell.exe"),
+            args: vec!["-NoLogo".into(), "-NoProfile".into()],
+            is_posix: false,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(sh) = std::env::var("SHELL") {
+            let trimmed = sh.trim();
+            if !trimmed.is_empty() {
+                return ShellLaunchConfig {
+                    program: std::path::PathBuf::from(trimmed),
+                    args: Vec::new(),
+                    is_posix: true,
+                };
+            }
+        }
+
+        for candidate in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+            let p = std::path::PathBuf::from(candidate);
+            if p.is_file() {
+                return ShellLaunchConfig {
+                    program: p,
+                    args: Vec::new(),
+                    is_posix: true,
+                };
+            }
+        }
+
+        ShellLaunchConfig {
+            program: std::path::PathBuf::from("/bin/sh"),
+            args: Vec::new(),
+            is_posix: true,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_bash() -> Option<std::path::PathBuf> {
+    let fixed_candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\tools\msys64\usr\bin\bash.exe",
+        r"C:\msys64\usr\bin\bash.exe",
+    ];
+    for candidate in fixed_candidates {
+        let p = std::path::PathBuf::from(candidate);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let user_git = std::path::PathBuf::from(local_app_data).join(r"Programs\Git\bin\bash.exe");
+        if user_git.is_file() {
+            return Some(user_git);
+        }
+    }
+
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        let scoop_git =
+            std::path::PathBuf::from(user_profile).join(r"scoop\apps\git\current\bin\bash.exe");
+        if scoop_git.is_file() {
+            return Some(scoop_git);
+        }
+    }
+
+    find_executable_in_path("bash.exe")
+}
+
+#[cfg(target_os = "windows")]
+fn find_executable_in_path(name: &str) -> Option<std::path::PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// A PTY plus the reader thread draining its output.
 ///
 /// The writer is behind a mutex rather than stored bare: a tool is shared
@@ -87,11 +219,13 @@ struct ShellSession {
     /// kept here: without it a timed-out command kept running for the rest of
     /// the session.
     killer: std::sync::Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    config: ShellLaunchConfig,
 }
 
 impl ShellSession {
     /// Spawn a login shell in `cwd`, or return `None` when no PTY is available.
     fn spawn(cwd: &str, id: &str) -> Option<Arc<Self>> {
+        let config = detect_shell();
         let pty_system = portable_pty::native_pty_system();
         let pair = pty_system
             .openpty(portable_pty::PtySize {
@@ -101,9 +235,11 @@ impl ShellSession {
                 pixel_height: 0,
             })
             .ok()?;
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let mut cmd = portable_pty::CommandBuilder::new(shell);
+        let mut cmd = portable_pty::CommandBuilder::new(&config.program);
         cmd.cwd(cwd);
+        for arg in &config.args {
+            cmd.arg(arg);
+        }
         // A login-ish environment: without these, `cargo` and `nvm` are missing.
         cmd.env("TERM", "xterm-256color");
         cmd.env(
@@ -150,6 +286,7 @@ impl ShellSession {
             cwd: Arc::new(Mutex::new(cwd.to_string())),
             id: id.to_string(),
             killer: std::sync::Mutex::new(killer),
+            config,
         }))
     }
 
@@ -229,13 +366,23 @@ impl ShellSession {
         // this script: the shell echoes every line it reads, so without it the
         // `__mixd_rc=$?` / `printf ...` lines leak into the result (the whole
         // script text was returned as the command's own output).
-        let script = format!(
-            "printf '\\n%s\\n' '{start}';\n{command}\n             __mixd_rc=$?\n             printf '%s' \"$__mixd_rc\" > '{status}' 2>/dev/null\n             printf '\\n%s\\n' '{sentinel}'\n             printf '{cwd_marker}%s__\\n' \"$PWD\"\n",
-            start = start_marker,
-            status = status_path.display(),
-            sentinel = sentinel,
-            cwd_marker = cwd_marker,
-        );
+        let script = if self.config.is_posix {
+            format!(
+                "printf '\\n%s\\n' '{start}'\n{command}\n__mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > '{status}' 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"$PWD\"\n",
+                start = start_marker,
+                status = status_path.display(),
+                sentinel = sentinel,
+                cwd_marker = cwd_marker,
+            )
+        } else {
+            format!(
+                "Write-Output \"`n{start}\"\n{command}\n$__mixd_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\n[System.IO.File]::WriteAllText('{status}', \"$__mixd_rc\")\nWrite-Output \"`n{sentinel}\"\nWrite-Output \"{cwd_marker}$($ExecutionContext.SessionState.Path.CurrentLocation.Path)__\"\n",
+                start = start_marker,
+                status = status_path.display(),
+                sentinel = sentinel,
+                cwd_marker = cwd_marker,
+            )
+        };
 
         {
             let mut writer = self.writer.lock().await;
@@ -609,13 +756,25 @@ impl TerminalTool {
             // runs outside the sandbox-steering below, so callers must not
             // assume continuity here.
             tracing::warn!(workspace = %key, "no PTY available; running one-shot without persistent shell state");
-            let (out, code, cwd, _) = self
-                .run_once(
-                    session_dir,
-                    "/bin/sh",
-                    &["-c".to_string(), command.to_string()],
-                    max_ms,
+            let shell_cfg = detect_shell();
+            let (shell_cmd, shell_args) = if shell_cfg.is_posix {
+                (
+                    shell_cfg.program.to_string_lossy().to_string(),
+                    vec!["-c".to_string(), command.to_string()],
                 )
+            } else {
+                (
+                    shell_cfg.program.to_string_lossy().to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-NonInteractive".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
+                )
+            };
+            let (out, code, cwd, _) = self
+                .run_once(session_dir, &shell_cmd, &shell_args, max_ms)
                 .await;
             return (out, code, Some(cwd.unwrap_or_else(|| {
                 // Sandbox boundary: the one-shot fallback has no live `$PWD`
@@ -631,9 +790,14 @@ impl TerminalTool {
         // symlinked `$PWD` cannot fake containment.
         if !cwd_inside(&session.cwd().await, project_root) {
             let home = shell_quote(&key);
+            let cd_cmd = if session.config.is_posix {
+                format!("cd {home}")
+            } else {
+                format!("Set-Location -LiteralPath {home}")
+            };
             // Best-effort: if the steer fails the timed-out/dead handling
             // below evicts the session anyway.
-            let _ = session.run(&format!("cd {home}"), max_ms.min(5_000)).await;
+            let _ = session.run(&cd_cmd, max_ms.min(5_000)).await;
             // Re-validate after the steer: the cwd is re-read from the live
             // shell, so a racing `cd` cannot slip an escape past the check.
             if !cwd_inside(&session.cwd().await, project_root) {
@@ -1020,5 +1184,43 @@ mod tests {
             .unwrap_or_default()
             .contains("hello from argv"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detect_shell_returns_valid_config() {
+        let config = detect_shell();
+        assert!(!config.program.as_os_str().is_empty());
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(config.is_posix);
+        }
+    }
+
+    #[test]
+    fn mix_shell_override_works() {
+        let config = detect_shell_inner(Some("/custom/bin/bash"));
+        assert_eq!(config.program, std::path::PathBuf::from("/custom/bin/bash"));
+        assert!(config.is_posix);
+
+        let config_zsh = detect_shell_inner(Some("/usr/local/bin/zsh"));
+        assert_eq!(
+            config_zsh.program,
+            std::path::PathBuf::from("/usr/local/bin/zsh")
+        );
+        assert!(config_zsh.is_posix);
+
+        let config_pwsh = detect_shell_inner(Some("C:\\Windows\\pwsh.exe"));
+        assert_eq!(
+            config_pwsh.program,
+            std::path::PathBuf::from("C:\\Windows\\pwsh.exe")
+        );
+        assert!(!config_pwsh.is_posix);
+
+        let config_cmd = detect_shell_inner(Some("C:\\Windows\\System32\\cmd.exe"));
+        assert_eq!(
+            config_cmd.program,
+            std::path::PathBuf::from("C:\\Windows\\System32\\cmd.exe")
+        );
+        assert!(!config_cmd.is_posix);
     }
 }

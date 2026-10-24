@@ -12,6 +12,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 
 | 特徴 | MIX-agent Desktop | Docker 版 |
 | :--- | :--- | :--- |
+| **主な用途・ニーズ** | **手元の PC ですぐ使いたい**<br>ローカルマシンのコーディング・ファイル直接編集 | **自宅鯖でチャット AI を自己ホストしたい**<br>常時稼働、Web ブラウザで家中（スマホ/PC）から利用 |
 | **起動環境** | Docker 不要。`.dmg` / `.exe` / `.deb` インストーラーから即起動 | Docker Engine & Docker Compose が必要 |
 | **プロセス構成** | 単一デスクトップバイナリ（tokio in-proc タスク） | 5 つの Docker コンテナ（app, web, db, runner, proxy） |
 | **データ管理** | SQLite (WAL モード + FTS5 全文検索) | PostgreSQL (pg_trgm インデックス) |

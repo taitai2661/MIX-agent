@@ -20,7 +20,7 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 本リポジトリでは、利用シーンに合わせて **Desktop 版** と **Docker 版** の 2 つのエディションを提供しています：
 
 - **Desktop 版**: 個人ローカル PC で手軽に使える、軽量・高速なネイティブデスクトップアプリ（Tauri 2 + Rust + React）。Docker 不要でインストーラーから即座に起動できます。
-- **Docker 版**: 自宅サーバーや LAN/VPN、NAS（ZimaOS/CasaOS）で常時稼働させるセルフホストサーバー（FastAPI + PostgreSQL + React）。Web ブラウザから複数デバイスでアクセスできます。
+- **Docker 版**: **「自宅サーバー（自宅鯖）や NAS でチャット AI を自己ホストしたい」** ニーズに応えるセルフホストサーバー（FastAPI + PostgreSQL + React）。24時間稼働させ、Web ブラウザ経由でスマホやタブレット、ノート PC など家中からアクセスできます。
 
 > [!NOTE]
 > **開発ステータス**: 初期開発版です。インターネットへの無制限な一般公開や、不特定多数のマルチテナント利用、悪意ある未知のコードを安全に実行する用途には使わないでください。
@@ -29,13 +29,15 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 
 ## どっちを選ぶべき？（エディション比較）
 
-用途や環境に合わせて最適なエディションを選択してください。
+「手元の PC で今すぐ作業したいか」「自宅鯖でプライベート AI を常時ホストしたいか」など、用途に合わせて選択してください。
 
 | 比較項目 | Desktop 版 (`apps/desktop`) | Docker 版 (`apps/server`, `apps/web`) |
 | :--- | :--- | :--- |
-| **主な用途** | **個人・日常作業向け（推奨）**<br>ローカル PC でのコーディング・ファイル作業・ブラウジング | **サーバー・常時稼働向け**<br>LAN/VPN 共有、NAS、バックグラウンドでの長時間実行 |
+| **主な用途・ニーズ** | **手元の PC で今すぐ使いたい（推奨）**<br>ローカル PC でのコーディング・ファイル編集・作業支援 | **自宅鯖でチャット AI を自己ホストしたい**<br>常時稼働、LAN/VPN 共有、NAS(ZimaOS/CasaOS)、HomeLab |
+| **アクセス元** | インストールした PC 単体 | **Web ブラウザ**（スマホ・タブレット・PC 等からアクセス） |
+| **稼働形態** | PC 起動時のみ（手軽なネイティブ起動） | **自宅鯖で 24 時間常時稼働**（バックグラウンド実行） |
 | **導入の手軽さ** | ⭐⭐⭐ **極めて簡単**（Docker 不要）<br>Releases からインストーラーをダウンロードして起動 | ⭐⭐ **標準**（Docker 環境が必要）<br>`git clone` 後に `docker compose up -d` で起動 |
-| **ユーザーインターフェース** | OS ネイティブウィンドウ、システムトレイ | Web ブラウザ（PC・タブレット・スマホ等からアクセス） |
+| **ユーザーインターフェース** | OS ネイティブウィンドウ、システムトレイ | Web ブラウザ（レスポンシブ UI） |
 | **技術スタック** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
 | **プロセス構成** | 単一バイナリ + tokio in-proc（+ 子プロセス Chromium） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
 | **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
@@ -82,7 +84,9 @@ pnpm desktop:build:dmg
 
 ---
 
-### Docker 版で起動（セルフホスト・サーバー版）
+### Docker 版で起動（自宅鯖・セルフホスト）
+
+自宅サーバー、HomeLab、NAS（ZimaOS/CasaOS）等で 24 時間常時稼働させ、自分専用のプライベートなチャット AI / 自律エージェント環境を自己ホストできます。外部クラウドに会話ログを預けることなく、宅内 LAN や VPN 経由でスマホや PC からブラウザで快適にアクセスできます。
 
 Docker Desktop、または Docker Engine と Compose v2 を用意します。
 リポジトリを clone して直下で起動するだけで、追加の設定ファイル作成なしですぐに立ち上がります。
@@ -93,8 +97,8 @@ cd MIX-agent
 docker compose up -d --build
 ```
 
-起動後、ブラウザで [http://localhost:8080](http://localhost:8080) を開いて初期管理者アカウントを作成します。
-ローカルの Ollama / LM Studio 等に接続する場合、Docker 内からはホスト PC の `localhost` ではなく `host.docker.internal` を使用します。
+起動後、ブラウザで [http://localhost:8080](http://localhost:8080)（自宅鯖の場合は `http://<自宅鯖のIP>:8080`）を開いて初期管理者アカウントを作成します。
+自宅鯖ローカルで動作する Ollama / LM Studio / vLLM 等に接続する場合、Docker 内からはホストマシンの `localhost` ではなく `host.docker.internal` を使用します。
 
 #### プロジェクトフォルダの接続
 

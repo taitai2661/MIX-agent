@@ -20,7 +20,7 @@ MIX-agent is an AI workspace designed to run securely on your local machine or t
 This repository provides two distinct editions tailored for different use cases:
 
 - **Desktop Edition**: A lightweight, fast, native desktop app (Tauri 2 + Rust + React) designed for everyday personal use on your local machine. No Docker required; install and launch directly from native installers.
-- **Docker Edition**: A self-hosted server setup (FastAPI + PostgreSQL + React) built for 24/7 background execution on home servers, private networks (LAN/VPN), and NAS devices (ZimaOS / CasaOS). Access from multiple devices via web browser.
+- **Docker Edition**: Built specifically for **self-hosting private chat AI on home servers (HomeLab, NAS, Mini PCs)**. Runs 24/7 in the background with FastAPI + PostgreSQL + React, accessible from phones, tablets, and PCs via web browser over LAN or VPN.
 
 > [!NOTE]
 > **Development Status**: This is an early development version. Not intended for unrestricted public internet exposure, multi-tenant usage, or untrusted/adversarial code execution.
@@ -33,9 +33,11 @@ Choose the edition that best fits your environment and workflow:
 
 | Feature / Aspect | Desktop Edition (`apps/desktop`) | Docker Edition (`apps/server`, `apps/web`) |
 | :--- | :--- | :--- |
-| **Primary Use Case** | **Personal & Daily Desktop Work (Recommended)**<br>Local coding, file manipulation, and web automation | **Server & Continuous Operation**<br>LAN/VPN sharing, NAS/HomeLab, long-running agents |
+| **Primary Need & Use Case** | **Work immediately on your local PC (Recommended)**<br>Local coding, direct file editing, and developer workflows | **Self-host chat AI on a home server**<br>24/7 background uptime, LAN/VPN sharing, NAS (ZimaOS/CasaOS), HomeLab |
+| **Client Access** | Installed local PC only | **Web Browser** (Access anywhere across phones, tablets, PCs) |
+| **Uptime & Lifecycle** | Active only when your PC is running | **24/7 always-on background server** |
 | **Setup Effort** | ⭐⭐⭐ **Effortless** (No Docker required)<br>Download installer from Releases and launch | ⭐⭐ **Standard** (Requires Docker Engine & Compose)<br>`git clone` and `docker compose up -d` |
-| **User Interface** | OS Native Window, System Tray | Web Browser (Accessible across devices) |
+| **User Interface** | OS Native Window, System Tray | Web Browser (Responsive UI) |
 | **Tech Stack** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
 | **Process Architecture** | Single binary + tokio in-proc (+ Chromium child process) | Docker Compose (app, web, db, runner, proxy containers) |
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM Encryption (Docker volumes) |
@@ -82,7 +84,9 @@ For full architecture and advanced options, refer to [`apps/desktop/README.md`](
 
 ---
 
-### Docker Edition (Self-Hosted Server)
+### Docker Edition (Home Server & Self-Hosted)
+
+Self-host a private chat AI and autonomous agent workspace on home servers, HomeLabs, or NAS devices (ZimaOS / CasaOS). Run 24/7 without sending conversation data to third-party cloud services, accessible via web browser over your local LAN or VPN.
 
 Requires Docker Desktop or Docker Engine with Compose v2. Clone and start with a single command without extra config files:
 
@@ -92,8 +96,8 @@ cd MIX-agent
 docker compose up -d --build
 ```
 
-Once up, open [http://localhost:8080](http://localhost:8080) in your browser to create your initial admin account.
-When connecting to local Ollama / LM Studio instances running on the host machine, use `host.docker.internal` instead of `localhost`.
+Once up, open [http://localhost:8080](http://localhost:8080) (or `http://<your-server-ip>:8080`) in your browser to create your initial admin account.
+When connecting to Ollama, LM Studio, or vLLM running on the host machine, use `host.docker.internal` instead of `localhost`.
 
 #### Mounting a Project Workspace
 
