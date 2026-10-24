@@ -1,7 +1,9 @@
 # MIX-agent Desktop
 
-Tauri 2 + Rust + React 19 で実装された、個人向けローカル AI ワークスペース。
-Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）の仕様を踏襲しつつ、**Docker 不要の単一バイナリ・OS Keychain 連携・ローカル直接作業**に最適化されたネイティブデスクトップアプリです。
+Tauri 2 + Rust + React 19 で実装された、**OpenCode のように自律動作するデスクトップ・コーディングエージェント**。
+ローカルマシンの作業ディレクトリ（ワークスペース）に直接接続し、コード探索（`grep`/`glob`）、構造化計画立案、最小差分のコード編集（`edit`）、永続 PTY シェルでのビルド・テスト・検証ループ（`terminal`）を自律的に回せる開発相棒です。
+
+Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）の仕様を踏襲しつつ、**Docker 不要の単一バイナリ・OS Keychain 連携・ローカル直接作業**に特化しています。
 
 > [!IMPORTANT]
 > **Docker 版との完全分離**: `apps/desktop/` は Docker 版の Python / FastAPI バックエンドや PostgreSQL に一切依存しません。同一の仕様書（[`docs/desktop/architecture.md`](../../docs/desktop/architecture.md) および [`docs/desktop/api-mapping.md`](../../docs/desktop/api-mapping.md)）に基づいて独立して Rust で再実装されています。
@@ -12,7 +14,8 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 
 | 特徴 | MIX-agent Desktop | Docker 版 |
 | :--- | :--- | :--- |
-| **主な用途・ニーズ** | **手元の PC ですぐ使いたい**<br>ローカルマシンのコーディング・ファイル直接編集 | **自宅鯖でチャット AI を自己ホストしたい**<br>常時稼働、Web ブラウザで家中（スマホ/PC）から利用 |
+| **主な用途・役割** | **デスクトップ・コーディングエージェント（OpenCode のように動作）**<br>ローカル PC でのコード探索・差分編集・テスト実行・開発支援 | **自宅鯖でチャット AI を自己ホストしたい**<br>24時間常時稼働、Web ブラウザで家中（スマホ/PC）から利用 |
+| **得意なタスク** | コード編集、テスト/lint 検証ループ、ローカル開発タスク | チャット会話、Web 調査、常時稼働バックグラウンド実行 |
 | **起動環境** | Docker 不要。`.dmg` / `.exe` / `.deb` インストーラーから即起動 | Docker Engine & Docker Compose が必要 |
 | **プロセス構成** | 単一デスクトップバイナリ（tokio in-proc タスク） | 5 つの Docker コンテナ（app, web, db, runner, proxy） |
 | **データ管理** | SQLite (WAL モード + FTS5 全文検索) | PostgreSQL (pg_trgm インデックス) |

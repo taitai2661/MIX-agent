@@ -19,7 +19,7 @@ MIX-agent is an AI workspace designed to run securely on your local machine or t
 
 This repository provides two distinct editions tailored for different use cases:
 
-- **Desktop Edition**: A lightweight, fast, native desktop app (Tauri 2 + Rust + React) designed for everyday personal use on your local machine. No Docker required; install and launch directly from native installers.
+- **Desktop Edition**: **An autonomous desktop coding agent (built to work like OpenCode)**. Runs directly on your local machine with full autonomy to explore repositories, plan changes, edit files, and run test loops in a persistent PTY terminal (Tauri 2 + Rust + React). No Docker required; install and launch directly from native installers.
 - **Docker Edition**: Built specifically for **self-hosting private chat AI on home servers (HomeLab, NAS, Mini PCs)**. Runs 24/7 in the background with FastAPI + PostgreSQL + React, accessible from phones, tablets, and PCs via web browser over LAN or VPN.
 
 > [!NOTE]
@@ -33,11 +33,12 @@ Choose the edition that best fits your environment and workflow:
 
 | Feature / Aspect | Desktop Edition (`apps/desktop`) | Docker Edition (`apps/server`, `apps/web`) |
 | :--- | :--- | :--- |
-| **Primary Need & Use Case** | **Work immediately on your local PC (Recommended)**<br>Local coding, direct file editing, and developer workflows | **Self-host chat AI on a home server**<br>24/7 background uptime, LAN/VPN sharing, NAS (ZimaOS/CasaOS), HomeLab |
-| **Client Access** | Installed local PC only | **Web Browser** (Access anywhere across phones, tablets, PCs) |
+| **Primary Role & Use Case** | **Desktop Coding Agent (Operates like OpenCode)**<br>Local repo exploration, multi-file diff editing, test/lint runs, dev partner | **Self-host chat AI on a home server**<br>24/7 background uptime, LAN/VPN sharing, NAS (ZimaOS/CasaOS), HomeLab |
+| **Best For** | Codebase editing, automated verification loops, terminal tasks | Chat conversations, web research, long-running background tasks |
+| **Client Access** | Installed local PC only (Native desktop GUI) | **Web Browser** (Access anywhere across phones, tablets, PCs) |
 | **Uptime & Lifecycle** | Active only when your PC is running | **24/7 always-on background server** |
 | **Setup Effort** | ⭐⭐⭐ **Effortless** (No Docker required)<br>Download installer from Releases and launch | ⭐⭐ **Standard** (Requires Docker Engine & Compose)<br>`git clone` and `docker compose up -d` |
-| **User Interface** | OS Native Window, System Tray | Web Browser (Responsive UI) |
+| **User Interface** | OS Native Window, Diff Inspector, System Tray | Web Browser (Responsive UI) |
 | **Tech Stack** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
 | **Process Architecture** | Single binary + tokio in-proc (+ Chromium child process) | Docker Compose (app, web, db, runner, proxy containers) |
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM Encryption (Docker volumes) |
@@ -49,9 +50,9 @@ Choose the edition that best fits your environment and workflow:
 
 ## Getting Started
 
-### Desktop Edition (Native Local App — Recommended)
+### Desktop Edition (Desktop Coding Agent)
 
-Get started right away without needing Docker or server setup.
+Directly connects to your local codebase and works like OpenCode without requiring Docker or complex server setups.
 
 #### 1. Install via Pre-built Binaries (Recommended)
 

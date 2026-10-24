@@ -22,8 +22,8 @@ MIX-agent/
 
 | エディション | 技術スタック | アーキテクチャ | 目的・ユースケース |
 | :--- | :--- | :--- | :--- |
-| **Desktop 版** | Tauri 2 + Rust + React 19 | 単一バイナリ + tokio in-proc + SQLite + Keychain | 手元のローカル PC 作業、Docker 不要、高速・低リソース |
-| **Docker 版** | FastAPI + PostgreSQL + React 19 | マルチコンテナ（Compose）+ Runner 隔離 + Proxy | **自宅鯖でのチャット AI 自己ホスト**、LAN/VPN 共有、NAS(ZimaOS)、常時稼働 |
+| **Desktop 版** | Tauri 2 + Rust + React 19 | 単一バイナリ + tokio in-proc + SQLite + Keychain | **デスクトップ・コーディングエージェント（OpenCode のように動作）**<br>コード探索・差分編集・検証ループ、Docker 不要 |
+| **Docker 版** | FastAPI + PostgreSQL + React 19 | マルチコンテナ（Compose）+ Runner 隔離 + Proxy | **自宅鯖でのチャット AI 自己ホスト**<br>LAN/VPN 共有、NAS(ZimaOS)、24時間常時稼働 |
 
 > Desktop 版の詳細な内部構造や Rust クレート設計については、[`docs/desktop/architecture.md`](desktop/architecture.md) を参照してください。
 
