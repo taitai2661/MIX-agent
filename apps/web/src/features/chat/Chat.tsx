@@ -282,6 +282,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     ["running", "queued", "waiting_approval", "paused"].includes(run.data.status);
   const live = liveToolCalls(events, runId);
   const currentRunMessageId = history.data?.runs?.find((r) => r.id === runId)?.message_id;
+  const latestUserMessageId = [...(history.data?.messages || [])].reverse().find((msg) => msg.data.role === "user")?.id;
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if ((!text.trim() && !attachments.length) || busy || active) return;
@@ -553,7 +554,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                     } catch (e) { setError(e); }
                   }}
                 />}
-                {m.data.role === "user" && currentRunMessageId === m.id && (
+                {m.data.role === "user" && (currentRunMessageId ? currentRunMessageId === m.id : latestUserMessageId === m.id) && (
                   <TodoPane items={history.data?.todos} />
                 )}
                 {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && toolHistory.data?.some(call => call.run_id === r.id && call.tool_name.startsWith("browser_"))).map(r => (

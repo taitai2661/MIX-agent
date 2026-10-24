@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 /// How many times a transient failure is retried before the run gives up.
-pub const MAX_ATTEMPTS: u32 = 3;
+pub const MAX_ATTEMPTS: u32 = 4;
 /// Base for the exponential backoff; doubled per attempt.
 pub const BASE_BACKOFF_MS: u64 = 500;
 /// Never sleep longer than this, whatever the exponent says.

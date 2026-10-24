@@ -18,6 +18,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { getString, removeKey, setString } from "@/lib/storage";
 import { subscribePromptInsert } from "@/lib/promptInsert";
+import { useUi, type SendShortcut } from "@/lib/ui";
 import type { ModelView, ProjectView, ProviderView } from "@/lib/types";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -112,6 +113,8 @@ export const Composer = memo(function Composer(props: {
     options: { temporaryMode: boolean; allowTools: boolean },
   ) => void;
   onStop: () => void;
+  /** Key shortcut used to send messages (Enter vs Cmd/Ctrl+Enter). */
+  sendShortcut?: SendShortcut;
   /** Drafts are scoped per conversation so switching threads no longer drops
    *  (or leaks) what the user was typing. `null` is the "no thread yet" slot. */
   draftKey?: string | null;
@@ -120,6 +123,8 @@ export const Composer = memo(function Composer(props: {
   // selectors inside the provider keep this subscribed per-field, so run
   // streaming (~16 store flushes/s) does not re-render the composer.
   const ctx = useChatComposerContext();
+  const storeSendShortcut = useUi((s) => s.sendShortcut);
+  const sendShortcut = props.sendShortcut ?? storeSendShortcut;
   const mode = props.mode ?? ctx?.mode ?? "chat";
   const setMode = props.setMode ?? ctx?.setMode ?? NOOP_SET_MODE;
   const allowedModes = props.allowedModes ?? ctx?.allowedModes;
@@ -152,6 +157,8 @@ export const Composer = memo(function Composer(props: {
   const [temporaryMode, setTemporaryMode] = useState(false);
   const [allowTools, setAllowTools] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isComposingRef = useRef(false);
+  const compositionEndTimestampRef = useRef(0);
   const draftKeyRef = useRef<string | null>(draftKey ?? null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -482,6 +489,13 @@ export const Composer = memo(function Composer(props: {
               onChange={(e) => {
                 setDraft(e.target.value);
               }}
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                isComposingRef.current = false;
+                compositionEndTimestampRef.current = Date.now();
+              }}
               onKeyUp={(e) => {
                 if (
                   !["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(
@@ -520,6 +534,12 @@ export const Composer = memo(function Composer(props: {
                 }
               }}
               onKeyDown={(e) => {
+                const isImeComposing =
+                  e.nativeEvent.isComposing ||
+                  isComposingRef.current ||
+                  e.keyCode === 229 ||
+                  Date.now() - compositionEndTimestampRef.current < 60;
+
                 if (mentionQuery !== null) {
                   if (e.key === "Escape") {
                     e.preventDefault();
@@ -536,7 +556,11 @@ export const Composer = memo(function Composer(props: {
                     setMentionIndex((i) => Math.max(0, i - 1));
                     return;
                   }
-                  if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    !e.shiftKey &&
+                    !isImeComposing
+                  ) {
                     const items = document.querySelectorAll(
                       "[data-mention-item]",
                     );
@@ -567,7 +591,11 @@ export const Composer = memo(function Composer(props: {
                     setSlashIndex((i) => Math.max(0, i - 1));
                     return;
                   }
-                  if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    !e.shiftKey &&
+                    !isImeComposing
+                  ) {
                     const items =
                       document.querySelectorAll("[data-slash-item]");
                     const active = items[slashIndex] as HTMLElement | undefined;
@@ -579,12 +607,19 @@ export const Composer = memo(function Composer(props: {
                   }
                 }
 
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                  // Enter sends, Shift+Enter breaks, and Cmd/Ctrl+Enter always
-                  // sends (even with Shift) for users coming from native apps.
-                  if (e.metaKey || e.ctrlKey || !e.shiftKey) {
-                    e.preventDefault();
-                    submit();
+                if (e.key === "Enter" && !isImeComposing) {
+                  if (sendShortcut === "modifier") {
+                    // Modifier mode: Cmd+Enter or Ctrl+Enter sends; regular Enter inserts newline.
+                    if (e.metaKey || e.ctrlKey) {
+                      e.preventDefault();
+                      submit();
+                    }
+                  } else {
+                    // Enter mode: Enter sends (unless Shift is pressed); Cmd/Ctrl+Enter also sends.
+                    if (e.metaKey || e.ctrlKey || !e.shiftKey) {
+                      e.preventDefault();
+                      submit();
+                    }
                   }
                 }
               }}
@@ -781,8 +816,15 @@ export const Composer = memo(function Composer(props: {
                       ? `${t("送信")} — ${sendDisabledReason}`
                       : t("送信")
                   }
-                  aria-keyshortcuts="Enter meta+Enter ctrl+Enter"
-                  title={sendDisabledReason ?? `${t("送信")} (Enter)`}
+                  aria-keyshortcuts={
+                    sendShortcut === "modifier"
+                      ? "meta+Enter ctrl+Enter"
+                      : "Enter meta+Enter ctrl+Enter"
+                  }
+                  title={
+                    sendDisabledReason ??
+                    `${t("送信")} (${sendShortcut === "modifier" ? "⌘+Enter" : "Enter"})`
+                  }
                   className="shrink-0 rounded-full shadow-md disabled:shadow-none"
                 >
                   <ArrowUp size={18} />
@@ -796,16 +838,29 @@ export const Composer = memo(function Composer(props: {
           id="composer-hints"
           className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint"
         >
-          <span
-            className="hidden items-center gap-1 sm:inline-flex"
-            aria-hidden="true"
-          >
-            <Kbd>Enter</Kbd>
-            <span>{t("送信")}</span>
-            <span className="mx-1 text-line">·</span>
-            <Kbd>⇧ Enter</Kbd>
-            <span>{t("改行")}</span>
-          </span>
+          {sendShortcut === "modifier" ? (
+            <span
+              className="hidden items-center gap-1 sm:inline-flex"
+              aria-hidden="true"
+            >
+              <Kbd>⌘ Enter</Kbd>
+              <span>{t("送信")}</span>
+              <span className="mx-1 text-line">·</span>
+              <Kbd>Enter</Kbd>
+              <span>{t("改行")}</span>
+            </span>
+          ) : (
+            <span
+              className="hidden items-center gap-1 sm:inline-flex"
+              aria-hidden="true"
+            >
+              <Kbd>Enter</Kbd>
+              <span>{t("送信")}</span>
+              <span className="mx-1 text-line">·</span>
+              <Kbd>⇧ Enter</Kbd>
+              <span>{t("改行")}</span>
+            </span>
+          )}
           <span className="min-w-0 flex-1" />
           {temporaryMode && (
             <Badge tone="warning">

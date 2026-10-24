@@ -58,6 +58,9 @@ export type SettingsTab =
 
 export type RightPanel = "none" | "activity" | "diff" | "changes" | "file";
 
+/** Key shortcut used to send a chat message in the Composer. */
+export type SendShortcut = "enter" | "modifier";
+
 export interface DiffTarget {
   /** Workspace-relative path the `files` tool reported. */
   path: string;
@@ -115,6 +118,13 @@ interface UiState {
   /** Git status entry whose diff is shown (set from the changes list). */
   gitDiffPath: string | null;
   setGitDiffPath: (path: string | null) => void;
+  /** Key shortcut used to send messages (Enter vs Cmd/Ctrl+Enter). */
+  sendShortcut: SendShortcut;
+  setSendShortcut: (shortcut: SendShortcut) => void;
+  /** Right panel custom or toggled width in pixels. */
+  rightPanelWidth: number;
+  setRightPanelWidth: (width: number) => void;
+  toggleRightPanelWidth: () => void;
   locale: Language;
   setLocale: (locale: Language) => void;
   theme: Theme;
@@ -144,6 +154,11 @@ const ACTIVE_PROJECT_KEY = "mix-agent-active-project";
 const SETTINGS_TAB_KEY = "mix-agent-settings-tab";
 const SURFACE_KEY = "mix-agent-surface";
 const THREAD_FILTER_KEY = "mix-agent-thread-filter";
+const SEND_SHORTCUT_KEY = "mix-agent-send-shortcut";
+const RIGHT_PANEL_WIDTH_KEY = "mix-agent-right-panel-width";
+
+export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
+export const WIDE_RIGHT_PANEL_WIDTH = 560;
 
 const SURFACES: Surface[] = ["chat", "desktop-agent"];
 const THREAD_FILTERS: ThreadFilter[] = ["all", "chat", "desktop-agent"];
@@ -225,6 +240,21 @@ function readThreadFilter(): ThreadFilter {
   if (stored && THREAD_FILTERS.includes(stored as ThreadFilter))
     return stored as ThreadFilter;
   return "all";
+}
+
+function readSendShortcut(): SendShortcut {
+  const stored = getString(SEND_SHORTCUT_KEY);
+  if (stored === "modifier" || stored === "enter") return stored;
+  return "enter";
+}
+
+function readRightPanelWidth(): number {
+  const stored = getString(RIGHT_PANEL_WIDTH_KEY);
+  if (stored) {
+    const val = Number(stored);
+    if (!Number.isNaN(val) && val >= 320 && val <= 900) return val;
+  }
+  return DEFAULT_RIGHT_PANEL_WIDTH;
 }
 
 /**
@@ -333,6 +363,25 @@ export const useUi = create<UiState>((set) => ({
     set({ filePreviewPath, rightPanel: "file" }),
   gitDiffPath: null,
   setGitDiffPath: (gitDiffPath) => set({ gitDiffPath }),
+  sendShortcut: readSendShortcut(),
+  setSendShortcut: (sendShortcut) => {
+    setString(SEND_SHORTCUT_KEY, sendShortcut);
+    set({ sendShortcut });
+  },
+  rightPanelWidth: readRightPanelWidth(),
+  setRightPanelWidth: (rightPanelWidth) => {
+    setString(RIGHT_PANEL_WIDTH_KEY, String(rightPanelWidth));
+    set({ rightPanelWidth });
+  },
+  toggleRightPanelWidth: () =>
+    set((state) => {
+      const next =
+        state.rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH
+          ? DEFAULT_RIGHT_PANEL_WIDTH
+          : WIDE_RIGHT_PANEL_WIDTH;
+      setString(RIGHT_PANEL_WIDTH_KEY, String(next));
+      return { rightPanelWidth: next };
+    }),
   locale: getLanguage(),
   setLocale: (locale) => {
     setLanguage(locale);
@@ -365,6 +414,8 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   SETTINGS_TAB_KEY,
   SURFACE_KEY,
   THREAD_FILTER_KEY,
+  SEND_SHORTCUT_KEY,
+  RIGHT_PANEL_WIDTH_KEY,
 ]);
 
 if (typeof window !== "undefined") {
@@ -396,6 +447,16 @@ if (typeof window !== "undefined") {
       case FILE_TREE_KEY: {
         const next = readBoolean(FILE_TREE_KEY, false);
         if (next !== state.fileTreeOpen) state.toggleFileTree();
+        break;
+      }
+      case SEND_SHORTCUT_KEY: {
+        const next = readSendShortcut();
+        if (next !== state.sendShortcut) state.setSendShortcut(next);
+        break;
+      }
+      case RIGHT_PANEL_WIDTH_KEY: {
+        const next = readRightPanelWidth();
+        if (next !== state.rightPanelWidth) state.setRightPanelWidth(next);
         break;
       }
       case RIGHT_PANEL_KEY: {

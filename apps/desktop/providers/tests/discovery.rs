@@ -67,6 +67,7 @@ async fn reads_an_openai_compatible_model_list() {
         .await
         .expect("probe");
 
+    eprintln!("FOUND: {:?}", found);
     assert!(found.online);
     assert_eq!(found.models.len(), 2);
     assert_eq!(found.models[0].id, "qwen2.5-7b-instruct");
@@ -170,6 +171,7 @@ async fn an_unidentified_server_still_produces_a_usable_provider() {
         .await
         .expect("probe");
 
+    eprintln!("FOUND: {:?}", found);
     assert!(found.online);
     assert_eq!(found.kind, "compatible");
     assert_eq!(found.models.len(), 2);

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type Ref } from "react";
-import { Activity, GitBranch, X } from "lucide-react";
+import { Activity, GitBranch, Maximize2, Minimize2, X } from "lucide-react";
 import { t } from "@/lib/i18n";
-import { useUi } from "@/lib/ui";
+import { useUi, WIDE_RIGHT_PANEL_WIDTH } from "@/lib/ui";
 import { ActivityPanel } from "@/features/chat/ActivityPanel";
 import { DiffPanel } from "@/features/chat/DiffView";
 import { ChangesPanel, FilePreviewPanel } from "@/features/files/ChangesPanel";
@@ -9,12 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { panelStyle } from "./usePanelCap";
 
-/** Fixed Codex-like drawer width. */
-const RIGHT_PANEL_WIDTH = 380;
-
 export function RightPanel({ cap = null }: { cap?: number | null }) {
   const rightPanel = useUi((s) => s.rightPanel);
   const setRightPanel = useUi((s) => s.setRightPanel);
+  const rightPanelWidth = useUi((s) => s.rightPanelWidth);
+  const toggleRightPanelWidth = useUi((s) => s.toggleRightPanelWidth);
+  const isWide = rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH;
   const asideRef = useRef<HTMLElement | null>(null);
   const returnFocusRef = useRef<Element | null>(null);
 
@@ -78,7 +78,7 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
       ref={asideRef as Ref<HTMLElement>}
       tabIndex={-1}
       data-side-panel=""
-      style={panelStyle(RIGHT_PANEL_WIDTH, cap)}
+      style={panelStyle(rightPanelWidth, cap)}
       role="dialog"
       aria-modal="false"
       aria-label={t("サイドパネル")}
@@ -112,6 +112,15 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
               {t("変更")}
             </SegmentedOption>
           </Segmented>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleRightPanelWidth}
+            title={isWide ? t("標準幅に戻す") : t("パネル幅を拡大")}
+            aria-label={isWide ? t("標準幅に戻す") : t("パネル幅を拡大")}
+          >
+            {isWide ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"

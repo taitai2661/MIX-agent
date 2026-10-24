@@ -2,44 +2,76 @@
 
 MIX-agent への改善提案、バグ報告、ドキュメント修正を歓迎します。変更を提案する前に、既存の Issue と [`docs/`](docs/) の設計資料を確認し、目的と影響範囲が分かる形で説明してください。
 
-本リポジトリは、セルフホスト向けの **Docker 版**（`apps/server`, `apps/web`）と、ネイティブクライアント向けの **Desktop 版**（`apps/desktop`）を同一リポジトリで管理するモノレポ構成です。
-リポジトリ全体のライセンスはルートの [`LICENSE`](LICENSE) を参照してください。
-Desktop 版の構成は [`docs/desktop/architecture.md`](docs/desktop/architecture.md) にあります。
+---
 
-## 開発の流れ
+## リポジトリの構成
 
-1. GitHub で Issue を作成するか、既存の Issue に対応するブランチを作成します。
-2. 小さく目的を分け、動作変更にはテストまたは検証手順を追加します。
-3. API 仕様を変更した場合は `docs/openapi.json` と生成型を更新します。
-4. 下列を実行して確認します。リポジトリルートをカレントディレクトリとして実行します。
+本リポジトリは、以下の 2 つのエディションを単一のリポジトリで管理するモノレポ構成です：
 
-   ```sh
-   # Docker 版のテストとビルド確認
-   docker compose --profile test run --rm test
-   cd apps/web && pnpm install --frozen-lockfile && pnpm test && pnpm build
-   ```
+1. **Desktop 版** (`apps/desktop`): Tauri 2 + Rust + React 19 で構成されたネイティブデスクトップアプリ
+2. **Docker 版** (`apps/server`, `apps/web`): FastAPI (Python) + PostgreSQL + React 19 で構成されたセルフホストサーバー
 
-   Node.js 22 以上と pnpm を使用します。DB を含む起動は Compose 内だけで完結し、
-   ホスト Shell の Postgres へ接続する必要はありません。
+両エディションは独立してビルド・テストが可能です。
 
-5. Desktop 版を触る場合は、ルートまたは `apps/desktop` にて下記を実行します。
+---
 
-   ```sh
-   # Desktop 版のチェックとテスト
-   pnpm desktop:ui:test
-   cargo check -p mixd-core
-   ```
+## 開発とテストの流れ
 
-6. `git diff --check` で空白エラーを確認し、Pull Request では変更理由、検証結果、既知の制限を記載します。
+### 1. 準備
+Node.js 22 以上、pnpm 10.x、Rust 1.82 以上（Desktop 版を触る場合）、Docker & Docker Compose（Docker 版を触る場合）を用意します。
 
-検証の結果と未実施の項目は [`docs/verification.md`](docs/verification.md) に追記します。
-実 Provider・実 Docker・実機で確認していない項目を、ビルドや単体テストの成功で
-「動作確認済み」と記載しないでください。
+```sh
+# 依存関係のインストール（リポジトリルート）
+pnpm install
+```
+
+### 2. Docker 版の開発・テスト
+Docker 版を変更した場合は、以下のテストとビルド確認を実施してください：
+
+```sh
+# バックエンドの単体テスト（使い捨て PostgreSQL コンテナで migration 後に実行）
+docker compose --profile test run --rm test
+
+# Web フロントエンドのテストとビルド
+pnpm web:test
+pnpm web:build
+```
+
+API 仕様（FastAPI ルート）を変更した場合は、`scripts/export-openapi.py` を実行して `docs/openapi.json` を更新し、`pnpm generate:api` で TypeScript 型定義を再生成してください。
+
+### 3. Desktop 版の開発・テスト
+Desktop 版を変更した場合は、以下のチェックとテストを実施してください：
+
+```sh
+# UI の単体テストと型チェック
+pnpm desktop:ui:test
+pnpm desktop:ui:build
+
+# Rust クレートのチェックとテスト
+cargo check --workspace --manifest-path apps/desktop/Cargo.toml
+cargo test --workspace --manifest-path apps/desktop/Cargo.toml
+
+# （任意）デスクトップアプリのローカルビルド確認
+pnpm desktop:build:dmg # macOS の場合
+```
+
+### 4. ドキュメント修正時の注意
+- エディションに関する記述を行う際は、**Desktop 版と Docker 版のどちらに関する内容か**を明確にしてください。
+- 共通の機能（Provider 対応、モード仕様、Agent ループなど）を変更した場合は、双方の README やドキュメントへの影響を確認してください。
+- 未検証の環境・Provider を「動作確認済み」と記載しないでください。検証結果は [`docs/verification.md`](docs/verification.md) に追記してください。
+
+### 5. Pull Request の作成
+- `git diff --check` で不要な空白・フォーマットエラーがないか確認します。
+- PR の概要には、変更理由・対象エディション・検証結果・既知の制限事項を明記してください。
+
+---
 
 ## セキュリティ報告
 
-API Key、パスワード、認証トークンなどの秘密情報を Issue や Pull Request に貼り付けないでください。再現可能な詳細を公開すると影響が広がるおそれがある場合は、公開 Issue ではなく、リポジトリ管理者へ非公開の方法で連絡してください。
+API Key、パスワード、認証トークンなどの秘密情報を Issue や Pull Request に貼り付けないでください。脆弱性等の報告は公開 Issue ではなく、リポジトリ管理者へ非公開の方法でご連絡ください。
+
+---
 
 ## ライセンス
 
-このプロジェクトへの意図的な Contribution は、別途明示的な合意がない限り、リポジトリの [`LICENSE`](LICENSE) に定める Apache License 2.0 の条件に従います。
+本リポジトリへのコントリビューションは、別途明示的な合意がない限り、リポジトリの [Apache License 2.0](LICENSE) に従って受理されます。

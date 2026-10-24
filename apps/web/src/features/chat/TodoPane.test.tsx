@@ -23,6 +23,20 @@ describe("TodoPane", () => {
     expect(html).toContain("未着手");
   });
 
+  it("marks pane as completed and calculates 100% progress when all items are completed", () => {
+    const html = renderToStaticMarkup(
+      <TodoPane
+        items={[
+          { content: "タスク1", status: "completed" },
+          { content: "タスク2", status: "completed" },
+        ]}
+      />,
+    );
+    expect(html).toContain("is-completed");
+    expect(html).toContain("2/2");
+    expect(html).toContain("style=\"width:100%\"");
+  });
+
   it("hides the pane when there is no todo yet", () => {
     expect(renderToStaticMarkup(<TodoPane items={[]} />)).toBe("");
     expect(renderToStaticMarkup(<TodoPane />)).toBe("");

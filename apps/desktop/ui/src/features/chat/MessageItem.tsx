@@ -13,8 +13,10 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  CheckCircle2,
   ChevronRight,
   FileText,
+  ListChecks,
   MessageSquare,
   Pencil,
   Sparkles,
@@ -165,6 +167,9 @@ function MessageToolsAccordion({
     [events.data, runId],
   );
 
+  const todos = timeline?.todos ?? [];
+  const completedCount = todos.filter((t) => t.status === "completed").length;
+
   return (
     <details
       open={open}
@@ -182,6 +187,14 @@ function MessageToolsAccordion({
           <Badge tone="neutral" size="sm">
             {count}
           </Badge>
+          {todos.length > 0 && (
+            <Badge
+              tone={completedCount === todos.length ? "success" : "brand"}
+              size="sm"
+            >
+              {completedCount}/{todos.length}
+            </Badge>
+          )}
         </div>
         <ChevronRight
           size={12}
@@ -189,11 +202,49 @@ function MessageToolsAccordion({
           aria-hidden="true"
         />
       </summary>
-      <div className="flex flex-col gap-1.5 border-t border-line p-2">
+      <div className="flex flex-col gap-2 border-t border-line p-2">
         {events.isLoading && (
           <div className="flex items-center gap-1.5 py-2 text-faint">
             <Spinner size={12} />
             <span>{t("読み込み中…")}</span>
+          </div>
+        )}
+        {todos.length > 0 && (
+          <div className="flex flex-col gap-1 rounded-md border border-line/60 bg-inset/50 p-2">
+            <div className="flex items-center gap-1.5 font-medium text-fg">
+              <ListChecks size={13} className="text-brand" />
+              <span>{t("計画")}</span>
+              <span className="text-faint text-2xs">
+                ({completedCount}/{todos.length})
+              </span>
+            </div>
+            <ul className="m-0 flex flex-col gap-1 p-0 list-none">
+              {todos.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-start gap-1.5 text-2xs leading-4"
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {item.status === "completed" ? (
+                      <CheckCircle2 size={11} className="text-success" />
+                    ) : item.status === "in_progress" ? (
+                      <Spinner size={10} className="text-warning" />
+                    ) : (
+                      <span className="block size-2.5 rounded-sm border border-line" />
+                    )}
+                  </span>
+                  <span
+                    className={
+                      item.status === "completed"
+                        ? "text-faint line-through"
+                        : "text-fg"
+                    }
+                  >
+                    {item.content}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
         {timeline?.tools.map((tool) => (

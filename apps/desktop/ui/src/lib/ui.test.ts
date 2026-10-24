@@ -126,4 +126,26 @@ describe("useUi surface state", () => {
     expect(SURFACE_MODES.chat).toContain("chat");
     expect(stored).toBe("nonsense");
   });
+
+  it("manages sendShortcut and persists it to localStorage", () => {
+    expect(useUi.getState().sendShortcut).toBe("enter");
+    useUi.getState().setSendShortcut("modifier");
+    expect(useUi.getState().sendShortcut).toBe("modifier");
+    expect(localStorage.getItem("mix-agent-send-shortcut")).toBe("modifier");
+
+    useUi.getState().setSendShortcut("enter");
+    expect(useUi.getState().sendShortcut).toBe("enter");
+    expect(localStorage.getItem("mix-agent-send-shortcut")).toBe("enter");
+  });
+
+  it("manages rightPanelWidth and toggles between default and wide", () => {
+    expect(useUi.getState().rightPanelWidth).toBe(380);
+    useUi.getState().toggleRightPanelWidth();
+    expect(useUi.getState().rightPanelWidth).toBe(560);
+    expect(localStorage.getItem("mix-agent-right-panel-width")).toBe("560");
+
+    useUi.getState().toggleRightPanelWidth();
+    expect(useUi.getState().rightPanelWidth).toBe(380);
+    expect(localStorage.getItem("mix-agent-right-panel-width")).toBe("380");
+  });
 });

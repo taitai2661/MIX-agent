@@ -377,4 +377,58 @@ describe("Composer", () => {
     );
     unmount();
   });
+
+  it("does not send when Enter is pressed right after IME composition", async () => {
+    const onSend = vi.fn();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    fireEvent.change(box, { target: { value: "日本語入力" } });
+    fireEvent.compositionStart(box);
+    fireEvent.compositionEnd(box);
+    // Enter pressed immediately on IME confirmation
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 13 });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box).toHaveValue("日本語入力");
+  });
+
+  it("supports modifier-based send shortcut (Cmd+Enter sends, Enter breaks)", async () => {
+    const onSend = vi.fn();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
+        sendShortcut="modifier"
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    fireEvent.change(box, { target: { value: "first line" } });
+    // Normal Enter should NOT send in modifier mode
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 13 });
+    expect(onSend).not.toHaveBeenCalled();
+
+    // Cmd+Enter sends in modifier mode
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 13, metaKey: true });
+    expect(onSend).toHaveBeenCalledWith("first line", [], {
+      temporaryMode: false,
+      allowTools: false,
+    });
+    expect(box).toHaveValue("");
+  });
 });

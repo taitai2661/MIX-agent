@@ -1,63 +1,84 @@
 # アーキテクチャ
 
-## 境界
+本ドキュメントでは、MIX-agent プロジェクト全体のアーキテクチャ構成と、各エディションの設計思想について解説します。
 
-`apps/server/mix_agent` は業務ロジックをまとめるモジュラーモノリスです。Provider Adapter、Tool Registry、Permission、Run Engineを分離しています。
+---
+
+## 全体構成とモノレポ構造
+
+MIX-agent は単一のモノレポ内で **Desktop 版** と **Docker 版** の 2 つのエディションを管理しています。両エディションは同一の設計思想と仕様契約（Provider Adapter、Run Engine、Tool Registry、Run Event kind、Capability 状態など）を共有していますが、**実装コードは完全に分離**されています。
 
 ```text
-React → REST / SSE → FastAPI → PostgreSQL
-                           → Provider Adapter
-                           → Run Engine → Tool Registry → Permission → Executor
-                                                                     ├ 本体（Memory、Web）
-                                                                     ├ execution-runner
-                                                                     └ mcp-runner
-Runner → egress-proxy → 許可された公開接続先
+MIX-agent/
+├── apps/
+│   ├── desktop/            # Desktop 版: Tauri 2 + Rust + React 19（完全独立）
+│   ├── server/             # Docker 版バックエンド: FastAPI (Python)
+│   └── web/                # Docker 版フロントエンド: React 19 + Vite
+├── docs/                   # 共通ドキュメント & 仕様書
+│   └── desktop/            # Desktop 版専用の内部設計・API マッピング
+├── packages/               # 共通ツール・スクリプト
+└── compose.yaml            # Docker Compose 設定
 ```
 
-FastAPIは1プロセスで起動します。メモリ内のTask管理・承認の排他は単一プロセス前提です。複数Workerへの変更にはDBによるジョブleaseと分散排他の追加が必要です。
+| エディション | 技術スタック | アーキテクチャ | 目的・ユースケース |
+| :--- | :--- | :--- | :--- |
+| **Desktop 版** | Tauri 2 + Rust + React 19 | 単一バイナリ + tokio in-proc + SQLite + Keychain | 個人のローカル PC 作業、Docker 不要、高速・低リソース |
+| **Docker 版** | FastAPI + PostgreSQL + React 19 | マルチコンテナ（Compose）+ Runner 隔離 + Proxy | サーバー、LAN/VPN 共有、NAS(ZimaOS)、常時稼働 |
 
-## DB
+> Desktop 版の詳細な内部構造や Rust クレート設計については、[`docs/desktop/architecture.md`](desktop/architecture.md) を参照してください。
 
-ユーザー、Session、Run、Event、ToolCall、Approval、RunCheckpointは専用の構造化カラムを持ちます。Provider、Model、Agent、Tool、MCP、Memory等は各専用テーブル内のJSONBに拡張可能な設定を保存します。AgentのTool選択は `agents.data.tool_ids` に格納し、初期版では別の中間テーブルを持ちません。
+---
 
-RunとMessageはConversationに、Event/ToolCall/Approval/RunCheckpointはRunに関連付けます。会話単位の有効なRunは部分ユニークIndexにより1件に制限します。EventはRun単位の連番です。RunCheckpointはAgentモードの長時間実行向けに定期保存されるスナップショットで、Resume APIから任意のチェックポイントへの選択的再開が可能です。
+## Docker 版アーキテクチャ
 
-MigrationはAlembicで管理し、PostgreSQL専用です。Memory本文にはpg_trgm Indexを作成し、部分一致検索を行います。
+Docker 版（`apps/server`, `apps/web`）は、FastAPI と PostgreSQL を中核とするモジュラーモノリスです。
 
-## Provider
+```text
+React (Web UI) ─► REST / SSE ─► FastAPI (apps/server)
+                                    ├─► PostgreSQL (DB / pg_trgm / JSONB)
+                                    ├─► Provider Adapter (OpenAI / Anthropic / Gemini / etc.)
+                                    └─► Run Engine ─► Tool Registry ─► Permission
+                                                         ├─ 本体組込（Memory / Web）
+                                                         ├─ execution-runner (コンテナ内操作)
+                                                         └─ mcp-runner (MCP サーバー実行)
+                                                                 │
+                                                                 ▼
+                                                            egress-proxy ─► 許可ドメイン (HTTPS)
+```
 
-`Adapter.stream()` は本文、公開Reasoning、最終応答・Tool Callを共通イベントへ変換します。署名・暗号化Reasoning・Tool IDなどはRun内のProvider固有履歴に保持し、UIには公開しません。モデルをまたぐ新しい会話ターンには本文の履歴を再構築します。
+### 1. プロセスと並行処理
+- FastAPI は 1 プロセスで起動します。メモリ内の Task 管理や承認の排他制御は単一プロセス前提です。
+- 会話単位の有効な Run は部分ユニークインデックスにより 1 件に制限されます。
 
-Capabilityは真偽/不明の3状態。手動Overrideを優先します。自動取得が失敗したモデルは消しません。モデル一覧は有料推論を実行しません。実モデルによるReasoning・Vision等の受入確認は別途必要です。
+### 2. データストア（PostgreSQL）
+- ユーザー、セッション、Run、Event、ToolCall、Approval、RunCheckpoint は専用の構造化カラムを持ちます。
+- Provider、Model、Agent、Tool、MCP、Memory などの拡張設定は専用テーブルの JSONB カラムに保存します。
+- マイグレーションは Alembic で管理され、Memory 本文には `pg_trgm` インデックスを作成して部分一致検索を行います。
 
-## 実行状態
+### 3. Provider Adapter と Capability Probe
+- `Adapter.stream()` は各 Provider の出力を共通の Run イベント形式へ変換します。署名や暗号化された推論履歴は保持しつつ UI には不要な内部トークンを公開しません。
+- **Capability 状態**: 各モデルの Tool Calling 能力は「対応 / 非対応 / 未確認」の 3 状態を保持します。未確認の場合は副作用のないダミー関数を用いたプローブで自動確認します。
 
-`queued → running → waiting_approval → running → completed` が通常の経路です。`failed`、`cancelled`、`interrupted`、`budget_extension_pending` を別に保持します。SSE購読でRunを開始することはありません。
+### 4. 実行状態と自律性（Agent モード）
+- 状態遷移: `queued → running → waiting_approval → running → completed`
+- **チェックポイント**: 長時間実行される Agent モードでは 10 ステップごとに中間スナップショットを保存し、任意のチェックポイントからの再開（Resume）が可能です。
+- **停滞検知と自己修復**: 繰り返しの失敗や読み取り停滞を検知し、モデルへ修復ガイダンスを注入します。
+- **階層的要約（Tiered Summary）**: コンテキスト上限に近づいた際、重要タスク状態（ゴールや未完了タスク）を保護しながら過去の会話履歴を段階的に要約圧縮します。
 
-`budget_extension_pending` はAgentモードで予算上限に近づいたときにエンジンが一時停止し、ユーザーに延長確認を求めるための状態。承認で `running` へ、拒否またはタイムアウトで `completed` へ遷移します。
+### 5. セキュリティと隔離（Runner & Egress Proxy）
+- **隔離コンテナ**: シェル実行やファイル操作を行う `execution-runner`、および MCP サーバーを動かす `mcp-runner` は、非 root・read-only filesystem・Capability 削除で起動します。ホストの Docker Socket や DB パスワードはマウントされません。
+- **通信制御**: Runner からの外部接続はすべて `egress-proxy` を経由します。管理者が明示的に許可した公開ドメインへの接続のみを許可し、Private IP へのアクセスは自動的に遮断されます。
+- **Secret 保護**: API Key や秘密情報は AES-GCM で暗号化されて保存されます。
 
-Tool Callは実行前に`executing`をcommitします。再起動後に結果不明になった操作は自動再実行しません。ユーザー確認後の再開では「結果不明」のTool結果をモデルへ渡します。Resume APIは `from_checkpoint` パラメータで任意のチェックポイントから再開でき、`unknown_actions` で `executing` のまま残った各Tool Callを `retry` / `discard` / `mark_unknown` 単位で制御します。外部APIに対するexactly-once実行の保証はありません。
+---
 
-Toolの引数Schema、選択Tool、Scope、現在の権限、定義Fingerprintを実行直前に確認します。実行中の副作用操作は本体で直列化します。固定Runner内のバックグラウンドProcessや外部MCPの副作用は独立して継続し得ます。
+## Desktop 版との設計対比
 
-## 長時間実行の自律性（Agent モード）
-
-Agentモード（`mode_policy.agent`）は次のポリシーフラグで実行ループを制御します：
-
-- `checkpointing` — 中間チェックポイントを `policy.checkpoint_every_steps` ごとに保存（既定10ステップ）。最新20件を保持
-- `stagnation_detection` — 直近12 Tool Callから繰り返し失敗・読み取り停滞・Provider不安定を検知し、ステップ毎に user-role で修復ガイダンスを挿入
-- `strict_verification` — `update_plan` の `phase:<name>` 区切りごとに検証を要求、削除後に `files_list` / `search_files` 確認、`write_file` 上書き前の `read_file`、破壊的ターミナル操作後の check Tool を必須化
-- `budget_extension` — ステップまたはツール上限到達時にユーザーへ延長確認（既定2回まで）。確認なしで停止しないよう UX を強化
-- `background_processes` / `persistent_browser` — 既存通り
-
-階層的要約（`context.tiered_summary`）は active サマリ（4000字まで）と直前の archived rows（最大12件）を分けて管理し、古い会話が要約されても task_state（goal/plan/pending/important_facts/artifacts/open_questions）を head ブロックで優先保持します。
-
-古い会話ターンだけを要約してContextを圧縮します。現在のTool Call/Resultや署名付きブロックは切断しません。現在のターンだけで上限を超えた場合は停止し、新しい会話での続行を促します。要約呼び出しもStepに数えます。要約APIが失敗した場合は古い会話を破棄せず Run を継続し、次の compaction 機会で再試行します（Tier 2 fallback）。
-
-## セキュリティと拡張
-
-AES-GCMでSecretを保存し、用途を追加認証データに含めます。CookieはHttpOnly/SameSite Strict、変更APIはCSRF TokenとOriginを検証します。HTTPS設定時にはSecure Cookieを使用します。
-
-独自APIは管理者Session向けです。外部アプリ向けBearer API KeyやOpenAI互換APIはまだありません。Knowledge、OpenAPI Tool、Pluginの実行口は将来の拡張対象です。
-
-参考仕様: [OpenAI Reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[MCP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)、[Docker Security](https://docs.docker.com/engine/security/)。
+| 概念 | Docker 版 (`apps/server`) | Desktop 版 (`apps/desktop`) |
+| :--- | :--- | :--- |
+| **通信契約** | FastAPI REST API (`/runs/...`) + SSE | Tauri IPC (`#[tauri::command]`) + Window イベント (`run_event`) |
+| **ストレージ** | PostgreSQL + Alembic | SQLite (WAL モード) + sqlx マイグレーション |
+| **秘密情報** | DB 内 AES-GCM 暗号化 | **OS Keychain** (keyring-rs) |
+| **ブラウザ自動化** | コンテナ内 Playwright Chromium | 子プロセス実 Chromium (chromiumoxide) |
+| **ターミナル** | コンテナ内の一時的シェル | ホスト OS の **永続 PTY シェル** |
+| **マルチユーザー** | 管理者アカウント・セッション認証あり | 完全ローカル・単一ユーザー前提（認証不要） |

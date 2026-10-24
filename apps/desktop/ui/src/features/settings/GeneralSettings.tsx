@@ -1,10 +1,12 @@
-import { Brain, Compass, Lock, Zap } from "lucide-react";
+import { Brain, Compass, Keyboard, Lock, Zap } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { useUi } from "@/lib/ui";
 import { useOnboardingGate } from "@/features/onboarding/useOnboardingGate";
 import { Card, Field, Row, Section } from "@/components/layout";
 import { ToggleRow } from "@/components/common";
 import { Select } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { ModelPicker } from "@/features/chat/ModelPicker";
 import { useModels, useProviders } from "@/lib/queries";
 import { useSettingsForm } from "@/lib/settings";
@@ -14,6 +16,8 @@ export function GeneralSettings() {
   const onboarding = useOnboardingGate();
   const models = useModels();
   const providers = useProviders();
+  const sendShortcut = useUi((s) => s.sendShortcut);
+  const setSendShortcut = useUi((s) => s.setSendShortcut);
 
   return (
     <Section>
@@ -55,6 +59,35 @@ export function GeneralSettings() {
               <option value="agent">{t("エージェント")}</option>
             </Select>
           </Field>
+        </div>
+      </Card>
+
+      <Card title={t("メッセージ送信キー")} icon={<Keyboard size={13} />}>
+        <div className="flex flex-col gap-2">
+          <p className="m-0 text-xs text-muted">
+            {t("チャット入力欄でのメッセージ送信ショートカットを設定します。")}
+          </p>
+          <Segmented
+            aria-label={t("メッセージ送信キー")}
+            className="w-full max-w-md"
+          >
+            <SegmentedOption
+              value="enter"
+              label={t("Enter で送信 (Shift+Enter で改行)")}
+              selected={sendShortcut === "enter"}
+              onSelect={() => setSendShortcut("enter")}
+            >
+              {t("Enter で送信 (Shift+Enter で改行)")}
+            </SegmentedOption>
+            <SegmentedOption
+              value="modifier"
+              label={t("⌘ / Ctrl + Enter で送信 (Enter で改行)")}
+              selected={sendShortcut === "modifier"}
+              onSelect={() => setSendShortcut("modifier")}
+            >
+              {t("⌘ / Ctrl + Enter で送信 (Enter で改行)")}
+            </SegmentedOption>
+          </Segmented>
         </div>
       </Card>
 

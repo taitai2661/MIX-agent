@@ -1,5 +1,6 @@
 import { t } from "@/app/i18n";
 import type { Row } from "@/app/api";
+import { Brain, ChevronDown } from "lucide-react";
 
 export function ModeStatus({
   mode,
@@ -68,7 +69,13 @@ export function ReasoningSummary({ text }: { text: string }) {
   if (!text) return null;
   return (
     <details className="reasoning">
-      <summary>{t("思考の要約（Provider提供）")}</summary>
+      <summary>
+        <span className="reasoning-summary-left">
+          <Brain size={14} className="reasoning-icon" />
+          <span>{t("思考の要約（Provider提供）")}</span>
+        </span>
+        <ChevronDown size={14} className="reasoning-chevron" />
+      </summary>
       <p>{text}</p>
     </details>
   );

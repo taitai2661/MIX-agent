@@ -2121,7 +2121,7 @@ async def drive(run_id):
                     is_pinned = run.data.get("requested_model_id") != "auto"
                     transient = is_pinned and is_retryable_provider_error(exc) and first_output_at is None
                     retry_budget = max(0, seconds_limit - elapsed)
-                    if transient and retries < 1 and retry_budget > 0:
+                    if transient and retries < 4 and retry_budget > 0:
                         delay = max(0.0, (retry_until - now()).total_seconds()) if retry_until else 0.5
                         if delay < retry_budget:
                             update(

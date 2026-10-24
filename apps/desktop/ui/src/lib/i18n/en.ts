@@ -236,6 +236,14 @@ export const en: Record<string, string> = {
   "構成": "Configuration",
   "外観": "Appearance",
   "一般": "General",
+  "メッセージ送信キー": "Message send key",
+  "チャット入力欄でのメッセージ送信ショートカットを設定します。":
+    "Configure the keyboard shortcut used to send messages in the chat composer.",
+  "Enter で送信 (Shift+Enter で改行)": "Send with Enter (Shift+Enter for newline)",
+  "⌘ / Ctrl + Enter で送信 (Enter で改行)":
+    "Send with ⌘ / Ctrl + Enter (Enter for newline)",
+  "標準幅に戻す": "Reset panel width",
+  "パネル幅を拡大": "Expand panel width",
   "ネットワーク": "Network",
   "アップデート": "Updates",
   "バックアップ": "Backup",
