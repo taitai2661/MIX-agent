@@ -469,44 +469,6 @@ impl ShellSession {
         };
         if !done {
             // Drain whatever arrived so a timeout does not corrupt the next call.
-            #[cfg(test)]
-            {
-                let transcript = self.output.lock().await;
-                let text = String::from_utf8_lossy(&transcript);
-                let sentinel_at = find_line(&text, &sentinel);
-                let marker_lines: Vec<String> = text
-                    .lines()
-                    .filter_map(|line| {
-                        let clean = strip_terminal_escape_sequences(line);
-                        if clean.contains(&start_marker) {
-                            Some(format!("start:{:?}", clean.trim()))
-                        } else if clean.contains(&sentinel) {
-                            Some(format!("done:{:?}", clean.trim()))
-                        } else if clean.contains(&cwd_marker) {
-                            Some(format!(
-                                "cwd-marker-present:{}",
-                                clean.contains(&cwd_marker)
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let cwd_after = sentinel_at
-                    .map(|at| {
-                        text.lines()
-                            .skip(at + 1)
-                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
-                    })
-                    .unwrap_or(false);
-                eprintln!(
-                    "[PTY marker debug] start={} done={} cwd_after_done={} lines={:?}",
-                    find_line(&text, &start_marker).is_some(),
-                    sentinel_at.is_some(),
-                    cwd_after,
-                    marker_lines
-                );
-            }
             self.output.lock().await.clear();
             return Err(format!("timed out after {max_ms} ms"));
         }
@@ -557,15 +519,18 @@ impl ShellSession {
     }
 }
 
-/// Index of the line whose trimmed content is exactly `needle`.
+/// Index of a line whose trimmed content is `needle` or ends with `needle`.
 ///
-/// Matching whole lines is what separates a real marker from the shell's echo
-/// of the command that printed it. ConPTY may prepend cursor-control sequences
-/// to a marker line, so those are removed for comparison only.
+/// Matching the suffix separates the actual marker from the shell's echoed
+/// `printf` command (which has a closing quote after the marker). Git Bash's
+/// ConPTY can print the marker over the end of the prompt/echo line instead of
+/// starting a new line. ANSI cursor-control sequences are removed for matching
+/// only; the raw transcript is preserved.
 fn find_line(text: &str, needle: &str) -> Option<usize> {
     text.lines().enumerate().find_map(|(index, line)| {
         let normalized = strip_terminal_escape_sequences(line);
-        (normalized.trim_end_matches('\r') == needle).then_some(index)
+        let normalized = normalized.trim_end_matches('\r');
+        (normalized == needle || normalized.ends_with(needle)).then_some(index)
     })
 }
 
@@ -1176,6 +1141,24 @@ mod tests {
             "\u{1b}[?25l\u{1b}[20;1H__MIXD_DONE_1__\r",
         ]
         .join("\n");
+        assert_eq!(find_line(&transcript, done), Some(2));
+        assert_eq!(
+            slice_output(&transcript, start, done),
+            "hello from the command"
+        );
+    }
+
+    #[test]
+    fn protocol_markers_match_at_the_end_of_prompt_prefixed_conpty_lines() {
+        let start = "__MIXD_START_1__";
+        let done = "__MIXD_DONE_1__";
+        let transcript = [
+            "$ printf '\\n%s\\n' '__MIXD_START_1__'__MIXD_START_1__",
+            "hello from the command",
+            "$ printf '\\n%s\\n' '__MIXD_DONE_1__'__MIXD_DONE_1__",
+        ]
+        .join("\n");
+        assert_eq!(find_line(&transcript, start), Some(0));
         assert_eq!(find_line(&transcript, done), Some(2));
         assert_eq!(
             slice_output(&transcript, start, done),
