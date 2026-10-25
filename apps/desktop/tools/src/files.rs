@@ -555,6 +555,7 @@ mod tests {
         assert!(FilesTool::safe_join(&root, "a/../../outside.txt").is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn safe_join_blocks_symlink_escape() {
         let root = temp_root("join-symlink");
@@ -562,9 +563,7 @@ mod tests {
             std::env::temp_dir().join(format!("mixd-files-outside-{}", std::process::id()));
         std::fs::create_dir_all(&outside).unwrap();
         let link = root.join("link");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &link).unwrap();
-        #[cfg(unix)]
         assert!(FilesTool::safe_join(&root, "link").is_err());
     }
 
