@@ -38,7 +38,7 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 # depends on reqwest 0.12 via tauri-plugin-http/updater — NOT 0.13, so no bump).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "json", "chrono", "uuid"] }
-rand = "0.8"
+rand = "0.10"
 base64 = "0.22"
 # `dirs` 6 (unified; was a mix of `dirs 5`): same data_dir/config_dir API used
 # in app/src/lib.rs and storage migrations. `directories` was considered but
