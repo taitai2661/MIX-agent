@@ -157,6 +157,7 @@ export const Composer = memo(function Composer(props: {
   );
   const [temporaryMode, setTemporaryMode] = useState(false);
   const [allowTools, setAllowTools] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const isComposingRef = useRef(false);
   const compositionEndTimestampRef = useRef(0);
@@ -250,6 +251,38 @@ export const Composer = memo(function Composer(props: {
       el.setSelectionRange(nextPos, nextPos);
     });
   }, []);
+
+  const handleDropFiles = useCallback(
+    async (files: File[]) => {
+      const images = files.filter((f) => f.type.startsWith("image/"));
+      const nonImages = files.filter((f) => !f.type.startsWith("image/"));
+      if (images.length > 0) {
+        await addImageFiles(images);
+      }
+      if (nonImages.length > 0) {
+        for (const file of nonImages) {
+          if (file.size <= 128 * 1024) {
+            try {
+              const text = await file.text();
+              setDraft((prev) => {
+                const prefix = prev ? prev + "\n\n" : "";
+                return `${prefix}# ${file.name}\n\`\`\`\n${text}\n\`\`\``;
+              });
+            } catch {
+              setDraft((prev) =>
+                prev ? `${prev} @${file.name}` : `@${file.name} `,
+              );
+            }
+          } else {
+            setDraft((prev) =>
+              prev ? `${prev} @${file.name}` : `@${file.name} `,
+            );
+          }
+        }
+      }
+    },
+    [addImageFiles],
+  );
 
   // Draft persistence: one slot per conversation, via `lib/storage.ts`
   // (best-effort). Switching threads used to either drop the draft or leak it
@@ -417,13 +450,40 @@ export const Composer = memo(function Composer(props: {
     <div className="border-t border-line bg-bg px-4 pb-4 pt-3">
       <div className="mx-auto flex w-full max-w-content flex-col gap-2">
         <div
+          onDragOver={(e) => {
+            if ([...(e.dataTransfer?.types ?? [])].includes("Files")) {
+              e.preventDefault();
+              setIsDragging(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+            setIsDragging(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            const files = [...(e.dataTransfer?.files ?? [])];
+            if (files.length > 0) {
+              void handleDropFiles(files);
+            }
+          }}
           className={cn(
-            "flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-sm",
+            "relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-sm",
             "transition-[border-color,box-shadow] duration-200 ease-out",
             "hover:border-line-strong",
             "focus-within:border-brand/60 focus-within:shadow-md focus-within:ring-4 focus-within:ring-brand/10",
+            isDragging && "border-brand ring-4 ring-brand/20 bg-brand-soft/20",
           )}
         >
+          {isDragging && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-brand bg-surface/90 backdrop-blur-xs">
+              <Paperclip size={22} className="text-brand animate-bounce" />
+              <span className="mt-1 text-xs font-semibold text-brand">
+                {t("ファイルをドロップして添付")}
+              </span>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5 border-b border-line px-3 py-2">
               {attachments.map((a, i) => (
@@ -529,17 +589,17 @@ export const Composer = memo(function Composer(props: {
                 }
               }}
               onDrop={(e) => {
-                const files = [...(e.dataTransfer?.files ?? [])].filter((f) =>
-                  f.type.startsWith("image/"),
-                );
+                e.preventDefault();
+                setIsDragging(false);
+                const files = [...(e.dataTransfer?.files ?? [])];
                 if (files.length > 0) {
-                  e.preventDefault();
-                  void addImageFiles(files);
+                  void handleDropFiles(files);
                 }
               }}
               onDragOver={(e) => {
                 if ([...(e.dataTransfer?.types ?? [])].includes("Files")) {
                   e.preventDefault();
+                  setIsDragging(true);
                 }
               }}
               onKeyDown={(e) => {
@@ -616,7 +676,11 @@ export const Composer = memo(function Composer(props: {
                   }
                 }
 
-                if (mentionQuery === null && slashQuery === null && !isImeComposing) {
+                if (
+                  mentionQuery === null &&
+                  slashQuery === null &&
+                  !isImeComposing
+                ) {
                   if (e.key === "ArrowUp") {
                     const el = textareaRef.current;
                     const inHistory = historyIndexRef.current >= 0;
@@ -641,7 +705,10 @@ export const Composer = memo(function Composer(props: {
                         }
                       }
                     }
-                  } else if (e.key === "ArrowDown" && historyIndexRef.current >= 0) {
+                  } else if (
+                    e.key === "ArrowDown" &&
+                    historyIndexRef.current >= 0
+                  ) {
                     const nextIndex = historyIndexRef.current - 1;
                     e.preventDefault();
                     if (nextIndex >= 0) {

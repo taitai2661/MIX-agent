@@ -22,7 +22,6 @@ export const en: Record<string, string> = {
   "タスクを作成できませんでした": "Could not create the task",
   "チャットを検索": "Search chats",
   "タスクを検索": "Search tasks",
-  "すべて": "All",
   "チャット履歴がありません": "No chat history yet",
   "タスクがありません": "No tasks yet",
   "一致するチャットがありません": "No chats match your search",
@@ -257,7 +256,8 @@ export const en: Record<string, string> = {
   "メッセージ送信キー": "Message send key",
   "チャット入力欄でのメッセージ送信ショートカットを設定します。":
     "Configure the keyboard shortcut used to send messages in the chat composer.",
-  "Enter で送信 (Shift+Enter で改行)": "Send with Enter (Shift+Enter for newline)",
+  "Enter で送信 (Shift+Enter で改行)":
+    "Send with Enter (Shift+Enter for newline)",
   "⌘ / Ctrl + Enter で送信 (Enter で改行)":
     "Send with ⌘ / Ctrl + Enter (Enter for newline)",
   "標準幅に戻す": "Reset panel width",
@@ -266,7 +266,8 @@ export const en: Record<string, string> = {
   "アップデート": "Updates",
   "アップデート状態": "Update status",
   "最終確認": "Last checked",
-  "GitHub Releases 経由で最新リリースを確認します": "Checks for latest releases via GitHub Releases",
+  "GitHub Releases 経由で最新リリースを確認します":
+    "Checks for latest releases via GitHub Releases",
   "確認中...": "Checking...",
   "今すぐ更新を確認": "Check for updates",
   "お使いのバージョンは最新です": "You are on the latest version",
@@ -277,8 +278,10 @@ export const en: Record<string, string> = {
   "ダウンロード中...": "Downloading...",
   "リリースノート": "Release notes",
   "アップデート設定": "Update settings",
-  "起動時にバックグラウンドで新しいバージョンを確認します": "Check for new versions in the background on startup",
-  "アプリの改善のため匿名の診断情報を共有します": "Share anonymous diagnostics to improve the app",
+  "起動時にバックグラウンドで新しいバージョンを確認します":
+    "Check for new versions in the background on startup",
+  "アプリの改善のため匿名の診断情報を共有します":
+    "Share anonymous diagnostics to improve the app",
   "バックアップ": "Backup",
   "設定セクションを選択": "Select a settings section",
 
@@ -837,4 +840,11 @@ export const en: Record<string, string> = {
   "ローカル実行と安全設計": "Local Execution & Safety First",
   "会話履歴や設定はあなたの端末ローカルに安全に保存されます。ファイルの編集やシェル実行などの操作は、必ず事前に承認を求める安全設計になっています。":
     "Your conversations and settings are stored safely on your local device. Operations such as file edits and shell executions are designed to require your approval beforehand.",
+
+  // UI Polish & Docking
+  "右側に固定表示": "Dock to side",
+  "オーバーレイ表示に切り替え": "Switch to overlay",
+  "最新のメッセージへスクロール": "Scroll to latest message",
+  "生成中… 最新へ": "Generating… Jump to latest",
+  "ファイルをドロップして添付": "Drop files to attach",
 };

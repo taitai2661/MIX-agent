@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+// @ts-expect-error mjs file without d.ts
 import { mergeManifests } from "../../../scripts/merge-updater-manifests.mjs";
 
 describe("mergeManifests", () => {
@@ -25,7 +32,7 @@ describe("mergeManifests", () => {
               url: "mix-agent-desktop_0.2.0_aarch64.app.tar.gz",
             },
           },
-        })
+        }),
       );
 
       writeFileSync(
@@ -40,7 +47,7 @@ describe("mergeManifests", () => {
               url: "mix-agent-desktop_0.2.0_x64-setup.nsis.zip",
             },
           },
-        })
+        }),
       );
 
       const outFile = join(tmp, "latest.json");
@@ -55,12 +62,12 @@ describe("mergeManifests", () => {
       expect(result?.platforms["darwin-aarch64"]).toBeDefined();
       expect(result?.platforms["darwin-aarch64"].signature).toBe("mac-sig");
       expect(result?.platforms["darwin-aarch64"].url).toBe(
-        "https://github.com/taitai2661/MIX-agent/releases/download/v0.2.0/mix-agent-desktop_0.2.0_aarch64.app.tar.gz"
+        "https://github.com/taitai2661/MIX-agent/releases/download/v0.2.0/mix-agent-desktop_0.2.0_aarch64.app.tar.gz",
       );
       expect(result?.platforms["windows-x86_64"]).toBeDefined();
       expect(result?.platforms["windows-x86_64"].signature).toBe("win-sig");
       expect(result?.platforms["windows-x86_64"].url).toBe(
-        "https://github.com/taitai2661/MIX-agent/releases/download/v0.2.0/mix-agent-desktop_0.2.0_x64-setup.nsis.zip"
+        "https://github.com/taitai2661/MIX-agent/releases/download/v0.2.0/mix-agent-desktop_0.2.0_x64-setup.nsis.zip",
       );
 
       const saved = JSON.parse(readFileSync(outFile, "utf-8"));

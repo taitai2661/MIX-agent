@@ -22,7 +22,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { relativeTime, threadGroup, type ThreadGroup } from "@/lib/format";
 import { loadPinnedThreadIds, togglePinnedThreadId } from "@/lib/pinnedThreads";
-import { useUi, surfaceForMode, type View, type ThreadFilter } from "@/lib/ui";
+import { useUi, surfaceForMode, type View } from "@/lib/ui";
 import type { ConversationSummary } from "@/lib/types";
 import {
   CONVERSATIONS_QUERY_KEY,
@@ -34,7 +34,6 @@ import { useApplySettings } from "@/lib/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, SearchField } from "@/components/ui/input";
-import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { NavRow, SectionLabel } from "@/components/layout";
 import { DeleteIconButton, SearchEmptyState } from "@/components/common";
 import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
@@ -61,15 +60,6 @@ const GROUP_LABEL: Record<ExtendedThreadGroup, string> = {
   yesterday: "昨日",
   week: "過去7日",
   older: "それより前",
-};
-
-/** Order and wording of the thread-list filter. `all` first so it is the
- *  default reading; the two surface values mirror `ThreadFilter`. */
-const THREAD_FILTERS: ThreadFilter[] = ["all", "chat", "desktop-agent"];
-const THREAD_FILTER_LABEL: Record<ThreadFilter, string> = {
-  all: "すべて",
-  chat: "チャット",
-  "desktop-agent": "エージェント",
 };
 
 /** Run modes, shown as words rather than the wire values. */
@@ -304,7 +294,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
             </div>
             <Button
               variant="ghost"
-              size="xs"
+              size="sm"
               onClick={() => setView("projects")}
               className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
               title={t("プロジェクトを変更")}
@@ -546,9 +536,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
           <EmptyState
             compact
             title={
-              isAgent
-                ? t("タスクがありません")
-                : t("チャット履歴がありません")
+              isAgent ? t("タスクがありません") : t("チャット履歴がありません")
             }
             sub={
               isAgent

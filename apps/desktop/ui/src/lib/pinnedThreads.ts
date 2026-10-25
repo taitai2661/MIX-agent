@@ -10,14 +10,22 @@ export function loadPinnedThreadIds(store?: Storage | null): string[] {
   return getJSON<string[]>(PINNED_THREADS_KEY, [], isStringArray, store);
 }
 
-export function savePinnedThreadIds(ids: string[], store?: Storage | null): void {
+export function savePinnedThreadIds(
+  ids: string[],
+  store?: Storage | null,
+): void {
   setJSON(PINNED_THREADS_KEY, ids, store);
 }
 
-export function togglePinnedThreadId(id: string, store?: Storage | null): string[] {
+export function togglePinnedThreadId(
+  id: string,
+  store?: Storage | null,
+): string[] {
   const current = loadPinnedThreadIds(store);
   const exists = current.includes(id);
-  const next = exists ? current.filter((item) => item !== id) : [id, ...current];
+  const next = exists
+    ? current.filter((item) => item !== id)
+    : [id, ...current];
   savePinnedThreadIds(next, store);
   return next;
 }

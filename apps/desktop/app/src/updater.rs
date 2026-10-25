@@ -120,7 +120,9 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
         tokio::time::sleep(std::time::Duration::from_secs(CHECK_DELAY_SECS)).await;
         // Respect settings.auto_update: skip if user turned off automatic updates.
         if let Some(state) = handle.try_state::<crate::AppState>() {
-            if let Ok(settings) = crate::commands::settings::read_settings(state.storage.pool()).await {
+            if let Ok(settings) =
+                crate::commands::settings::read_settings(state.storage.pool()).await
+            {
                 if !settings.auto_update {
                     tracing::info!("auto-update is disabled in settings; skipping launch check");
                     return;

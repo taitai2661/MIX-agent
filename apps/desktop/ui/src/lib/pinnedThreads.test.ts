@@ -1,9 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import {
-  loadPinnedThreadIds,
-  savePinnedThreadIds,
-  togglePinnedThreadId,
-} from "./pinnedThreads";
+import { loadPinnedThreadIds, togglePinnedThreadId } from "./pinnedThreads";
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();

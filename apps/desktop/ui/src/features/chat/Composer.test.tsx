@@ -474,4 +474,28 @@ describe("Composer", () => {
     fireEvent.keyDown(box, { key: "ArrowDown" });
     expect(box).toHaveValue("");
   });
+
+  it("handles dragging and dropping files into composer", async () => {
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={vi.fn()}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    const file = new File(["hello world"], "test.txt", { type: "text/plain" });
+
+    fireEvent.dragOver(box, {
+      dataTransfer: { types: ["Files"] },
+    });
+    fireEvent.drop(box, {
+      dataTransfer: { files: [file] },
+    });
+  });
 });

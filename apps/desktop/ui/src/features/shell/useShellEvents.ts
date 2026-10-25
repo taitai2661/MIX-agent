@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { api, listenRunEvents } from "@/lib/api";
@@ -8,13 +8,7 @@ import {
   PENDING_APPROVALS_QUERY_KEY,
 } from "@/lib/queries";
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
-import type { UpdateNotice } from "@/lib/types";
 import { useUpdater } from "@/lib/updater";
-
-/** Mirrors `app/tauri.conf.json` `plugins.updater.active`. Flip to `true`
- *  only when endpoints + pubkey are configured there; otherwise the update
- *  banner and its install button are dead UI. */
-const UPDATER_ENABLED = false;
 
 /** Create a thread from whatever mode / model / project is selected *now*.
  *

@@ -23,9 +23,17 @@ describe("WindowControls", () => {
     document.documentElement.dataset.platform = "other";
     render(<WindowControls />);
 
-    expect(screen.getByRole("toolbar", { name: /ウィンドウ操作|window controls/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /最小化|minimize/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /最大化|maximize/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /閉じる|close/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("toolbar", { name: /ウィンドウ操作|window controls/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /最小化|minimize/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /最大化|maximize/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /閉じる|close/i }),
+    ).toBeInTheDocument();
   });
 });

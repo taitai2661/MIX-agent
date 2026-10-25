@@ -558,10 +558,7 @@ pub fn strip_dsml_residue(text: &str) -> String {
         // Remove whole invoke blocks conservatively: from an invoke open to
         // its matching close when both exist. Unmatched fragments are
         // removed as plain markers below.
-        loop {
-            let Some(open) = out.find(dialect.invoke_open) else {
-                break;
-            };
+        while let Some(open) = out.find(dialect.invoke_open) {
             let Some(close_rel) = out[open..].find(dialect.invoke_close) else {
                 break;
             };

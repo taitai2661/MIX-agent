@@ -168,8 +168,11 @@ export function UpdateSettings() {
                 </div>
                 {downloadProgress?.total_bytes && (
                   <p className="mt-1.5 text-right font-mono text-[10px] text-muted">
-                    {(downloadProgress.downloaded_bytes / 1024 / 1024).toFixed(1)} /{" "}
-                    {(downloadProgress.total_bytes / 1024 / 1024).toFixed(1)} MB
+                    {(downloadProgress.downloaded_bytes / 1024 / 1024).toFixed(
+                      1,
+                    )}{" "}
+                    / {(downloadProgress.total_bytes / 1024 / 1024).toFixed(1)}{" "}
+                    MB
                   </p>
                 )}
               </div>
@@ -182,7 +185,7 @@ export function UpdateSettings() {
                   {t("リリースノート")}
                 </span>
                 <div className="max-h-48 overflow-y-auto rounded-md border border-line bg-surface p-3 text-xs">
-                  <Markdown content={update.notes} />
+                  <Markdown>{update.notes}</Markdown>
                 </div>
               </div>
             )}

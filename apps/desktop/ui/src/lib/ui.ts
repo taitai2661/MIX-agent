@@ -125,6 +125,10 @@ interface UiState {
   /** Key shortcut used to send messages (Enter vs Cmd/Ctrl+Enter). */
   sendShortcut: SendShortcut;
   setSendShortcut: (shortcut: SendShortcut) => void;
+  /** Whether the right panel is docked (split view) or floating overlay. */
+  rightPanelDocked: boolean;
+  setRightPanelDocked: (docked: boolean) => void;
+  toggleRightPanelDocked: () => void;
   /** Right panel custom or toggled width in pixels. */
   rightPanelWidth: number;
   setRightPanelWidth: (width: number) => void;
@@ -160,6 +164,7 @@ const SURFACE_KEY = "mix-agent-surface";
 const THREAD_FILTER_KEY = "mix-agent-thread-filter";
 const SEND_SHORTCUT_KEY = "mix-agent-send-shortcut";
 const RIGHT_PANEL_WIDTH_KEY = "mix-agent-right-panel-width";
+const RIGHT_PANEL_DOCKED_KEY = "mix-agent-right-panel-docked";
 const CHAT_CONVERSATION_KEY = "mix-agent-chat-conversation-id";
 const AGENT_CONVERSATION_KEY = "mix-agent-agent-conversation-id";
 
@@ -208,6 +213,10 @@ function readRightPanel(): RightPanel {
   // explicitly opens a side panel. Defaulting to "activity" squeezed every
   // fresh install into a narrow transcript.
   return "none";
+}
+
+function readRightPanelDocked(): boolean {
+  return readBoolean(RIGHT_PANEL_DOCKED_KEY, true);
 }
 
 const SETTING_TABS: SettingsTab[] = [
@@ -419,6 +428,17 @@ export const useUi = create<UiState>((set) => ({
     setString(SEND_SHORTCUT_KEY, sendShortcut);
     set({ sendShortcut });
   },
+  rightPanelDocked: readRightPanelDocked(),
+  setRightPanelDocked: (rightPanelDocked) => {
+    setBoolean(RIGHT_PANEL_DOCKED_KEY, rightPanelDocked);
+    set({ rightPanelDocked });
+  },
+  toggleRightPanelDocked: () =>
+    set((state) => {
+      const next = !state.rightPanelDocked;
+      setBoolean(RIGHT_PANEL_DOCKED_KEY, next);
+      return { rightPanelDocked: next };
+    }),
   rightPanelWidth: readRightPanelWidth(),
   setRightPanelWidth: (rightPanelWidth) => {
     setString(RIGHT_PANEL_WIDTH_KEY, String(rightPanelWidth));
@@ -467,6 +487,7 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   THREAD_FILTER_KEY,
   SEND_SHORTCUT_KEY,
   RIGHT_PANEL_WIDTH_KEY,
+  RIGHT_PANEL_DOCKED_KEY,
   CHAT_CONVERSATION_KEY,
   AGENT_CONVERSATION_KEY,
 ]);
@@ -478,7 +499,8 @@ if (typeof window !== "undefined") {
     switch (event.key) {
       case CHAT_CONVERSATION_KEY: {
         const next = readStoredConversation(CHAT_CONVERSATION_KEY);
-        if (next !== state.chatConversationId) state.setChatConversationId(next);
+        if (next !== state.chatConversationId)
+          state.setChatConversationId(next);
         break;
       }
       case AGENT_CONVERSATION_KEY: {
@@ -521,6 +543,11 @@ if (typeof window !== "undefined") {
       case RIGHT_PANEL_WIDTH_KEY: {
         const next = readRightPanelWidth();
         if (next !== state.rightPanelWidth) state.setRightPanelWidth(next);
+        break;
+      }
+      case RIGHT_PANEL_DOCKED_KEY: {
+        const next = readRightPanelDocked();
+        if (next !== state.rightPanelDocked) state.setRightPanelDocked(next);
         break;
       }
       case RIGHT_PANEL_KEY: {

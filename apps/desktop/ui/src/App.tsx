@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Folder,
   FolderTree,
   PanelLeft,
   PanelRight,
@@ -15,7 +16,6 @@ import {
   Sparkles,
 } from "lucide-react";
 import { api } from "./lib/api";
-import { errorMessage } from "./lib/errors";
 import { useUi, type View } from "./lib/ui";
 import { t } from "./lib/i18n";
 import { normalizeTheme, storedTheme } from "./lib/theme";
@@ -282,15 +282,30 @@ export function App() {
           {view === "chat"
             ? (threadTitle ?? (agentSurface ? t("タスク") : t("チャット")))
             : t(VIEW_TITLES[view])}
-          {view === "chat" && agentSurface && activeProject && (
-            <span
-              className="ms-2 hidden max-w-40 truncate align-middle text-xs font-normal text-faint sm:inline-block"
-              title={activeProject.rootPath ?? undefined}
-            >
-              <span className="me-1 text-line">·</span>
-              {activeProject.name}
-            </span>
-          )}
+          {view === "chat" &&
+            agentSurface &&
+            (activeProject ? (
+              <button
+                type="button"
+                onClick={() => setView("projects")}
+                className="ms-2 hidden max-w-48 truncate align-middle text-xs font-normal text-faint hover:text-fg hover:bg-hover px-1.5 py-0.5 rounded transition-colors sm:inline-flex items-center gap-1"
+                title={`${t("プロジェクトを変更")}: ${activeProject.rootPath ?? activeProject.name}`}
+              >
+                <span className="text-line">·</span>
+                <Folder size={11} className="text-muted shrink-0" />
+                <span className="truncate">{activeProject.name}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setView("projects")}
+                className="ms-2 hidden truncate align-middle text-2xs font-normal text-warning hover:text-warning/80 hover:bg-warning-soft px-1.5 py-0.5 rounded border border-warning/30 transition-colors sm:inline-flex items-center gap-1"
+                title={t("プロジェクトを選択")}
+              >
+                <span className="text-line">·</span>
+                <span>{t("プロジェクト未選択")}</span>
+              </button>
+            ))}
         </h1>
 
         <div className="flex shrink-0 items-center gap-1.5">
@@ -417,8 +432,14 @@ export function App() {
                   </div>
                   {downloadProgress.total_bytes && (
                     <span className="text-[10px] text-muted font-mono">
-                      {(downloadProgress.downloaded_bytes / 1024 / 1024).toFixed(1)} /{" "}
-                      {(downloadProgress.total_bytes / 1024 / 1024).toFixed(1)} MB
+                      {(
+                        downloadProgress.downloaded_bytes /
+                        1024 /
+                        1024
+                      ).toFixed(1)}{" "}
+                      /{" "}
+                      {(downloadProgress.total_bytes / 1024 / 1024).toFixed(1)}{" "}
+                      MB
                     </span>
                   )}
                 </div>

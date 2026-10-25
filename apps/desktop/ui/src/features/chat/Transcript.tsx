@@ -1,5 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Bot, CornerDownLeft, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  ArrowDown,
+  Bot,
+  CornerDownLeft,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { t } from "@/lib/i18n";
 import { type RunTimeline } from "@/lib/runEvents";
 import {
@@ -202,9 +208,20 @@ export function Transcript({
             if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
             setStuck(true);
           }}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 border-line-strong shadow-pop"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border-line-strong bg-surface/90 px-3.5 py-1.5 shadow-pop backdrop-blur-md transition-all hover:scale-105 active:scale-95"
+          title={t("最新のメッセージへスクロール")}
         >
-          <ArrowDown size={13} aria-hidden="true" /> {t("最新へ")}
+          {showLive ? (
+            <span className="relative flex size-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-brand" />
+            </span>
+          ) : (
+            <ArrowDown size={13} aria-hidden="true" />
+          )}
+          <span className="text-xs font-medium">
+            {showLive ? t("生成中… 最新へ") : t("最新へ")}
+          </span>
         </Button>
       )}
     </div>

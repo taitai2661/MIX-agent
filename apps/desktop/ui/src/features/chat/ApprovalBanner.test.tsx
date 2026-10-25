@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { api } from "@/lib/api";
 import { setLanguage } from "@/lib/i18n";
 import { ApprovalBanner } from "./ApprovalBanner";
-import type { ApprovalRequest } from "@/lib/runEvents";
+import type { PendingApproval } from "@/lib/runEvents";
 
 beforeAll(() => setLanguage("ja"));
 
@@ -14,8 +14,9 @@ vi.mock("@/lib/api", () => ({
 }));
 
 describe("ApprovalBanner", () => {
-  const approval: ApprovalRequest = {
+  const approval: PendingApproval = {
     approvalId: "app-123",
+    toolCallId: "tc-123",
     name: "terminal",
     arguments: { command: "npm test" },
   };
@@ -43,6 +44,23 @@ describe("ApprovalBanner", () => {
     render(<ApprovalBanner approval={approval} />);
     const rejectBtn = screen.getByText("拒否");
     fireEvent.click(rejectBtn);
+    expect(api.decideApproval).toHaveBeenCalledWith({
+      id: "app-123",
+      grant: false,
+      remember: false,
+    });
+  });
+
+  it("handles Cmd+Enter to approve and Escape to reject via keyboard", async () => {
+    render(<ApprovalBanner approval={approval} />);
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    expect(api.decideApproval).toHaveBeenCalledWith({
+      id: "app-123",
+      grant: true,
+      remember: false,
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(api.decideApproval).toHaveBeenCalledWith({
       id: "app-123",
       grant: false,

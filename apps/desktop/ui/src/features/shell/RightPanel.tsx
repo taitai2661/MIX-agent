@@ -1,5 +1,13 @@
 import { useEffect, useRef, type Ref } from "react";
-import { Activity, GitBranch, Maximize2, Minimize2, X } from "lucide-react";
+import {
+  Activity,
+  Columns2,
+  GitBranch,
+  Maximize2,
+  Minimize2,
+  PanelRight,
+  X,
+} from "lucide-react";
 import { t } from "@/lib/i18n";
 import { useUi, WIDE_RIGHT_PANEL_WIDTH } from "@/lib/ui";
 import { ActivityPanel } from "@/features/chat/ActivityPanel";
@@ -14,6 +22,8 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
   const setRightPanel = useUi((s) => s.setRightPanel);
   const rightPanelWidth = useUi((s) => s.rightPanelWidth);
   const toggleRightPanelWidth = useUi((s) => s.toggleRightPanelWidth);
+  const isDocked = useUi((s) => s.rightPanelDocked);
+  const toggleDocked = useUi((s) => s.toggleRightPanelDocked);
   const isWide = rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH;
   const asideRef = useRef<HTMLElement | null>(null);
   const returnFocusRef = useRef<Element | null>(null);
@@ -69,20 +79,22 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
 
   const tabbed = rightPanel === "activity" || rightPanel === "changes";
 
-  // Overlay drawer, not a flex sibling: opening or closing it never changes
-  // the centre column's width, so the transcript and composer stay exactly
-  // where they are — the single biggest source of "unstable" layout shifts.
-  // (The parent shell row is `relative`; this anchors to its right edge.)
+  // Can be rendered either as a docked flex sibling (split-view) or as an
+  // overlay drawer depending on `isDocked`.
   return (
     <aside
       ref={asideRef as Ref<HTMLElement>}
       tabIndex={-1}
       data-side-panel=""
       style={panelStyle(rightPanelWidth, cap)}
-      role="dialog"
+      role={isDocked ? "region" : "dialog"}
       aria-modal="false"
       aria-label={t("サイドパネル")}
-      className="absolute inset-y-0 right-0 z-30 flex max-w-[85vw] flex-col overflow-hidden border-l border-line bg-bg shadow-pop animate-fade"
+      className={
+        isDocked
+          ? "relative z-10 flex shrink-0 flex-col overflow-hidden border-l border-line bg-bg animate-fade"
+          : "absolute inset-y-0 right-0 z-30 flex max-w-[85vw] flex-col overflow-hidden border-l border-line bg-bg shadow-pop animate-fade"
+      }
     >
       {tabbed && (
         <div className="flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-bg/85 px-3 backdrop-blur-md">
@@ -112,6 +124,24 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
               {t("変更")}
             </SegmentedOption>
           </Segmented>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleDocked}
+            title={
+              isDocked ? t("オーバーレイ表示に切り替え") : t("右側に固定表示")
+            }
+            aria-label={
+              isDocked ? t("オーバーレイ表示に切り替え") : t("右側に固定表示")
+            }
+            aria-pressed={isDocked}
+          >
+            {isDocked ? (
+              <PanelRight size={13} className="text-brand" />
+            ) : (
+              <Columns2 size={13} />
+            )}
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"

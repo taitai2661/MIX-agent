@@ -131,7 +131,7 @@ pub async fn get_recent_logs(lines: Option<usize>) -> Result<String, String> {
             }
         }
     }
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|a| std::cmp::Reverse(a.0));
     let Some((_, latest_path)) = files.first() else {
         return Ok("no log file found".to_string());
     };
