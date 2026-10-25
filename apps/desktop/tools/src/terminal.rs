@@ -471,6 +471,29 @@ impl ShellSession {
         };
         if !done {
             // Drain whatever arrived so a timeout does not corrupt the next call.
+            #[cfg(all(test, target_os = "windows"))]
+            if command == "echo alive" {
+                let output = self.output.lock().await;
+                let text = String::from_utf8_lossy(&output);
+                let sentinel_at = find_line(&text, &sentinel);
+                let cwd_after_done = sentinel_at
+                    .map(|at| {
+                        text.lines()
+                            .skip(at + 1)
+                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
+                    })
+                    .unwrap_or(false);
+                eprintln!(
+                    "[PTY timeout summary] bytes={} lines={} start={} done={} cwd_after_done={} command_echo={} output_text={}",
+                    output.len(),
+                    text.lines().count(),
+                    find_line(&text, &start_marker).is_some(),
+                    sentinel_at.is_some(),
+                    cwd_after_done,
+                    text.contains("echo alive"),
+                    text.contains("alive")
+                );
+            }
             self.output.lock().await.clear();
             return Err(format!("timed out after {max_ms} ms"));
         }
