@@ -23,7 +23,7 @@ sqlx.workspace = true
 reqwest = { workspace = true, features = ["stream", "gzip"] }
 portable-pty = "0.8"
 url = "2.5"
-ipnetwork = "0.20"
+ipnetwork = "0.21"
 regex = "1.10"
 ddgs = "0.1"
 base64.workspace = true
