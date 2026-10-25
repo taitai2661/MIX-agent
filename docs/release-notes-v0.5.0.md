@@ -22,7 +22,7 @@ Desktop版は単一ユーザーのローカル利用を想定したアプリで�
 - OpenAI / Anthropic / GeminiなどのProviderとモデル選択、Capability Probe、Autoルーティング
 - Tool Registryと権限ゲート、Browser Operator、Remote MCP、Skills、Knowledge、Memory
 - Agentの実行予算・進捗表示、チェックポイントからの再開、停滞検知
-- OSトレイ、通知、`mix-agent-desktop://` deep link、バックアップ、Keychain連携
+- OSメニューからNew Chat／Settings／Backup／Diagnostics／Update確認を操作でき、OSトレイ・通知・`mix-agent-desktop://` deep link・バックアップ・Keychain連携にも対応
 - UIの差分表示、スラッシュコマンド、`@`メンション、Tool実行のインライン表示
 
 **自動更新について:** DesktopアプリはGitHub Releasesの`latest.json`を参照する設定です。更新用成果物は署名が必要です。GitHub Actionsで署名済みの各OS用マニフェスト・アセットが生成され、公開後に実機で更新確認ができることをリリース時に確認してください。

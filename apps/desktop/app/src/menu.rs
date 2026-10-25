@@ -47,11 +47,19 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let quit = PredefinedMenuItem::quit(app, Some("Quit MIX-agent"))?;
     let sep = || PredefinedMenuItem::separator(app);
 
+    #[cfg(target_os = "macos")]
     let file = Submenu::with_items(
         app,
         "File",
         true,
         &[&new_chat, &sep()?, &backup, &sep()?, &quit],
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let file = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[&new_chat, &settings, &sep()?, &backup, &sep()?, &quit],
     )?;
 
     let edit = Submenu::with_items(
