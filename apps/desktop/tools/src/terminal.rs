@@ -398,11 +398,24 @@ impl ShellSession {
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_ms);
         let done = loop {
-            let seen = {
+            // The shell writes the sentinel and cwd marker separately. A PTY
+            // reader may observe the sentinel first; draining at that point
+            // loses the live cwd and lets the next call trust a stale value.
+            let complete = {
                 let buffer = self.output.lock().await;
-                find_line(&String::from_utf8_lossy(&buffer), &sentinel)
+                let text = String::from_utf8_lossy(&buffer);
+                let sentinel_at = find_line(text.as_ref(), &sentinel);
+                let cwd_seen = sentinel_at
+                    .map(|at| {
+                        text.lines()
+                            .skip(at + 1)
+                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
+                    })
+                    .unwrap_or(false);
+                let sentinel_seen = sentinel_at.is_some();
+                sentinel_seen && cwd_seen
             };
-            if seen.is_some() {
+            if complete {
                 break true;
             }
             if std::time::Instant::now() >= deadline {
@@ -431,12 +444,7 @@ impl ShellSession {
         let cwd = lines
             .iter()
             .skip(marker_at)
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix(&cwd_marker)
-                    .and_then(|rest| rest.strip_suffix("__"))
-                    .map(|raw| raw.to_string())
-            })
+            .find_map(|line| cwd_marker_path(line, &cwd_marker))
             .unwrap_or(known_cwd);
         *self.cwd.lock().await = cwd.clone();
 
@@ -914,6 +922,20 @@ fn cwd_inside(cwd: &str, root: &std::path::Path) -> bool {
     cwd_path.starts_with(root)
 }
 
+/// Extract a live absolute cwd from a PTY line. The echoed `printf` command
+/// also contains the marker text, so reject its non-path payload rather than
+/// mistaking it for the result line.
+fn cwd_marker_path(line: &str, marker: &str) -> Option<String> {
+    let line = line.trim();
+    let marker_at = line.find(marker)?;
+    let rest = &line[marker_at + marker.len()..];
+    let end = rest.rfind("__")?;
+    let path = &rest[..end];
+    std::path::Path::new(path)
+        .is_absolute()
+        .then(|| path.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1033,6 +1055,24 @@ mod tests {
         assert_eq!(
             shell_quote("a'; rm -rf /; echo '"),
             "'a'\\''; rm -rf /; echo '\\'''"
+        );
+    }
+
+    #[test]
+    fn cwd_marker_parser_accepts_prompt_prefixed_paths_but_not_echoed_printf() {
+        let marker = "__MIXD_CWD_1__";
+        let expected = std::env::temp_dir()
+            .join("mixd-pty-project")
+            .to_string_lossy()
+            .to_string();
+        let output = format!("\u{1b}]0;prompt\u{7}{marker}{expected}__");
+        assert_eq!(
+            cwd_marker_path(&output, marker).as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            cwd_marker_path("printf '__MIXD_CWD_1__%s__\\n' \"$PWD\"", marker),
+            None
         );
     }
 

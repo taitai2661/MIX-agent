@@ -32,6 +32,7 @@ Desktop版は単一ユーザーのローカル利用を想定したアプリで�
 - **モデル情報**: `MIX_MODELS_DEV_URL`（既定値`https://models.dev/api.json`）で取得先を指定できます。旧`MIX_MODEL_INFO_URL`は非推奨エイリアスです。
 - **Memory**: Memoryの役割・scope・lifecycle・evidence・conflict・revisionを仕様書にまとめました。`memory_links`により関連・上書き・矛盾の関係を表現し、仕様と実装のparityをCIで確認します。削除後も同一ownerのrevisionから、元のIDを保ったまま復元できます。
 - **Agent実行**: Contextの予算可視化、段階的要約、耐久チェックポイント、任意のチェックポイントからのResume、予算延長フロー、停滞検知、検証ループを追加しました。
+- **Desktop Terminal**: 永続PTYの完了・cwd marker同期を修正し、workspace外へ移動したshellのcwdが次のTool呼び出しに残らないようにしました。
 - **Projects / Todo / Skills**: Project文書をContextへ提供し、会話単位のTodo、Skill Discovery、`SKILL.md`検証、パッケージのインポート／エクスポートを追加しました。
 - **Web UI / 運用**: Projects、Usage、Network、Diagnostics、Run Activity、Memory Mind Viewなどを追加・改善しました。利用量の履歴は本文や添付ではなく、モデル別のトークン数・価格など最小限の集計情報を扱います。
 - **Migrations**: サーバー起動時にAlembicがDB migrationを適用します。今回含まれる主な変更は`0022_chatgpt_flat_memory.py`、`0024_memory_lifecycle.py`、`0025_memory_links.py`です（revision chainは`0022` → `0024` → `0025`で、`0023`は使用していません）。

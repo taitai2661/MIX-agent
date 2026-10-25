@@ -12,17 +12,20 @@
 
 確認した項目:
 
-- JSON / YAML構文、Python compileall、`uv lock --check`、`git diff --check`が成功。ZimaOS Composeは`v0.5.0`で2回再生成し、出力が一致することを確認。
-- Web版: ルートworkspace lockfileを追加。`pnpm install --frozen-lockfile`、Vitest 21ファイル158テスト、production buildが成功。Buildは500 kBを超えるchunkの注意を出すが、正常終了。
-- Desktop UI: lint、TypeScript typecheck、Vitest 32ファイル250テスト、production buildが成功。Rustのfmt / clippy / testとOSインストーラーbuildは未実施。
-- Server版: DB不要のproxy policy / Browser provisionerテスト12件が成功。全pytestでは344件が成功したが、PostgreSQLサービス`postgres-test`がこの環境にないため、DB依存240件は接続不能で完了していない。Release CIのDocker test jobで再確認すること。
-- Agent schedulerが削除済みの`routes.purge_expired_conversations`をimportしていたため、現行の`api.helpers.cleanup`へ修正し、関連回帰テストのimportも更新。
+- JSON / YAML、Python compileall、`uv lock --check`、`git diff --check`が成功。ZimaOS Composeは`v0.5.0`で2回再生成し、出力が一致。
+- [GitHub Validate run 40171835517](https://github.com/taitai2661/MIX-agent/actions/runs/40171835517)が成功。PostgreSQL service付きapp suiteは583 passed / 1 skipped。Docker release image build、legacy ZimaOS/CasaOS archive検証、Web frontendも成功。
+- Web版: `pnpm install --frozen-lockfile`、Vitest 21ファイル158テスト、production buildが成功。Buildは500 kBを超えるchunkの注意を出すが、正常終了。
+- Desktop UI: lint、TypeScript typecheck、Vitest 32ファイル250テスト、production buildが成功。
+- Desktop Rust/Linux: `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`が成功。Rust workspaceのテスト集計は595 passed / 0 failed。PTY terminalのsentinel/cwd marker raceを修正し、terminal focused tests 18件も成功。
+- Agent schedulerの誤importを修正。Memory revisionから削除済みMemoryを同一IDで復元する実装・回帰テスト、Windows/Linux Settings OS menu、Desktop clean-checkout Rust CIのChromium placeholder準備も追加。
 
 未確認の項目:
 
-- Docker CLIがないため、PostgreSQLを含む`docker compose --profile test`、全イメージbuild、Compose runtime受入確認は未実施。
-- Rust toolchain（`cargo`）がないため、Desktop Rust workspaceのfmt / clippy / testおよびmacOS / Windows / Linuxのinstaller buildは未実施。
-- GitHub Actions Secretsへの読み取り権限がなく、`TAURI_SIGNING_PRIVATE_KEY`の存在・公開鍵との一致は確認できていない。公開前に管理者が確認し、署名済み`latest.json`と各OS実機のupdater動作を検証すること。候補workflowは秘密鍵未設定時にfail closedする。
+- `cargo build --workspace --release`がoptimized profileで成功。macOS/Windows Rust matrixおよび各OS installer packagingは未実施。
+- GitHub Secretsの値・登録状態・鍵ペアにはアクセスしていない。署名済み`latest.json`と各OS実機のupdater動作は未確認。署名を含むDesktop release workflowはmain上の`v0.5.0` tagが必要。
+- Composeを用いた長時間runtimeの実機受入確認は未実施。
+
+PR作成は既存GitHub integrationからGraphQL / RESTの両方で403 `Resource not accessible by integration`となり、Pull Requests: write権限が不足している。mainへの反映、`v0.5.0` tag、GitHub Releaseは未実施。
 
 ## v0.3.5リリース候補の確認（2026-10-01）
 
