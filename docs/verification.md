@@ -13,10 +13,12 @@
 - ユーザー指示によりv0.5.0 macOSアプリ本体はApple Developer IDコード署名・公証なしで配布します。Gatekeeperの警告や起動制限が出る可能性をRelease notesに記載します。Updater用アーカイブの署名は別機構のため維持します。
 - ユーザーの公開範囲変更により、v0.5.0で配布するDesktopインストーラーをApple Silicon／Intel macOSに限定し、Windows/Linux版は見送ります。`.github/workflows/desktop-release.yml`、Release notes、公開checklistをこの範囲へ合わせました。Docker/Web版とZimaOS配布は従来どおり対象です。
 - Windowsを含むクロスプラットフォームCI [run 40185098158](https://github.com/taitai2661/MIX-agent/actions/runs/40185098158) は、PTY integration testを直列化したcommit `dd59c77`でsuccess。PostgreSQL・Docker/Webを含む[Validate run 40185131436](https://github.com/taitai2661/MIX-agent/actions/runs/40185131436)もsuccess。
-- macOS署名dry-run [run 40185138619](https://github.com/taitai2661/MIX-agent/actions/runs/40185138619)では、Apple Silicon／Intelの両jobを含めて`Build and bundle`がfailureとなり、`checksums`と`release`はskip。macOSの失敗ログには`security import`がkeychain certificateのimportに失敗した旨がありました。Apple証明書のSecret値は参照・表示・変更していません。
-- [Tauri公式macOS signing guide](https://v2.tauri.app/distribute/sign/macos/)では、`APPLE_CERTIFICATE`はbase64化した`.p12`、`APPLE_CERTIFICATE_PASSWORD`はexport時に設定したpasswordと説明されています。Repository管理者が既存の証明書Secretとpasswordの整合性を確認する必要があります。
-- Updater用`TAURI_SIGNING_PRIVATE_KEY`はGitHub Actionsのnon-empty checkを通過しましたが、今回のmacOS buildはApple証明書エラーで停止し、公開鍵による署名検証まで到達していません。先行preflightでは同Secretのdecodeで`Invalid padding`が記録されており、既存key fileからのSecret値修正も引き続き必要です。値の取得・表示・再生成は行っていません。
-- `v0.5.0` tag、GitHub Release、Desktop配布assetは作成していません。既存の署名Secretsが修正され、macOS-only dry-runがbuildと署名検証を通過するまでtag作成を保留します。
+- 先行macOS署名dry-run [run 40185138619](https://github.com/taitai2661/MIX-agent/actions/runs/40185138619)ではApple Silicon／Intelの`Build and bundle`が`security import`のkeychain certificate importでfailureでした。これはAppleコード署名を使っていた時点の履歴であり、後述のユーザー指示によってApple証明書・署名・公証をワークフローから削除しました。
+- [Tauri公式macOS signing guide](https://v2.tauri.app/distribute/sign/macos/)はApple証明書を使ったmacOSアプリ署名を説明しています。ユーザーはこの署名・公証を望まずGatekeeper警告を許容するため、証明書importを復活させない方針です。
+- 署名なしmacOSの現行preflight [run 40187871556](https://github.com/taitai2661/MIX-agent/actions/runs/40187871556)（commit `5239184`）では、Apple証明書エラーなしで進み、Apple Silicon／Intel両jobがUpdater用`TAURI_SIGNING_PRIVATE_KEY`のBase64 decode `Invalid padding`で`Build and bundle` failure。`checksums`および`release`はskipされました。秘密値は取得・表示していません。
+- 同commitの[Validate run 40187862943](https://github.com/taitai2661/MIX-agent/actions/runs/40187862943)はsuccess。一方、[CI run 40187854500](https://github.com/taitai2661/MIX-agent/actions/runs/40187854500)はWindows `cargo test`でPTY integration testが1件failureでした。
+- Updater用署名はAppleのアプリ本体署名と別機構です。公開鍵で検証できるアップデートを生成するには有効な既存Updater keyが必要ですが、今回そのdecodeに失敗しました。key値の取得・表示・外部送信・再生成・変更は行っていません。
+- `v0.5.0` tag、GitHub Release、Desktop配布assetは作成していません。Updater keyの扱いが解決し、必要なdry-run/CI条件を満たすまでtag作成を保留します。
 
 ## [追記] Windows Desktop CIのpath修正（2026-10-25）
 
