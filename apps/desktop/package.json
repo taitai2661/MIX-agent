@@ -2,6 +2,7 @@
   "name": "mix-agent-desktop-workspace",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "MIX-agent Desktop — Rust + Tauri 2 + React workspace root",
   "scripts": {
     "ui:dev": "pnpm --filter mix-agent-desktop-ui dev",

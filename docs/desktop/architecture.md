@@ -383,12 +383,12 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 ## ライセンス
 
 **確定: Apache License 2.0**。リポジトリ全体の `LICENSE` が Apache-2.0 であり、
-Desktop 側も `desktop/mix-agent-desktop/LICENSE` と `Cargo.toml` の `license` を
+Desktop 側も `apps/desktop/LICENSE` と `apps/desktop/Cargo.toml` の `license` を
 含めて Apache-2.0 に統一されている（MIT ではない）。
-変更する場合はルート `LICENSE` / `NOTICE` / `desktop/mix-agent-desktop/NOTICE` と
-`desktop/mix-agent-desktop/Cargo.toml` の `license` を同時に書き換えること。
+変更する場合はルート `LICENSE` / `NOTICE` / `apps/desktop/NOTICE` と
+`apps/desktop/Cargo.toml` の `license` を同時に書き換えること。
 
 ## 関連ドキュメント
 
-- [`docker/MIX-agent/docs/architecture.md`](../../docker/MIX-agent/docs/architecture.md)（Docker 版アーキテクチャ）
-- [`desktop/README.md`](../../desktop/README.md)（Desktop 版入口・セットアップ / 開発フェーズ）
+- [`docs/architecture.md`](../architecture.md)（アーキテクチャ概要）
+- [`apps/desktop/README.md`](../../apps/desktop/README.md)（Desktop 版入口・セットアップ / 開発フェーズ）

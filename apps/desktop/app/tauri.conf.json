@@ -50,7 +50,10 @@
     "longDescription": "A Tauri 2 + Rust + React desktop application that brings the MIX-agent chat / thinking / agent experience to a single-user local install with OS Keychain integration.",
     "resources": {
       "icons/icon.svg": "icons/icon.svg",
-      "resources/chromium": "chromium"
+      "resources/chromium": "chromium",
+      "../LICENSE": "LICENSE",
+      "../NOTICE": "NOTICE",
+      "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md"
     },
     "macOS": {
       "minimumSystemVersion": "12.0",
