@@ -39,6 +39,11 @@ on:
       tag:
         description: "Tag to build (e.g. desktop-v0.5.0 or v0.5.0)"
         required: true
+      dry_run:
+        description: "Build/sign/validate artifacts without creating or updating a GitHub Release"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -310,6 +315,41 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Merge manifests and verify updater signatures
+        shell: bash
+        env:
+          UPDATER_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
+            --repo "$GITHUB_REPOSITORY" --tag "$UPDATER_TAG"
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const manifest = JSON.parse(readFileSync("artifacts/latest.json", "utf8"));
+          const platforms = Object.entries(manifest.platforms ?? {});
+          if (!manifest.version || platforms.length === 0) {
+            throw new Error("Updater manifest has no version or platform entries");
+          }
+          for (const [platform, artifact] of platforms) {
+            if (!artifact.signature || !artifact.url) {
+              throw new Error(`Updater entry is missing signature or URL: ${platform}`);
+            }
+          }
+          console.log(`Validated signed updater entries: ${platforms.map(([name]) => name).join(", ")}`);
+          NODE
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+          public_key="$(jq -er '.plugins.updater.pubkey | select(type == "string" and length > 0)' apps/desktop/app/tauri.conf.json)"
+          signature_count=0
+          while IFS= read -r -d '' signature_file; do
+            artifact_file="${signature_file%.sig}"
+            test -s "$artifact_file"
+            minisign -V -m "$artifact_file" -x "$signature_file" -P "$public_key" >/dev/null
+            signature_count=$((signature_count + 1))
+          done < <(find artifacts -type f -name '*.sig' -print0)
+          test "$signature_count" -gt 0
+          echo "Cryptographically verified updater bundle signatures: $signature_count"
       - name: Build a checksum manifest
         run: |
           cd artifacts
@@ -325,9 +365,9 @@ jobs:
 
   release:
     needs: [bundle, checksums]
-    # Tag pushes match the ref; manual dispatches use the `tag` input (the
-    # bundle job checks out that same ref above).
-    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Tag pushes publish. Manual runs are signing preflights by default; set
+    # dry_run=false explicitly to create/update a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     runs-on: ubuntu-latest
     permissions:
       contents: write

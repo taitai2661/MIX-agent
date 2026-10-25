@@ -229,7 +229,7 @@ fn native_path_string(path: &std::path::Path) -> String {
 fn posix_path_expression(path: &std::path::Path) -> String {
     if cfg!(windows) {
         let windows_path = native_path_string(path).replace('\\', "/");
-        format!("$(cygpath -u {})", shell_quote(&windows_path))
+        format!("\"$(cygpath -u {})\"", shell_quote(&windows_path))
     } else {
         shell_quote(&path.to_string_lossy())
     }
@@ -1335,7 +1335,7 @@ mod tests {
         );
         assert_eq!(
             posix_path_expression(drive_path),
-            "$(cygpath -u 'C:/Users/runner/My Project/file')"
+            "\"$(cygpath -u 'C:/Users/runner/My Project/file')\""
         );
         assert_eq!(posix_cwd_expression(), "$(cygpath -w \"$PWD\")");
 
