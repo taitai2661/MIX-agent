@@ -1240,6 +1240,7 @@ def _detach_pointers(db, owner, memory_id) -> None:
 
 
 def restore(db, owner, row, previous):
+    previous = previous if isinstance(previous, dict) else {}
     prev_content = (previous or {}).get("content", "") or (previous or {}).get("gist", "")
     if prev_content:
         row.content = str(prev_content)[:10000]
@@ -1247,24 +1248,74 @@ def restore(db, owner, row, previous):
     data["content"] = row.content
     if isinstance(previous, dict) and isinstance(previous.get("pinned"), bool):
         data["pinned"] = previous["pinned"]
+    if isinstance(previous.get("source"), str):
+        data["source"] = previous["source"]
+    source_run = previous.get("source_run")
+    if "source_run" in previous and (source_run is None or isinstance(source_run, str)):
+        data["source_run"] = source_run
+    if "strength" in previous:
+        data["strength"] = number(previous.get("strength"), DEFAULT_STRENGTH)
     row.data = data
-    # §1: a revision snapshot carries the taxonomy, so a restore brings the
-    # lifecycle and the two §3 pointers back with the content — restoring half
-    # of the pre-change state would leave `superseded` on a row whose pointer
-    # says it was never superseded.
-    if isinstance(previous, dict):
-        state = lifecycle_value(previous.get("lifecycle_state"))
-        if state:
-            row.lifecycle_state = state
-        for column in ("superseded_by_id", "disputed_by_id"):
-            if column in previous:
-                value = previous.get(column)
-                setattr(row, column, str(value) if isinstance(value, str) and value else None)
+    # §1: restore the full taxonomy with the content, so no old lifecycle or
+    # role is left paired with a different snapshot.
+    for column, validator in (
+        ("lifecycle_state", lifecycle_value),
+        ("role", role_value),
+        ("scope", scope_value),
+        ("source_kind", source_kind_value),
+    ):
+        if column in previous:
+            value = validator(previous.get(column))
+            if value:
+                setattr(row, column, value)
+    for column, default in (("confidence", DEFAULT_CONFIDENCE), ("salience", DEFAULT_SALIENCE)):
+        if column in previous:
+            setattr(row, column, number(previous.get(column), default))
+    # A deleted counterpart may no longer exist. Do not recreate a pointer or
+    # mirror edge to a missing/cross-owner row from an old revision snapshot.
+    for column in ("superseded_by_id", "disputed_by_id"):
+        if column in previous:
+            value = previous.get(column)
+            pointed = db.get(Memory, value) if isinstance(value, str) and value else None
+            if pointed is None or pointed.owner_id != owner:
+                value = None
+            setattr(row, column, value)
     row.updated_at = now()
     db.flush()
     # §4: the link mirror follows the columns it mirrors, in this transaction.
     sync_links(db, row)
     return {"id": row.id, **_trace_data(row)}
+
+
+def restore_deleted(db, owner, memory_id, previous):
+    """Recreate a forgotten Memory from its owner-scoped revision snapshot."""
+    if not isinstance(previous, dict):
+        raise TypeError("Memory revision snapshot is invalid")
+    content = previous.get("content") or previous.get("gist")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Memory revision has no restorable content")
+    content = content[:10000]
+    row = Memory(
+        id=memory_id,
+        owner_id=owner,
+        content=content,
+        updated_at=now(),
+        data={"content": content},
+    )
+    created_at = previous.get("created_at")
+    if isinstance(created_at, str):
+        try:
+            restored_created_at = datetime.fromisoformat(created_at)
+        except ValueError:
+            pass
+        else:
+            row.created_at = (
+                restored_created_at if restored_created_at.tzinfo else restored_created_at.replace(tzinfo=UTC)
+            )
+    db.add(row)
+    db.flush()
+    restored = restore(db, owner, row, previous)
+    return row, restored
 
 
 def reinforce_row(row, *, reason: str = "reinforce") -> Memory:

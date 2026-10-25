@@ -3393,11 +3393,24 @@ async def memory_history(key: str, ctx=Depends(context)):
 @router.post("/memories/{key}/restore/{revision}")
 async def restore_memory(key: str, revision: str, ctx=Depends(context)):
     db, s = ctx
-    row = own(db, Memory, key, s.owner_id)
     rev = own(db, MemoryRevision, revision, s.owner_id)
-    if rev.data["memory_id"] != key:
+    revision_data = rev.data if isinstance(rev.data, dict) else {}
+    if revision_data.get("memory_id") != key:
         raise HTTPException(404)
-    restored = memory.restore(db, s.owner_id, row, rev.data["previous"])
+    previous = revision_data.get("previous")
+    content = previous.get("content") or previous.get("gist") if isinstance(previous, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(404, "復元できるMemory revisionがありません")
+    row = db.get(Memory, key)
+    if row is not None and row.owner_id != s.owner_id:
+        raise HTTPException(404, "見つかりません")
+    if row is None:
+        try:
+            row, restored = memory.restore_deleted(db, s.owner_id, key, previous)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(404, "復元できるMemory revisionがありません") from exc
+    else:
+        restored = memory.restore(db, s.owner_id, row, previous)
     db.commit()
     return {
         "id": row.id,
