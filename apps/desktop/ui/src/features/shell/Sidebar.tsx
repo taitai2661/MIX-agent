@@ -9,6 +9,8 @@ import {
   Monitor,
   Moon,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Search,
   Settings2,
@@ -19,12 +21,14 @@ import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { relativeTime, threadGroup, type ThreadGroup } from "@/lib/format";
+import { loadPinnedThreadIds, togglePinnedThreadId } from "@/lib/pinnedThreads";
 import { useUi, surfaceForMode, type View, type ThreadFilter } from "@/lib/ui";
 import type { ConversationSummary } from "@/lib/types";
 import {
   CONVERSATIONS_QUERY_KEY,
   useConversations,
   usePendingApprovals,
+  useProjects,
 } from "@/lib/queries";
 import { useApplySettings } from "@/lib/settings";
 import { Badge } from "@/components/ui/badge";
@@ -43,8 +47,16 @@ const NAV_ITEMS: { id: View; label: string; icon: React.ReactNode }[] = [
   { id: "schedules", label: "スケジュール", icon: <Clock3 size={15} /> },
 ];
 
-const GROUP_ORDER: ThreadGroup[] = ["today", "yesterday", "week", "older"];
-const GROUP_LABEL: Record<ThreadGroup, string> = {
+type ExtendedThreadGroup = "pinned" | ThreadGroup;
+const GROUP_ORDER: ExtendedThreadGroup[] = [
+  "pinned",
+  "today",
+  "yesterday",
+  "week",
+  "older",
+];
+const GROUP_LABEL: Record<ExtendedThreadGroup, string> = {
+  pinned: "ピン留め済み",
   today: "今日",
   yesterday: "昨日",
   week: "過去7日",
@@ -98,8 +110,8 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const theme = useUi((s) => s.theme);
   const setTheme = useUi((s) => s.setTheme);
   const sidebarOpen = useUi((s) => s.sidebarOpen);
-  const threadFilter = useUi((s) => s.threadFilter);
-  const setThreadFilter = useUi((s) => s.setThreadFilter);
+  const surface = useUi((s) => s.surface);
+  const activeProjectId = useUi((s) => s.activeProjectId);
   const applySettings = useApplySettings();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
@@ -108,9 +120,22 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [exportError, setExportError] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() =>
+    loadPinnedThreadIds(),
+  );
+  const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  const togglePin = (id: string) => {
+    const next = togglePinnedThreadId(id);
+    setPinnedIds(next);
+  };
   /** Ref for arrow-key travel over the thread titles (see below). */
   const threadListRef = useRef<HTMLDivElement | null>(null);
 
+  const isAgent = surface === "desktop-agent";
+  const projects = useProjects();
+  const activeProject =
+    projects.data?.find((p) => p.id === activeProjectId) ?? null;
   const conversations = useConversations();
   const approvals = usePendingApprovals();
   const createConversation = useCreateThread();
@@ -166,9 +191,8 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const threads = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
     const list = (conversations.data ?? []).filter((c) => {
-      // Surface filter first, then the free-text search. The store already
-      // persisted `threadFilter`; this is the list that finally honours it.
-      if (threadFilter !== "all" && surfaceForMode(c.mode) !== threadFilter) {
+      // Natural separation by active surface:
+      if (surfaceForMode(c.mode) !== surface) {
         return false;
       }
       return (
@@ -177,18 +201,26 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
         (c.preview ?? "").toLowerCase().includes(q)
       );
     });
-    const groups = new Map<ThreadGroup, ConversationSummary[]>();
+    const groups = new Map<ExtendedThreadGroup, ConversationSummary[]>();
     for (const c of list) {
-      const group = threadGroup(c.updated_at);
-      const bucket = groups.get(group) ?? [];
-      bucket.push(c);
-      groups.set(group, bucket);
+      if (pinnedSet.has(c.id)) {
+        const bucket = groups.get("pinned") ?? [];
+        bucket.push(c);
+        groups.set("pinned", bucket);
+      } else {
+        const group = threadGroup(c.updated_at);
+        const bucket = groups.get(group) ?? [];
+        bucket.push(c);
+        groups.set(group, bucket);
+      }
     }
     return groups;
-  }, [conversations.data, deferredSearch, threadFilter]);
+  }, [conversations.data, deferredSearch, pinnedSet, surface]);
 
   const pendingCount = approvals.data?.length ?? 0;
-  const hasThreads = (conversations.data?.length ?? 0) > 0;
+  const hasThreads = (conversations.data ?? []).some(
+    (c) => surfaceForMode(c.mode) === surface,
+  );
   const filteredThreadCount = [...threads.values()].reduce(
     (n, items) => n + items.length,
     0,
@@ -257,6 +289,30 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     >
       {/* Primary action + search, pinned so they are always reachable. */}
       <div className="flex shrink-0 flex-col gap-2 p-3 pb-1.5">
+        {isAgent && (
+          <div className="flex items-center justify-between rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-xs shadow-xs">
+            <div className="flex min-w-0 items-center gap-2">
+              <Folder size={14} className="shrink-0 text-brand" />
+              <span
+                className="truncate font-medium text-fg"
+                title={
+                  activeProject?.rootPath ?? activeProject?.name ?? undefined
+                }
+              >
+                {activeProject?.name ?? t("プロジェクト未選択")}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setView("projects")}
+              className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
+              title={t("プロジェクトを変更")}
+            >
+              {t("変更")}
+            </Button>
+          </div>
+        )}
         <Button
           variant="primary"
           size="lg"
@@ -264,15 +320,18 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
           onClick={() => createConversation.mutate()}
           disabled={createConversation.isPending}
         >
-          <Plus size={12} />
-          {t("新規スレッド")}
+          {isAgent ? <Bot size={15} /> : <Plus size={15} />}
+          {isAgent ? t("新規タスク") : t("新規チャット")}
         </Button>
         {/* Thread creation failures used to be silent — the button just
             stopped spinning and nothing appeared. */}
         {createConversation.isError && (
           <ErrorBox
             error={
-              createConversation.error || t("スレッドを作成できませんでした")
+              createConversation.error ||
+              (isAgent
+                ? t("タスクを作成できませんでした")
+                : t("スレッドを作成できませんでした"))
             }
           />
         )}
@@ -280,28 +339,12 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
           icon={<Search size={13} />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder={t("スレッドを検索")}
-          aria-label={t("スレッドを検索")}
+          placeholder={isAgent ? t("タスクを検索") : t("チャットを検索")}
+          aria-label={isAgent ? t("タスクを検索") : t("チャットを検索")}
           {...(search
             ? { onClear: () => setSearch(""), clearLabel: t("クリア") }
             : {})}
         />
-        {/* Surface filter. The store has held `threadFilter` all along; this
-            is the control that finally drives it, so an agent-workspace user
-            can hide the plain chat threads (and vice versa). */}
-        <Segmented aria-label={t("スレッドを絞り込む")} className="w-full">
-          {THREAD_FILTERS.map((filter) => (
-            <SegmentedOption
-              key={filter}
-              value={filter}
-              label={t(THREAD_FILTER_LABEL[filter])}
-              selected={threadFilter === filter}
-              onSelect={setThreadFilter}
-            >
-              {t(THREAD_FILTER_LABEL[filter])}
-            </SegmentedOption>
-          ))}
-        </Segmented>
         {exportError && <ErrorBox error={exportError} />}
       </div>
 
@@ -387,6 +430,13 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                                 <span className="truncate text-sm font-medium text-fg">
                                   {c.title}
                                 </span>
+                                {pinnedSet.has(c.id) && (
+                                  <Pin
+                                    size={12}
+                                    className="shrink-0 text-brand fill-brand/30"
+                                    aria-hidden="true"
+                                  />
+                                )}
                               </button>
                               {c.preview && (
                                 <span className="pointer-events-none truncate text-xs text-muted">
@@ -415,6 +465,31 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                                   conversationId === c.id && "opacity-100",
                                 )}
                               >
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  title={
+                                    pinnedSet.has(c.id)
+                                      ? t("ピン留めを解除")
+                                      : t("ピン留め")
+                                  }
+                                  aria-label={
+                                    pinnedSet.has(c.id)
+                                      ? t("ピン留めを解除")
+                                      : t("ピン留め")
+                                  }
+                                  onClick={() => togglePin(c.id)}
+                                  className={cn(
+                                    pinnedSet.has(c.id) &&
+                                      "text-brand hover:text-brand",
+                                  )}
+                                >
+                                  {pinnedSet.has(c.id) ? (
+                                    <PinOff size={13} />
+                                  ) : (
+                                    <Pin size={13} />
+                                  )}
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon-sm"
@@ -454,11 +529,12 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
             {filteredThreadCount === 0 && (
               <SearchEmptyState
                 compact
-                title={t("一致するスレッドがありません")}
-                onClear={() => {
-                  setSearch("");
-                  setThreadFilter("all");
-                }}
+                title={
+                  isAgent
+                    ? t("一致するタスクがありません")
+                    : t("一致するチャットがありません")
+                }
+                onClear={() => setSearch("")}
               />
             )}
           </>
@@ -469,25 +545,37 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
         ) : (
           <EmptyState
             compact
-            title={t("スレッドがありません")}
-            sub={t("新しい会話を始めましょう")}
+            title={
+              isAgent
+                ? t("タスクがありません")
+                : t("チャット履歴がありません")
+            }
+            sub={
+              isAgent
+                ? t("新しいタスクを始めましょう")
+                : t("新しい会話を始めましょう")
+            }
           />
         )}
       </div>
 
       {/* Secondary destinations, below the history so threads stay primary. */}
       <nav className="flex shrink-0 flex-col gap-0.5 border-t border-line p-3 pt-2.5">
-        <SectionLabel>{t("ワークスペース")}</SectionLabel>
-        {NAV_ITEMS.map((item) => (
-          <NavRow
-            key={item.id}
-            icon={item.icon}
-            selected={view === item.id}
-            onClick={() => setView(item.id)}
-          >
-            {t(item.label)}
-          </NavRow>
-        ))}
+        {isAgent && (
+          <>
+            <SectionLabel>{t("ワークスペース")}</SectionLabel>
+            {NAV_ITEMS.map((item) => (
+              <NavRow
+                key={item.id}
+                icon={item.icon}
+                selected={view === item.id}
+                onClick={() => setView(item.id)}
+              >
+                {t(item.label)}
+              </NavRow>
+            ))}
+          </>
+        )}
         <NavRow
           icon={<Settings2 size={15} />}
           selected={view === "settings"}

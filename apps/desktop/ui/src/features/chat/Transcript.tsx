@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, CornerDownLeft, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowDown, Bot, CornerDownLeft, ShieldCheck, Sparkles } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { type RunTimeline } from "@/lib/runEvents";
 import {
@@ -219,6 +219,9 @@ function Welcome({
   hasModels: boolean;
 }) {
   const setOnboardingForcedOpen = useUi((s) => s.setOnboardingForcedOpen);
+  const surface = useUi((s) => s.surface);
+  const isAgent = surface === "desktop-agent";
+
   return (
     <div className="relative flex flex-col items-center gap-6 py-16 text-center animate-rise">
       <div
@@ -226,11 +229,11 @@ function Welcome({
         className="pointer-events-none absolute -top-6 left-1/2 size-64 -translate-x-1/2 rounded-full bg-brand/10 blur-3xl"
       />
       <div className="relative grid size-14 place-items-center rounded-2xl border border-line bg-gradient-to-b from-surface to-inset text-brand">
-        <Sparkles size={24} />
+        {isAgent ? <Bot size={24} /> : <Sparkles size={24} />}
       </div>
       <div className="flex flex-col gap-2">
         <p className="text-2xs font-bold tracking-[0.18em] text-accent uppercase">
-          MIX-agent
+          {isAgent ? t("デスクトップエージェント") : "MIX-agent"}
         </p>
         {welcome ? (
           <h2 className="mx-auto max-w-lg text-2xl font-semibold tracking-tight text-balance text-fg">

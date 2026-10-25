@@ -474,3 +474,11 @@ export interface UpdateNotice {
   notes: string;
   date: string | null;
 }
+
+/** Progress payload emitted during update download. */
+export interface UpdateProgress {
+  chunk_bytes: number;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  percent: number | null;
+}

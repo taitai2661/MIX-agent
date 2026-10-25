@@ -7,6 +7,7 @@ import { StepProvider } from "./StepProvider";
 import { StepRail, type OnboardingStepMeta } from "./StepRail";
 import { StepStart } from "./StepStart";
 import { StepWelcome } from "./StepWelcome";
+import { WindowControls } from "../shell/WindowControls";
 
 /** Steps the rail shows. The welcome page is not one of them: it has no state
  * behind it, so numbering it would promise progress that cannot happen. */
@@ -70,6 +71,7 @@ export function Onboarding({
           <X size={12} />
           {t("あとで設定する")}
         </Button>
+        <WindowControls />
       </header>
 
       <main className="relative flex min-h-0 flex-1 justify-center overflow-y-auto px-6 py-10">

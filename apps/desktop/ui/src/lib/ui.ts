@@ -82,6 +82,10 @@ interface UiState {
   openSettings: (tab?: SettingsTab) => void;
   conversationId: string | null;
   setConversationId: (id: string | null) => void;
+  chatConversationId: string | null;
+  setChatConversationId: (id: string | null) => void;
+  agentConversationId: string | null;
+  setAgentConversationId: (id: string | null) => void;
   /** Workspace the active conversation is bound to; drives the browser pane so
    * a manual sign-in lands in the same profile the agent uses. */
   workspaceId: string | null;
@@ -156,6 +160,8 @@ const SURFACE_KEY = "mix-agent-surface";
 const THREAD_FILTER_KEY = "mix-agent-thread-filter";
 const SEND_SHORTCUT_KEY = "mix-agent-send-shortcut";
 const RIGHT_PANEL_WIDTH_KEY = "mix-agent-right-panel-width";
+const CHAT_CONVERSATION_KEY = "mix-agent-chat-conversation-id";
+const AGENT_CONVERSATION_KEY = "mix-agent-agent-conversation-id";
 
 export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
 export const WIDE_RIGHT_PANEL_WIDTH = 560;
@@ -248,6 +254,11 @@ function readSendShortcut(): SendShortcut {
   return "enter";
 }
 
+function readStoredConversation(key: string): string | null {
+  const stored = getString(key);
+  return stored ? stored : null;
+}
+
 function readRightPanelWidth(): number {
   const stored = getString(RIGHT_PANEL_WIDTH_KEY);
   if (stored) {
@@ -277,6 +288,12 @@ export function surfaceForMode(mode: Mode | (string & {})): Surface {
   return mode === "agent" ? "desktop-agent" : "chat";
 }
 
+const initialSurface = readSurface();
+const initialChatConv = readStoredConversation(CHAT_CONVERSATION_KEY);
+const initialAgentConv = readStoredConversation(AGENT_CONVERSATION_KEY);
+const initialConv =
+  initialSurface === "desktop-agent" ? initialAgentConv : initialChatConv;
+
 export const useUi = create<UiState>((set) => ({
   view: "chat",
   setView: (view) => set({ view }),
@@ -293,8 +310,38 @@ export const useUi = create<UiState>((set) => ({
       setString(SETTINGS_TAB_KEY, settingsTab);
       return { view: "settings", settingsTab };
     }),
-  conversationId: null,
-  setConversationId: (id) => set({ conversationId: id }),
+  conversationId: initialConv,
+  chatConversationId: initialChatConv,
+  agentConversationId: initialAgentConv,
+  setConversationId: (id) =>
+    set((state) => {
+      if (state.surface === "desktop-agent") {
+        if (id) setString(AGENT_CONVERSATION_KEY, id);
+        else removeKey(AGENT_CONVERSATION_KEY);
+        return { conversationId: id, agentConversationId: id };
+      } else {
+        if (id) setString(CHAT_CONVERSATION_KEY, id);
+        else removeKey(CHAT_CONVERSATION_KEY);
+        return { conversationId: id, chatConversationId: id };
+      }
+    }),
+  setChatConversationId: (id) => {
+    if (id) setString(CHAT_CONVERSATION_KEY, id);
+    else removeKey(CHAT_CONVERSATION_KEY);
+    set((state) => ({
+      chatConversationId: id,
+      conversationId: state.surface === "chat" ? id : state.conversationId,
+    }));
+  },
+  setAgentConversationId: (id) => {
+    if (id) setString(AGENT_CONVERSATION_KEY, id);
+    else removeKey(AGENT_CONVERSATION_KEY);
+    set((state) => ({
+      agentConversationId: id,
+      conversationId:
+        state.surface === "desktop-agent" ? id : state.conversationId,
+    }));
+  },
   workspaceId: null,
   setWorkspaceId: (workspaceId) => set({ workspaceId }),
   runId: null,
@@ -311,7 +358,7 @@ export const useUi = create<UiState>((set) => ({
       return { mode: SURFACE_MODES[state.surface][0] };
     });
   },
-  surface: readSurface(),
+  surface: initialSurface,
   setSurface: (surface) => {
     setString(SURFACE_KEY, surface);
     set((state) => {
@@ -321,7 +368,11 @@ export const useUi = create<UiState>((set) => ({
       const nextMode = SURFACE_MODES[surface].includes(state.mode)
         ? state.mode
         : SURFACE_MODES[surface][0];
-      return { surface, mode: nextMode };
+      const targetConvId =
+        surface === "desktop-agent"
+          ? state.agentConversationId
+          : state.chatConversationId;
+      return { surface, mode: nextMode, conversationId: targetConvId };
     });
   },
   threadFilter: readThreadFilter(),
@@ -416,6 +467,8 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   THREAD_FILTER_KEY,
   SEND_SHORTCUT_KEY,
   RIGHT_PANEL_WIDTH_KEY,
+  CHAT_CONVERSATION_KEY,
+  AGENT_CONVERSATION_KEY,
 ]);
 
 if (typeof window !== "undefined") {
@@ -423,6 +476,17 @@ if (typeof window !== "undefined") {
     if (!event.key || !SYNCED_KEYS.has(event.key)) return;
     const state = useUi.getState();
     switch (event.key) {
+      case CHAT_CONVERSATION_KEY: {
+        const next = readStoredConversation(CHAT_CONVERSATION_KEY);
+        if (next !== state.chatConversationId) state.setChatConversationId(next);
+        break;
+      }
+      case AGENT_CONVERSATION_KEY: {
+        const next = readStoredConversation(AGENT_CONVERSATION_KEY);
+        if (next !== state.agentConversationId)
+          state.setAgentConversationId(next);
+        break;
+      }
       case SETTINGS_TAB_KEY: {
         const next = readSettingsTab();
         if (next !== state.settingsTab) state.setSettingsTab(next);

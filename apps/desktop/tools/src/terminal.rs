@@ -366,19 +366,21 @@ impl ShellSession {
         // this script: the shell echoes every line it reads, so without it the
         // `__mixd_rc=$?` / `printf ...` lines leak into the result (the whole
         // script text was returned as the command's own output).
+        let status_str = status_path.to_string_lossy().replace('\\', "/");
         let script = if self.config.is_posix {
             format!(
                 "printf '\\n%s\\n' '{start}'\n{command}\n__mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > '{status}' 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"$PWD\"\n",
                 start = start_marker,
-                status = status_path.display(),
+                status = status_str,
                 sentinel = sentinel,
                 cwd_marker = cwd_marker,
             )
         } else {
+            // PowerShell in raw PTY mode handles CRLF reliably for interactive evaluation
             format!(
-                "Write-Output \"`n{start}\"\n{command}\n$__mixd_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\n[System.IO.File]::WriteAllText('{status}', \"$__mixd_rc\")\nWrite-Output \"`n{sentinel}\"\nWrite-Output \"{cwd_marker}$($ExecutionContext.SessionState.Path.CurrentLocation.Path)__\"\n",
+                "Write-Output \"`n{start}\"\r\n{command}\r\n$__mixd_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\r\n[System.IO.File]::WriteAllText('{status}', \"$__mixd_rc\")\r\nWrite-Output \"`n{sentinel}\"\r\nWrite-Output \"{cwd_marker}$($ExecutionContext.SessionState.Path.CurrentLocation.Path)__\"\r\n",
                 start = start_marker,
-                status = status_path.display(),
+                status = status_str.replace('\'', "''"),
                 sentinel = sentinel,
                 cwd_marker = cwd_marker,
             )

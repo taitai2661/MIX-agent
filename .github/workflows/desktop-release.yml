@@ -325,9 +325,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Merge multi-platform updater manifests
+        run: |
+          node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
+            --repo taitai2661/MIX-agent \
+            --tag ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -341,6 +349,6 @@ jobs:
             artifacts/**/*.tar.gz.sig
             artifacts/**/*.zip
             artifacts/**/*.zip.sig
-            artifacts/**/latest.json
+            artifacts/latest.json
             artifacts/**/SHA256SUMS
           fail_on_unmatched_files: false

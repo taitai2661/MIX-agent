@@ -7,18 +7,26 @@
 //! Both the updater endpoint and the signing public key are optional: a local
 //! build has neither, and `install` must stay a no-op rather than fail startup.
 
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// How long to wait after launch before checking, so a slow start is not
 /// competing with an update download.
 const CHECK_DELAY_SECS: u64 = 20;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UpdateAvailable {
     pub version: String,
     pub current_version: String,
     pub notes: String,
     pub date: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UpdateProgress {
+    pub chunk_bytes: usize,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: Option<f64>,
 }
 
 /// Is an updater endpoint configured?
@@ -74,10 +82,26 @@ pub async fn install_and_relaunch<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         .await
         .map_err(crate::error::cmd_err)?
         .ok_or_else(|| "no update is available".to_string())?;
+
+    let mut downloaded: u64 = 0;
     update
         .download_and_install(
             |chunk, total| {
-                let _ = app.emit("update_progress", (chunk, total));
+                downloaded += chunk as u64;
+                let percent = total.map(|t| {
+                    if t > 0 {
+                        ((downloaded as f64 / t as f64) * 100.0).clamp(0.0, 100.0)
+                    } else {
+                        0.0
+                    }
+                });
+                let progress = UpdateProgress {
+                    chunk_bytes: chunk,
+                    downloaded_bytes: downloaded,
+                    total_bytes: total,
+                    percent,
+                };
+                let _ = app.emit("update_progress", &progress);
             },
             || {},
         )
@@ -94,10 +118,25 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(CHECK_DELAY_SECS)).await;
+        // Respect settings.auto_update: skip if user turned off automatic updates.
+        if let Some(state) = handle.try_state::<crate::AppState>() {
+            if let Ok(settings) = crate::commands::settings::read_settings(state.storage.pool()).await {
+                if !settings.auto_update {
+                    tracing::info!("auto-update is disabled in settings; skipping launch check");
+                    return;
+                }
+            }
+        }
         if let Err(err) = check(&handle).await {
             tracing::info!(?err, "update check failed");
         }
     });
+}
+
+/// Check if updater is configured.
+#[tauri::command]
+pub async fn is_updater_configured(app: AppHandle) -> Result<bool, String> {
+    Ok(is_configured(&app))
 }
 
 /// Check on demand (the Help ▸ Check for Updates menu item).

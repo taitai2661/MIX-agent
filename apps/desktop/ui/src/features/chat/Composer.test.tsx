@@ -431,4 +431,47 @@ describe("Composer", () => {
     });
     expect(box).toHaveValue("");
   });
+
+  it("navigates prompt history with ArrowUp and ArrowDown", async () => {
+    const onSend = vi.fn();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+
+    // Send first message
+    fireEvent.change(box, { target: { value: "first message" } });
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 13 });
+    expect(box).toHaveValue("");
+
+    // Send second message
+    fireEvent.change(box, { target: { value: "second message" } });
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 13 });
+    expect(box).toHaveValue("");
+
+    // ArrowUp recalls second message
+    fireEvent.keyDown(box, { key: "ArrowUp" });
+    expect(box).toHaveValue("second message");
+
+    // ArrowUp again recalls first message
+    fireEvent.keyDown(box, { key: "ArrowUp" });
+    expect(box).toHaveValue("first message");
+
+    // ArrowDown goes back to second message
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    expect(box).toHaveValue("second message");
+
+    // ArrowDown again restores empty draft
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    expect(box).toHaveValue("");
+  });
 });

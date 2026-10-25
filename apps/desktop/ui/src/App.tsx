@@ -56,6 +56,7 @@ import { RightPanel } from "./features/shell/RightPanel";
 import { CommandPalette } from "./features/shell/CommandPalette";
 import { ShortcutHelp } from "./features/shell/ShortcutHelp";
 import { SurfaceSwitcher } from "./features/shell/SurfaceSwitcher";
+import { WindowControls } from "./features/shell/WindowControls";
 import { usePanelCap } from "./features/shell/usePanelCap";
 import { Onboarding } from "./features/onboarding/Onboarding";
 import { useOnboardingGate } from "./features/onboarding/useOnboardingGate";
@@ -192,12 +193,18 @@ export function App() {
   }, [settings.data]);
 
   const createThread = useCreateThread();
-  const { update, dismiss } = useUpdateNotice();
+  const {
+    update,
+    isInstalling,
+    downloadProgress,
+    error: installError,
+    install: installUpdate,
+    dismiss,
+  } = useUpdateNotice();
   // The sidebar and the file tree are fixed-width `shrink-0` panes; the right
   // panel is an overlay drawer, so opening it never takes width from the
   // centre column. `panelCap` only clamps the inline panes on narrow windows.
   const [shellRow, setShellRow] = useState<HTMLDivElement | null>(null);
-  const [installError, setInstallError] = useState<string | null>(null);
   const panelCap = usePanelCap(shellRow);
   useShellEvents({
     newThread: () => createThread.mutate(),
@@ -273,9 +280,9 @@ export function App() {
         <span className="mx-0.5 h-4 w-px shrink-0 bg-line" aria-hidden="true" />
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
           {view === "chat"
-            ? (threadTitle ?? t("チャット"))
+            ? (threadTitle ?? (agentSurface ? t("タスク") : t("チャット")))
             : t(VIEW_TITLES[view])}
-          {view === "chat" && activeProject && (
+          {view === "chat" && agentSurface && activeProject && (
             <span
               className="ms-2 hidden max-w-40 truncate align-middle text-xs font-normal text-faint sm:inline-block"
               title={activeProject.rootPath ?? undefined}
@@ -339,6 +346,7 @@ export function App() {
               </Button>
             </div>
           )}
+          <WindowControls />
         </div>
       </header>
 
@@ -356,41 +364,65 @@ export function App() {
         >
           {update && (
             <div
-              className="flex shrink-0 items-center gap-3 border-b border-brand/20 bg-brand-soft px-4 py-2 text-xs text-fg"
+              className="flex shrink-0 flex-col border-b border-brand/20 bg-brand-soft px-4 py-2 text-xs text-fg"
               role="status"
             >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand/15 text-brand">
-                <Sparkles size={14} aria-hidden="true" />
-              </span>
-              <span className="min-w-0 flex-1 truncate">
-                {t("アップデートがあります")}: {update.current_version} →{" "}
-                <strong className="font-semibold">{update.version}</strong>
-              </span>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => {
-                  setInstallError(null);
-                  // A failed install (signature mismatch, offline, no write
-                  // access) used to reject as an unhandled promise; surface it
-                  // under the banner instead of leaving the button inert.
-                  void api
-                    .installUpdate()
-                    .catch((error) => setInstallError(errorMessage(error)));
-                }}
-              >
-                {t("インストールして再起動")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setInstallError(null);
-                  dismiss();
-                }}
-              >
-                {t("閉じる")}
-              </Button>
+              <div className="flex items-center gap-3">
+                <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand/15 text-brand">
+                  <Sparkles size={14} aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {t("アップデートがあります")}: {update.current_version} →{" "}
+                  <strong className="font-semibold">{update.version}</strong>
+                </span>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={isInstalling}
+                  onClick={() => {
+                    void installUpdate().catch(() => {});
+                  }}
+                >
+                  {isInstalling ? (
+                    <span className="flex items-center gap-1.5">
+                      <Spinner size={12} />
+                      {downloadProgress?.percent != null
+                        ? `${Math.round(downloadProgress.percent)}%`
+                        : t("ダウンロード中...")}
+                    </span>
+                  ) : (
+                    t("インストールして再起動")
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={isInstalling}
+                  onClick={() => {
+                    dismiss();
+                  }}
+                >
+                  {t("閉じる")}
+                </Button>
+              </div>
+              {isInstalling && downloadProgress && (
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                    <div
+                      className="h-full bg-brand transition-all duration-150"
+                      style={{
+                        width: `${downloadProgress.percent ?? 0}%`,
+                      }}
+                    />
+                  </div>
+                  {downloadProgress.total_bytes && (
+                    <span className="text-[10px] text-muted font-mono">
+                      {(downloadProgress.downloaded_bytes / 1024 / 1024).toFixed(1)} /{" "}
+                      {(downloadProgress.total_bytes / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {installError && (

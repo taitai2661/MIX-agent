@@ -148,4 +148,34 @@ describe("useUi surface state", () => {
     expect(useUi.getState().rightPanelWidth).toBe(380);
     expect(localStorage.getItem("mix-agent-right-panel-width")).toBe("380");
   });
+
+  it("manages separate active conversation IDs per surface", () => {
+    useUi.setState({
+      surface: "chat",
+      conversationId: null,
+      chatConversationId: null,
+      agentConversationId: null,
+    });
+
+    useUi.getState().setConversationId("chat-1");
+    expect(useUi.getState().conversationId).toBe("chat-1");
+    expect(useUi.getState().chatConversationId).toBe("chat-1");
+    expect(useUi.getState().agentConversationId).toBeNull();
+
+    useUi.getState().setSurface("desktop-agent");
+    expect(useUi.getState().surface).toBe("desktop-agent");
+    expect(useUi.getState().conversationId).toBeNull();
+
+    useUi.getState().setConversationId("agent-1");
+    expect(useUi.getState().conversationId).toBe("agent-1");
+    expect(useUi.getState().agentConversationId).toBe("agent-1");
+    expect(useUi.getState().chatConversationId).toBe("chat-1");
+
+    useUi.getState().setSurface("chat");
+    expect(useUi.getState().surface).toBe("chat");
+    expect(useUi.getState().conversationId).toBe("chat-1");
+
+    useUi.getState().setSurface("desktop-agent");
+    expect(useUi.getState().conversationId).toBe("agent-1");
+  });
 });

@@ -121,6 +121,20 @@ function archiveRoot(cft) {
   return `chrome-${cft}`;
 }
 
+async function renameWithRetry(src, dst, attempts = 5) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await rename(src, dst);
+      return;
+    } catch (err) {
+      if (i === attempts || (err.code !== "EPERM" && err.code !== "EBUSY")) {
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 200 * i));
+    }
+  }
+}
+
 async function exists(path) {
   try {
     await stat(path);
@@ -340,7 +354,7 @@ async function main() {
     if (!inner) throw new Error(`no executable found in ${macosDir}`);
     await rename(join(macosDir, inner.name), join(macosDir, "Chromium"));
   } else {
-    await rename(extracted, normalized);
+    await renameWithRetry(extracted, normalized);
   }
 
   if (platform !== "win") await chmod(stageDest, 0o755);
@@ -361,7 +375,7 @@ async function main() {
   // Swap into place: only now does the previous tree get replaced, so an
   // interrupted run can never leave a half-written `resources/chromium`.
   await rm(outRoot, { recursive: true, force: true });
-  await rename(staging, outRoot);
+  await renameWithRetry(staging, outRoot);
   console.log(`[chromium] ready: ${dest} (version ${version}, recorded in chromium-version.json)`);
 }
 

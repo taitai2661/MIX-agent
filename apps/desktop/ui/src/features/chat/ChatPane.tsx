@@ -10,7 +10,7 @@ import {
   useModels,
   useProjects,
 } from "@/lib/queries";
-import { useUi } from "@/lib/ui";
+import { useUi, surfaceForMode } from "@/lib/ui";
 import { getLastModelForSurface } from "@/lib/modelPrefs";
 import type { ModelView, RunView } from "@/lib/types";
 import { nextVisit, type Welcome } from "./greeting";
@@ -20,6 +20,7 @@ import {
 } from "./ChatComposerContext";
 import { Composer, type DraftAttachment } from "./Composer";
 import { Transcript } from "./Transcript";
+import { ApprovalBanner } from "./ApprovalBanner";
 import { ErrorBox } from "@/components/shared";
 import { PaneErrorBoundary } from "@/components/PaneErrorBoundary";
 
@@ -72,9 +73,17 @@ function ChatPaneBody() {
   // backend deletes that thread, so the composer has to let go of it too.
   const temporaryNewRef = useRef<string | null>(null);
 
+  const surfaceConversations = useMemo(
+    () =>
+      (conversations.data ?? []).filter(
+        (c) => surfaceForMode(c.mode) === surface,
+      ),
+    [conversations.data, surface],
+  );
+
   const activeModelId = modelId || "auto";
   const activeConversationId =
-    conversationId ?? conversations.data?.[0]?.id ?? null;
+    conversationId ?? surfaceConversations[0]?.id ?? null;
 
   useEffect(() => {
     // `auto` is the default pick and is valid without any model in the list.
@@ -101,9 +110,18 @@ function ChatPaneBody() {
   }, [modelId, models.data, setModelId, surface]);
 
   useEffect(() => {
-    if (!conversationId && conversations.data?.[0])
-      setConversationId(conversations.data[0].id);
-  }, [conversationId, conversations.data, setConversationId]);
+    if (!conversations.data) return;
+    const currentConv = conversations.data.find((c) => c.id === conversationId);
+    if (
+      !conversationId ||
+      (currentConv && surfaceForMode(currentConv.mode) !== surface)
+    ) {
+      const match = conversations.data.find(
+        (c) => surfaceForMode(c.mode) === surface,
+      );
+      setConversationId(match ? match.id : null);
+    }
+  }, [conversationId, conversations.data, surface, setConversationId]);
 
   // Opening a project-scoped thread moves the file tree / diff scope with it.
   const activeConversation = useMemo(
@@ -358,8 +376,38 @@ function ChatPaneBody() {
     );
   }, [activeProjectId, conversations.data, projects.data, surface]);
 
+  const activeProject =
+    projects.data?.find((p) => p.id === activeProjectId) ?? null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {surface === "desktop-agent" && activeProject && (
+        <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface/40 px-4 py-1.5 text-xs text-muted backdrop-blur-xs sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="flex size-2 shrink-0 rounded-full bg-brand"
+              aria-hidden="true"
+            />
+            <span className="truncate font-medium text-fg">
+              {activeProject.name}
+            </span>
+            {activeProject.rootPath && (
+              <span
+                className="hidden truncate font-mono text-2xs text-faint sm:inline"
+                title={activeProject.rootPath}
+              >
+                {activeProject.rootPath}
+              </span>
+            )}
+          </div>
+          <span className="shrink-0 text-2xs font-semibold uppercase tracking-wider text-faint">
+            {t("エージェントワークスペース")}
+          </span>
+        </div>
+      )}
+      {liveForThisConversation?.approval && (
+        <ApprovalBanner approval={liveForThisConversation.approval} />
+      )}
       <PaneErrorBoundary name="Transcript" resetKeys={[activeConversationId]}>
         <Transcript
           messages={visibleMessages}

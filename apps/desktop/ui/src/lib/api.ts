@@ -356,6 +356,15 @@ export const api = {
 
   checkForUpdates: () => invoke<UpdateNotice | null>("check_for_updates"),
   installUpdate: () => invoke<void>("install_update"),
+  isUpdaterConfigured: () => invoke<boolean>("is_updater_configured"),
+  getAppVersion: async (): Promise<string> => {
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      return await getVersion();
+    } catch {
+      return "0.1.0";
+    }
+  },
 
   getSettings: () => invoke<SettingsView>("get_settings"),
   updateSettings: (input: SettingsView) =>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { api, listenRunEvents } from "@/lib/api";
@@ -9,6 +9,7 @@ import {
 } from "@/lib/queries";
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
 import type { UpdateNotice } from "@/lib/types";
+import { useUpdater } from "@/lib/updater";
 
 /** Mirrors `app/tauri.conf.json` `plugins.updater.active`. Flip to `true`
  *  only when endpoints + pubkey are configured there; otherwise the update
@@ -27,13 +28,20 @@ export function useCreateThread() {
   const setView = useUi((s) => s.setView);
   return useMutation({
     mutationFn: () => {
-      const { mode, modelId, activeProjectId } = useUi.getState();
+      const { surface, mode, modelId, activeProjectId } = useUi.getState();
+      const isAgent = surface === "desktop-agent";
+      const threadMode = isAgent
+        ? "agent"
+        : mode === "thinking"
+          ? "thinking"
+          : "chat";
+      const projectId = isAgent ? activeProjectId : null;
       return api.createConversation({
-        mode,
+        mode: threadMode,
         model_id: modelId,
         title: null,
         workspace_id: null,
-        project_id: activeProjectId,
+        project_id: projectId,
       });
     },
     onSuccess: (created) => {
@@ -46,40 +54,22 @@ export function useCreateThread() {
 
 /** The update banner's state, plus the two ways it gets set. */
 export function useUpdateNotice() {
-  const [update, setUpdate] = useState<UpdateNotice | null>(null);
-
-  const check = useCallback(async () => {
-    // Mirrors `app/tauri.conf.json` `plugins.updater.active: false`:
-    // with no endpoints/pubkey the backend can never report an update, so
-    // the banner stays hidden instead of showing dead UI.
-    if (!UPDATER_ENABLED) {
-      setUpdate(null);
-      return;
-    }
-    try {
-      setUpdate(await api.checkForUpdates());
-    } catch {
-      setUpdate(null);
-    }
-  }, []);
+  const store = useUpdater();
 
   useEffect(() => {
-    if (!UPDATER_ENABLED) return;
-    let active = true;
-    const offs: Array<() => void> = [];
-    listen<UpdateNotice>("update_available", (e) => {
-      if (active) setUpdate(e.payload);
-    }).then((un) => (active ? offs.push(un) : un()));
-    listen("menu://check-updates", () => {
-      if (active) void check();
-    }).then((un) => (active ? offs.push(un) : un()));
-    return () => {
-      active = false;
-      offs.forEach((un) => un());
-    };
-  }, [check]);
+    return store.init();
+  }, [store]);
 
-  return { update, dismiss: () => setUpdate(null), check };
+  return {
+    update: store.update,
+    isChecking: store.isChecking,
+    isInstalling: store.isInstalling,
+    downloadProgress: store.downloadProgress,
+    error: store.error,
+    check: store.check,
+    install: store.install,
+    dismiss: store.dismiss,
+  };
 }
 
 /** Tauri menu events, the run-event bridge and cache invalidations.

@@ -176,38 +176,31 @@ staple の各手順は `desktop-release.yml` に実装済みです（署名証�
 ## 自動更新
 
 `app/src/updater.rs` が起動 20 秒後に更新を確認し、新しい版があれば
-`update_available` を emit する。UI はそれを受け取ってバナーを表示し、
-「Install & restart」でダウンロード → インストール → 再起動を行う。
-`Help ▸ Check for Updates` からの手動確認も可能。
+`update_available` を emit します。UI はそれを受け取って上部バナーおよび「設定 ▸ アップデート」画面に表示し、
+「インストールして再起動」でダウンロード（進捗プログレスバー表示）→ インストール → 再起動を行います。
+起動時の自動確認は設定の `auto_update`（有効/無効）に従います。
+また、「設定 ▸ アップデート」タブおよび `Help ▸ Check for Updates` からの手動確認・リリースノート確認も可能です。
 
-**既定では無効**（`tauri.conf.json` の `plugins.updater.active = false`、
-`endpoints: []`）。この状態では `is_configured()` が false を返し、起動時の
-チェックもインストールも no-op になる。ローカルビルドが壊れないための意図的な
-仕様で、endpoint がないのに起動を失敗させてはならない。
+**配信エンドポイント:**
+GitHub Releases の `https://github.com/taitai2661/MIX-agent/releases/latest/download/latest.json` を使用します。
+CI（`.github/workflows/desktop-release.yml`）内で、各プラットフォームビルド後に `scripts/merge-updater-manifests.mjs` が自動実行され、マルチプラットフォーム（macOS arm64/x64, Windows, Linux）対応の単一 `latest.json` が生成・発行されます。
 
-有効化するには署名鍵とエンドポイントを用意して設定する:
+署名鍵の準備・有効化手順:
 
 ```bash
 # 1) 署名鍵を生成する（機密: リポジトリにコミットしないこと）
-cargo tauri signer generate -w ~/.tauri/mix-agent.key \
+pnpm --filter mix-agent-desktop-workspace tauri signer generate -w ~/.tauri/mix-agent.key \
   -p "MIX-agent Desktop" --force
 
-# 2) 更新マニフェストを配信できるサーバー
-#    https://v2.tauri.app/plugin/updater/ を参照
+# 2) 生成された公開鍵（~/.tauri/mix-agent.key.pub）の文字列を
+#    app/tauri.conf.json の plugins.updater.pubkey に登録
 
-# 3) app/tauri.conf.json を編集する
-#    plugins.updater.active           = true
-#    plugins.updater.dialog           = false
-#    plugins.updater.endpoints        = ["https://example.com/updates/{{target}}/{{arch}}/{{current_version}}"]
-#    plugins.updater.pubkey           = "生成された公開鍵"
-#    bundle.createUpdaterArtifacts    = true
+# 3) 生成された秘密鍵の内容およびパスワードを GitHub リポジトリの Secrets に設定:
+#    - TAURI_SIGNING_PRIVATE_KEY
+#    - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-`bundle.createUpdaterArtifacts` は `false` に設定しています。updater が無効な期間に
-署名済み更新アーティファクト（`.sig` / `latest.json`）を生成しても配布経路がなく、
-CI 成果物が膨らむだけだからです。updater 有効化（上記手順）と同時に `true` へ戻し、
-`desktop-release.yml` の updater-artifacts アップロードのコメント解除も行ってください。
-`dialog: false` なので、有効化後は UI 側のバナーからのインストールに依存します。
+ローカル環境等で `pubkey` が未設定またはエンドポイントへの疎通ができない場合でも、アプリ起動が失敗しないよう安全にフォールバックされます。
 
 ## Backup / Restore
 

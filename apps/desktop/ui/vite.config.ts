@@ -47,6 +47,13 @@ export default defineConfig({
           // is only needed by the transcript and file previews.
           markdown: ["react-markdown", "remark-gfm", "remark-breaks"],
           vendor: ["react", "react-dom", "@tanstack/react-query", "zustand"],
+          radix: [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-popover",
+            "@radix-ui/react-slot",
+          ],
+          icons: ["lucide-react"],
         },
       },
     },

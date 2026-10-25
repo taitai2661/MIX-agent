@@ -18,6 +18,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { getString, removeKey, setString } from "@/lib/storage";
 import { subscribePromptInsert } from "@/lib/promptInsert";
+import { loadPromptHistory, pushPromptHistory } from "@/lib/promptHistory";
 import { useUi, type SendShortcut } from "@/lib/ui";
 import type { ModelView, ProjectView, ProviderView } from "@/lib/types";
 import { Alert } from "@/components/ui/alert";
@@ -162,6 +163,9 @@ export const Composer = memo(function Composer(props: {
   const draftKeyRef = useRef<string | null>(draftKey ?? null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+
+  const historyIndexRef = useRef<number>(-1);
+  const historyDraftRef = useRef<string>("");
 
   const activeProject = projects.find((p) => p.id === projectId);
   const rootPath = activeProject?.rootPath ?? null;
@@ -383,7 +387,11 @@ export const Composer = memo(function Composer(props: {
 
   const submit = () => {
     if (!canSend) return;
-    onSend(draft.trim(), attachments, { temporaryMode, allowTools });
+    const trimmed = draft.trim();
+    pushPromptHistory(trimmed);
+    historyIndexRef.current = -1;
+    historyDraftRef.current = "";
+    onSend(trimmed, attachments, { temporaryMode, allowTools });
     setDraft("");
     clearAttachments();
     removeKey(`mix:composer-draft:${draftKeyRef.current ?? "none"}`);
@@ -396,7 +404,7 @@ export const Composer = memo(function Composer(props: {
 
   const placeholder =
     mode === "agent"
-      ? t("複雑な作業を依頼…")
+      ? t("エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)")
       : mode === "thinking"
         ? t("深く考えてほしいことを入力…")
         : t("MIX-agent に話しかける…");
@@ -488,6 +496,7 @@ export const Composer = memo(function Composer(props: {
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value);
+                historyIndexRef.current = -1;
               }}
               onCompositionStart={() => {
                 isComposingRef.current = true;
@@ -603,6 +612,45 @@ export const Composer = memo(function Composer(props: {
                       e.preventDefault();
                       active.click();
                       return;
+                    }
+                  }
+                }
+
+                if (mentionQuery === null && slashQuery === null && !isImeComposing) {
+                  if (e.key === "ArrowUp") {
+                    const el = textareaRef.current;
+                    const inHistory = historyIndexRef.current >= 0;
+                    const atStart =
+                      inHistory ||
+                      !el ||
+                      (el.selectionStart === 0 && el.selectionEnd === 0);
+                    if (atStart) {
+                      const history = loadPromptHistory();
+                      if (history.length > 0) {
+                        const nextIndex = Math.min(
+                          historyIndexRef.current + 1,
+                          history.length - 1,
+                        );
+                        if (nextIndex !== historyIndexRef.current) {
+                          if (historyIndexRef.current === -1) {
+                            historyDraftRef.current = draft;
+                          }
+                          historyIndexRef.current = nextIndex;
+                          e.preventDefault();
+                          setDraft(history[nextIndex]);
+                        }
+                      }
+                    }
+                  } else if (e.key === "ArrowDown" && historyIndexRef.current >= 0) {
+                    const nextIndex = historyIndexRef.current - 1;
+                    e.preventDefault();
+                    if (nextIndex >= 0) {
+                      const history = loadPromptHistory();
+                      historyIndexRef.current = nextIndex;
+                      setDraft(history[nextIndex]);
+                    } else {
+                      historyIndexRef.current = -1;
+                      setDraft(historyDraftRef.current);
                     }
                   }
                 }
