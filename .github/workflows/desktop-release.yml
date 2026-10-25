@@ -334,7 +334,7 @@ jobs:
       - name: Merge multi-platform updater manifests
         run: |
           node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
-            --repo taitai2661/MIX-agent \
+            --repo ${{ github.repository }} \
             --tag ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       - uses: softprops/action-gh-release@v2
         with:
