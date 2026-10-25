@@ -8,6 +8,15 @@
 
 現在の日付順（新しい順）: 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
 
+## [追記] v0.5.0 Desktop公開対象の変更と署名preflight（2026-10-25）
+
+- ユーザーの公開範囲変更により、v0.5.0で配布するDesktopインストーラーをApple Silicon／Intel macOSに限定し、Windows/Linux版は見送ります。`.github/workflows/desktop-release.yml`、Release notes、公開checklistをこの範囲へ合わせました。Docker/Web版とZimaOS配布は従来どおり対象です。
+- Windowsを含むクロスプラットフォームCI [run 40185098158](https://github.com/taitai2661/MIX-agent/actions/runs/40185098158) は、PTY integration testを直列化したcommit `dd59c77`でsuccess。PostgreSQL・Docker/Webを含む[Validate run 40185131436](https://github.com/taitai2661/MIX-agent/actions/runs/40185131436)もsuccess。
+- macOS署名dry-run [run 40185138619](https://github.com/taitai2661/MIX-agent/actions/runs/40185138619)では、Apple Silicon／Intelの両jobを含めて`Build and bundle`がfailureとなり、`checksums`と`release`はskip。macOSの失敗ログには`security import`がkeychain certificateのimportに失敗した旨がありました。Apple証明書のSecret値は参照・表示・変更していません。
+- [Tauri公式macOS signing guide](https://v2.tauri.app/distribute/sign/macos/)では、`APPLE_CERTIFICATE`はbase64化した`.p12`、`APPLE_CERTIFICATE_PASSWORD`はexport時に設定したpasswordと説明されています。Repository管理者が既存の証明書Secretとpasswordの整合性を確認する必要があります。
+- Updater用`TAURI_SIGNING_PRIVATE_KEY`はGitHub Actionsのnon-empty checkを通過しましたが、今回のmacOS buildはApple証明書エラーで停止し、公開鍵による署名検証まで到達していません。先行preflightでは同Secretのdecodeで`Invalid padding`が記録されており、既存key fileからのSecret値修正も引き続き必要です。値の取得・表示・再生成は行っていません。
+- `v0.5.0` tag、GitHub Release、Desktop配布assetは作成していません。既存の署名Secretsが修正され、macOS-only dry-runがbuildと署名検証を通過するまでtag作成を保留します。
+
 ## [追記] Windows Desktop CIのpath修正（2026-10-25）
 
 - main commit `90d18ad`の[CI run 40175459776](https://github.com/taitai2661/MIX-agent/actions/runs/40175459776)では、Desktop UI、Ubuntu/macOS Rust、Docker backend/frontend、lint、format、Memory parityが成功。Windows Rustのみ102 passed / 6 failedで、主にpersistent Git Bash PTYのcwd/exit-status marker timeoutとUnix executableを前提にしたdirect-exec testが失敗しました。

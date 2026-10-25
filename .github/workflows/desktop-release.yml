@@ -6,9 +6,10 @@ name: desktop-release
 # Tagging with `v*` triggers both Docker releases and Desktop DMG / installer builds,
 # uploading them as unified GitHub Release assets.
 #
-# Alpha scope: x64 macOS + ARM macOS + x64 Windows + x64 Linux only.
-# Deferred (no runner / untested CfT bundle): aarch64-linux, universal-macos,
-# win-arm64. Add them as explicit matrix entries when a runner exists.
+# v0.5.0 Desktop release scope: Apple Silicon and Intel macOS only.
+# Windows and Linux Desktop installers are deferred by release scope decision;
+# do not add them to this release matrix. Also deferred: universal-macos,
+# aarch64-linux, and win-arm64.
 #
 # Bundled Chromium is fetched explicitly below (pinned MIX_CHROMIUM_VERSION),
 # and the release build fails closed (MIX_REQUIRE_CHROMIUM=1) rather than
@@ -77,19 +78,9 @@ jobs:
             bundles: app,dmg
             cft: mac-x64
             cft_key: MAC_X64
-          # Deferred: universal-macos (requires lipo of both targets; add when needed).
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bundles: msi,nsis
-            cft: win32
-            cft_key: WIN32
-          # Deferred: win-arm64 (CfT win-arm64 bundle untested; no ARM runner yet).
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            bundles: deb,appimage
-            cft: linux64
-            cft_key: LINUX64
-          # Deferred: aarch64-linux (no ARM Linux runner in CI yet).
+          # Deferred for v0.5.0: Windows x64 and Linux x86_64 Desktop installers.
+          # universal-macos requires lipo of both targets; win-arm64 and Linux ARM64
+          # are also deferred until runners and signed artifacts are accepted.
 
     steps:
       # workflow_dispatch builds the tag passed as `inputs.tag`; tag pushes
