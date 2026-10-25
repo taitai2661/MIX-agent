@@ -434,9 +434,23 @@ impl ShellSession {
 
         {
             let mut writer = self.writer.lock().await;
-            writer
-                .write_all(script.as_bytes())
-                .map_err(|e| format!("shell write failed: {e:#}"))?;
+            if let Err(err) = writer.write_all(script.as_bytes()) {
+                #[cfg(all(test, target_os = "windows"))]
+                if command == "echo alive" {
+                    let output = self.output.lock().await;
+                    let text = String::from_utf8_lossy(&output).to_ascii_lowercase();
+                    eprintln!(
+                        "[PTY write summary] bytes={} lines={} start_marker={} bash_error={} fork_error={} resource_error={}",
+                        output.len(),
+                        text.lines().count(),
+                        text.contains(&start_marker.to_ascii_lowercase()),
+                        text.contains("bash:"),
+                        text.contains("fork"),
+                        text.contains("resource") || text.contains("memory")
+                    );
+                }
+                return Err(format!("shell write failed: {err:#}"));
+            }
             writer
                 .flush()
                 .map_err(|e| format!("shell flush failed: {e:#}"))?;
