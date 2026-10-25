@@ -1,0 +1,37 @@
+[package]
+name = "mixd-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MIX-agent Desktop — Run Engine core"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+mixd-providers = { workspace = true }
+mixd-tools = { workspace = true }
+mixd-storage = { workspace = true }
+mixd-browser = { workspace = true }
+mixd-mcp = { workspace = true }
+futures-util = "0.3"
+async-stream = "0.3"
+regex = "1.10"
+sqlx.workspace = true
+
+# The retrieval-quality bench (spec §5). Declared explicitly so the target is
+# `--bin retrieval-bench` (hyphen) rather than the file stem; running it is
+# `cargo run -p mixd-core --bin retrieval-bench -- --size 1000`. It is a
+# measurement tool, not a test: nothing here runs under `cargo test --workspace`.
+[[bin]]
+name = "retrieval-bench"
+path = "src/bin/retrieval_bench.rs"

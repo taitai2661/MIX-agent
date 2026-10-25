@@ -363,8 +363,10 @@ def test_memory_revision_restore(signed):
     revisions = signed.get("/api/v1/memories/" + key + "/revisions").json()
     assert revisions[0]["data"]["previous"]["content"] == "日本語を好む"
     assert signed.delete("/api/v1/memories/" + key).status_code == 200
+    # §3: `forget` is a hard delete — the row is gone and only the revision
+    # survives, which is what makes the restore below possible.
     deleted = signed.get("/api/v1/memories?q=日本語").json()
-    assert deleted[0]["data"]["deleted"] is True
+    assert deleted == []
     assert (
         signed.post(
             "/api/v1/memories/" + key + "/restore/" + revisions[0]["id"]
@@ -392,7 +394,9 @@ def test_memory_recall_ranks_pinned_relevant_entries_and_blocks_secrets(signed):
     assert rows[0]["data"]["pinned"] is True
     assert "category" not in rows[0]["data"]
     assert rows[0]["data"]["lifecycle_state"] == "established"
-    assert rows[0]["data"]["strength"] > 0.8
+    # The duplicate reinforced the row it already had (§3): the same words
+    # arriving again are evidence, so its strength grew past §1's default.
+    assert rows[0]["data"]["strength"] > 0.6
     rejected = signed.post("/api/v1/memories", json={"content": "api_key=not-for-memory"})
     assert rejected.status_code == 422
 
@@ -598,13 +602,17 @@ def test_memory_scope_is_a_soft_retrieval_signal(signed):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         service.change(db, owner, "user preference", confidence=.9)
-        service.change(db, owner, "agent-only decision", scope="agent:one", confidence=.9)
+        # §2's vocabulary: an unknown scope falls back to the row default, so
+        # the second memory needs a real scope to be distinguishable at all.
+        service.change(db, owner, "agent-only decision", scope="task", confidence=.9)
         db.commit()
+        # A scope is a *soft* signal: the other scope stays retrievable, it
+        # only ranks lower.
         user_ranked = service.search(db, owner, scopes=["user"])
-        agent_ranked = service.search(db, owner, scopes=["agent:one"])
+        task_ranked = service.search(db, owner, scopes=["task"])
         assert {row["content"] for row in user_ranked} == {"user preference", "agent-only decision"}
         assert user_ranked[0]["content"] == "user preference"
-        assert agent_ranked[0]["content"] == "agent-only decision"
+        assert task_ranked[0]["content"] == "agent-only decision"
 
 
 def test_message_retry_and_saved_selection(signed, monkeypatch):
@@ -638,6 +646,244 @@ def test_message_retry_and_saved_selection(signed, monkeypatch):
     history = signed.get(url).json()
     assert len(history["messages"]) == len(history["runs"]) == 1
     assert history["selection"]["model_id"] == model_id
+
+
+def test_edit_message_truncates_later_turns_and_regenerates(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    headers = {"Idempotency-Key": "edit-turn-1"}
+    first = signed.post(
+        url, json={"model_id": model_id, "content": "first", "mode": "chat"}, headers=headers
+    )
+    assert first.status_code == 200, first.text
+    with SessionLocal() as db:
+        db.get(Run, first.json()["run_id"]).status = "completed"
+        db.commit()
+    second = signed.post(
+        url,
+        json={"model_id": model_id, "content": "second", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-turn-2"},
+    )
+    assert second.status_code == 200, second.text
+    with SessionLocal() as db:
+        db.get(Run, second.json()["run_id"]).status = "completed"
+        db.commit()
+
+    history = signed.get(url).json()
+    target = history["messages"][0]["id"]
+    edited = signed.post(
+        "/api/v1/conversations/" + conversation["id"] + "/messages/" + target + "/edit",
+        json={"model_id": model_id, "content": "first (edited)", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-turn-3"},
+    )
+    assert edited.status_code == 200, edited.text
+
+    history = signed.get(url).json()
+    # The edited turn replaces the old one, and the turn that followed it — which
+    # answered the old wording — is gone along with its Run.
+    assert [message["data"]["content"] for message in history["messages"]] == ["first (edited)"]
+    assert len(history["runs"]) == 1
+    assert history["messages"][0]["id"] != target
+    assert edited.json()["run_id"] == history["runs"][0]["id"]
+
+
+def test_edit_message_rejects_assistant_and_other_conversations(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    posted = signed.post(
+        url,
+        json={"model_id": model_id, "content": "hello", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-role-1"},
+    )
+    assert posted.status_code == 200, posted.text
+    with SessionLocal() as db:
+        own_run = db.get(Run, posted.json()["run_id"])
+        own_run.status = "completed"
+        assistant = Message(
+            owner_id=own_run.owner_id,
+            conversation_id=conversation["id"],
+            data={"role": "assistant", "content": "reply"},
+        )
+        db.add(assistant)
+        db.commit()
+        assistant_id = assistant.id
+    # An assistant turn is not editable.
+    assert (
+        signed.post(
+            url + "/" + assistant_id + "/edit",
+            json={"content": "x"},
+            headers={"Idempotency-Key": "edit-role-2"},
+        ).status_code
+        == 422
+    )
+    # A user message from another conversation cannot be edited through it.
+    target = signed.get(url).json()["messages"][0]["id"]
+    other = signed.post("/api/v1/conversations", json={}).json()
+    assert (
+        signed.post(
+            "/api/v1/conversations/" + other["id"] + "/messages/" + target + "/edit",
+            json={"content": "x"},
+            headers={"Idempotency-Key": "edit-role-3"},
+        ).status_code
+        == 422
+    )
+
+
+def test_edit_message_failure_keeps_the_history(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    posted = signed.post(
+        url,
+        json={"model_id": model_id, "content": "keep me", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-fail-1"},
+    )
+    assert posted.status_code == 200, posted.text
+    with SessionLocal() as db:
+        db.get(Run, posted.json()["run_id"]).status = "completed"
+        db.commit()
+    target = signed.get(url).json()["messages"][0]["id"]
+    # A model that does not exist fails the send path. The truncation has to be
+    # part of that same failed transaction, so the original turn survives
+    # instead of the conversation being emptied with nothing to replace it.
+    failed = signed.post(
+        url + "/" + target + "/edit",
+        json={"model_id": "missing-model", "content": "edited", "mode": "chat"},
+        headers={"Idempotency-Key": "edit-fail-2"},
+    )
+    assert failed.status_code == 404, failed.text
+    history = signed.get(url).json()
+    assert [message["data"]["content"] for message in history["messages"]] == ["keep me"]
+    assert len(history["runs"]) == 1
+
+
+def test_edit_idempotency_is_scoped_to_the_target_message(signed, monkeypatch):
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(routes, "launch", lambda _: None)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        provider = Provider(owner_id=owner, data={"kind": "compatible"})
+        db.add(provider)
+        db.flush()
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
+        db.add(model)
+        db.commit()
+        model_id = model.id
+    conversation = signed.post("/api/v1/conversations", json={}).json()
+    url = "/api/v1/conversations/" + conversation["id"] + "/messages"
+    for index, key in enumerate(("edit-scope-seed-1", "edit-scope-seed-2")):
+        posted = signed.post(
+            url,
+            json={"model_id": model_id, "content": f"turn {index}", "mode": "chat"},
+            headers={"Idempotency-Key": key},
+        )
+        assert posted.status_code == 200, posted.text
+        with SessionLocal() as db:
+            db.get(Run, posted.json()["run_id"]).status = "completed"
+            db.commit()
+    messages = signed.get(url).json()["messages"]
+    target, later = messages[0]["id"], messages[1]["id"]
+    body = {"model_id": model_id, "content": "turn 0 (edited)", "mode": "chat"}
+    headers = {"Idempotency-Key": "edit-scope-key"}
+    edited = signed.post(url + "/" + target + "/edit", json=body, headers=headers)
+    assert edited.status_code == 200, edited.text
+    # Retrying the same edit is idempotent...
+    retried = signed.post(url + "/" + target + "/edit", json=body, headers=headers)
+    assert retried.status_code == 200, retried.text
+    assert retried.json() == edited.json()
+    # ...but the same key against a *different* turn is a different request, not
+    # a retry, so it must not be answered with the first Run.
+    conflict = signed.post(url + "/" + later + "/edit", json=body, headers=headers)
+    assert conflict.status_code == 409, conflict.text
+
+
+def test_delete_message_tail_defers_artifact_unlink_until_commit(signed, tmp_path, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from mix_agent import config
+    from mix_agent.api import routes
+
+    monkeypatch.setattr(config, "ARTIFACTS", tmp_path)
+    base = datetime.now(UTC)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        conversation = Conversation(owner_id=owner, data={"title": "t", "state": "active"})
+        artifact = Artifact(
+            owner_id=owner,
+            data={"name": "note.txt", "mime": "text/plain", "size": 3},
+        )
+        db.add_all([conversation, artifact])
+        db.flush()
+        (tmp_path / artifact.id).write_bytes(b"abc")
+        kept = Message(
+            owner_id=owner,
+            conversation_id=conversation.id,
+            data={"role": "user", "content": "keep"},
+            created_at=base,
+        )
+        doomed = Message(
+            owner_id=owner,
+            conversation_id=conversation.id,
+            data={"role": "user", "content": "drop", "artifact_ids": [artifact.id]},
+            created_at=base + timedelta(seconds=1),
+        )
+        db.add_all([kept, doomed])
+        db.flush()
+        kept_id, doomed_id, artifact_id = kept.id, doomed.id, artifact.id
+        # The rows have to exist before the rollback below: the test proves
+        # that the *deletion* is transactional, so what survives it is the
+        # committed conversation, not an uncommitted insert.
+        db.commit()
+
+        paths = routes._delete_message_tail(db, conversation, doomed_id)
+        # Nothing is unlinked here: the replacement Run's transaction may still
+        # roll back, so the bytes must outlive it. Only the caller unlinks after
+        # the commit.
+        assert (tmp_path / artifact_id).exists()
+        assert any(str(path).endswith(artifact_id) for path in paths)
+        db.rollback()
+
+    with SessionLocal() as db:
+        assert db.get(Message, kept_id) is not None
+        assert db.get(Message, doomed_id) is not None
+        assert db.get(Artifact, artifact_id) is not None
+    assert (tmp_path / artifact_id).exists()
 
 
 def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monkeypatch):

@@ -1,0 +1,380 @@
+name: desktop-release
+
+# Builds installable MIX-agent Desktop artifacts for all three platforms.
+#
+# Tag scheme: `desktop-v*` (e.g. desktop-v0.5.0) or `v*` (e.g. v0.5.0).
+# Tagging with `v*` triggers both Docker releases and Desktop DMG / installer builds,
+# uploading them as unified GitHub Release assets.
+#
+# Alpha scope: x64 macOS + ARM macOS + x64 Windows + x64 Linux only.
+# Deferred (no runner / untested CfT bundle): aarch64-linux, universal-macos,
+# win-arm64. Add them as explicit matrix entries when a runner exists.
+#
+# Bundled Chromium is fetched explicitly below (pinned MIX_CHROMIUM_VERSION),
+# and the release build fails closed (MIX_REQUIRE_CHROMIUM=1) rather than
+# shipping browser-less. Linux/Windows jobs need the extra system libraries
+# Chromium links against.
+#
+# `cft` is the Chrome-for-Testing platform that matches the *bundle target*,
+# not the runner: the two macOS entries build from the same runner label, so
+# without it the Intel bundle would ship an arm64 Chromium (or the reverse).
+# Checksums are per CfT platform too — each one ships its own zip — so
+# MIX_CHROMIUM_SHA256_<KEY> / MIX_CHROMIUM_SIZE_<KEY> are optional secrets
+# and variables; when a target has none, the version assertion below is the
+# only gate.
+#
+# Auto-update: the Tauri config enables signed updates using the embedded
+# verification public key and the GitHub latest.json endpoint. Releases require
+# TAURI_SIGNING_PRIVATE_KEY in Actions Secrets. The release job validates that
+# signed updater manifests were produced before uploading the release assets.
+# See docs/desktop/architecture.md ("Automatic updates" section).
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. desktop-v0.5.0 or v0.5.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  RUST_BACKTRACE: "1"
+  # Pinned Chromium for reproducible release builds. Bump deliberately and keep
+  # MIX_CHROMIUM_SHA256/SIZE in sync when the version changes. When set
+  # (secrets.MIX_CHROMIUM_SHA256 / vars.MIX_CHROMIUM_SIZE), fetch-chromium.mjs
+  # verifies the zip; when unset, the "Verify Chromium provenance" step below
+  # asserts chromium-version.json version == MIX_CHROMIUM_VERSION via jq
+  # (fail closed).
+  MIX_CHROMIUM_VERSION: "145.0.7632.14"
+  MIX_REQUIRE_CHROMIUM: "1"
+
+jobs:
+  bundle:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+            cft: mac-arm64
+            cft_key: MAC_ARM64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+            cft: mac-x64
+            cft_key: MAC_X64
+          # Deferred: universal-macos (requires lipo of both targets; add when needed).
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi,nsis
+            cft: win32
+            cft_key: WIN32
+          # Deferred: win-arm64 (CfT win-arm64 bundle untested; no ARM runner yet).
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+            cft: linux64
+            cft_key: LINUX64
+          # Deferred: aarch64-linux (no ARM Linux runner in CI yet).
+
+    steps:
+      # workflow_dispatch builds the tag passed as `inputs.tag`; tag pushes
+      # build github.ref. Without this, the `tag` input would be accepted but
+      # never used.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.91.0"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+          key: bundle-${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Single source of truth for the pnpm version is packageManager in
+          # apps/desktop/package.json (pnpm@10.11.0) via corepack;
+          # the explicit `version:` here only pins CI while corepack auto-pin
+          # is disabled (COREPACK_ENABLE_AUTO_PIN=0). Drop `version:` once CI
+          # runs `corepack enable` + `corepack install` instead.
+          version: "10.11.0"
+
+      # Chromium needs these at build time on Linux; tauri also needs them to
+      # package .deb and .AppImage.
+      # NOTE: jobs stay on ubuntu-22.04 (not 24.04): 24.04 renamed libssl to
+      # libssl3t64 and moved libwebkit2gtk-4.1/libappindicator3 out of the
+      # default archive, so the apt set below would need rework before bumping.
+      - name: Install Linux bundling + Chromium dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libssl-dev libxdo-dev libgtk-3-dev libayatana-appindicator3-dev \
+            fuse3
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"
+
+      # No separate `pnpm build` in ui/: `tauri build` runs beforeBuildCommand
+      # (UI build + fetch-chromium) exactly once, so an explicit UI build here
+      # would compile Vite twice.
+      # Cache the fetched Chromium dir across runs: keyed on the pinned
+      # version + target so a version bump naturally invalidates it. A stale
+      # cache never ships the wrong version — the provenance step below
+      # asserts chromium-version.json == MIX_CHROMIUM_VERSION either way.
+      - name: Cache bundled Chromium
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/app/resources/chromium
+          key: chromium-${{ env.MIX_CHROMIUM_VERSION }}-${{ matrix.target }}
+          restore-keys: |
+            chromium-${{ env.MIX_CHROMIUM_VERSION }}-
+      - name: Fetch bundled Chromium (fail closed)
+        working-directory: apps/desktop
+        run: node scripts/fetch-chromium.mjs
+        env:
+          MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
+          MIX_CHROMIUM_CFT: ${{ matrix.cft }}
+          MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
+          MIX_CHROMIUM_SIZE: ${{ vars[format('MIX_CHROMIUM_SIZE_{0}', matrix.cft_key)] }}
+          MIX_REQUIRE_CHROMIUM: "1"
+
+      - name: Assert Chromium bundle present
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          test -f app/resources/chromium/chromium-version.json
+          cat app/resources/chromium/chromium-version.json
+          case "${{ runner.os }}" in
+            macOS) test -f app/resources/chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium ;;
+            Windows) test -f app/resources/chromium/chrome-win/chrome.exe ;;
+            *) test -f app/resources/chromium/chrome-linux/chrome ;;
+          esac
+
+      - name: Upload chromium-version manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-version-${{ matrix.target }}
+          path: apps/desktop/app/resources/chromium/chromium-version.json
+          if-no-files-found: error
+          retention-days: 14
+
+      # Effective SHA/version gate: when a per-target SHA is set the fetch
+      # step above already hash-verified the zip; when unset, assert the
+      # recorded version equals the pinned MIX_CHROMIUM_VERSION and that the
+      # recorded platform is the one this matrix entry targets (warn, don't
+      # pass silently, so a floating Latest or a wrong-arch Chromium shows up
+      # in the logs).
+      - name: Verify Chromium provenance
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ -n "${MIX_CHROMIUM_SHA256:-}" ]; then
+            echo "SHA pin present — zip was hash-verified by fetch-chromium.mjs."
+          else
+            echo "::warning::MIX_CHROMIUM_SHA256_${CFT_KEY} is not set — falling back to version and platform assertions only."
+          fi
+          jq -e --arg v "$MIX_CHROMIUM_VERSION" '.version == $v' \
+            app/resources/chromium/chromium-version.json > /dev/null
+          jq -e --arg p "$MIX_CHROMIUM_CFT" '.platform == $p' \
+            app/resources/chromium/chromium-version.json > /dev/null
+        env:
+          MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
+          MIX_CHROMIUM_CFT: ${{ matrix.cft }}
+          CFT_KEY: ${{ matrix.cft_key }}
+          MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
+
+      - name: Require updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not configured in GitHub Actions Secrets."
+            exit 1
+          fi
+      # macOS signing certificate must be in the keychain BEFORE `tauri build`
+      # so signing happens during bundling (post-hoc codesign invalidates it).
+      # Skipped without secrets: the build below then stays clearly unsigned.
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.repository }}
+        run: |
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          trap 'security delete-keychain build.keychain 2>/dev/null; rm -f /tmp/cert.p12' EXIT
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/cert.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm -f /tmp/cert.p12
+
+      # Signing happens DURING `tauri build` via the Apple env below, not as a      # post-hoc codesign of the bundled .app (post-hoc signing invalidates the
+      # bundle). Without APPLE_SIGNING_IDENTITY the build still succeeds but is
+      # clearly labeled unsigned (see the guard echo).
+      - name: Build and bundle
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && [ "${{ runner.os }}" = "macOS" ]; then
+            echo "::warning::No APPLE_SIGNING_IDENTITY — producing an UNSIGNED macOS build."
+          fi
+          pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        env:
+          MIX_REQUIRE_CHROMIUM: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Notarization runs after the (already signed) bundle exists. The nested
+      # Chromium.app is signed BEFORE the outer app; the outer signature would
+      # otherwise be invalidated. Creates the notarytool keychain profile from
+      # secrets; skipped entirely without them.
+      - name: Notarize and staple the macOS build
+        if: runner.os == 'macOS' && secrets.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          xcrun notarytool store-credentials "notary" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD"
+          APP="target/${{ matrix.target }}/release/bundle/macos/MIX-agent Desktop.app"
+          SIGN="${APPLE_SIGNING_IDENTITY:-Developer ID Application: $APPLE_TEAM_ID}"
+          if [ -d "$APP/Contents/Resources/chromium" ]; then
+            find "$APP/Contents/Resources/chromium" -name "*.app" -depth -exec \
+              codesign --force --sign "$SIGN" --options runtime --timestamp {} \;
+          fi
+          codesign --force --sign "$SIGN" --options runtime --timestamp "$APP"
+          xcrun notarytool submit "$APP" --keychain-profile "notary" --wait
+          xcrun stapler staple "$APP"
+
+      - name: Collect artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mix-agent-desktop-${{ matrix.target }}
+          path: |
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.msi
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.exe
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.deb
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz.sig
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip.sig
+            apps/desktop/target/${{ matrix.target }}/release/bundle/**/latest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  checksums:
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Build a checksum manifest
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+            -o -name '*.deb' -o -name '*.AppImage' \) \
+            -print0 | sort -z | xargs -0 -I{} sh -c 'sha256sum "$1" >> SHA256SUMS' _ {}
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mix-agent-desktop-checksums
+          path: artifacts/SHA256SUMS
+          retention-days: 14
+
+  release:
+    needs: [bundle, checksums]
+    # Tag pushes match the ref; manual dispatches use the `tag` input (the
+    # bundle job checks out that same ref above).
+    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Merge multi-platform updater manifests
+        run: |
+          node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
+            --repo ${{ github.repository }} \
+            --tag ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      - name: Validate signed updater manifest
+        shell: bash
+        run: |
+          test -s artifacts/latest.json
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const manifest = JSON.parse(readFileSync("artifacts/latest.json", "utf8"));
+          const platforms = Object.entries(manifest.platforms ?? {});
+          if (!manifest.version || platforms.length === 0) {
+            throw new Error("Updater manifest has no version or platform entries");
+          }
+          for (const [platform, artifact] of platforms) {
+            if (!artifact.signature || !artifact.url) {
+              throw new Error(`Updater entry is missing signature or URL: ${platform}`);
+            }
+          }
+          console.log(`Validated signed updater entries: ${platforms.map(([name]) => name).join(", ")}`);
+          NODE
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
+            artifacts/**/*.tar.gz
+            artifacts/**/*.tar.gz.sig
+            artifacts/**/*.zip
+            artifacts/**/*.zip.sig
+            artifacts/latest.json
+            artifacts/**/SHA256SUMS
+          fail_on_unmatched_files: false

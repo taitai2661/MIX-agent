@@ -44,7 +44,9 @@ ROLES: Final[tuple[str, ...]] = (
 )
 
 # Roles that describe *what the agent believes to be true right now* (semantic).
-SEMANTIC_ROLES: Final = frozenset({ROLE_FACT, ROLE_DECISION, ROLE_PREFERENCE, ROLE_GOAL, ROLE_CONSTRAINT, ROLE_SOLUTION})
+SEMANTIC_ROLES: Final = frozenset(
+    {ROLE_FACT, ROLE_DECISION, ROLE_PREFERENCE, ROLE_GOAL, ROLE_CONSTRAINT, ROLE_SOLUTION}
+)
 # Roles that describe *what happened* (episodic).
 EPISODIC_ROLES: Final = frozenset({ROLE_EXPERIENCE, ROLE_FAILURE, ROLE_OBSERVATION})
 # Roles that are not yet stable enough to drive action without confirmation.
@@ -111,26 +113,30 @@ VERIFICATIONS: Final[tuple[str, ...]] = (
 # ---------------------------------------------------------------------------
 # Lifecycle: how the item ages in the agent's mind.
 # ---------------------------------------------------------------------------
+# `established` is a first-class state (not a legacy alias): a Memory that has
+# survived unchallenged for a while is distinct from one just created. Both
+# editions' schemas default to it, and retrieval treats it as retrievable.
 LIFECYCLE_CANDIDATE: Final = "candidate"
 LIFECYCLE_ACTIVE: Final = "active"
+LIFECYCLE_ESTABLISHED: Final = "established"
 LIFECYCLE_SUPERSEDED: Final = "superseded"
 LIFECYCLE_EXPIRED: Final = "expired"
 LIFECYCLE_ARCHIVED: Final = "archived"
 LIFECYCLE_DISPUTED: Final = "disputed"
 
 # Map old associative-memory states to the new vocabulary so legacy rows still
-# make sense after migration.
+# make sense after migration. `established` is deliberately absent: it is part
+# of the current vocabulary, and mapping it to `active` would silently flatten
+# the distinction the moment a legacy row is read.
 LEGACY_LIFECYCLE_MAP: Final[dict[str, str]] = {
-    "established": LIFECYCLE_ACTIVE,
     "latent": LIFECYCLE_CANDIDATE,
-    "superseded": LIFECYCLE_SUPERSEDED,
-    "archived": LIFECYCLE_ARCHIVED,
     "deleted": LIFECYCLE_EXPIRED,
 }
 
 LIFECYCLES: Final[tuple[str, ...]] = (
     LIFECYCLE_CANDIDATE,
     LIFECYCLE_ACTIVE,
+    LIFECYCLE_ESTABLISHED,
     LIFECYCLE_SUPERSEDED,
     LIFECYCLE_EXPIRED,
     LIFECYCLE_ARCHIVED,
@@ -138,7 +144,7 @@ LIFECYCLES: Final[tuple[str, ...]] = (
 )
 
 # Lifecycle states that may appear in retrieval results by default.
-LIFECYCLE_RETRIEVABLE: Final = frozenset({LIFECYCLE_CANDIDATE, LIFECYCLE_ACTIVE})
+LIFECYCLE_RETRIEVABLE: Final = frozenset({LIFECYCLE_CANDIDATE, LIFECYCLE_ACTIVE, LIFECYCLE_ESTABLISHED})
 
 
 # ---------------------------------------------------------------------------

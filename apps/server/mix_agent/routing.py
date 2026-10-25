@@ -14,12 +14,19 @@ from mix_agent.providers.model_quality import quality_prior, request_cost
 from mix_agent.providers.model_roles import is_auto_chat_eligible
 from mix_agent.reliability import _events, context_failure_ceiling, now, reliability, speed, usage_scope
 
-CODING = re.compile(r"```|\b(?:python|javascript|typescript|react|sql|docker|api|bug|code|コード|実装|修正)\b", re.IGNORECASE)
-REASONING = re.compile(r"\b(?:why|prove|derive|analy[sz]e|reason|比較|理由|証明|推論|考察|複雑)\b", re.IGNORECASE)
+CODING = re.compile(
+    r"```|\b(?:python|javascript|typescript|react|sql|docker|api|bug|code|コード|実装|修正)\b", re.IGNORECASE
+)
+REASONING = re.compile(
+    r"\b(?:why|prove|derive|analy[sz]e|reason|比較|理由|証明|推論|考察|複雑)\b", re.IGNORECASE
+)
 TRANSLATION = re.compile(r"\b(?:translate|translation|英訳|和訳|翻訳)\b", re.IGNORECASE)
 SUMMARIZE = re.compile(r"\b(?:summar(?:y|ize)|要約|まとめ)\b", re.IGNORECASE)
 EXTRACTION = re.compile(r"\b(?:json|yaml|schema|extract|構造化|抽出|表形式)\b", re.IGNORECASE)
-MATH = re.compile(r"\b(?:calculate|compute|equation|integral|derivative|math|数学|計算|解け)\b|[0-9]\s*[+\-*/^]\s*[0-9]", re.IGNORECASE)
+MATH = re.compile(
+    r"\b(?:calculate|compute|equation|integral|derivative|math|数学|計算|解け)\b|[0-9]\s*[+\-*/^]\s*[0-9]",
+    re.IGNORECASE,
+)
 JAPANESE = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
 
 # User-selectable tradeoffs.  ``quality_strength`` seeds the Beta prior from the
@@ -99,7 +106,10 @@ def _base_tokens(content, mode, artifact_mimes, tools_required, required_tokens)
     if any(mime.startswith("image/") for mime in artifact_mimes):
         tokens.append("vision")
     if required_tokens is not None:
-        tokens.append("input:" + ("small" if required_tokens <= 4_096 else "medium" if required_tokens <= 32_768 else "large"))
+        tokens.append(
+            "input:"
+            + ("small" if required_tokens <= 4_096 else "medium" if required_tokens <= 32_768 else "large")
+        )
     return tokens
 
 
@@ -157,8 +167,11 @@ def _speed_scores(details):
         # lack token usage; never compare milliseconds with milliseconds/token.
         ("completion_value", "completion_evidence", 0.06, lambda item: not item["completion_normalized"]),
     ):
-        known = [item[value_key] for item in details.values()
-                 if item[value_key] is not None and item[evidence_key] >= 3.0 and eligible(item)]
+        known = [
+            item[value_key]
+            for item in details.values()
+            if item[value_key] is not None and item[evidence_key] >= 3.0 and eligible(item)
+        ]
         if len(known) < 2:
             continue
         reference = sorted(known)[len(known) // 2]
@@ -188,18 +201,35 @@ def _cost_scores(costs):
 
 def _thompson_tiebreak(tied, request_key):
     """Resolve exact score ties by a deterministic per-request Beta draw."""
+
     def draw(entry):
         _, model, up, down, prior_up, prior_down = entry
         seeded = hashlib.sha256((request_key + model.id).encode()).digest()
         return random.Random(seeded).betavariate(prior_up + up, prior_down + down)
 
-    return sorted(tied, key=lambda entry: (-draw(entry), hashlib.sha256((request_key + entry[1].id).encode()).hexdigest()))
+    return sorted(
+        tied,
+        key=lambda entry: (-draw(entry), hashlib.sha256((request_key + entry[1].id).encode()).hexdigest()),
+    )
 
 
-def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, tools_required,
-                      context_parts, reserved_output_tokens, request_key, attachment_bytes=0,
-                      excluded_model_ids=(), prefer_other_provider_than=None, current_model_id=None,
-                      priority="balanced"):
+def select_auto_model(
+    db,
+    owner_id,
+    allowed_ids,
+    content,
+    mode,
+    artifact_mimes,
+    tools_required,
+    context_parts,
+    reserved_output_tokens,
+    request_key,
+    attachment_bytes=0,
+    excluded_model_ids=(),
+    prefer_other_provider_than=None,
+    current_model_id=None,
+    priority="balanced",
+):
     """Return a selected Model plus auditable local routing details, or a reason."""
     weights = PRIORITIES.get(priority, PRIORITIES["balanced"])
     required_tokens = estimate_tokens(context_parts, attachment_bytes) + reserved_output_tokens
@@ -231,10 +261,22 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
             continue
         candidates.append((model, caps, context_window))
     if not candidates:
-        details = "、".join({"chat": "通常チャット", "context": "Context Window", "vision": "Vision", "tools": "Tool Calling"}[k] for k in excluded)
+        details = "、".join(
+            {
+                "chat": "通常チャット",
+                "context": "Context Window",
+                "vision": "Vision",
+                "tools": "Tool Calling",
+            }[k]
+            for k in excluded
+        )
         reason = "Autoで使用可能なモデルに必要な " + (details or "条件") + " を満たすものがありません。"
-        return None, {"profile": profile, "candidate_count": 0, "required_tokens": required_tokens,
-                      "reason": reason}
+        return None, {
+            "profile": profile,
+            "candidate_count": 0,
+            "required_tokens": required_tokens,
+            "reason": reason,
+        }
 
     outcomes = _scores(db, owner_id, context.levels)
     total = sum(up + down for up, down in outcomes.values())
@@ -259,9 +301,25 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
             "usage_ratio": usage,
             "penalty": max(0, usage - 0.5) * 0.1 if usage is not None else 0,
         }
-        health = reliability(db, owner_id, model.id, model.data.get("provider_id"), scope, profile=context.accepted, events=events)
+        health = reliability(
+            db,
+            owner_id,
+            model.id,
+            model.data.get("provider_id"),
+            scope,
+            profile=context.accepted,
+            events=events,
+        )
         reliability_details[model.id] = health
-        speed_details[model.id] = speed(db, owner_id, model.id, model.data.get("provider_id"), scope, profile=context.accepted, events=events)
+        speed_details[model.id] = speed(
+            db,
+            owner_id,
+            model.id,
+            model.data.get("provider_id"),
+            scope,
+            profile=context.accepted,
+            events=events,
+        )
     speed_scores = _speed_scores(speed_details)
     cost_scores = _cost_scores(costs)
     for model, caps, context_window in candidates:
@@ -277,19 +335,28 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
         count = up + down
         mean = (up + prior_up) / (count + prior_up + prior_down)
         exploration = weights["explore"] * math.sqrt(
-            2 * math.log(total + (prior_up + prior_down) * len(candidates) + 1) / (count + prior_up + prior_down)
+            2
+            * math.log(total + (prior_up + prior_down) * len(candidates) + 1)
+            / (count + prior_up + prior_down)
         )
         reasoning_bonus = 0.04 if mode == "thinking" and caps.get("reasoning") is True else 0
         context_penalty = context_usage[model.id]["penalty"]
         health = reliability_details[model.id]
-        provider_retry_penalty = 1.0 if has_other_provider and model.data.get("provider_id") == prefer_other_provider_than else 0
+        provider_retry_penalty = (
+            1.0 if has_other_provider and model.data.get("provider_id") == prefer_other_provider_than else 0
+        )
         # Small hysteresis avoids switching on a tie or a marginal score change.
         continuity_bonus = 0.03 if model.id == current_model_id else 0
         score = (
-            mean + exploration + reasoning_bonus
+            mean
+            + exploration
+            + reasoning_bonus
             + speed_scores[model.id] * weights["speed_scale"]
             + cost_scores[model.id] * weights["cost_weight"]
-            + continuity_bonus - context_penalty - health["penalty"] - provider_retry_penalty
+            + continuity_bonus
+            - context_penalty
+            - health["penalty"]
+            - provider_retry_penalty
         )
         ranked.append((score, model, up, down, prior_up, prior_down))
     best = max(entry[0] for entry in ranked)
@@ -302,14 +369,18 @@ def select_auto_model(db, owner_id, allowed_ids, content, mode, artifact_mimes, 
     reason_parts = ["Auto: " + profile + " (" + priority + ") の実績・探索度・既知Contextの余裕から選択"]
     if selected_health["reason"]:
         reason_parts.append(selected_health["reason"])
-    if speed_details[selected.id]["first_output_ms"] is not None or speed_details[selected.id]["completion_value"] is not None:
+    if (
+        speed_details[selected.id]["first_output_ms"] is not None
+        or speed_details[selected.id]["completion_value"] is not None
+    ):
         reason_parts.append("応答速度の実績も考慮")
     if quality_details[selected.id] is not None:
         reason_parts.append("モデル能力の事前知識も考慮")
     if cost_scores[selected.id]:
         reason_parts.append("コスト効率も考慮")
-    avoided = [item["reason"] for key, item in reliability_details.items()
-               if key != selected.id and item["reason"]]
+    avoided = [
+        item["reason"] for key, item in reliability_details.items() if key != selected.id and item["reason"]
+    ]
     if avoided and not selected_health["reason"]:
         reason_parts.append(avoided[0])
     return selected, {

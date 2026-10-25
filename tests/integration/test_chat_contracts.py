@@ -6,6 +6,7 @@ def test_chat_endpoints_publish_typed_openapi_responses():
     expected = {
         ("/api/v1/conversations/{key}/messages", "get"): "ConversationMessagesView",
         ("/api/v1/conversations/{key}/messages", "post"): "SendMessageView",
+        ("/api/v1/conversations/{key}/messages/{message_id}/edit", "post"): "SendMessageView",
         ("/api/v1/conversations/{key}/tool-calls", "get"): "ToolCallHistoryView",
         ("/api/v1/runs/{key}", "get"): "RunView",
         ("/api/v1/artifacts", "post"): "ArtifactView",

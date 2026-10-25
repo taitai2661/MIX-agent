@@ -1,21 +1,96 @@
+<div align="center">
+
 # MIX-agent
 
-個人・LAN/VPN内向けのセルフホストAIワークスペース。React + FastAPI + PostgreSQL。
+**ローカル・セルフホストのための AI ワークスペース**
 
-**初期開発版です。インターネット公開・複数ユーザー・未知のコードを安全に実行する用途には使わないでください。**
+[![CI](https://github.com/taitai2661/MIX-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/taitai2661/MIX-agent/actions/workflows/ci.yml)
+[![Release](https://github.com/taitai2661/MIX-agent/actions/workflows/release.yml)](https://github.com/taitai2661/MIX-agent/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker--compose-2496ED?logo=docker&logoColor=white)](compose.yaml)
 
-## 導入方法
+日本語 | [English](README.en.md)
 
-| 方法 | 対象 | 入口 |
-| --- | --- | --- |
-| Docker Compose | Dockerを自分で管理する人 | 下記の「Dockerで起動」 |
-| ZimaOSコミュニティストア | AMD64のZimaOSを使う人 | [ZimaOSガイド](docs/zimaos.md) |
+</div>
 
-ZimaOSストアは配布イメージの公開とストア配布作業が完了したバージョンから利用できます。
+---
 
-## Dockerで起動
+MIX-agent は、外部のクラウドサービスに依存せず、自分のマシンまたは信頼できるネットワーク内で安全に AI を活用するためのワークスペースです。
 
-Docker Desktop、またはDocker EngineとCompose v2を用意します。初回ビルドとBrowser機能の導入に備えて、10GB以上のディスク空き容量を推奨します。
+本リポジトリでは、利用シーンに合わせて **Desktop 版** と **Docker 版** の 2 つのエディションを提供しています：
+
+- **Desktop 版**: **「OpenCode のように自律動作するデスクトップ・コーディングエージェント」**。手元のローカル PC でコード探索・計画・複数ファイル編集・永続 PTY ターミナルでのテスト＆修正ループを直接回せる開発相棒（Tauri 2 + Rust + React）。Docker 不要でインストーラーから即座に起動できます。
+- **Docker 版**: **「自宅サーバー（自宅鯖）や NAS でチャット AI を自己ホストしたい」** ニーズに応えるセルフホストサーバー（FastAPI + PostgreSQL + React）。24時間稼働させ、Web ブラウザ経由でスマホやタブレット、ノート PC など家中からアクセスできます。
+
+> [!NOTE]
+> **開発ステータス**: 初期開発版です。インターネットへの無制限な一般公開や、不特定多数のマルチテナント利用、悪意ある未知のコードを安全に実行する用途には使わないでください。
+
+---
+
+## どっちを選ぶべき？（エディション比較）
+
+「ローカル PC で OpenCode のようにコーディングやファイル作業を自律実行させたいか」「自宅鯖でプライベート AI を常時ホストしたいか」など、用途に合わせて選択してください。
+
+| 比較項目 | Desktop 版 (`apps/desktop`) | Docker 版 (`apps/server`, `apps/web`) |
+| :--- | :--- | :--- |
+| **主な用途・役割** | **デスクトップ・コーディングエージェント（OpenCode のように動作）**<br>ローカル PC でのコード探索・差分編集・ビルド/テスト実行・作業支援 | **自宅鯖でのチャット AI 自己ホスト**<br>24時間常時稼働、LAN/VPN 共有、NAS(ZimaOS/CasaOS)、HomeLab |
+| **得意なタスク** | リポジトリ探索・コード編集・ターミナル実行（git/npm/test） | チャット会話・Web調査・長時間のバックグラウンド自律タスク |
+| **アクセス元** | インストールした PC 単体（ネイティブ GUI） | **Web ブラウザ**（スマホ・タブレット・PC 等からアクセス） |
+| **稼働形態** | PC 起動時のみ（手軽なネイティブ起動） | **自宅鯖で 24 時間常時稼働**（バックグラウンド実行） |
+| **導入の手軽さ** | ⭐⭐⭐ **極めて簡単**（Docker 不要）<br>Releases からインストーラーをダウンロードして起動 | ⭐⭐ **標準**（Docker 環境が必要）<br>`git clone` 後に `docker compose up -d` で起動 |
+| **ユーザーインターフェース** | OS ネイティブウィンドウ、差分プレビュー、システムトレイ | Web ブラウザ（レスポンシブ UI） |
+| **技術スタック** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
+| **プロセス構成** | 単一バイナリ + tokio in-proc（+ 子プロセス Chromium） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
+| **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
+| **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
+| **ブラウザ操作** | 同梱 Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
+| **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等） | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
+
+---
+
+## 導入・起動方法
+
+### Desktop 版で起動（デスクトップ・コーディングエージェント）
+
+Docker や複雑なサーバー設定なしで、OpenCode のようにローカル PC のワークスペースで直接コーディング支援やファイル作業を実行できます。
+
+#### 1. インストーラーから導入（推奨）
+
+[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) からお使いの OS に合わせた最新インストーラーをダウンロードします：
+
+- **macOS**:
+  - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
+  - Intel Mac: `mix-agent-desktop_*_x64.dmg`
+  - *インストール手順*: `.dmg` を開き、`MIX-agent Desktop` を `Applications` フォルダへドラッグ＆ドロップします。
+  - *macOS Gatekeeper の注意*: 開発版のため未署名・未公証です。初回起動時に警告が出た場合は、Control キーを押しながらアプリアイコンをクリックして「開く」を選択するか、ターミナルで `xattr -cr "/Applications/MIX-agent Desktop.app"` を実行してください。
+- **Windows**: `mix-agent-desktop_*_x64-setup.exe` または `*.msi` インストーラー
+- **Linux**: `mix-agent-desktop_*_amd64.deb` または `*.AppImage` パッケージ
+
+#### 2. ソースコードから起動・ビルド
+
+Rust (1.82+)、Node.js (22+)、pnpm を使用します。
+
+```sh
+# 依存関係のインストール
+pnpm install
+
+# デスクトップ版の起動（開発モード）
+pnpm desktop:dev
+
+# macOS 向け .dmg パッケージのローカルビルド
+pnpm desktop:build:dmg
+```
+
+詳細な設定やアーキテクチャは [`apps/desktop/README.md`](apps/desktop/README.md) を参照してください。
+
+---
+
+### Docker 版で起動（自宅鯖・セルフホスト）
+
+自宅サーバー、HomeLab、NAS（ZimaOS/CasaOS）等で 24 時間常時稼働させ、自分専用のプライベートなチャット AI / 自律エージェント環境を自己ホストできます。外部クラウドに会話ログを預けることなく、宅内 LAN や VPN 経由でスマホや PC からブラウザで快適にアクセスできます。
+
+Docker Desktop、または Docker Engine と Compose v2 を用意します。
+リポジトリを clone して直下で起動するだけで、追加の設定ファイル作成なしですぐに立ち上がります。
 
 ```sh
 git clone https://github.com/taitai2661/MIX-agent.git
@@ -23,144 +98,108 @@ cd MIX-agent
 docker compose up -d --build
 ```
 
-[http://localhost:8080](http://localhost:8080) を開いて管理者を作成します。環境変数やAPI Keyの事前設定は不要です。
+起動後、ブラウザで [http://localhost:8080](http://localhost:8080)（自宅鯖の場合は `http://<自宅鯖のIP>:8080`）を開いて初期管理者アカウントを作成します。
+自宅鯖ローカルで動作する Ollama / LM Studio / vLLM 等に接続する場合、Docker 内からはホストマシンの `localhost` ではなく `host.docker.internal` を使用します。
 
-1. Providerを追加し、必要なAPI Keyを保存。保存後にモデル一覧を自動取得し、Context Windowを確認できるモデルをAuto候補へ追加します。
-2. 必要に応じて「接続テスト」または「モデル取得」を再実行。
-3. モデルの対応機能を確認。不明な機能は必要に応じて手動Override。
-4. 既定モデル、Toolsの権限、Runnerの通信許可ドメインを設定。
-5. 必要ならAgent・MCPを追加。
+#### プロジェクトフォルダの接続
 
-ローカルのOllama/LM Studioには、Provider設定でプライベート接続を明示的に許可します。Docker内のlocalhostはホストPCではありません。標準URLでは `host.docker.internal` を使用します。ホスト側サービスの待受設定も確認してください。
-
-### プロジェクトフォルダの接続
-
-作業対象のリポジトリを読み取り専用で `/project` にマウントすると、そのフォルダの `AGENTS.md`（無い場合は `CLAUDE.md`）が各Runの指示に自動で読み込まれ、`.mix/skills` → `.claude/skills` → `.agents/skills` のうち最初に存在したディレクトリの `SKILL.md` がSkillとして提供されます。いずれもDBには保存されず、ファイルを編集すれば次回のRunから反映されます。
+作業対象のリポジトリを `/project` にマウントすると、そのフォルダの `AGENTS.md`（または `CLAUDE.md`）が指示書として自動読み込みされます：
 
 ```sh
 MIX_PROJECT_DIR=/path/to/your/repo docker compose up -d
 ```
 
-`MIX_PROJECT_DIR` を指定しない場合はComposeファイルのあるディレクトリがマウントされます。指示書もスキルも無い場合、何も追加されません。スケジュール実行にはプロジェクト文脈（指示書・資料）を渡していません（対話Runのみ）。
-
-### 更新とバックアップ
-
-更新前に管理画面から暗号化バックアップを取得し、復元に必要なパスワードを保管してください。
-コードを取得して再ビルドすると、起動時にDB migrationが適用されます。
+#### 更新とバックアップ
 
 ```sh
 git pull --ff-only
 docker compose up -d --build
 ```
+データは Docker ボリュームに安全に保存されます（`docker compose down -v` はボリュームを消去するため実行しないでください）。更新前に Web 管理画面から暗号化バックアップを取得することを推奨します。
 
-状態はDockerボリュームに保存されます。`docker compose down` はコンテナを停止しますが、
-`docker compose down -v` はボリュームも削除するため、更新時には実行しないでください。
-手動Compose版からZimaOSストア版へ移る場合は、ボリュームが自動で引き継がれるとは限りません。
-バックアップと復元の手順は[ZimaOSガイド](docs/zimaos.md)を確認してください。
+---
 
-### GitHub Releases
+## 主な機能（コア機能）
 
-リリースページには、バージョンごとの[変更内容](docs/release-notes-v0.3.5.md)と
-ZimaOSストアのアーカイブを掲載します。コンテナイメージはGitHub Container Registry
-（GHCR）から取得します。初回リリースの公開作業には、GHCRパッケージをPublicに
-設定してからストアとReleaseを配布する手順が含まれます。
-公開手順は[リリースチェックリスト](docs/release-checklist.md)にまとめています。
+どちらのエディションでも、AI 実行エンジンとして高度な自律性と豊富な連携機能を備えています：
 
-## 実装内容
+### 1. Chat / Thinking / Agent の 3 つのモード
+- **Chat**: 素早い対話と必要に応じた検索・作成。思考や Tool Calling が未対応のモデルでも通常対話が可能。
+- **Thinking**: Reasoning（思考）対応モデルの能力を引き出し、論理的な思考ステップを経てタスクを実行。
+- **Agent**: 長時間の作業を自律完遂するための実行ループ。チェックポイント保存、停滞検知と自己修復、厳格な検証ループ、予算動的調整を備えます。
 
-- Chat / Thinking / Agent、SSEストリーミング、会話履歴、添付
-- プロジェクト（専用の指示・資料テキスト・会話の整理）と、Agentを使う調査モード（Web調査と出典つきレポート）
-- 52種類のProviderプリセット（OpenAI、Anthropic、Gemini、主要互換API、国内・ローカル実行系）と、OpenAI互換／Anthropic／Gemini用カスタム接続
-- 共通Tool Registry、Always Allow / Ask / Deny、永続化した承認
-- Web / Files / Terminal / Browser / Memory、ユーザー向けPlan
-- stdio / Streamable HTTP MCP、Filesystem導入テンプレート
-- Agent編集、Memory履歴・復元、暗号化Secret
-- 暗号化バックアップ、復元前退避、復元途中の再起動からの回復
-- 運用診断（DB接続、Runner設定、滞留Run、直近の失敗・中断）
-- Knowledgeのテキスト登録・検索Tool、Skillの登録・履歴・復元、定期実行
-- Agent Skills（`SKILL.md`）の取り込み・書き出し（貼り付け／zip／サーバーディレクトリ）、同梱資料の読取Tool
-- Remote MCPのOAuth認証フロー（対応Serverとの接続が必要）
-- 会話のMarkdown書き出し（回答のみ／会話／Tool実行概要）
+### 2. 52 種類の Provider 対応 & 自動能力判定
+- OpenAI、Anthropic、Gemini、OpenRouter、Groq、Mistral、DeepSeek、Cohere、Ollama、LM Studio などの主要 Provider プリセットを網羅。
+- **Capability Probe**: モデルの Tool Calling 対応状況を実行前に副作用のない安全なプローブで自動検証。
 
-Knowledgeはテキストのチャンク検索を提供します。外部資料の自動同期や検索品質の実環境評価は今後の課題です。画像生成・編集、Registry Store、外部向けOpenAI Compatible APIは次段階です。Vision対応モデルへの画像添付・解析は含みます。
+### 3. Tool Registry と柔軟な権限管理
+- ファイル操作、コード編集、永続ターミナル、Web 検索、ブラウザ操作、メモリ、ナレッジ検索などの組み込みツール。
+- **権限制御**: ツール呼び出しごとに `Always Allow` / `Ask` / `Deny` を指定可能。承認ルールはスコープ（特定パスや特定コマンド）に絞って永続化可能。
 
-### Agent Skills
+### 4. MCP（Model Context Protocol）連携
+- stdio および Streamable HTTP / Remote MCP に対応。
+- 外部 MCP サーバーが提供するツールをシームレスに Agent から利用可能。
 
-`name`と`description`を必須とする`SKILL.md`（YAML frontmatter + Markdown）を取り込めます。Skills画面で本文を貼り付けるか、`.zip`をアップロードするか、データボリュームの`/data/skills/<name>/SKILL.md`に置いて「サーバーディレクトリから取込」を実行します（`MIX_SKILLS_DIR`で別の置き場所に変更できます）。各Skillは`SKILL.md`または`.zip`として書き出せます。`scripts`・`references`・`assets`の同梱ファイルは保存され、AIは`skill_resource` Toolで読み取りますが、スクリプトは実行しません。`allowed-tools`は表示のみで、権限の自動許可は行いません。
+### 5. Skills とナレッジ管理
+- `SKILL.md`（Agent Skills 仕様）のインポート・エクスポートに対応。
+- 外部ドキュメントのチャンク検索（Knowledge）や、プロジェクト固有の指示書連携。
 
-プロジェクトの資料は現時点では貼り付けたテキストを各Runに渡します。プロジェクトに既存会話を移す場合は「会話を管理」から選択できます。プロジェクトを削除しても会話は残ります。調査モードには有効なWeb検索またはBrowser ToolとTool Calling対応モデルが必要です。出典の正確さは利用者が確認してください。
+---
 
-Contextの上限が近づくと、古い会話を要約してモデルへ渡します。チャット画面ではRunごとの圧縮要約と対象件数を確認できます。要約が生成できない場合は古い文脈を切り落とさず実行を止めます。Runの「回答チェック」はユーザー向け最終回答の有無を判定するもので、内容の正しさや依頼達成を保証しません。
+## 安全上の境界とセキュリティモデル
 
-### Chat / Thinking / Agent
+エディションによってセキュリティとプロセスの隔離方式が異なります：
 
-- **Chat**: 対応が確認されたモデルでは、必要に応じて思考・検索・作成・実行を使います。思考やTool Callingが未対応・未確認でも通常会話は可能です。
-- **Thinking**: 通常推論を使いながら必要に応じて検索・作成・実行を進めます。Reasoning対応モデルではProvider固有の思考機能も有効にしますが、非対応モデルでもThinkingは利用できます。毎回の検索や思考文の表示・長さを保証するものではありません。
-- **Agent**: 従来の思考設定と、長い作業向けの実行ループを維持します。さらに、定期チェックポイント、停滞検知と自己修復ガイダンス、厳格な検証ループ、階層的な文脈圧縮、予算の動的調整を備えます。
+### Desktop 版のセキュリティモデル
+- **OS 権限**: ログイン中のローカルユーザーの権限でネイティブ動作します。
+- **秘密情報**: API Key や認証情報は、OS 標準の安全なストレージ（macOS Keychain, Windows Credential Manager, Linux Secret Service）に暗号化して保管されます。
+- **権限ゲート**: ファイル書き込み、コマンド実行、ブラウザ操作などは既定で確認ダイアログ（`Ask`）が表示され、許可したパスやコマンドのみが実行されます。
 
-標準では全モードに組み込みツールを提供します。プリセット選択時はそのツール一覧（空リストを含む）を優先し、MCPを自動追加しません。Ask / Deny・承認・Runner隔離はモードにかかわらず適用されます。上限はChatが20分・12ステップ・12 Tool Call、Thinkingが45分・24ステップ・24 Tool Call、Agentが90分・300ステップ・750 Tool Callです。長い作業はAgentを使ってください。
+### Docker 版のセキュリティモデル
+- **コンテナ隔離**: 実行部（Runner）は非 root、read-only rootfs、Capability 制限でコンテナ起動します。ホストや Docker Socket はマウントされません。
+- **通信制限**: Runner は内部ネットワークと egress-proxy を経由して通信し、管理者によって許可された公開ドメインへの接続のみを許可します。Private IP への接続は自動的に拒否されます。
+- **ネットワーク公開**: 標準では `localhost:8080` のみ公開。LAN 公開やリバースプロキシ構成時は `MIX_BIND` や `PUBLIC_ORIGIN` を適切に設定してください。
 
-#### Agent の自律性
-
-- **中間チェックポイント**: 10ステップごとに履歴・task_state・plan・直近Tool Callを `run_checkpoints` に保存。中断後の再開はチェックポイント単位で選択可能で、`POST /runs/{key}/resume` の `from_checkpoint` で任意の地点から再開できます。
-- **停滞検知と自己修復**: 直近12 Tool Callから繰り返し失敗・読み取り停滞・Provider不安定を検知し、ステップ毎に修復ガイダンスを user-role 履歴へ注入。`stagnation_detected` イベントでUIにも表示。
-- **厳格な検証ループ**: `update_plan` の `phase:<name>` 区切りごとに検証を要求。`delete_file` 後の `files_list` / `search_files`、`write_file` 上書き前の `read_file`、破壊的ターミナル操作後の check Tool を必須化。
-- **階層的な文脈圧縮**: active サマリ（4000字まで）と archive rows（最大12件）を別管理。task_state（goal/plan/pending/important_facts/artifacts/open_questions）を head ブロックで優先保持。
-- **予算の動的調整**: ステップまたはツール上限到達時にユーザーへ延長確認（既定2回まで）。`POST /runs/{key}/budget-extension` で `grant: true/false` を返却。確認なしで停止しないよう UX を強化。
-- **結果不明操作の選択的処理**: 再開APIの `unknown_actions` で `executing` のまま残った各Tool Callを `retry` / `discard` / `mark_unknown` 単位で制御。
-
-Chat / ThinkingのProvider固有思考制御はOpenAI Responses、OpenRouter、識別可能なClaude 3.7 / 4系とGemini 2.5 / 3系に対応しています。Ollama / LM Studio / 汎用互換APIと未識別モデルでは、その専用パラメーターを送らず通常推論でThinkingを実行します。Tool Callingが未確認のモデルを使うときは、Chat / Thinking / Agent のいずれも実行前に副作用のないダミー関数で自動確認します。結果は保存され、未確認・非対応時はツールなしで続行します。再実行は capability probe の鮮度ポリシー（未確定6時間、確定14日）に従い、Scheduler tick でも並行して走ります。モデル設定の「Tool Callingを再確認」でだけ手動再試行できます。手動Overrideは自動確認より優先します。
-
-APIの `mode` は変更していません。`GET /models` の各レコードの `data.reasoning_control` は計算した制御方式またはnullで、`data.tool_probe` は保存済みのTool Calling確認結果です。`POST /models/{id}/verify-tools` は副作用のない再確認を実行します。Runには解決済みの思考方針とツール一覧を保存し、追加情報のない旧Runは従来動作を維持します。公開された思考要約だけを表示し、署名付きコンテキストはツール継続用に保持します。
-
-### Run Events
-
-`GET /runs/{key}/events` のSSEストリームは次の `kind` 値を流します（Engine→UIの表現契約）：
-
-- 既存の `text` / `reasoning` / `model_started` / `model_selected` / `model_rerouted` / `message` / `status` / `tool_started` / `tool_result` / `plan` / `approval` / `browser_frame` / `context_summary`
-- 新規 `checkpoint_saved` / `budget_extension_requested` / `budget_extension_resolved` / `stagnation_detected` / `verification_required` / `phase_advanced`
-
-`run_checkpoints` のチェックポイントは `GET /runs/{key}/checkpoints` で一覧可能。`budget_extension_pending` 状態のRunに対する応答は `POST /runs/{key}/budget-extension` で `grant` と任意の予算上書きを受け付けます。
-
-制御仕様の参照: [OpenAI](https://developers.openai.com/api/docs/guides/reasoning)、[Claude](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking)、[Gemini GenerateContent](https://ai.google.dev/gemini-api/docs/generate-content/thinking)、[OpenRouter](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)。実Providerでの確認範囲は検証記録を参照してください。
-
-## 安全上の境界
-
-- 標準では公開ポートはlocalhostの8080だけです。初期設定前のLAN公開は避けてください。
-- Terminalは専用workspace全体を操作できます。サブフォルダ間の強い隔離はありません。
-- Runnerはホスト・Docker Socket・Provider Key・DBパスワードをマウントしません。
-- TerminalとMCPは別コンテナ。MCP Server同士は単一管理者の信頼領域を共有します。
-- Runner通信は内部ネットワークとProxyを使用。許可ドメインが未設定なら公開ドメインを許可し、設定時は完全一致の許可リストとして扱います。private IPは拒否します。
-- 任意のShellコードを許可した場合、「パッケージ導入だけを完全に禁止する」保証はありません。
-- MCPパッケージ導入や通信許可先変更は管理者の操作です。AIからは設定を変更できません。
-- Dockerの隔離設定は専用OS/VMによる敵対的コード隔離の代わりではありません。
-- Providerに送るメッセージ・画像・Tool結果はProviderのデータ規約に従います。
-- プリセットは接続方式と既定URLを設定するための一覧です。実際のモデル対応・料金・利用規約は各Providerで確認してください。URLが空のプリセットは、組織またはローカル環境のBase URLを入力して接続します。
+---
 
 ## 開発
 
-Node.js 22以上、pnpmを使用します。アプリケーションDBはPostgreSQL専用で、起動はDocker Compose経由です。
-
-モデルのコンテキスト長・料金・能力などの補完データは [model-info](https://github.com/taitai2661/model-info) の静的JSONから取得します。既定の取得先はGitHub Pagesで、`MIX_MODEL_INFO_URL` に `https://` のアドレスまたはローカルのmodel-infoチェックアウト(その `v1/` を含むディレクトリ)を指定して差し替えられます。取得できない場合、当該モデルの補完データは未設定のまま扱われます。
+本リポジトリは pnpm ワークスペースを用いたモノレポ構成です。
 
 ```sh
-cd apps/web
-pnpm install --frozen-lockfile
-pnpm build
-cd ../..
-docker compose up -d --build
+# 依存関係のインストール
+pnpm install
+
+# --- Desktop 版の開発 ---
+pnpm desktop:dev        # デスクトップアプリ起動
+pnpm desktop:ui:dev     # UI 単体開発サーバー
+pnpm desktop:ui:test    # UI 単体テスト
+cargo test --workspace --manifest-path apps/desktop/Cargo.toml # Rust コアテスト
+
+# --- Docker / Web 版の開発 ---
+pnpm web:dev            # Web フロントエンド開発サーバー
+pnpm web:test           # Web フロントエンドテスト
+docker compose --profile test run --rm test # バックエンドテスト
 ```
 
-DBを含むアプリ起動はCompose内で完結します。ホストShellを使うRunnerフォールバックはありません。
+詳細は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
-```sh
-# リポジトリルートから。使い捨てPostgreSQLでmigration後に実行します。
-docker compose --profile test run --rm test
-cd apps/web
-pnpm test
-pnpm build
-```
+---
 
-API仕様は `docs/openapi.json`、生成TypeScript型は `apps/web/src/generated/api.ts`。更新は `scripts/export-openapi.py` と `pnpm generate:api` で行います。
+## 主なドキュメント
 
-詳しくは [アーキテクチャ](docs/architecture.md)、[運用](docs/operations.md)、[検証状況](docs/verification.md) を参照してください。
+| ドキュメント | 内容 |
+| :--- | :--- |
+| [Desktop 版 README](apps/desktop/README.md) | Desktop 版の構成、ツール仕様、ビルド手順の詳細 |
+| [システムアーキテクチャ](docs/architecture.md) | プロジェクト全体の構造とエディションの設計思想 |
+| [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計と API マッピング |
+| [運用ガイド](docs/operations.md) | Docker 版の運用、バックアップ・復元手順 |
+| [検証状況](docs/verification.md) | 実機・Provider での動作検証ログ |
+| [ZimaOS ガイド](docs/zimaos.md) | ZimaOS / CasaOS コミュニティストアでの導入 |
+| [コントリビューション](CONTRIBUTING.md) | 開発の流れと PR の提出手順 |
+
+---
+
+## ライセンス
+
+本プロジェクトは [Apache License 2.0](LICENSE) で提供されます。詳細は [NOTICE](NOTICE) を参照してください。

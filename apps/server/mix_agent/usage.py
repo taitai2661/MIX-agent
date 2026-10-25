@@ -18,7 +18,12 @@ RETENTION = timedelta(days=90)
 _INPUT_KEYS = ("input_tokens", "prompt_tokens", "promptTokenCount", "prompt_token_count")
 _OUTPUT_KEYS = ("output_tokens", "completion_tokens", "candidatesTokenCount", "candidates_token_count")
 _TOTAL_KEYS = ("total_tokens", "totalTokenCount", "total_token_count")
-_CACHED_KEYS = ("cache_read_input_tokens", "cachedContentTokenCount", "cached_tokens", "cached_content_token_count")
+_CACHED_KEYS = (
+    "cache_read_input_tokens",
+    "cachedContentTokenCount",
+    "cached_tokens",
+    "cached_content_token_count",
+)
 
 
 def _count(source, keys):
@@ -57,8 +62,18 @@ def token_usage(usage):
     }
 
 
-def record(db, owner_id, model_data, provider_id, mode, usage, *, run_id=None,
-           input_estimate=None, model_record_id=None):
+def record(
+    db,
+    owner_id,
+    model_data,
+    provider_id,
+    mode,
+    usage,
+    *,
+    run_id=None,
+    input_estimate=None,
+    model_record_id=None,
+):
     """Store one model call's usage with its resolved price snapshot.
 
     Falls back to the locally estimated input token count only when the provider
@@ -66,24 +81,38 @@ def record(db, owner_id, model_data, provider_id, mode, usage, *, run_id=None,
     measured from estimated usage.
     """
     current = now()
-    db.execute(delete(ModelUsageEvent).where(
-        ModelUsageEvent.owner_id == owner_id,
-        ModelUsageEvent.created_at < current - RETENTION,
-    ))
+    db.execute(
+        delete(ModelUsageEvent).where(
+            ModelUsageEvent.owner_id == owner_id,
+            ModelUsageEvent.created_at < current - RETENTION,
+        )
+    )
     tokens = token_usage(usage)
     source = "provider"
+    estimate = (
+        int(input_estimate)
+        if isinstance(input_estimate, int)
+        and not isinstance(input_estimate, bool)
+        and input_estimate
+        and input_estimate > 0
+        else None
+    )
+    if isinstance(input_estimate, str) and input_estimate.isdigit():
+        estimate = int(input_estimate)
     if tokens is None or (not tokens["input_tokens"] and not tokens["output_tokens"]):
-        if input_estimate:
-            estimate = int(input_estimate)
+        if estimate:
             tokens = {
-                "input_tokens": estimate, "output_tokens": 0, "cached_tokens": 0,
-                "reasoning_tokens": 0, "total_tokens": estimate,
+                "input_tokens": estimate,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": estimate,
             }
             source = "estimated"
         else:
             return None
     prices, price_source = pricing.resolve(model_data or {})
-    event = ModelUsageEvent(owner_id=owner_id, data={
+    data = {
         "model_id": (model_data or {}).get("model_id"),
         "model_record_id": model_record_id,
         "provider_id": provider_id,
@@ -100,6 +129,13 @@ def record(db, owner_id, model_data, provider_id, mode, usage, *, run_id=None,
             prices, tokens["input_tokens"], tokens["output_tokens"], tokens["cached_tokens"]
         ),
         "run_id": run_id,
-    }, created_at=current)
+    }
+    # Keep the pre-send estimate alongside provider numbers so the dashboard
+    # can show estimation drift (estimated vs actual input tokens).
+    if estimate:
+        data["estimated_input_tokens"] = estimate
+        if source == "provider" and tokens["input_tokens"]:
+            data["estimate_drift"] = tokens["input_tokens"] - estimate
+    event = ModelUsageEvent(owner_id=owner_id, data=data, created_at=current)
     db.add(event)
     return event

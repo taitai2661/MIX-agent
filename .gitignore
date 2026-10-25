@@ -1,7 +1,7 @@
-node_modules/
-dist/
+**/node_modules/
+**/dist/
 .venv/
-__pycache__/
+**/__pycache__/
 *.pyc
 .pytest_cache/
 .coverage
@@ -13,3 +13,20 @@ playwright-report/
 .DS_Store
 *.tsbuildinfo
 .codex/
+.ruff_cache/
+
+# Local agent / tool state (never committed)
+.freebuff/
+.opencode/
+
+# Cargo / Rust
+**/target/
+**/*.rs.bk
+
+# Tauri generated assets
+**/src-tauri/gen/
+**/src-tauri/target/
+
+# Desktop app local data (kept outside repo)
+apps/desktop/.data/
+apps/desktop/app/.data/

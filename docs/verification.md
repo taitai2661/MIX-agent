@@ -6,7 +6,23 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## v0.5.0公開準備の確認（2026-10-25）
+
+確認した項目:
+
+- JSON / YAML構文、Python compileall、`uv lock --check`、`git diff --check`が成功。ZimaOS Composeは`v0.5.0`で2回再生成し、出力が一致することを確認。
+- Web版: ルートworkspace lockfileを追加。`pnpm install --frozen-lockfile`、Vitest 21ファイル158テスト、production buildが成功。Buildは500 kBを超えるchunkの注意を出すが、正常終了。
+- Desktop UI: lint、TypeScript typecheck、Vitest 32ファイル250テスト、production buildが成功。Rustのfmt / clippy / testとOSインストーラーbuildは未実施。
+- Server版: DB不要のproxy policy / Browser provisionerテスト12件が成功。全pytestでは344件が成功したが、PostgreSQLサービス`postgres-test`がこの環境にないため、DB依存240件は接続不能で完了していない。Release CIのDocker test jobで再確認すること。
+- Agent schedulerが削除済みの`routes.purge_expired_conversations`をimportしていたため、現行の`api.helpers.cleanup`へ修正し、関連回帰テストのimportも更新。
+
+未確認の項目:
+
+- Docker CLIがないため、PostgreSQLを含む`docker compose --profile test`、全イメージbuild、Compose runtime受入確認は未実施。
+- Rust toolchain（`cargo`）がないため、Desktop Rust workspaceのfmt / clippy / testおよびmacOS / Windows / Linuxのinstaller buildは未実施。
+- GitHub Actions Secretsへの読み取り権限がなく、`TAURI_SIGNING_PRIVATE_KEY`の存在・公開鍵との一致は確認できていない。公開前に管理者が確認し、署名済み`latest.json`と各OS実機のupdater動作を検証すること。候補workflowは秘密鍵未設定時にfail closedする。
 
 ## v0.3.5リリース候補の確認（2026-10-01）
 

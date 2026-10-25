@@ -7,6 +7,7 @@ import io
 import os
 import secrets
 import signal
+import time
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -22,6 +23,9 @@ BROWSER = None
 PLAYWRIGHT = None
 PAGES = {}
 LOCK = asyncio.Lock()
+PAGE_LOCKS = {}
+PAGE_IDLE_TIMEOUT = int(os.getenv("BROWSER_PAGE_IDLE_TIMEOUT", "1800"))  # 30 minutes
+BROWSER_LAUNCH_ARGS = os.getenv("BROWSER_LAUNCH_ARGS", "").split() if os.getenv("BROWSER_LAUNCH_ARGS") else []
 
 
 @app.middleware("http")

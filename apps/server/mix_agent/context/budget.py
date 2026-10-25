@@ -29,12 +29,18 @@ def resolve_window(model_data: dict | None, snapshot: dict | None = None) -> dic
             break
     if reserved is None:
         candidate = data.get("max_output_tokens")
-        reserved = (candidate if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate > 0
-                    else FALLBACK_RESERVED_OUTPUT)
+        reserved = (
+            candidate
+            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate > 0
+            else FALLBACK_RESERVED_OUTPUT
+        )
     # Safety margin scales mildly with window size so small models stay usable.
     safety = min(8000, max(1000, window // 32))
-    if (isinstance(data.get("safety_margin"), int) and not isinstance(data["safety_margin"], bool)
-            and data["safety_margin"] >= 0):
+    if (
+        isinstance(data.get("safety_margin"), int)
+        and not isinstance(data["safety_margin"], bool)
+        and data["safety_margin"] >= 0
+    ):
         safety = data["safety_margin"]
     return {
         "context_window": window,

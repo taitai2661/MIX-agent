@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run application test suite
+        run: docker compose --profile test run --build --rm test
+
+      # Spec §5's ranking is a *number*, so a weighting change can be caught as
+      # "a specific score moved" rather than as "the order looked different".
+      # The gate reads the shared recall fixture only — no database, no network,
+      # no LLM — and is fully deterministic (exact scores to four decimals), so
+      # the same thresholds are valid verbatim in the Desktop job below.
+      #
+      # Deliberately NOT gated here: latency. The fixture suite measures none,
+      # and synthetic-corpus latency is machine-dependent; the bench still
+      # reports it when run by hand with --suite synthetic.
+      - name: Retrieval quality gate (spec §5)
+        run: |
+          docker compose --profile test run --build --rm test \
+            sh -c "cd /app && python /workspace/experiments/run_retrieval_bench.py --suite fixture \
+              --min-recall5 1.0 --min-recall8 1.0 --min-mrr 1.0 --max-noise 0.5"
+
+  docker-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv==0.12.7
+      - name: Ruff check
+        working-directory: apps/server
+        run: uv run ruff check
+      - name: Ruff format check
+        working-directory: apps/server
+        run: uv run ruff format --check
+
+  docker-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.11.0"
+      - name: Check frontend
+        working-directory: apps/web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"
+
+  # Same reasoning as above for Memory: the spec is duplicated in both editions
+  # and each edition keeps its own vocabulary constants. This fails when the
+  # two specs diverge or when a spec no longer matches what is implemented.
+  memory-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Memory spec parity check
+        run: python3 scripts/check-memory-parity.py
+      # The greeting is duplicated by hand in both editions (fragments, id-keyed
+      # English maps, suggestion labels and prompts). Without this gate a
+      # fragment or suggestion can lose its English entry and silently fall
+      # back to Japanese.
+      - name: Greeting parity check
+        run: python3 scripts/check-greeting-parity.py
+
+  desktop-fmt:
+    # Lightweight single-OS fmt gate: rustfmt is platform-independent, so the
+    # three-OS matrix below would only repeat the same check three times.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.91.0"
+          components: rustfmt
+      - name: cargo fmt check
+        working-directory: apps/desktop
+        run: cargo fmt --all -- --check
+
+  desktop-rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.91.0"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      # `cargo check` is intentionally omitted: `cargo clippy --all-targets`
+      # type-checks the same targets and more (clippy ⊃ check), so a separate
+      # check step would only recompile the workspace a second time.
+      - name: cargo clippy
+        working-directory: apps/desktop
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # NOTE: `cargo nextest` deliberately not adopted: heavier toolchain
+      # install for marginal gain at this workspace size; revisit if test
+      # time dominates CI.
+      - name: cargo test
+        working-directory: apps/desktop
+        run: cargo test --workspace
+
+      # Spec §5's ranking gate, same thresholds and same shared fixture as the
+      # `docker-backend` job — the fixture suite is the one suite whose numbers
+      # are contractual across both editions, which is why the thresholds match
+      # character for character. Ubuntu only: the synthetic-corpus numbers are
+      # identical on every OS (the bench seeds its corpus), so the three-OS
+      # matrix would buy nothing here, and `cargo test` above has already built
+      # the bin, so this is incremental.
+      #
+      # `retrieval-bench` (hyphen) is the bin's name; `retrieval_bench.rs` is
+      # its file. The edition's own naming.
+      - name: Retrieval quality gate (spec §5)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: apps/desktop
+        run: >
+          cargo run -p mixd-core --bin retrieval-bench --
+          --suite fixture --min-recall5 1.0 --min-recall8 1.0 --min-mrr 1.0 --max-noise 0.5
+
+  desktop-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.11.0"
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('apps/desktop/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+      - name: Install UI dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"
+      - name: UI lint + typecheck + test
+        working-directory: apps/desktop/ui
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+      # `pnpm build` is `tsc -b && vite build`; the explicit `pnpm typecheck`
+      # above already ran `tsc -b`, so build here via vite only to avoid
+      # compiling TypeScript twice.
+      - name: UI build
+        working-directory: apps/desktop/ui
+        run: pnpm exec vite build
+      - name: Prettier check
+        working-directory: apps/desktop/ui
+        run: pnpm format:check
+
+      # The bundling assets (icons, resource mapping) are only exercised by an
+      # actual `tauri build`, and a missing icon or wrong resource key is
+      # invisible to cargo check.
+      - name: Bundle smoke test
+        working-directory: apps/desktop
+        run: pnpm tauri build --no-bundle
+        env:
+          MIX_SKIP_CHROMIUM: "1"
+
+      - name: Chromium fetch scripts are valid
+        working-directory: apps/desktop
+        run: |
+          node --check scripts/fetch-chromium.mjs
+          node --check scripts/ensure-chromium-dir.mjs

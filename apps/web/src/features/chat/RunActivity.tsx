@@ -117,7 +117,8 @@ export function RunActivity({
           <span className="run-activity-head">
             <b>{head}</b>
           </span>
-          {waiting && <span className="run-activity-badge">{t("承認待ち")}</span>}
+          {waiting && <span className="run-activity-badge" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>{t("承認待ち")}</span>}
+          {failed && !running && <span className="run-activity-badge" style={{ background: "#c23b3b18", color: "var(--danger)" }}>{t("エラー")}</span>}
           <ChevronDown className="run-activity-chevron" size={15} />
         </summary>
         <ol className="run-timeline">

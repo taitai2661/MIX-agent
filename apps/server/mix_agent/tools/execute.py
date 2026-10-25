@@ -15,9 +15,9 @@ from mix_agent.auth.security import read_secret, store_secret
 from mix_agent.db.models import Agent, Artifact, Conversation, MCPConnection, ScheduledJob, Settings, now
 from mix_agent.knowledge import service as knowledge
 from mix_agent.mcp import oauth as mcp_oauth
-from mix_agent.memory import runtime as memory_runtime
-from mix_agent.memory import service as memory
+from mix_agent.memory import embeddings as mem_embeddings
 from mix_agent.memory import tools as memory_tools
+from mix_agent.memory.service import RESULT_LIMIT_DEFAULT
 from mix_agent.skills import service as skills
 from mix_agent.tools.network import fetch_public, fetch_public_bytes
 
@@ -74,7 +74,9 @@ def _page_text(html):
     soup = BeautifulSoup(html, "html.parser")
     title = (soup.title.string or "").strip() if soup.title and soup.title.string else ""
     description = ""
-    meta = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+    meta = soup.find("meta", attrs={"name": "description"}) or soup.find(
+        "meta", attrs={"property": "og:description"}
+    )
     if meta and meta.get("content"):
         description = meta["content"].strip()[:2000]
     published = ""
@@ -149,10 +151,23 @@ async def _search_brave(query, count, key, freshness="any"):
     if freshness in BRAVE_FRESHNESS:
         params["freshness"] = BRAVE_FRESHNESS[freshness]
     async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
-        response = await client.get("https://api.search.brave.com/res/v1/web/search", params=params, headers={"X-Subscription-Token": key})
+        response = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params=params,
+            headers={"X-Subscription-Token": key},
+        )
         response.raise_for_status()
         rows = response.json().get("web", {}).get("results", [])
-        return {"results": [{"title": row.get("title", ""), "url": row.get("url", ""), "description": row.get("description", "")} for row in rows]}
+        return {
+            "results": [
+                {
+                    "title": row.get("title", ""),
+                    "url": row.get("url", ""),
+                    "description": row.get("description", ""),
+                }
+                for row in rows
+            ]
+        }
 
 
 async def _search_tavily(query, count, key, freshness="any"):
@@ -165,27 +180,58 @@ async def _search_tavily(query, count, key, freshness="any"):
         response = await client.post("https://api.tavily.com/search", json=payload)
         response.raise_for_status()
         rows = response.json().get("results", [])
-        return {"results": [{"title": row.get("title", ""), "url": row.get("url", ""), "description": row.get("content", "")} for row in rows]}
+        return {
+            "results": [
+                {
+                    "title": row.get("title", ""),
+                    "url": row.get("url", ""),
+                    "description": row.get("content", ""),
+                }
+                for row in rows
+            ]
+        }
 
 
 async def _search_exa(query, count, key):
     if not key:
         raise ValueError("Exa API Keyが未設定です")
     async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
-        response = await client.post("https://api.exa.ai/search", json={"query": query, "numResults": count, "type": "auto"}, headers={"x-api-key": key, "Content-Type": "application/json"})
+        response = await client.post(
+            "https://api.exa.ai/search",
+            json={"query": query, "numResults": count, "type": "auto"},
+            headers={"x-api-key": key, "Content-Type": "application/json"},
+        )
         response.raise_for_status()
         rows = response.json().get("results", [])
-        return {"results": [{"title": row.get("title", ""), "url": row.get("url", ""), "description": row.get("text", "")} for row in rows]}
+        return {
+            "results": [
+                {"title": row.get("title", ""), "url": row.get("url", ""), "description": row.get("text", "")}
+                for row in rows
+            ]
+        }
 
 
 async def _search_serper(query, count, key):
     if not key:
         raise ValueError("Serper API Keyが未設定です")
     async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
-        response = await client.post("https://google.serper.dev/search", json={"q": query, "num": count}, headers={"X-API-KEY": key, "Content-Type": "application/json"})
+        response = await client.post(
+            "https://google.serper.dev/search",
+            json={"q": query, "num": count},
+            headers={"X-API-KEY": key, "Content-Type": "application/json"},
+        )
         response.raise_for_status()
         rows = response.json().get("organic", [])
-        return {"results": [{"title": row.get("title", ""), "url": row.get("link", ""), "description": row.get("snippet", "")} for row in rows]}
+        return {
+            "results": [
+                {
+                    "title": row.get("title", ""),
+                    "url": row.get("link", ""),
+                    "description": row.get("snippet", ""),
+                }
+                for row in rows
+            ]
+        }
 
 
 async def _search_searxng(query, count, base_url):
@@ -193,28 +239,57 @@ async def _search_searxng(query, count, base_url):
     if not base:
         raise ValueError("SearXNGのURLが未設定です")
     parsed = urlsplit(base)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None, 443):
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.port not in (None, 443)
+    ):
         raise ValueError("SearXNGのURLは公開HTTPSエンドポイントを指定してください")
     async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
         response = await client.get(base + "/search", params={"q": query, "format": "json"})
         response.raise_for_status()
         rows = response.json().get("results", [])[:count]
-        return {"results": [{"title": row.get("title", ""), "url": row.get("url", ""), "description": row.get("content", "")} for row in rows]}
+        return {
+            "results": [
+                {
+                    "title": row.get("title", ""),
+                    "url": row.get("url", ""),
+                    "description": row.get("content", ""),
+                }
+                for row in rows
+            ]
+        }
 
 
 async def _search_ddgs(query, count, freshness="any"):
     from ddgs import DDGS
+
     timelimit = DDGS_TIMELIMIT.get(freshness)
-    rows = await asyncio.wait_for(asyncio.to_thread(lambda: list(DDGS().text(query, max_results=count, timelimit=timelimit))), timeout=20)
-    return {"results": [{"title": row.get("title", ""), "url": row.get("href", ""), "description": row.get("body", "")} for row in rows]}
+    rows = await asyncio.wait_for(
+        asyncio.to_thread(lambda: list(DDGS().text(query, max_results=count, timelimit=timelimit))),
+        timeout=20,
+    )
+    return {
+        "results": [
+            {"title": row.get("title", ""), "url": row.get("href", ""), "description": row.get("body", "")}
+            for row in rows
+        ]
+    }
 
 
 async def runner_request(kind, path, payload, timeout=120):
     token = config.runner_token(kind)
     if not token:
         raise RuntimeError("Runner is not configured. Start the Docker deployment.")
-    url = {"execution": config.RUNNER_URL, "mcp": config.MCP_URL, "manager": config.MCP_MANAGER_URL,
-           "browser": config.BROWSER_URL, "browser-provisioner": config.BROWSER_PROVISIONER_URL}[kind]
+    url = {
+        "execution": config.RUNNER_URL,
+        "mcp": config.MCP_URL,
+        "manager": config.MCP_MANAGER_URL,
+        "browser": config.BROWSER_URL,
+        "browser-provisioner": config.BROWSER_PROVISIONER_URL,
+    }[kind]
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         response = await client.post(url + path, json=payload, headers={"Authorization": "Bearer " + token})
         response.raise_for_status()
@@ -253,13 +328,56 @@ def save_text_artifact(db, owner, name, mime, content):
         raise ValueError("Artifact filename must be a single safe filename")
     if not re.fullmatch(r"[\w .()\-]+", name, re.UNICODE):
         raise ValueError("Artifact filename contains unsupported characters")
-    if not isinstance(mime, str) or len(mime) > 120 or ";" in mime or not re.fullmatch(r"[\w.+-]+/[\w.+-]+", mime):
+    if (
+        not isinstance(mime, str)
+        or len(mime) > 120
+        or ";" in mime
+        or not re.fullmatch(r"[\w.+-]+/[\w.+-]+", mime)
+    ):
         raise ValueError("Artifact MIME type is invalid")
     if not isinstance(content, str) or not content:
         raise ValueError("Artifact content is required")
     if len(content.encode("utf-8")) > 1024 * 1024:
         raise ValueError("Artifact content is too large")
     return save_artifact(db, owner, content.encode("utf-8"), name, mime)
+
+
+async def _memory_query_vector(db, run, query) -> list[float] | None:
+    """Query embedding for memory tools; ``None`` means lexical ranking.
+
+    Runs inside async tool dispatch, so it is the natural place to resolve the
+    vector. Every failure path returns ``None`` instead of raising: a tool call
+    must never fail because an embedding endpoint was slow or absent.
+    """
+    from mix_agent.db.models import Provider
+
+    provider_id = (run.data or {}).get("snapshot", {}).get("provider_record_id")
+    provider = db.get(Provider, provider_id) if provider_id else None
+    if provider is None:
+        return None
+    key = read_secret(db, provider.data.get("secret_id"))
+    return await mem_embeddings.query_vector({**provider.data, "id": provider.id}, key, query)
+
+
+async def _embed_after_remember(db, run, result) -> dict:
+    """Best-effort vector for a memory the agent just wrote.
+
+    Uses the run's own provider so the row lands in the same embedding space as
+    the queries that will later retrieve it. Silent no-op when the provider has
+    no embeddings endpoint.
+    """
+    memory_id = (result or {}).get("id") if isinstance(result, dict) else None
+    if not memory_id:
+        return result
+    from mix_agent.auth.security import read_secret
+    from mix_agent.db.models import Provider
+
+    provider_id = (run.data or {}).get("snapshot", {}).get("provider_record_id")
+    provider = db.get(Provider, provider_id) if provider_id else None
+    key = read_secret(db, provider.data.get("secret_id")) if provider else None
+    if await mem_embeddings.embed_memory(db, memory_id, provider=provider, key=key):
+        db.commit()
+    return result
 
 
 async def execute(db, run, tool, args):
@@ -271,27 +389,55 @@ async def execute(db, run, tool, args):
             raise ValueError("MCP connection is disabled")
         credentials = json.loads(read_secret(db, conn.data.get("secret_id")) or "{}")
         oauth = credentials.get("oauth")
-        if oauth and int(oauth.get("obtained_at", 0)) + int(oauth.get("expires_in", 0)) <= int(time.time()) + 60:
+        if (
+            oauth
+            and int(oauth.get("obtained_at", 0)) + int(oauth.get("expires_in", 0)) <= int(time.time()) + 60
+        ):
             try:
                 oauth = await mcp_oauth.refresh(oauth, credentials.get("oauth_registration", {}))
-                credentials = {**credentials, "oauth": oauth, "headers": {**credentials.get("headers", {}), "Authorization": "Bearer " + oauth["access_token"]}}
-                conn.data = {**conn.data, "secret_id": store_secret(db, conn.owner_id, json.dumps(credentials), "mcp")}
+                credentials = {
+                    **credentials,
+                    "oauth": oauth,
+                    "headers": {
+                        **credentials.get("headers", {}),
+                        "Authorization": "Bearer " + oauth["access_token"],
+                    },
+                }
+                conn.data = {
+                    **conn.data,
+                    "secret_id": store_secret(db, conn.owner_id, json.dumps(credentials), "mcp"),
+                }
                 db.commit()
             except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-                conn.data = {**conn.data, "state": "needs_authorization", "authorization_required": True, "enabled": False}
+                conn.data = {
+                    **conn.data,
+                    "state": "needs_authorization",
+                    "authorization_required": True,
+                    "enabled": False,
+                }
                 db.commit()
                 raise ValueError("MCPの再認証が必要です")
         if conn.data.get("runtime", {}).get("driver") in ("oci", "npm", "pypi"):
             result = await runner_request(
                 "manager",
                 f"/v1/call/{conn.id}",
-                {"credentials": credentials, "arguments": conn.data.get("runtime_arguments", []), "tool": tool["remote_name"], "arguments_value": args},
+                {
+                    "credentials": credentials,
+                    "arguments": conn.data.get("runtime_arguments", []),
+                    "tool": tool["remote_name"],
+                    "arguments_value": args,
+                },
             )
         else:
             result = await runner_request(
                 "mcp",
                 "/call",
-                {"connection": {**conn.data, "credentials": credentials}, "tool": tool["remote_name"], "arguments": args, "run_id": run.id},
+                {
+                    "connection": {**conn.data, "credentials": credentials},
+                    "tool": tool["remote_name"],
+                    "arguments": args,
+                    "run_id": run.id,
+                },
             )
     elif tool["executor_ref"] == "execution":
         setting = db.scalar(select(Settings).where(Settings.owner_id == run.owner_id))
@@ -313,8 +459,9 @@ async def execute(db, run, tool, args):
                     "設定画面から導入を完了してください。"
                 )
         result = await runner_request(
-            "browser" if name.startswith("browser_") else "execution", "/execute", {"name": name, "arguments": args, "run_id": run.id,
-                                      "browser_settings": browser_settings}
+            "browser" if name.startswith("browser_") else "execution",
+            "/execute",
+            {"name": name, "arguments": args, "run_id": run.id, "browser_settings": browser_settings},
         )
         # The frame is a UI observation, never part of the model tool result.
         if "image_base64" in result:
@@ -337,22 +484,30 @@ async def execute(db, run, tool, args):
             "published": published,
             "headings": headings[:10],
             "links": links[:20],
-            "text": text[offset:offset + max_chars],
+            "text": text[offset : offset + max_chars],
             "chars": total,
             "offset": offset,
             "truncated": offset + max_chars < total,
         }
     elif name == "web_fetch_pdf":
-        raw, content_type = await fetch_public_bytes(args["url"], max_bytes=20 * 1024 * 1024,
-                                                      allowed_domains=_fetch_allowed_domains(db, run.owner_id))
+        raw, content_type = await fetch_public_bytes(
+            args["url"], max_bytes=20 * 1024 * 1024, allowed_domains=_fetch_allowed_domains(db, run.owner_id)
+        )
         if "html" in content_type.lower() and not raw.lstrip().startswith(b"%PDF"):
             raise ValueError("URLはPDFではありません（HTMLが返されました）")
         max_pages = max(1, min(100, int(args.get("max_pages", 100) or 100)))
         try:
-            text, pages = await asyncio.wait_for(asyncio.to_thread(_extract_pdf_text, raw, max_pages), timeout=60)
+            text, pages = await asyncio.wait_for(
+                asyncio.to_thread(_extract_pdf_text, raw, max_pages), timeout=60
+            )
         except Exception as error:
             raise ValueError("PDFの解析に失敗しました: " + type(error).__name__) from error
-        result = {"url": args["url"], "pages": pages, "extracted_pages": min(pages, max_pages), "text": text[:50000]}
+        result = {
+            "url": args["url"],
+            "pages": pages,
+            "extracted_pages": min(pages, max_pages),
+            "text": text[:50000],
+        }
     elif name == "web_search":
         setting = db.scalar(select(Settings).where(Settings.owner_id == run.owner_id))
         data = setting.data if setting else {}
@@ -361,9 +516,13 @@ async def execute(db, run, tool, args):
         freshness = args.get("freshness", "any") or "any"
         query = _apply_domains(args["query"], args.get("domains"))
         if backend == "brave":
-            result = await _search_brave(query, count, read_secret(db, data.get("brave_secret_id")), freshness)
+            result = await _search_brave(
+                query, count, read_secret(db, data.get("brave_secret_id")), freshness
+            )
         elif backend == "tavily":
-            result = await _search_tavily(query, count, read_secret(db, data.get("tavily_secret_id")), freshness)
+            result = await _search_tavily(
+                query, count, read_secret(db, data.get("tavily_secret_id")), freshness
+            )
         elif backend == "exa":
             result = await _search_exa(query, count, read_secret(db, data.get("exa_secret_id")))
         elif backend == "serper":
@@ -373,35 +532,26 @@ async def execute(db, run, tool, args):
         else:
             result = await _search_ddgs(query, count, freshness)
     elif name == "memory_recall":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.recall(
             db,
             run.owner_id,
             query=args.get("query", ""),
+            limit=int(args.get("limit") or RESULT_LIMIT_DEFAULT),
             scopes=scopes,
-            roles=args.get("roles"),
-            limit=int(args.get("limit") or 8),
+            query_vector=await _memory_query_vector(db, run, args.get("query", "")),
         )
     elif name == "memory_remember":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
-        result = memory_tools.remember(
+        result = await _embed_after_remember(
             db,
-            run.owner_id,
-            content=args.get("content", ""),
-            role=args.get("role") or "fact",
-            scope=args.get("scope") or scopes[0],
-            role_metadata=args.get("role_metadata"),
-            entities=args.get("entities"),
-            concepts=args.get("concepts"),
-            evidence=args.get("evidence"),
-            task_id=run.id,
-            source_kind="agent",
+            run,
+            memory_tools.remember(
+                db,
+                run.owner_id,
+                content=args.get("content", ""),
+                explicit_user=False,
+            ),
         )
     elif name == "memory_forget":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.forget(
             db,
             run.owner_id,
@@ -410,35 +560,30 @@ async def execute(db, run, tool, args):
             reason=str(args.get("reason") or "agent forget"),
         )
     elif name == "memory_search":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
-        # Legacy alias: redirect through the role-based Recall Pipeline so
-        # older agents transparently benefit from the role taxonomy.
+        # Legacy alias for memory_recall.
         result = memory_tools.recall(
-            db, run.owner_id,
-            query=args.get("query", ""),
-            scopes=scopes,
-            limit=8,
-        )
-    elif name in ("memory_add", "memory_update"):
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
-        result = memory_tools.remember(
             db,
             run.owner_id,
-            content=args.get("content", ""),
-            role="fact",
-            scope=scopes[0],
-            entities=args.get("entities"),
-            concepts=args.get("concepts"),
-            task_id=run.id,
-            source_kind="agent",
+            query=args.get("query", ""),
+            limit=RESULT_LIMIT_DEFAULT,
+            scopes=scopes,
+            query_vector=await _memory_query_vector(db, run, args.get("query", "")),
+        )
+    elif name in ("memory_add", "memory_update"):
+        result = await _embed_after_remember(
+            db,
+            run,
+            memory_tools.remember(
+                db,
+                run.owner_id,
+                content=args.get("content", ""),
+                explicit_user=False,
+            ),
         )
     elif name == "memory_delete":
-        if not scopes:
-            raise ValueError("Memory is disabled for this agent")
         result = memory_tools.forget(
-            db, run.owner_id,
+            db,
+            run.owner_id,
             memory_id=args.get("id"),
             reason="agent forget",
         )
@@ -449,12 +594,29 @@ async def execute(db, run, tool, args):
         # The same project skills the prompt advertises, so the model can read
         # one back after seeing it in the catalogue.
         seen = {row.get("id") for row in stored}
-        merged = stored + [row for row in discovery.search(args.get("query", "")) if row.get("id") not in seen]
+        merged = stored + [
+            row for row in discovery.search(args.get("query", "")) if row.get("id") not in seen
+        ]
         result = {"skills": merged}
     elif name == "skill_add":
-        result = skills.change(db, run.owner_id, name=args["name"], description=args.get("description", ""), content=args["content"], source_run=run.id)
+        result = skills.change(
+            db,
+            run.owner_id,
+            name=args["name"],
+            description=args.get("description", ""),
+            content=args["content"],
+            source_run=run.id,
+        )
     elif name == "skill_update":
-        result = skills.change(db, run.owner_id, name=args.get("name"), description=args.get("description"), content=args.get("content"), skill_id=args["id"], source_run=run.id)
+        result = skills.change(
+            db,
+            run.owner_id,
+            name=args.get("name"),
+            description=args.get("description"),
+            content=args.get("content"),
+            skill_id=args["id"],
+            source_run=run.id,
+        )
     elif name == "skill_resource":
         row = skills.find(db, run.owner_id, args.get("skill", ""))
         if row:
@@ -472,10 +634,16 @@ async def execute(db, run, tool, args):
         from mix_agent.schedules import next_at
 
         jobs = []
-        for job in db.scalars(select(ScheduledJob).where(ScheduledJob.owner_id == run.owner_id).order_by(ScheduledJob.created_at.desc())):
+        for job in db.scalars(
+            select(ScheduledJob)
+            .where(ScheduledJob.owner_id == run.owner_id)
+            .order_by(ScheduledJob.created_at.desc())
+        ):
             data = dict(job.data)
             try:
-                data["next_at"] = next_at(data["cron"], data["timezone"]).isoformat() if data.get("enabled") else None
+                data["next_at"] = (
+                    next_at(data["cron"], data["timezone"]).isoformat() if data.get("enabled") else None
+                )
             except ValueError:
                 data["next_at"] = None
             jobs.append({"id": job.id, **data})
@@ -496,11 +664,21 @@ async def execute(db, run, tool, args):
                 raise ValueError("Scheduled job target was not found")
 
         if name == "schedule_create":
-            data = {"name": args["name"], "target_type": args["target_type"], "target_id": args["target_id"], "prompt": args["prompt"], "cron": args["cron"], "timezone": args.get("timezone", "Asia/Tokyo"), "enabled": args.get("enabled", True), "catch_up": args.get("catch_up", False)}
+            data = {
+                "name": args["name"],
+                "target_type": args["target_type"],
+                "target_id": args["target_id"],
+                "prompt": args["prompt"],
+                "cron": args["cron"],
+                "timezone": args.get("timezone", "Asia/Tokyo"),
+                "enabled": args.get("enabled", True),
+                "catch_up": args.get("catch_up", False),
+            }
             validate_target(data)
             next_at(data["cron"], data["timezone"])
             job = ScheduledJob(owner_id=run.owner_id, data=data)
-            db.add(job); db.flush()
+            db.add(job)
+            db.flush()
             result = {"id": job.id, "created": True, **data}
         elif name == "schedule_update":
             job = owned_job(args["id"])
@@ -527,9 +705,16 @@ async def execute(db, run, tool, args):
             # visible before handing it to the background engine.
             db.commit()
             launch(scheduled_run.id)
-            result = {"id": job.id, "scheduled_run_id": scheduled.id, "run_id": scheduled_run.id, "started": True}
+            result = {
+                "id": job.id,
+                "scheduled_run_id": scheduled.id,
+                "run_id": scheduled_run.id,
+                "started": True,
+            }
     elif name == "knowledge_search":
-        result = {"documents": knowledge.search(db, run.owner_id, args.get("query", ""), args.get("top_k", 5))}
+        result = {
+            "documents": knowledge.search(db, run.owner_id, args.get("query", ""), args.get("top_k", 5))
+        }
     elif name == "knowledge_delete":
         result = knowledge.delete(db, run.owner_id, args["id"])
     elif name == "knowledge_add":
@@ -538,38 +723,72 @@ async def execute(db, run, tool, args):
             path = args.get("path", "")
             if not path:
                 raise ValueError("Workspace path is required")
-            fetched = await runner_request("execution", "/execute", {"name": "read_file", "arguments": {"path": path}, "run_id": run.id})
-            result = knowledge.add(db, run.owner_id, fetched.get("text", ""), title=args.get("title", "") or path, source_type="workspace", source_ref=path, memo=args.get("memo", ""))
+            fetched = await runner_request(
+                "execution", "/execute", {"name": "read_file", "arguments": {"path": path}, "run_id": run.id}
+            )
+            result = knowledge.add(
+                db,
+                run.owner_id,
+                fetched.get("text", ""),
+                title=args.get("title", "") or path,
+                source_type="workspace",
+                source_ref=path,
+                memo=args.get("memo", ""),
+            )
         elif source_type == "url":
             url = args.get("url", "")
             if not url:
                 raise ValueError("URL is required")
-            raw, content_type = await fetch_public_bytes(url, allowed_domains=_fetch_allowed_domains(db, run.owner_id))
+            raw, content_type = await fetch_public_bytes(
+                url, allowed_domains=_fetch_allowed_domains(db, run.owner_id)
+            )
             if "pdf" in content_type.lower() or raw.lstrip().startswith(b"%PDF"):
                 text, _ = await asyncio.wait_for(asyncio.to_thread(_extract_pdf_text, raw, 100), timeout=60)
                 title = args.get("title", "") or url
             else:
                 title, _, _, _, _, text = _page_text(raw.decode("utf-8", errors="replace"))
                 title = args.get("title", "") or title or url
-            result = knowledge.add(db, run.owner_id, text, title=title, source_type="url", source_ref=url, memo=args.get("memo", ""))
+            result = knowledge.add(
+                db,
+                run.owner_id,
+                text,
+                title=title,
+                source_type="url",
+                source_ref=url,
+                memo=args.get("memo", ""),
+            )
         else:
             content = args.get("content", "")
             if not content:
                 raise ValueError("Content is required")
-            result = knowledge.add(db, run.owner_id, content, title=args.get("title", ""), source_type="text", source_ref="", memo=args.get("memo", ""))
+            result = knowledge.add(
+                db,
+                run.owner_id,
+                content,
+                title=args.get("title", ""),
+                source_type="text",
+                source_ref="",
+                memo=args.get("memo", ""),
+            )
     elif name == "web_clip_save":
         url = args["url"]
-        raw, content_type = await fetch_public_bytes(url, allowed_domains=_fetch_allowed_domains(db, run.owner_id))
+        raw, content_type = await fetch_public_bytes(
+            url, allowed_domains=_fetch_allowed_domains(db, run.owner_id)
+        )
         if "pdf" in content_type.lower() or raw.lstrip().startswith(b"%PDF"):
             text, _ = await asyncio.wait_for(asyncio.to_thread(_extract_pdf_text, raw, 100), timeout=60)
             title = args.get("title", "") or url
         else:
             title, _, _, _, _, text = _page_text(raw.decode("utf-8", errors="replace"))
             title = args.get("title", "") or title or url
-        result = knowledge.add(db, run.owner_id, text, title=title, source_type="url", source_ref=url, memo=args.get("memo", ""))
+        result = knowledge.add(
+            db, run.owner_id, text, title=title, source_type="url", source_ref=url, memo=args.get("memo", "")
+        )
         result = {"saved": True, "url": url, **result}
     elif name == "create_artifact":
-        result = {"artifact": save_text_artifact(db, run.owner_id, args["name"], args["mime"], args["content"])}
+        result = {
+            "artifact": save_text_artifact(db, run.owner_id, args["name"], args["mime"], args["content"])
+        }
     else:
         raise ValueError("Unknown tool")
     raw = json.dumps(result, ensure_ascii=False)
@@ -581,12 +800,19 @@ async def execute(db, run, tool, args):
     except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
         pass
     if len(raw) > inline_limit:
-        artifact = save_artifact(db, run.owner_id, raw.encode(), "tool-result.json", "application/json", kind="context-tool-output")
+        artifact = save_artifact(
+            db, run.owner_id, raw.encode(), "tool-result.json", "application/json", kind="context-tool-output"
+        )
         try:
             existing_refs = list(run.data.get("tool_refs") or [])
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             existing_refs = []
         if artifact["artifact_id"] not in existing_refs:
             run.data = {**run.data, "tool_refs": [*existing_refs, artifact["artifact_id"]]}
-        return {"excerpt": raw[:inline_limit], "truncated": True, "artifact": artifact, "artifact_ref": "artifact://" + artifact["artifact_id"]}
+        return {
+            "excerpt": raw[:inline_limit],
+            "truncated": True,
+            "artifact": artifact,
+            "artifact_ref": "artifact://" + artifact["artifact_id"],
+        }
     return result

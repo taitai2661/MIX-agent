@@ -59,9 +59,9 @@ services:
       # for skills discovered under .mix/skills (then .claude/skills, then
       # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
       MIX_PROJECT_MOUNT: /project
-      # Source of the model-info catalog: an https address or a directory
-      # mounted into this container (see the volumes comment below).
-      MIX_MODEL_INFO_URL: "${MIX_MODEL_INFO_URL:-https://taitai2661.github.io/model-info/v1}"
+      # Source of the models.dev catalog: the published api.json or a local
+      # file mounted into this container (see the volumes comment below).
+      MIX_MODELS_DEV_URL: "${MIX_MODELS_DEV_URL:-https://models.dev/api.json}"
     volumes:
       - data:/data
       - policy:/data/egress
@@ -77,9 +77,9 @@ services:
       - manager-token:/manager-keys:ro
       - browser-token:/browser-keys:ro
       - browser-provisioner-token:/browser-provisioner-keys:ro
-      # Local model-info checkout instead of the published catalog:
-      #   - ./model-info:/model-info:ro   (with MIX_MODEL_INFO_URL=/model-info/v1)
-      # - ${MIX_MODEL_INFO_DIR:-./model-info}:/model-info:ro
+      # Local models.dev api.json instead of the published catalog:
+      #   - ./models-dev:/models-dev:ro   (with MIX_MODELS_DEV_URL=/models-dev/api.json)
+      # - ${MIX_MODELS_DEV_DIR:-./models-dev}:/models-dev:ro
     command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
     networks: [database, execution, mcp, internet]
     extra_hosts: ["host.docker.internal:host-gateway"]

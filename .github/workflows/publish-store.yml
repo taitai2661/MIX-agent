@@ -4,20 +4,20 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: "Release tag to publish, for example v0.3.0"
+        description: "Release tag to publish, for example v0.2.3"
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag, for example v0.3.0"
+        description: "Existing release tag, for example v0.2.3"
         required: true
         type: string
   push:
     branches:
       - main
     paths:
-      - "Apps/**"
+      - "apps/**"
       - "build/**"
       - "category-list.json"
       - "featured-apps.json"
@@ -40,12 +40,13 @@ jobs:
 
       - name: Resolve store version
         id: version
+        working-directory: .
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          COMPOSE_VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
+          COMPOSE_VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' apps/MIX-agent/docker-compose.yml)"
           test -n "$COMPOSE_VERSION"
 
           if [[ -n "${INPUT_TAG:-}" ]]; then
@@ -66,6 +67,7 @@ jobs:
 
       - name: Verify public image manifests
         id: images
+        working-directory: .
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
@@ -140,7 +142,7 @@ jobs:
           with zipfile.ZipFile(archive) as zf:
               if zf.testzip() is not None:
                   raise SystemExit("Legacy main.zip failed integrity check")
-              expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml"
+              expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/apps/MIX-agent/docker-compose.yml"
               if expected_entry not in zf.namelist():
                   raise SystemExit(f"Legacy main.zip is missing {expected_entry}")
           PY
@@ -181,11 +183,11 @@ jobs:
           legacy="mix-agent-zimaos-legacy-${RELEASE_TAG}.zip"
           tar -czf "$bundle" -C dist .
           cp dist/store/main.zip "$legacy"
+          notes_file="docs/release-notes-${RELEASE_TAG}.md"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$bundle" "$legacy" --clobber
           elif [[ -n "${REQUESTED_TAG:-}" ]]; then
-            notes_file="docs/release-notes-${RELEASE_TAG}.md"
             if [[ -f "$notes_file" ]]; then
               gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --notes-file "$notes_file"
             else
@@ -193,4 +195,13 @@ jobs:
             fi
           else
             echo "Release $RELEASE_TAG does not exist yet; store is published but release assets are skipped."
+            exit 0
+          fi
+
+          # The desktop-release workflow creates the same GitHub Release in
+          # parallel and passes no body, so whichever workflow got there first
+          # decides the notes. Re-apply the release notes file here so the
+          # published body always matches docs/release-notes-<tag>.md.
+          if [[ -f "$notes_file" ]]; then
+            gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
           fi

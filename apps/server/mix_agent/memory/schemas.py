@@ -46,10 +46,12 @@ def validate_decision_metadata(raw: Any) -> dict | None:
             if isinstance(entry, str):
                 rejected.append({"option": entry[:200], "reason": ""})
             elif isinstance(entry, dict):
-                rejected.append({
-                    "option": str(entry.get("option", ""))[:200],
-                    "reason": str(entry.get("reason", ""))[:500],
-                })
+                rejected.append(
+                    {
+                        "option": str(entry.get("option", ""))[:200],
+                        "reason": str(entry.get("reason", ""))[:500],
+                    }
+                )
         out["rejected_alternatives"] = rejected
     if isinstance(raw.get("source"), str):
         out["source"] = raw["source"][:200]
