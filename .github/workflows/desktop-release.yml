@@ -223,7 +223,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -d '' dmgs < <(find "target/${{ matrix.target }}/release/bundle" -type f -name '*.dmg' -print0 | sort -z)
+          # macOS runners still use bash 3.2, which has no `mapfile`. Read the
+          # NUL-delimited find output with a portable loop instead.
+          dmgs=()
+          while IFS= read -r -d '' dmg; do
+            dmgs+=("$dmg")
+          done < <(find "target/${{ matrix.target }}/release/bundle" -type f -name '*.dmg' -print0)
           if [ "${#dmgs[@]}" -ne 1 ]; then
             echo "::error::Expected one DMG for ${{ matrix.asset_arch }}, found ${#dmgs[@]}."
             exit 1
@@ -251,7 +256,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -d '' dmgs < <(find artifacts -type f -name '*.dmg' -print0 | sort -z)
+          # Keep this loop bash-3.2 compatible too: the release workflow is
+          # easy to move between macOS and Linux runners.
+          dmgs=()
+          while IFS= read -r -d '' dmg; do
+            dmgs+=("$dmg")
+          done < <(find artifacts -type f -name '*.dmg' -print0)
           if [ "${#dmgs[@]}" -ne 2 ]; then
             echo "::error::Expected exactly two macOS DMGs (Apple Silicon and Intel), found ${#dmgs[@]}."
             exit 1

@@ -28,7 +28,9 @@ export function UpdateSettings() {
             {t("GitHub Releasesを開く")}
           </a>
           <p className="text-xs text-muted">
-            {t("ダウンロードしたDMGのSHA256SUMSチェックサムを確認してください。")}
+            {t(
+              "ダウンロードしたDMGのSHA256SUMSチェックサムを確認してください。",
+            )}
           </p>
           <p className="text-xs text-muted">
             {t(

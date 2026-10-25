@@ -6,7 +6,20 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## v0.5.0公開前の問題修正（2026-10-26）
+
+- `desktop-release`のmacOS DMG収集が`mapfile`（macOS標準bash 3.2に無い）で失敗していたため、`find -print0` + `read -d ''`のbash 3.2互換ループへ変更した。DMG 1件／2件の収集を`/bin/bash` 3.2で再現し、成功を確認。
+- `apps/desktop/ui/src/features/settings/UpdateSettings.tsx`へPrettierを適用。`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、Vitest 31ファイル249テストが成功。
+- ルート`pnpm-lock.yaml`から削除済み`@tauri-apps/plugin-updater`の残存entryを除去した。`pnpm install --frozen-lockfile`が全4ワークスペースで成功。これがCI `docker-frontend`／`Validate release candidate`の`ERR_PNPM_OUTDATED_LOCKFILE`の原因だった。
+- WebはVitest 21ファイル158テストとproduction buildが成功。ZimaOS Composeの再生成・`docker compose config`も成功。
+- 手動DMG配布へ切り替えた後に残っていた`apps/desktop/scripts/merge-updater-manifests.mjs`とそのテストを削除し、`THIRD_PARTY_LICENSES.md`を再生成した。
+- `Apps/MIX-agent`と`apps/MIX-agent`の大文字小文字重複を解消した。v1ストア用の`Apps/`レイアウトは`scripts/stage-legacy-store.sh`で一時生成し、v1 archiveの`build/sysroot/.../Apps/MIX-agent/docker-compose.yml`を確認した。macOSのケース非依存ファイルシステムでも`apps/`のみでチェックアウトできる。
+- Windows PTYテストのタイムアウトを60秒へ延長し、direct-execテストもPTYテストと同じ直列ロックで実行するよう変更した。macOS上で`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（全suite）が成功。
+- PostgreSQL test profileは583 passed / 1 skipped。8種類のrelease image target（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）はローカルDockerでbuild成功。
+- Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-legacy-store.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
+- 未確認: この環境にはGitHubへの書き込み権限がなく、修正後のGitHub Actions（CI／Validate／desktop-releaseのmacOS dry-run）は実行できていない。Windows実機のPTYテストとmacOS実機のDMG起動も未確認。`v0.5.0`タグとGitHub Releaseは引き続き未作成。
 
 ## [追記] v0.5.0 Desktopを手動DMG配布へ変更（2026-10-25）
 

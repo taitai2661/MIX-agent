@@ -105,11 +105,15 @@ jobs:
           cache-file: .cache/build_appstore/image-size-cache.json
           digest-cache-file: .cache/build_appstore/image-digest-cache.json
 
+      - name: Stage legacy ZimaOS/CasaOS v1 store source
+        if: steps.images.outputs.ready == 'true'
+        run: bash scripts/stage-legacy-store.sh out/legacy-store
+
       - name: Build legacy ZimaOS/CasaOS v1 store
         if: steps.images.outputs.ready == 'true'
         uses: IceWhaleTech/CasaOS-AppStore/.github/actions/build-store-v1@0909364b800950030e71ea82355a5969a1c08b39
         with:
-          source: .
+          source: out/legacy-store
           output-zip: dist/store/main.zip
           report-json: out/build-v1-report.json
           report-title: MIX-agent legacy ZimaOS store build

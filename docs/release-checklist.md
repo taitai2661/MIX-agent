@@ -22,5 +22,5 @@
 - API key、パスワード、個人データ、開発機の生成物が含まれていない。
 - 設定ファイル・README・Releaseノートに非公開の作業用リポジトリへの参照が含まれていない。
 - ZimaOSの既存手動導入からストア導入へのデータ引き継ぎは自動ではない。ガイドのバックアップ・復元説明を維持する。
-- v2の`apps/MIX-agent/docker-compose.yml`とv1互換の`Apps/MIX-agent/docker-compose.yml`の`x-casaos.version`が、Releaseタグと一致している。
+- `apps/MIX-agent/docker-compose.yml`の`x-casaos.version`がReleaseタグと一致している。v1互換アーカイブは`scripts/stage-legacy-store.sh`で同じファイルから生成する。
 - v0.5.0 Desktop版はUpdater署名鍵を使わず、アプリ内自動更新を無効にする。配布物はmacOS DMGとSHA256SUMSのみとする。

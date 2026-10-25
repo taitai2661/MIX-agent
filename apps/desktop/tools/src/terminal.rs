@@ -1044,6 +1044,15 @@ mod tests {
     // only the integration tests that exercise a real persistent PTY.
     static PTY_INTEGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    // Git Bash/ConPTY startup and teardown routinely take several seconds on
+    // a loaded Windows runner. A 10 s budget made the exit-code and respawn
+    // assertions fail intermittently, so keep the integration budget generous
+    // while leaving the intentionally-timing-out `exit` case short.
+    #[cfg(windows)]
+    const PTY_TEST_TIMEOUT_MS: u64 = 60_000;
+    #[cfg(not(windows))]
+    const PTY_TEST_TIMEOUT_MS: u64 = 10_000;
+
     /// One directory per test. The persistent shell is keyed by workspace, so
     /// sharing a root would make the tests queue behind each other on one
     /// session and hide ordering bugs.
@@ -1224,14 +1233,20 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
 
         let first = tool
-            .invoke(context.clone(), serde_json::json!({ "command": "cd sub" }))
+            .invoke(
+                context.clone(),
+                serde_json::json!({ "command": "cd sub", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+            )
             .await
             .expect("first call");
         // If no PTY is available the fallback still succeeds; the persistence
         // assertion below is then vacuous, so only assert the happy path here.
         if first.content["persistent"] == true {
             let second = tool
-                .invoke(context.clone(), serde_json::json!({ "command": "pwd" }))
+                .invoke(
+                    context.clone(),
+                    serde_json::json!({ "command": "pwd", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+                )
                 .await
                 .expect("second call");
             let out = second.content["stdout"].as_str().unwrap_or_default();
@@ -1251,7 +1266,10 @@ mod tests {
         let (context, dir) = ctx_for("escape");
 
         let first = tool
-            .invoke(context.clone(), serde_json::json!({ "command": "cd /tmp" }))
+            .invoke(
+                context.clone(),
+                serde_json::json!({ "command": "cd /tmp", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+            )
             .await
             .expect("first call");
         if first.content["persistent"] != true {
@@ -1259,7 +1277,10 @@ mod tests {
             return; // no PTY on this platform
         }
         let second = tool
-            .invoke(context.clone(), serde_json::json!({ "command": "pwd" }))
+            .invoke(
+                context.clone(),
+                serde_json::json!({ "command": "pwd", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+            )
             .await
             .expect("second call");
         let out = second.content["stdout"].as_str().unwrap_or_default();
@@ -1299,7 +1320,7 @@ mod tests {
         let result = tool
             .invoke(
                 context,
-                serde_json::json!({ "command": "(exit 3)", "max_wall_clock_ms": 10000 }),
+                serde_json::json!({ "command": "(exit 3)", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
             )
             .await
             .expect("invoke");
@@ -1321,7 +1342,7 @@ mod tests {
                 context.clone(),
                 // `exit` kills the shell before the marker is printed, so this
                 // call is expected to time out; keep the timeout short.
-                serde_json::json!({ "command": "exit 0", "max_wall_clock_ms": 2000 }),
+                serde_json::json!({ "command": "exit 0", "max_wall_clock_ms": 5000 }),
             )
             .await
             .expect("first call");
@@ -1333,7 +1354,7 @@ mod tests {
         let second = tool
             .invoke(
                 context.clone(),
-                serde_json::json!({ "command": "echo alive", "max_wall_clock_ms": 10000 }),
+                serde_json::json!({ "command": "echo alive", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
             )
             .await
             .expect("second call");
@@ -1350,6 +1371,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_direct_exec_path_bypasses_the_shell() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("argv");
         #[cfg(windows)]
@@ -1365,7 +1387,7 @@ mod tests {
                 serde_json::json!({
                     "command": command,
                     "args": args,
-                    "max_wall_clock_ms": 10000,
+                    "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
                 }),
             )
             .await
