@@ -331,8 +331,8 @@ async function main() {
     platform === "mac" ? join(stageRoot, "chrome-mac")
       : platform === "win" ? join(stageRoot, "chrome-win")
         : join(stageRoot, "chrome-linux");
-  await mkdir(normalized, { recursive: true });
   if (platform === "mac") {
+    await mkdir(normalized, { recursive: true });
     // The bundle is named "Google Chrome for Testing.app" upstream; do not
     // hardcode it, just take the single .app we just unpacked.
     const bundles = (await readdir(extracted, { withFileTypes: true }))

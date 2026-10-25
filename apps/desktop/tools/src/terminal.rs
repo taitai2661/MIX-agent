@@ -112,7 +112,9 @@ fn detect_shell_inner(mix_shell_override: Option<&str>) -> ShellLaunchConfig {
         if let Some(bash) = find_windows_bash() {
             return ShellLaunchConfig {
                 program: bash,
-                args: vec!["--login".into(), "-i".into()],
+                // Keep Git Bash's login environment, but do not enable prompt
+                // echo under ConPTY; framed commands are fed over stdin.
+                args: vec!["--login".into()],
                 is_posix: true,
             };
         }
