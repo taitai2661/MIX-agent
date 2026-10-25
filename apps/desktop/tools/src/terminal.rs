@@ -404,16 +404,18 @@ impl ShellSession {
             }
         }
         // A start marker separates real command output from the PTY echo of
-        // this script: the shell echoes every line it reads, so without it the
-        // `__mixd_rc=$?` / `printf ...` lines leak into the result (the whole
-        // script text was returned as the command's own output).
+        // this script. Run the POSIX command with eval so its state changes
+        // persist, and capture `$?` on the same input line: interactive Git
+        // Bash prompt hooks run between input lines and can otherwise replace
+        // the command's exit status before the wrapper reads it.
         let status_str = native_path_string(&status_path);
         let status_expr = posix_path_expression(&status_path);
         let cwd_expr = posix_cwd_expression();
         let script = if self.config.is_posix {
             format!(
-                "printf '\\n%s\\n' '{start}'\n{command}\n__mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > {status} 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"{cwd}\"\n",
+                "printf '\\n%s\\n' '{start}'\neval {command}; __mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > {status} 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"{cwd}\"\n",
                 start = start_marker,
+                command = shell_quote(command),
                 status = status_expr,
                 sentinel = sentinel,
                 cwd_marker = cwd_marker,
