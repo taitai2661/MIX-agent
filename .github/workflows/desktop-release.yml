@@ -221,14 +221,19 @@ jobs:
           fi
       # macOS signing certificate must be in the keychain BEFORE `tauri build`
       # so signing happens during bundling (post-hoc codesign invalidates it).
-      # Skipped without secrets: the build below then stays clearly unsigned.
+      # Runs only on macOS; without a certificate the step warns and exits, and
+      # the build below remains clearly unsigned.
       - name: Import macOS signing certificate
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
+        if: runner.os == 'macOS'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ github.repository }}
         run: |
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "::warning::No APPLE_CERTIFICATE — producing an unsigned macOS build."
+            exit 0
+          fi
           echo "::add-mask::$KEYCHAIN_PASSWORD"
           trap 'security delete-keychain build.keychain 2>/dev/null; rm -f /tmp/cert.p12' EXIT
           echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
@@ -266,15 +271,19 @@ jobs:
       # Notarization runs after the (already signed) bundle exists. The nested
       # Chromium.app is signed BEFORE the outer app; the outer signature would
       # otherwise be invalidated. Creates the notarytool keychain profile from
-      # secrets; skipped entirely without them.
+      # secrets; without all credentials, the step warns and exits successfully.
       - name: Notarize and staple the macOS build
-        if: runner.os == 'macOS' && secrets.APPLE_ID != ''
+        if: runner.os == 'macOS'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "::warning::Apple notarization credentials are incomplete; skipping notarization."
+            exit 0
+          fi
           xcrun notarytool store-credentials "notary" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
