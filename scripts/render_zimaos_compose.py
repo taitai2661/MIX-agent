@@ -13,7 +13,10 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "apps/MIX-agent/docker-compose.yml"
+OUTS = (
+    ROOT / "apps/MIX-agent/docker-compose.yml",
+    ROOT / "Apps/MIX-agent/docker-compose.yml",
+)
 PACKAGE = "ghcr.io/taitai2661/mix-agent"
 TARGETS = {
     "init": "init",
@@ -160,4 +163,7 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.5.0"))
+    rendered = render(sys.argv[1] if len(sys.argv) == 2 else "v0.5.0")
+    for output in OUTS:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered)

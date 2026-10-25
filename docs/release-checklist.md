@@ -22,5 +22,5 @@
 - API key、パスワード、個人データ、開発機の生成物が含まれていない。
 - 設定ファイル・README・Releaseノートに非公開の作業用リポジトリへの参照が含まれていない。
 - ZimaOSの既存手動導入からストア導入へのデータ引き継ぎは自動ではない。ガイドのバックアップ・復元説明を維持する。
-- `apps/MIX-agent/docker-compose.yml` の `x-casaos.version` とReleaseタグが一致している。
+- v2の`apps/MIX-agent/docker-compose.yml`とv1互換の`Apps/MIX-agent/docker-compose.yml`の`x-casaos.version`が、Releaseタグと一致している。
 - Desktop updater署名の秘密鍵はActions Secretsだけで管理し、ソース・ビルドログ・Release assetsへ含めない。

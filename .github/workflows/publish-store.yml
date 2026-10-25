@@ -142,7 +142,7 @@ jobs:
           with zipfile.ZipFile(archive) as zf:
               if zf.testzip() is not None:
                   raise SystemExit("Legacy main.zip failed integrity check")
-              expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/apps/MIX-agent/docker-compose.yml"
+          expected_entry = "build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml"
               if expected_entry not in zf.namelist():
                   raise SystemExit(f"Legacy main.zip is missing {expected_entry}")
           PY

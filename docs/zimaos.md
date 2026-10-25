@@ -2,8 +2,8 @@
 
 ## 配布の仕組み
 
-公開リポジトリの `store-config.json` と `Apps/MIX-agent/docker-compose.yml` から、
-新しいZimaOS向けのv2ストアと、旧クライアント互換のv1ストアを同時に生成します。
+公開リポジトリの `store-config.json` とv2用の `apps/MIX-agent/docker-compose.yml`、
+v1互換用の `Apps/MIX-agent/docker-compose.yml` から、両世代のストアを同時に生成します。
 
 Releaseタグ `vX.Y.Z` を作成すると、GitHub Actionsは次の順番で自動処理します。
 
