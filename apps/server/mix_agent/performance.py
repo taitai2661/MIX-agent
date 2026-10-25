@@ -9,15 +9,24 @@ from mix_agent.db.models import PerformanceEvent, now
 RETENTION = timedelta(days=30)
 
 
-def record(db, owner_id: str, model_id: str, provider_id: str, mode: str,
-           output_tokens: int, generation_ms: int,
-           first_output_ms: int | None = None) -> PerformanceEvent:
+def record(
+    db,
+    owner_id: str,
+    model_id: str,
+    provider_id: str,
+    mode: str,
+    output_tokens: int,
+    generation_ms: int,
+    first_output_ms: int | None = None,
+) -> PerformanceEvent:
     """Store only the values needed to compare completed answer throughput."""
     current = now()
-    db.execute(delete(PerformanceEvent).where(
-        PerformanceEvent.owner_id == owner_id,
-        PerformanceEvent.created_at < current - RETENTION,
-    ))
+    db.execute(
+        delete(PerformanceEvent).where(
+            PerformanceEvent.owner_id == owner_id,
+            PerformanceEvent.created_at < current - RETENTION,
+        )
+    )
     data = {
         "model_id": model_id,
         "provider_id": provider_id,

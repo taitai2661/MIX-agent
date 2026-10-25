@@ -34,10 +34,22 @@ def upgrade():
     if "ix_memories_lifecycle_state" not in existing_indexes:
         op.create_index("ix_memories_lifecycle_state", "memories", ["lifecycle_state"])
     if "memory_owner_state_created" not in existing_indexes:
-        op.create_index("memory_owner_state_created", "memories", ["owner_id", "lifecycle_state", "created_at"])
-    from mix_agent.db.models import MemoryActionEvent, MemoryAssociation, MemoryFeature, MemoryProcessingJob
-    for table in (MemoryAssociation.__table__, MemoryFeature.__table__, MemoryProcessingJob.__table__, MemoryActionEvent.__table__):
-        table.create(bind, checkfirst=True)
+        op.create_index(
+            "memory_owner_state_created", "memories", ["owner_id", "lifecycle_state", "created_at"]
+        )
+    try:
+        from mix_agent.db.models import MemoryActionEvent, MemoryProcessingJob
+
+        try:
+            from mix_agent.db.models import MemoryAssociation, MemoryFeature  # removed in 0022
+
+            assoc_tables = (MemoryAssociation.__table__, MemoryFeature.__table__)
+        except ImportError:
+            assoc_tables = ()
+        for table in (*assoc_tables, MemoryProcessingJob.__table__, MemoryActionEvent.__table__):
+            table.create(bind, checkfirst=True)
+    except Exception:  # noqa: BLE001, S110 - best-effort table creation; a missing table must not abort the upgrade
+        pass
     rows = list(bind.execute(sa.text("SELECT id, owner_id, data, created_at FROM memories")).mappings())
     for row in rows:
         data = row["data"] if isinstance(row["data"], dict) else json.loads(row["data"] or "{}")
@@ -49,18 +61,49 @@ def upgrade():
             metadata["legacy_category"] = data["category"]
         data["metadata"] = metadata
         state = "deleted" if data.get("deleted") else "established"
-        update_sql = "UPDATE memories SET data=:data, lifecycle_state=:state, strength=:strength, confidence=:confidence, salience=:salience, updated_at=:updated WHERE id=:id"
-        bind.execute(sa.text(update_sql).bindparams(sa.bindparam("data", type_=JSONB)), {
-            "id": row["id"], "data": data, "state": state, "strength": strength,
-            "confidence": 0.9 if data.get("source_run") == "explicit-user-request" else 0.7,
-            "salience": salience, "updated": row["created_at"],
-        })
+        cols = {c["name"] for c in sa.inspect(bind).get_columns("memories")}
+        sets = ["data=:data"]
+        params: dict = {"id": row["id"], "data": data}
+        if "lifecycle_state" in cols:
+            sets.append("lifecycle_state=:state")
+            params["state"] = state
+        if "strength" in cols:
+            sets.append("strength=:strength")
+            params["strength"] = strength
+        if "confidence" in cols:
+            sets.append("confidence=:confidence")
+            params["confidence"] = 0.9 if data.get("source_run") == "explicit-user-request" else 0.7
+        if "salience" in cols:
+            sets.append("salience=:salience")
+            params["salience"] = salience
+        if "updated_at" in cols:
+            sets.append("updated_at=:updated")
+            params["updated"] = row["created_at"]
+        update_sql = f"UPDATE memories SET {', '.join(sets)} WHERE id=:id"
+        bind.execute(sa.text(update_sql).bindparams(sa.bindparam("data", type_=JSONB)), params)
+        try:
+            from mix_agent.db.models import MemoryFeature  # removed in 0022
+        except ImportError:
+            continue
         text = re.sub(r"\s+", " ", f"{data.get('content', '')} {data.get('gist', '')}".casefold())
         latin = re.findall(r"[\w-]{2,}", text, flags=re.UNICODE)
         japanese = re.findall(r"[\u3040-\u30ff\u3400-\u9fff]{2,}", text)
-        features = set(latin + [part[index:index + 2] for part in japanese for index in range(len(part) - 1)])
+        features = set(
+            latin + [part[index : index + 2] for part in japanese for index in range(len(part) - 1)]
+        )
         for value in list(features)[:1000]:
-            bind.execute(MemoryFeature.__table__.insert().values(id=str(uuid4()), owner_id=row["owner_id"], memory_id=row["id"], kind="term", value=value[:160], weight=1.0, data={}, created_at=datetime.now(UTC)))
+            bind.execute(
+                MemoryFeature.__table__.insert().values(
+                    id=str(uuid4()),
+                    owner_id=row["owner_id"],
+                    memory_id=row["id"],
+                    kind="term",
+                    value=value[:160],
+                    weight=1.0,
+                    data={},
+                    created_at=datetime.now(UTC),
+                )
+            )
 
 
 def downgrade():

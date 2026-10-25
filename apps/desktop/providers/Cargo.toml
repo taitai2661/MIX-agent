@@ -1,0 +1,27 @@
+[package]
+name = "mixd-providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MIX-agent Desktop — LLM Provider adapters"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+reqwest = { workspace = true, features = ["stream", "gzip"] }
+futures-util = "0.3"
+async-stream = "0.3"
+bytes = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

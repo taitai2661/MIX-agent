@@ -128,10 +128,14 @@ def upgrade():
     ):
         if name not in conflict_indexes:
             op.create_index(name, "memory_conflicts", columns)
-    unique_constraints = {item["name"] for item in conflict_inspector.get_unique_constraints("memory_conflicts")}
+    unique_constraints = {
+        item["name"] for item in conflict_inspector.get_unique_constraints("memory_conflicts")
+    }
     if "uq_memory_conflict_owner_pair" not in unique_constraints:
         op.create_unique_constraint(
-            "uq_memory_conflict_owner_pair", "memory_conflicts", ["owner_id", "memory_a_id", "memory_b_id"],
+            "uq_memory_conflict_owner_pair",
+            "memory_conflicts",
+            ["owner_id", "memory_a_id", "memory_b_id"],
         )
 
 

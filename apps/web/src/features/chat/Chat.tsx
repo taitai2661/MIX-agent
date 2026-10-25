@@ -1,5 +1,5 @@
-import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
+import { t } from "@/app/i18n";
 import { uuid } from "@/app/uuid";
 import { ja } from "@/app/strings";
 import type { components } from "@/generated/api";
@@ -9,10 +9,12 @@ import {
   ArrowUp,
   Bot,
   Brain,
+  CornerDownLeft,
   FileText,
   FolderKanban,
   MessageSquare,
   Paperclip,
+  Pencil,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -32,6 +34,7 @@ import { ErrorBox, useRows } from "@/components/shared";
 import { ModelPicker } from "@/components/model-picker";
 import { SelectMenu } from "@/components/select-menu";
 import { Toggle } from "@/components/toggle";
+import { useToast } from "@/components/toast";
 import { ModeStatus, ReasoningSummary } from "./ModeStatus";
 import { RunBudget } from "./RunBudget";
 import { RunActivity, type ToolCallHistory } from "./RunActivity";
@@ -43,7 +46,16 @@ import {
   CheckpointsPanel,
   StagnationPanel,
 } from "./AgentLoop";
-import { randomGreeting } from "./greeting";
+import {
+  nextVisit,
+  welcomeTitle,
+  welcomeNote,
+  greetingText,
+  suggestionLabelId,
+  suggestionPromptId,
+  type Welcome,
+  type WorkspaceSnapshot,
+} from "./greeting";
 import {
   liveToolCalls,
   parseRunEvent,
@@ -63,10 +75,11 @@ type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string
 type Feedback = components["schemas"]["FeedbackInput"]["value"];
 const modes = ["chat", "thinking", "agent"] as const satisfies readonly ChatMode[];
 
-export function Chat() {
+export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const { id, projectId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { addToast } = useToast();
   const models = useRows<ChatModel>("/models"),
     projects = useRows<Row>("/projects"),
     agents = useRows<ChatAgent>("/agents"),
@@ -91,8 +104,17 @@ export function Chat() {
     [reasoning, setReasoning] = useState(""),
     [events, setEvents] = useState<RunEvent[]>([]),
     [streamConnected, setStreamConnected] = useState(false);
-  const [welcome] = useState(() => randomGreeting());
+  // Inline edit of a sent user turn, and the regeneration it triggers.
+  const [editingId, setEditingId] = useState<string | null>(null),
+    [editText, setEditText] = useState(""),
+    [savingEdit, setSavingEdit] = useState(false);
+  const [welcome, setWelcome] = useState<Welcome | null>(null);
+  // `nextVisit` advances the stored visit count, so guard against React
+  // StrictMode's double-invoked effect: without this the count (and the recent
+  // fragment list) would be bumped twice per mount.
+  const welcomePicked = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null),
+    composer = useRef<HTMLTextAreaElement>(null),
     bottom = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const pendingSend = useRef<{
@@ -108,6 +130,17 @@ export function Chat() {
     enabled: !!id,
   });
   useEffect(() => { if (projectId) setSelectedProject(projectId); }, [projectId]);
+  useEffect(() => {
+    if (welcomePicked.current || !workspace) return;
+    welcomePicked.current = true;
+    setWelcome(
+      nextVisit({
+        ...workspace,
+        projectCount: projects.data?.length ?? 0,
+        agentCount: agents.data?.length ?? 0,
+      }).welcome,
+    );
+  }, [agents.data, projects.data, workspace]);
   const run = useQuery<Run>({
     queryKey: ["run", runId],
     queryFn: () => api("/runs/" + runId),
@@ -238,11 +271,18 @@ export function Chat() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [streamText, history.data]);
+  useEffect(() => {
+    if (composer.current) {
+      composer.current.style.height = "auto";
+      composer.current.style.height = composer.current.scrollHeight + "px";
+    }
+  }, [text]);
   const active =
     run.data &&
     ["running", "queued", "waiting_approval", "paused"].includes(run.data.status);
   const live = liveToolCalls(events, runId);
   const currentRunMessageId = history.data?.runs?.find((r) => r.id === runId)?.message_id;
+  const latestUserMessageId = [...(history.data?.messages || [])].reverse().find((msg) => msg.data.role === "user")?.id;
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if ((!text.trim() && !attachments.length) || busy || active) return;
@@ -331,19 +371,77 @@ export function Chat() {
       setError(e);
     }
   }
+  function startEdit(m: Row) {
+    setEditingId(m.id);
+    setEditText(String(m.data.content || ""));
+    setError(null);
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText("");
+  }
+  /** Replace a sent user turn and regenerate from it. The backend drops that
+   *  turn and everything after it, so the reply stream starts clean. */
+  async function saveEdit(m: Row) {
+    const content = editText.trim();
+    if (!content || !id || savingEdit || active || busy) return;
+    setSavingEdit(true);
+    setError(null);
+    try {
+      const body = {
+        content,
+        model_id: model,
+        mode: researchMode ? "agent" : mode,
+        agent_id: agent,
+        artifact_ids: (m.data.artifact_ids as string[]) || [],
+        temporary_mode: temporaryMode,
+        allow_tools: allowTools,
+        research_mode: researchMode && !temporaryMode,
+      };
+      const r = await api<SendMessage>(
+        "/conversations/" + id + "/messages/" + m.id + "/edit",
+        "POST",
+        body,
+        uuid(),
+      );
+      cancelEdit();
+      setRunId(r.run_id);
+      qc.invalidateQueries({ queryKey: ["messages", id] });
+      qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+      qc.invalidateQueries({ queryKey: ["/conversations"] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
   return (
     <div className="chat-page">
       <div className="chat-body">
         <div className="conversation">
-          {!id && !history.data?.messages?.length ? (
+          {!id && !history.data?.messages?.length && welcome ? (
             <section className="welcome">
               <div className="welcome-icon">
                 <Sparkles size={30} />
               </div>
               <p className="eyebrow">MIX</p>
-              <h1>{t(welcome)}</h1>
+              <h1>{welcomeTitle(welcome)}</h1>
               <div className="welcome-note">
-                <ShieldCheck size={14} /> {t("必要なときだけ、確認のうえで作業を進めます")}
+                <ShieldCheck size={14} /> {welcomeNote(welcome)}
+              </div>
+              <div className="suggestions">
+                {welcome.suggestions.map((suggestion) => (
+                  <button
+                    key={suggestion.id}
+                    onClick={() => {
+                      setText(greetingText(suggestionPromptId(suggestion.id), suggestion.prompt));
+                      composer.current?.focus();
+                    }}
+                  >
+                    <b>{greetingText(suggestionLabelId(suggestion.id), suggestion.label)}</b>
+                    <CornerDownLeft size={15} />
+                  </button>
+                ))}
               </div>
             </section>
           ) : (
@@ -367,11 +465,57 @@ export function Chat() {
                       </>
                     )}
                   </div>
-                  <div className="markdown">
-                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                      {m.data.content}
-                    </Markdown>
-                  </div>
+                  {editingId === m.id ? (
+                    <div className="message-edit">
+                      <textarea
+                        aria-label={t("メッセージを編集")}
+                        value={editText}
+                        autoFocus
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            void saveEdit(m);
+                          }
+                        }}
+                      />
+                      <div className="message-edit-actions">
+                        <span className="message-edit-hint">{t("⌘+Enter で保存")}</span>
+                        <Button type="button" variant="ghost" onClick={cancelEdit} disabled={savingEdit}>
+                          {t("キャンセル")}
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => void saveEdit(m)}
+                          disabled={savingEdit || !editText.trim()}
+                        >
+                          {t("保存")}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="markdown">
+                      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                        {m.data.content}
+                      </Markdown>
+                    </div>
+                  )}
+                  {m.data.role === "user" && editingId !== m.id && (
+                    <button
+                      type="button"
+                      className="message-edit-trigger"
+                      aria-label={t("メッセージを編集")}
+                      title={t("メッセージを編集")}
+                      disabled={active || busy}
+                      onClick={() => startEdit(m)}
+                    >
+                      <Pencil size={12} /> {t("編集")}
+                    </button>
+                  )}
                   {m.data.artifacts?.map((artifact) => (
                     <ArtifactCard key={artifact.artifact_id} artifact={artifact} />
                   )) || m.data.artifact_ids?.map((artifact_id: string) => (
@@ -410,7 +554,7 @@ export function Chat() {
                     } catch (e) { setError(e); }
                   }}
                 />}
-                {m.data.role === "user" && currentRunMessageId === m.id && (
+                {m.data.role === "user" && (currentRunMessageId ? currentRunMessageId === m.id : latestUserMessageId === m.id) && (
                   <TodoPane items={history.data?.todos} />
                 )}
                 {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && toolHistory.data?.some(call => call.run_id === r.id && call.tool_name.startsWith("browser_"))).map(r => (
@@ -483,9 +627,13 @@ export function Chat() {
               {attachments.length > 0 && (
                 <div className="attachments">
                   {attachments.map((a) => (
-                    <span key={a.artifact_id}>
-                      <FileText size={13} />
-                      {a.name}
+                    <span key={a.artifact_id} className={a.mime?.startsWith("image/") ? "attachment-image-span" : ""}>
+                      {a.mime?.startsWith("image/") ? (
+                        <img src={`/api/v1/artifacts/${a.artifact_id}`} alt="" className="attachment-thumb" />
+                      ) : (
+                        <FileText size={13} />
+                      )}
+                      <span className="attachment-name">{a.name}</span>
                       <button
                         type="button"
                         aria-label={t("添付解除")}
@@ -500,10 +648,22 @@ export function Chat() {
                 </div>
               )}
               <textarea
+                ref={composer}
                 aria-label={t("メッセージ")}
                 placeholder={t("MIX agent にメッセージを送信…")}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
+                onPaste={(e) => {
+                  const items = Array.from(e.clipboardData.items);
+                  const files = items
+                    .filter((item) => item.kind === "file")
+                    .map((item) => item.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    void attach(files);
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (
                     e.key === "Enter" &&
@@ -511,7 +671,7 @@ export function Chat() {
                     !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229
                   ) {
                     e.preventDefault();
-                    send();
+                    void send();
                   }
                 }}
               />
@@ -605,6 +765,7 @@ export function Chat() {
                   </div>
                 </details>
                 <div className="composer-actions">
+                  <span className="send-hint">{t("Enterで送信 / Shift+Enterで改行")}</span>
                   <button
                     type="button"
                     className="icon"

@@ -158,8 +158,7 @@ def list_for_run(db, run_id: str) -> list[dict]:
 
 def get(db, run_id: str, checkpoint_id: str) -> RunCheckpoint | None:
     return db.scalar(
-        select(RunCheckpoint)
-        .where(RunCheckpoint.run_id == run_id, RunCheckpoint.id == checkpoint_id)
+        select(RunCheckpoint).where(RunCheckpoint.run_id == run_id, RunCheckpoint.id == checkpoint_id)
     )
 
 

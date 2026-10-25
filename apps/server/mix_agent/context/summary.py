@@ -10,22 +10,56 @@ SUMMARY_SYSTEM = (
 
 SUMMARY_MAX_CHARS = 6000
 
+# Summarizer input bound: without this, one compaction of a long agent run
+# can send tens of thousands of chars to the summarizer model itself.
+# Newest evicted messages are kept (closest to the live window); older ones
+# are already covered by the previous summary/archive.
+MAX_EVICTED_MESSAGES = 20
+MAX_EVICTED_CHARS = 15000
+
+
+def _compact_entry(message: dict) -> dict:
+    role = message.get("role", "")
+    content = str(message.get("content") or "")
+    if len(content) > 4000:
+        content = content[:4000] + "…(truncated)"
+    entry = {"role": role, "content": content}
+    if message.get("name"):
+        entry["name"] = message["name"]
+    return entry
+
 
 def eviction_text(messages: list[dict]) -> str:
     """Render evicted messages compactly for the summarizer (no raw base64)."""
     import json
 
-    compact = []
-    for message in messages or []:
-        role = message.get("role", "")
-        content = str(message.get("content") or "")
-        if len(content) > 4000:
-            content = content[:4000] + "…(truncated)"
-        entry = {"role": role, "content": content}
-        if message.get("name"):
-            entry["name"] = message["name"]
-        compact.append(entry)
-    return json.dumps(compact, ensure_ascii=False)
+    ordered = list(messages or [])
+    truncated = 0
+    if len(ordered) > MAX_EVICTED_MESSAGES:
+        truncated = len(ordered) - MAX_EVICTED_MESSAGES
+        ordered = ordered[-MAX_EVICTED_MESSAGES:]
+    # Newest-first so the char cap drops the oldest (already covered by the
+    # previous summary); restore chronological order afterwards.
+    kept_rev: list[dict] = []
+    used = 0
+    for message in reversed(ordered):
+        entry = _compact_entry(message)
+        size = len(json.dumps(entry, ensure_ascii=False))
+        if used + size > MAX_EVICTED_CHARS and kept_rev:
+            truncated += 1
+            continue
+        kept_rev.append(entry)
+        used += size
+    ordered_entries = list(reversed(kept_rev))
+    if truncated:
+        ordered_entries = [
+            {
+                "role": "system",
+                "content": f"[{truncated} older evicted messages already covered by the previous summary - omitted to bound cost]",
+            },
+            *ordered_entries,
+        ]
+    return json.dumps(ordered_entries, ensure_ascii=False)
 
 
 def merge_prompt(previous: str, evicted: list[dict]) -> list[dict]:

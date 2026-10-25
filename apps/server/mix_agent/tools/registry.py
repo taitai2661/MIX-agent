@@ -9,7 +9,13 @@ from mix_agent.db.models import Permission, Tool
 
 
 def definition(
-    name, description, properties=None, required=None, permission="allow", executor="execution", parallel_safe=False,
+    name,
+    description,
+    properties=None,
+    required=None,
+    permission="allow",
+    executor="execution",
+    parallel_safe=False,
     allowed_modes=("chat", "thinking", "agent"),
 ):
     return {
@@ -126,7 +132,14 @@ BUILTINS = [
         parallel_safe=True,
     ),
     definition("process_list", "List workspace processes", allowed_modes=("agent",)),
-    definition("process_stop", "Stop a workspace process group", {"process_id": S}, ["process_id"], "ask", allowed_modes=("agent",)),
+    definition(
+        "process_stop",
+        "Stop a workspace process group",
+        {"process_id": S},
+        ["process_id"],
+        "ask",
+        allowed_modes=("agent",),
+    ),
     definition("browser_open", "Open a permitted public URL", {"url": S}, ["url"], "ask"),
     definition("browser_click", "Click a Playwright locator", {"selector": S}, ["selector"], "ask"),
     definition(
@@ -181,7 +194,14 @@ BUILTINS = [
         executor="builtin",
         parallel_safe=True,
     ),
-    definition("knowledge_delete", "Delete a saved knowledge document with approval", {"id": S}, ["id"], "ask", "builtin"),
+    definition(
+        "knowledge_delete",
+        "Delete a saved knowledge document with approval",
+        {"id": S},
+        ["id"],
+        "ask",
+        "builtin",
+    ),
     definition(
         "web_clip_save",
         "Fetch a public web page and save it into the knowledge store in one step as untrusted evidence",
@@ -195,36 +215,26 @@ BUILTINS = [
         "builtin",
     ),
     # ---------------------------------------------------------------------------
-    # Memory Tool surface: reduced to recall / remember / forget.  These map to
-    # the role-based Memory Runtime; legacy memory_search/add/update/delete are
-    # kept only as compatibility shims and re-route to the same runtime.
+    # Memory Tool surface (ChatGPT-style flat): recall / remember / forget.
     # ---------------------------------------------------------------------------
     definition(
         "memory_recall",
-        "Recall memories relevant to the current task. Returns role-grouped items so the agent can distinguish Decisions, Failures, Facts and Experiences.",
-        {"query": S, "scopes": {"type": "array", "items": S, "maxItems": 8}, "roles": {"type": "array", "items": S, "maxItems": 12}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}},
+        "Recall saved user memories relevant to the current task. Returns a flat list of {id, content}.",
+        {"query": S, "limit": {"type": "integer", "minimum": 1, "maximum": 30}},
         executor="builtin",
         parallel_safe=True,
     ),
     definition(
         "memory_remember",
-        "Persist a single memory through the role-based Memory Evaluator. Pick the right role (fact / decision / failure / preference / goal / experience / hypothesis / question) so the agent can recall it correctly next time.",
-        {
-            "content": S,
-            "role": {"type": "string", "enum": ["fact", "decision", "preference", "goal", "constraint", "experience", "failure", "solution", "observation", "hypothesis", "question"]},
-            "scope": {"type": "string", "enum": ["working", "task", "project", "user", "world"]},
-            "role_metadata": {"type": "object"},
-            "entities": {"type": "array", "items": S, "maxItems": 30},
-            "concepts": {"type": "array", "items": S, "maxItems": 30},
-            "evidence": {"type": "array", "items": {"type": "object"}, "maxItems": 20},
-        },
+        "Save one short user fact or preference (ChatGPT-style, <=200 chars recommended). Duplicates are ignored.",
+        {"content": S},
         ["content"],
         "ask",
         "builtin",
     ),
     definition(
         "memory_forget",
-        "Remove (supersede) a memory. Provide an id, or a short query that resolves through memory_recall to find the target.",
+        "Delete a saved memory. Provide an id, or a short query that resolves to the target.",
         {"id": S, "query": S, "reason": {"type": "string", "maxLength": 200}},
         None,
         "ask",
@@ -233,11 +243,23 @@ BUILTINS = [
     # Legacy compatibility shims that re-route to the runtime.  They remain
     # available so existing tests and older agents keep working, but new agents
     # should use the three tools above exclusively.
-    definition("memory_search", "Search the associative memory network (legacy alias for memory_recall)", {"query": S, "debug": {"type": "boolean"}}, executor="builtin", parallel_safe=True),
+    definition(
+        "memory_search",
+        "Search the associative memory network (legacy alias for memory_recall)",
+        {"query": S, "debug": {"type": "boolean"}},
+        executor="builtin",
+        parallel_safe=True,
+    ),
     definition(
         "memory_add",
         "Create or reinforce a reusable memory (legacy alias for memory_remember)",
-        {"content": S, "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "salience": {"type": "number", "minimum": 0, "maximum": 1}, "entities": {"type": "array", "items": S}, "concepts": {"type": "array", "items": S}},
+        {
+            "content": S,
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "salience": {"type": "number", "minimum": 0, "maximum": 1},
+            "entities": {"type": "array", "items": S},
+            "concepts": {"type": "array", "items": S},
+        },
         ["content"],
         "ask",
         "builtin",
@@ -245,12 +267,25 @@ BUILTINS = [
     definition(
         "memory_update",
         "Update existing memory (legacy alias)",
-        {"id": S, "content": S, "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "salience": {"type": "number", "minimum": 0, "maximum": 1}, "entities": {"type": "array", "items": S}, "concepts": {"type": "array", "items": S}},
+        {
+            "id": S,
+            "content": S,
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "salience": {"type": "number", "minimum": 0, "maximum": 1},
+            "entities": {"type": "array", "items": S},
+            "concepts": {"type": "array", "items": S},
+        },
         ["id", "content"],
         "ask",
         "builtin",
     ),
-    definition("skill_search", "Search reusable work instructions", {"query": S}, executor="builtin", parallel_safe=True),
+    definition(
+        "skill_search",
+        "Search reusable work instructions",
+        {"query": S},
+        executor="builtin",
+        parallel_safe=True,
+    ),
     definition(
         "skill_resource",
         "List or read a bundled file from a saved skill as read-only data; scripts are never executed. Omit path to list files.",
@@ -259,15 +294,42 @@ BUILTINS = [
         executor="builtin",
         parallel_safe=True,
     ),
-    definition("skill_add", "Save a reusable verified workflow. Never include credentials.", {"name": {"type": "string", "maxLength": 64}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["name", "description", "content"], "ask", "builtin", allowed_modes=("agent",)),
-    definition("skill_update", "Update a reusable workflow, retaining history", {"id": S, "name": {"type": "string", "maxLength": 64}, "description": {"type": "string", "maxLength": 1000}, "content": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
+    definition(
+        "skill_add",
+        "Save a reusable verified workflow. Never include credentials.",
+        {
+            "name": {"type": "string", "maxLength": 64},
+            "description": {"type": "string", "maxLength": 1000},
+            "content": S,
+        },
+        ["name", "description", "content"],
+        "ask",
+        "builtin",
+        allowed_modes=("agent",),
+    ),
+    definition(
+        "skill_update",
+        "Update a reusable workflow, retaining history",
+        {
+            "id": S,
+            "name": {"type": "string", "maxLength": 64},
+            "description": {"type": "string", "maxLength": 1000},
+            "content": S,
+        },
+        ["id"],
+        "ask",
+        "builtin",
+        allowed_modes=("agent",),
+    ),
     definition("memory_delete", "Delete existing memory with approval", {"id": S}, ["id"], "ask", "builtin"),
     definition(
         "update_plan",
         "Publish a short task checklist and record remaining work and verification. Clear pending only after verifying the requested outcome.",
-        {"steps": {"type": "array", "maxItems": 20, "items": S},
-         "pending": {"type": "array", "maxItems": 20, "items": S},
-         "verification": {"type": "string", "maxLength": 2000}},
+        {
+            "steps": {"type": "array", "maxItems": 20, "items": S},
+            "pending": {"type": "array", "maxItems": 20, "items": S},
+            "verification": {"type": "string", "maxLength": 2000},
+        },
         ["steps"],
         executor="builtin",
         allowed_modes=("agent",),
@@ -282,18 +344,58 @@ BUILTINS = [
     definition(
         "schedule_create",
         "Create a recurring job that runs an owned agent or conversation. Confirm the target, prompt, cron expression, and timezone with the user before calling.",
-        {"name": {"type": "string", "minLength": 1, "maxLength": 100}, "target_type": {"type": "string", "enum": ["agent", "conversation"]}, "target_id": {"type": "string", "minLength": 1, "maxLength": 100}, "prompt": S, "cron": {"type": "string", "minLength": 9, "maxLength": 100}, "timezone": {"type": "string", "minLength": 1, "maxLength": 100}, "enabled": {"type": "boolean"}, "catch_up": {"type": "boolean"}},
+        {
+            "name": {"type": "string", "minLength": 1, "maxLength": 100},
+            "target_type": {"type": "string", "enum": ["agent", "conversation"]},
+            "target_id": {"type": "string", "minLength": 1, "maxLength": 100},
+            "prompt": S,
+            "cron": {"type": "string", "minLength": 9, "maxLength": 100},
+            "timezone": {"type": "string", "minLength": 1, "maxLength": 100},
+            "enabled": {"type": "boolean"},
+            "catch_up": {"type": "boolean"},
+        },
         ["name", "target_type", "target_id", "prompt", "cron"],
-        "ask", "builtin", allowed_modes=("agent",),
+        "ask",
+        "builtin",
+        allowed_modes=("agent",),
     ),
     definition(
         "schedule_update",
         "Update an existing recurring job owned by the user. Include only fields that need changing.",
-        {"id": S, "name": {"type": "string", "minLength": 1, "maxLength": 100}, "target_type": {"type": "string", "enum": ["agent", "conversation"]}, "target_id": {"type": "string", "minLength": 1, "maxLength": 100}, "prompt": S, "cron": {"type": "string", "minLength": 9, "maxLength": 100}, "timezone": {"type": "string", "minLength": 1, "maxLength": 100}, "enabled": {"type": "boolean"}, "catch_up": {"type": "boolean"}},
-        ["id"], "ask", "builtin", allowed_modes=("agent",),
+        {
+            "id": S,
+            "name": {"type": "string", "minLength": 1, "maxLength": 100},
+            "target_type": {"type": "string", "enum": ["agent", "conversation"]},
+            "target_id": {"type": "string", "minLength": 1, "maxLength": 100},
+            "prompt": S,
+            "cron": {"type": "string", "minLength": 9, "maxLength": 100},
+            "timezone": {"type": "string", "minLength": 1, "maxLength": 100},
+            "enabled": {"type": "boolean"},
+            "catch_up": {"type": "boolean"},
+        },
+        ["id"],
+        "ask",
+        "builtin",
+        allowed_modes=("agent",),
     ),
-    definition("schedule_delete", "Delete an existing recurring job owned by the user.", {"id": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
-    definition("schedule_run", "Start one existing recurring job immediately.", {"id": S}, ["id"], "ask", "builtin", allowed_modes=("agent",)),
+    definition(
+        "schedule_delete",
+        "Delete an existing recurring job owned by the user.",
+        {"id": S},
+        ["id"],
+        "ask",
+        "builtin",
+        allowed_modes=("agent",),
+    ),
+    definition(
+        "schedule_run",
+        "Start one existing recurring job immediately.",
+        {"id": S},
+        ["id"],
+        "ask",
+        "builtin",
+        allowed_modes=("agent",),
+    ),
 ]
 
 

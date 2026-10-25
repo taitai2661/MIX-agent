@@ -1,0 +1,179 @@
+{
+  "_comment": [
+    "Shared recall contract for both editions (docker/ and desktop/).",
+    "Each case states its inputs and the exact score every candidate must get,",
+    "so a ranking change is caught as a specific number rather than as",
+    "'something moved'.",
+    "",
+    "Cases supply `terms` instead of relying on either edition's tokeniser:",
+    "tokenisation is allowed to differ between the two, and these cases are",
+    "about the ranking formula, not about splitting text.",
+    "",
+    "  recency = 1 / (1 + age_days / 180)",
+    "  lexical = |Q & T| / max(1, |Q|)          -- measured against the query",
+    "  vector  = (1 + cosine(query, candidate)) / 2, only when both vectors",
+    "            exist and share a dimension; otherwise the without-vector",
+    "            weights apply to that pair.",
+    "",
+    "Expected scores are rounded to 4 decimals, matching the implementation."
+  ],
+  "ranking": {
+    "lexical_weight_with_vector": 0.55,
+    "vector_weight_with_vector": 0.3,
+    "recency_weight_with_vector": 0.15,
+    "lexical_weight_without_vector": 0.85,
+    "recency_weight_without_vector": 0.15,
+    "min_score": 0.1
+  },
+  "cases": [
+    {
+      "id": "lexical-and-recency-only",
+      "description": "With no vector anywhere the without-vector weights decide: a full lexical match wins even against a strictly newer memory.",
+      "query_terms": ["laptop", "lid", "closed"],
+      "query_vector": null,
+      "memories": [
+        {
+          "id": "meetings",
+          "content": "keeps the laptop lid closed during meetings",
+          "terms": ["keeps", "the", "laptop", "lid", "closed", "during", "meetings"],
+          "age_days": 5
+        },
+        {
+          "id": "standup",
+          "content": "prefers the camera on for standup",
+          "terms": ["prefers", "the", "camera", "on", "for", "standup"],
+          "age_days": 1
+        }
+      ],
+      "expected": "meetings",
+      "scores": {"meetings": 0.9959, "standup": 0.1492}
+    },
+    {
+      "id": "min-score-drops-unrelated",
+      "description": "0.85*0 + 0.15*0.3103 = 0.0466 is below min_score, so a memory that shares no terms must not reach the caller at all.",
+      "query_terms": ["laptop", "lid", "closed"],
+      "query_vector": null,
+      "memories": [
+        {
+          "id": "standup",
+          "content": "prefers the camera on for standup",
+          "terms": ["prefers", "the", "camera", "on", "for", "standup"],
+          "age_days": 400
+        }
+      ],
+      "expected": null,
+      "scores": {}
+    },
+    {
+      "id": "vector-breaks-a-lexical-tie",
+      "description": "Identical lexical and recency scores are separated by the vector term, so the semantically closer memory wins.",
+      "query_terms": ["closing", "the", "laptop", "in", "meetings"],
+      "query_vector": [1.0, 0.0, 0.0, 0.0],
+      "memories": [
+        {
+          "id": "lid-down",
+          "content": "closing the laptop in meetings means do not disturb",
+          "terms": ["closing", "the", "laptop", "in", "meetings", "means", "do", "not", "disturb"],
+          "age_days": 30,
+          "vector": [1.0, 0.0, 0.0, 0.0]
+        },
+        {
+          "id": "lid-up",
+          "content": "closing the laptop in meetings means available for a chat",
+          "terms": ["closing", "the", "laptop", "in", "meetings", "means", "available", "for", "a", "chat"],
+          "age_days": 30,
+          "vector": [0.0, 0.0, 1.0, 0.0]
+        }
+      ],
+      "expected": "lid-down",
+      "scores": {"lid-down": 0.9786, "lid-up": 0.8286}
+    },
+    {
+      "id": "missing-query-vector-falls-back-to-lexical",
+      "description": "Without a query vector the without-vector weights apply even though both candidates carry vectors, so the result is exactly the lexical ranking.",
+      "query_terms": ["camera", "settings"],
+      "query_vector": null,
+      "memories": [
+        {
+          "id": "camera-old",
+          "content": "camera settings are in the top menu",
+          "terms": ["camera", "settings", "are", "in", "the", "top", "menu"],
+          "age_days": 10,
+          "vector": [0.0, 0.0, 0.0, 1.0]
+        },
+        {
+          "id": "camera-new",
+          "content": "camera settings live in preferences",
+          "terms": ["camera", "settings", "live", "in", "preferences"],
+          "age_days": 1,
+          "vector": [0.0, 0.0, 0.0, 1.0]
+        }
+      ],
+      "expected": "camera-new",
+      "scores": {"camera-old": 0.9921, "camera-new": 0.9992}
+    },
+    {
+      "id": "mismatched-dimensions-are-not-a-zero-similarity",
+      "description": "A candidate whose vector has a different dimension is ranked without a vector, not with a zero similarity, so its lexical and recency score is not halved.",
+      "query_terms": ["camera", "settings"],
+      "query_vector": [1.0, 0.0, 0.0, 0.0],
+      "memories": [
+        {
+          "id": "same-dim",
+          "content": "camera settings are in the top menu",
+          "terms": ["camera", "settings", "are", "in", "the", "top", "menu"],
+          "age_days": 10,
+          "vector": [1.0, 0.0, 0.0, 0.0]
+        },
+        {
+          "id": "other-dim",
+          "content": "camera settings live in preferences",
+          "terms": ["camera", "settings", "live", "in", "preferences"],
+          "age_days": 1,
+          "vector": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        }
+      ],
+      "expected": "other-dim",
+      "scores": {"same-dim": 0.9921, "other-dim": 0.9992}
+    },
+    {
+      "id": "orthogonal-vector-lowers-but-keeps-the-row",
+      "description": "A vector at right angles to the query contributes 0.5, which lowers the score without removing a genuine lexical match.",
+      "query_terms": ["coffee", "order"],
+      "query_vector": [1.0, 0.0, 0.0, 0.0],
+      "memories": [
+        {
+          "id": "orthogonal",
+          "content": "coffee order is confirmed",
+          "terms": ["coffee", "order", "is", "confirmed"],
+          "age_days": 1,
+          "vector": [0.0, 1.0, 0.0, 0.0]
+        }
+      ],
+      "expected": "orthogonal",
+      "scores": {"orthogonal": 0.8492}
+    },
+    {
+      "id": "overlap-is-measured-against-the-query",
+      "description": "Dividing by |T| instead of |Q| would drop the broad memory to 0.3920 and hand the win to the narrow one; measured against the query, the broad and newer memory wins.",
+      "query_terms": ["coffee", "order"],
+      "query_vector": null,
+      "memories": [
+        {
+          "id": "broad",
+          "content": "coffee order beans roast grinder subscription weekly",
+          "terms": ["coffee", "order", "beans", "roast", "grinder", "subscription", "weekly"],
+          "age_days": 1
+        },
+        {
+          "id": "narrow",
+          "content": "coffee order",
+          "terms": ["coffee", "order"],
+          "age_days": 60
+        }
+      ],
+      "expected": "broad",
+      "scores": {"broad": 0.9992, "narrow": 0.9625}
+    }
+  ]
+}

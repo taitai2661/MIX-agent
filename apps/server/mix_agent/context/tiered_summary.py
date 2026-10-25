@@ -40,12 +40,14 @@ def current_archive(run_data: dict) -> list[dict]:
     cleaned: list[dict] = []
     for entry in raw:
         if isinstance(entry, dict) and isinstance(entry.get("text"), str):
-            cleaned.append({
-                "text": entry["text"],
-                "covered_count": int(entry.get("covered_count", 0)),
-                "archived_at": entry.get("archived_at"),
-                "version": int(entry.get("version", ARCHIVE_VERSION)),
-            })
+            cleaned.append(
+                {
+                    "text": entry["text"],
+                    "covered_count": int(entry.get("covered_count", 0)),
+                    "archived_at": entry.get("archived_at"),
+                    "version": int(entry.get("version", ARCHIVE_VERSION)),
+                }
+            )
     return cleaned
 
 
@@ -53,15 +55,21 @@ def archive_summary(run_data: dict, new_text: str, covered_count: int) -> None:
     """Move the previous active summary into the archive and install a new one."""
     if not isinstance(run_data, dict):
         return
-    current = (run_data.get("summary") or {}).get("text") if isinstance(run_data.get("summary"), dict) else run_data.get("summary")
+    current = (
+        (run_data.get("summary") or {}).get("text")
+        if isinstance(run_data.get("summary"), dict)
+        else run_data.get("summary")
+    )
     archive = current_archive(run_data)
     if isinstance(current, str) and current.strip():
-        archive.append({
-            "text": current,
-            "covered_count": int((run_data.get("summary") or {}).get("covered_count", 0)),
-            "archived_at": (run_data.get("summary") or {}).get("updated_at"),
-            "version": ARCHIVE_VERSION,
-        })
+        archive.append(
+            {
+                "text": current,
+                "covered_count": int((run_data.get("summary") or {}).get("covered_count", 0)),
+                "archived_at": (run_data.get("summary") or {}).get("updated_at"),
+                "version": ARCHIVE_VERSION,
+            }
+        )
         if len(archive) > MAX_ARCHIVE_ROWS:
             archive = archive[-MAX_ARCHIVE_ROWS:]
     run_data[ARCHIVE_LIST_KEY] = archive

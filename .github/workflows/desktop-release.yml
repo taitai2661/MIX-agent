@@ -1,0 +1,301 @@
+name: desktop-release
+
+# Builds MIX-agent Desktop artifacts for the currently enabled release targets.
+#
+# Tag scheme: `desktop-v*` (e.g. desktop-v0.5.0) or `v*` (e.g. v0.5.0).
+# Tagging with `v*` triggers both Docker releases and Desktop macOS DMG builds,
+# uploading them as GitHub Release assets.
+#
+# v0.5.0 Desktop release scope: Apple Silicon and Intel macOS only.
+# Windows and Linux Desktop installers are deferred by release scope decision;
+# do not add them to this release matrix. Also deferred: universal-macos,
+# aarch64-linux, and win-arm64.
+#
+# Bundled Chromium is fetched explicitly below (pinned MIX_CHROMIUM_VERSION),
+# and the release build fails closed (MIX_REQUIRE_CHROMIUM=1) rather than
+# shipping browser-less. Linux/Windows jobs need the extra system libraries
+# Chromium links against.
+#
+# `cft` is the Chrome-for-Testing platform that matches the *bundle target*,
+# not the runner: the two macOS entries build from the same runner label, so
+# without it the Intel bundle would ship an arm64 Chromium (or the reverse).
+# Checksums are per CfT platform too — each one ships its own zip — so
+# MIX_CHROMIUM_SHA256_<KEY> / MIX_CHROMIUM_SIZE_<KEY> are optional secrets
+# and variables; when a target has none, the version assertion below is the
+# only gate.
+#
+# macOS v0.5.0 builds are intentionally not Apple-code-signed or notarized;
+# Gatekeeper may warn or block launch. Do not import Apple certificates or pass
+# Apple signing/notarization secrets to the build.
+# v0.5.0 uses manual DMG downloads only: the Tauri updater plugin and updater
+# artifacts are disabled. Releases contain the two macOS DMGs and SHA256SUMS;
+# no latest.json or updater signatures are generated.
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. desktop-v0.5.0 or v0.5.0)"
+        required: true
+      dry_run:
+        description: "Build/validate artifacts without creating or updating a GitHub Release"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  RUST_BACKTRACE: "1"
+  # Pinned Chromium for reproducible release builds. Bump deliberately and keep
+  # MIX_CHROMIUM_SHA256/SIZE in sync when the version changes. When set
+  # (secrets.MIX_CHROMIUM_SHA256 / vars.MIX_CHROMIUM_SIZE), fetch-chromium.mjs
+  # verifies the zip; when unset, the "Verify Chromium provenance" step below
+  # asserts chromium-version.json version == MIX_CHROMIUM_VERSION via jq
+  # (fail closed).
+  MIX_CHROMIUM_VERSION: "145.0.7632.14"
+  MIX_REQUIRE_CHROMIUM: "1"
+
+jobs:
+  bundle:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_arch: Apple-Silicon
+            bundles: app,dmg
+            cft: mac-arm64
+            cft_key: MAC_ARM64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset_arch: Intel
+            bundles: app,dmg
+            cft: mac-x64
+            cft_key: MAC_X64
+          # Deferred for v0.5.0: Windows x64 and Linux x86_64 Desktop installers.
+          # universal-macos requires lipo of both targets; win-arm64 and Linux ARM64
+          # are also deferred until runners and signed artifacts are accepted.
+
+    steps:
+      # workflow_dispatch builds the tag passed as `inputs.tag`; tag pushes
+      # build github.ref. Without this, the `tag` input would be accepted but
+      # never used.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.91.0"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+          key: bundle-${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Single source of truth for the pnpm version is packageManager in
+          # apps/desktop/package.json (pnpm@10.11.0) via corepack;
+          # the explicit `version:` here only pins CI while corepack auto-pin
+          # is disabled (COREPACK_ENABLE_AUTO_PIN=0). Drop `version:` once CI
+          # runs `corepack enable` + `corepack install` instead.
+          version: "10.11.0"
+
+      # Chromium needs these at build time on Linux; tauri also needs them to
+      # package .deb and .AppImage.
+      # NOTE: jobs stay on ubuntu-22.04 (not 24.04): WebKitGTK/AppIndicator
+      # package names and archive availability differ; re-check before bumping.
+      - name: Install Linux bundling + Chromium dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
+            libssl-dev libxdo-dev libgtk-3-dev libayatana-appindicator3-dev \
+            fuse3
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+        env:
+          COREPACK_ENABLE_AUTO_PIN: "0"
+
+      # No separate `pnpm build` in ui/: `tauri build` runs beforeBuildCommand
+      # (UI build + fetch-chromium) exactly once, so an explicit UI build here
+      # would compile Vite twice.
+      # Cache the fetched Chromium dir across runs: keyed on the pinned
+      # version + target so a version bump naturally invalidates it. A stale
+      # cache never ships the wrong version — the provenance step below
+      # asserts chromium-version.json == MIX_CHROMIUM_VERSION either way.
+      - name: Cache bundled Chromium
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/app/resources/chromium
+          key: chromium-${{ env.MIX_CHROMIUM_VERSION }}-${{ matrix.target }}
+          restore-keys: |
+            chromium-${{ env.MIX_CHROMIUM_VERSION }}-
+      - name: Fetch bundled Chromium (fail closed)
+        working-directory: apps/desktop
+        run: node scripts/fetch-chromium.mjs
+        env:
+          MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
+          MIX_CHROMIUM_CFT: ${{ matrix.cft }}
+          MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
+          MIX_CHROMIUM_SIZE: ${{ vars[format('MIX_CHROMIUM_SIZE_{0}', matrix.cft_key)] }}
+          MIX_REQUIRE_CHROMIUM: "1"
+
+      - name: Assert Chromium bundle present
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          test -f app/resources/chromium/chromium-version.json
+          cat app/resources/chromium/chromium-version.json
+          case "${{ runner.os }}" in
+            macOS) test -f app/resources/chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium ;;
+            Windows) test -f app/resources/chromium/chrome-win/chrome.exe ;;
+            *) test -f app/resources/chromium/chrome-linux/chrome ;;
+          esac
+
+      - name: Upload chromium-version manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-version-${{ matrix.target }}
+          path: apps/desktop/app/resources/chromium/chromium-version.json
+          if-no-files-found: error
+          retention-days: 14
+
+      # Effective SHA/version gate: when a per-target SHA is set the fetch
+      # step above already hash-verified the zip; when unset, assert the
+      # recorded version equals the pinned MIX_CHROMIUM_VERSION and that the
+      # recorded platform is the one this matrix entry targets (warn, don't
+      # pass silently, so a floating Latest or a wrong-arch Chromium shows up
+      # in the logs).
+      - name: Verify Chromium provenance
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ -n "${MIX_CHROMIUM_SHA256:-}" ]; then
+            echo "SHA pin present — zip was hash-verified by fetch-chromium.mjs."
+          else
+            echo "::warning::MIX_CHROMIUM_SHA256_${CFT_KEY} is not set — falling back to version and platform assertions only."
+          fi
+          jq -e --arg v "$MIX_CHROMIUM_VERSION" '.version == $v' \
+            app/resources/chromium/chromium-version.json > /dev/null
+          jq -e --arg p "$MIX_CHROMIUM_CFT" '.platform == $p' \
+            app/resources/chromium/chromium-version.json > /dev/null
+        env:
+          MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
+          MIX_CHROMIUM_CFT: ${{ matrix.cft }}
+          CFT_KEY: ${{ matrix.cft_key }}
+          MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
+
+      # macOS app code signing/notarization are intentionally disabled for v0.5.0.
+      # No Apple certificate, signing identity, Apple account, or updater key
+      # secrets are passed; users install updates manually from the Release.
+      - name: Build and bundle
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            echo "::warning::Apple app signing/notarization and automatic updates are disabled for this release; Gatekeeper may warn or block launch."
+          fi
+          pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        env:
+          MIX_REQUIRE_CHROMIUM: "1"
+
+      - name: Stage manual-download DMG
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          # macOS runners still use bash 3.2, which has no `mapfile`. Read the
+          # NUL-delimited find output with a portable loop instead.
+          dmgs=()
+          while IFS= read -r -d '' dmg; do
+            dmgs+=("$dmg")
+          done < <(find "target/${{ matrix.target }}/release/bundle" -type f -name '*.dmg' -print0)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::Expected one DMG for ${{ matrix.asset_arch }}, found ${#dmgs[@]}."
+            exit 1
+          fi
+          mkdir -p release-assets
+          cp "${dmgs[0]}" "release-assets/MIX-agent-Desktop-${{ matrix.asset_arch }}.dmg"
+
+      - name: Collect artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mix-agent-desktop-${{ matrix.target }}
+          path: apps/desktop/release-assets/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  checksums:
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Build a checksum manifest for macOS DMGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep this loop bash-3.2 compatible too: the release workflow is
+          # easy to move between macOS and Linux runners.
+          dmgs=()
+          while IFS= read -r -d '' dmg; do
+            dmgs+=("$dmg")
+          done < <(find artifacts -type f -name '*.dmg' -print0)
+          if [ "${#dmgs[@]}" -ne 2 ]; then
+            echo "::error::Expected exactly two macOS DMGs (Apple Silicon and Intel), found ${#dmgs[@]}."
+            exit 1
+          fi
+          : > artifacts/SHA256SUMS
+          for dmg in "${dmgs[@]}"; do
+            (cd "$(dirname "$dmg")" && sha256sum "$(basename "$dmg")") >> artifacts/SHA256SUMS
+          done
+          cat artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mix-agent-desktop-checksums
+          path: artifacts/SHA256SUMS
+          retention-days: 14
+
+  release:
+    needs: [bundle, checksums]
+    # Tag pushes publish. Manual runs are packaging dry-runs by default; set
+    # dry_run=false explicitly to create/update a manual-download GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/SHA256SUMS
+          fail_on_unmatched_files: false

@@ -30,20 +30,27 @@ PROVIDER_ERROR_LIMIT = 3
 
 # Tool IDs considered "read" for stagnation purposes (no state change).
 _READ_TOOLS = {
-    "web_search", "web_fetch", "web_fetch_pdf", "files_list", "read_file",
-    "search_files", "browser_read", "browser_screenshot", "browser_extract",
-    "workspace_check", "knowledge_search", "memory_search", "skill_search",
-    "skill_resource", "process_list",
+    "web_search",
+    "web_fetch",
+    "web_fetch_pdf",
+    "files_list",
+    "read_file",
+    "search_files",
+    "browser_read",
+    "browser_screenshot",
+    "browser_extract",
+    "workspace_check",
+    "knowledge_search",
+    "memory_search",
+    "skill_search",
+    "skill_resource",
+    "process_list",
 }
 
 
 def _tool_call_rows(db, run_id: str) -> list[ToolCall]:
     return list(
-        db.scalars(
-            select(ToolCall)
-            .where(ToolCall.run_id == run_id)
-            .order_by(ToolCall.created_at.asc())
-        )
+        db.scalars(select(ToolCall).where(ToolCall.run_id == run_id).order_by(ToolCall.created_at.asc()))
     )
 
 
@@ -67,8 +74,11 @@ def _is_provider_transient(call: ToolCall) -> bool:
     error = result.get("error") or {}
     code = (error.get("code") if isinstance(error, dict) else None) or ""
     return code in {
-        "provider_5xx", "timeout", "incomplete",
-        "rate_limit", "tool_timeout",
+        "provider_5xx",
+        "timeout",
+        "incomplete",
+        "rate_limit",
+        "tool_timeout",
     }
 
 
@@ -96,40 +106,40 @@ def detect_stagnation(db, run) -> list[dict]:
         failures_by_tool[tool_id] += 1
     for tool_id, count in failures_by_tool.items():
         if count >= SAME_TOOL_FAILURE_LIMIT:
-            findings.append({
-                "code": "tool_repeated_failure",
-                "severity": "warn",
-                "tool_id": tool_id,
-                "count": count,
-                "message": (
-                    f"同じTool '{tool_id}' の失敗が直近{count}回続いています。"
-                    "別のToolや参照方法で同じ情報を取得できるか検討し、"
-                    "Skill検索で類似作業の手順を確認してください。"
-                ),
-                "suggested_tools": ["skill_search", "memory_search"],
-            })
+            findings.append(
+                {
+                    "code": "tool_repeated_failure",
+                    "severity": "warn",
+                    "tool_id": tool_id,
+                    "count": count,
+                    "message": (
+                        f"同じTool '{tool_id}' の失敗が直近{count}回続いています。"
+                        "別のToolや参照方法で同じ情報を取得できるか検討し、"
+                        "Skill検索で類似作業の手順を確認してください。"
+                    ),
+                    "suggested_tools": ["skill_search", "memory_search"],
+                }
+            )
 
     # 2. Read-only doldrums: many read tool calls without write/update activity
-    read_only = sum(
-        1 for call in recent
-        if (call.data or {}).get("tool_id") in _READ_TOOLS
-    )
+    read_only = sum(1 for call in recent if (call.data or {}).get("tool_id") in _READ_TOOLS)
     if read_only >= READ_ONLY_LIMIT and not any(
-        (call.data or {}).get("tool_id") not in _READ_TOOLS
-        and (call.data or {}).get("risk") != "read"
+        (call.data or {}).get("tool_id") not in _READ_TOOLS and (call.data or {}).get("risk") != "read"
         for call in recent[-READ_ONLY_LIMIT:]
     ):
-        findings.append({
-            "code": "no_progress",
-            "severity": "warn",
-            "count": read_only,
-            "message": (
-                f"直近{read_only}回のTool呼び出しが読み取りのみで、"
-                "状態を変更する操作や検証がありません。"
-                "update_planで現在の進捗を反映し、次の具体的な作業に進んでください。"
-            ),
-            "suggested_tools": ["update_plan"],
-        })
+        findings.append(
+            {
+                "code": "no_progress",
+                "severity": "warn",
+                "count": read_only,
+                "message": (
+                    f"直近{read_only}回のTool呼び出しが読み取りのみで、"
+                    "状態を変更する操作や検証がありません。"
+                    "update_planで現在の進捗を反映し、次の具体的な作業に進んでください。"
+                ),
+                "suggested_tools": ["update_plan"],
+            }
+        )
 
     # 3. Stale plan: pending list has not been touched for PLAN_STEP_LIMIT steps
     task_state = run.data.get("task_state") or {}
@@ -144,31 +154,35 @@ def detect_stagnation(db, run) -> list[dict]:
                 break
             since_update += 1
         if since_update >= PLAN_STEP_LIMIT and len(pending) >= 1:
-            findings.append({
-                "code": "stale_plan",
-                "severity": "info",
-                "count": since_update,
-                "message": (
-                    f"update_planが{PLAN_STEP_LIMIT}ステップ以上更新されていません。"
-                    "保留中の作業と完了済み作業を進捗に合わせて整理してください。"
-                ),
-                "suggested_tools": ["update_plan"],
-            })
+            findings.append(
+                {
+                    "code": "stale_plan",
+                    "severity": "info",
+                    "count": since_update,
+                    "message": (
+                        f"update_planが{PLAN_STEP_LIMIT}ステップ以上更新されていません。"
+                        "保留中の作業と完了済み作業を進捗に合わせて整理してください。"
+                    ),
+                    "suggested_tools": ["update_plan"],
+                }
+            )
 
     # 4. Provider instability
     transient = sum(1 for call in recent if _is_provider_transient(call))
     if transient >= PROVIDER_ERROR_LIMIT:
-        findings.append({
-            "code": "provider_unstable",
-            "severity": "warn",
-            "count": transient,
-            "message": (
-                f"Providerの一時的な失敗が直近{transient}回発生しています。"
-                "設定済みの代替ProviderがあるならAutoに切り替えを、"
-                "なければ少し時間を置いてから再開することを検討してください。"
-            ),
-            "suggested_tools": [],
-        })
+        findings.append(
+            {
+                "code": "provider_unstable",
+                "severity": "warn",
+                "count": transient,
+                "message": (
+                    f"Providerの一時的な失敗が直近{transient}回発生しています。"
+                    "設定済みの代替ProviderがあるならAutoに切り替えを、"
+                    "なければ少し時間を置いてから再開することを検討してください。"
+                ),
+                "suggested_tools": [],
+            }
+        )
 
     return findings
 

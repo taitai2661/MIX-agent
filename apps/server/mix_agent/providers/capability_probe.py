@@ -20,9 +20,15 @@ from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 TRACKED = ("tools", "vision", "reasoning")
 # Reasoning is only auto-probeable where the provider request is strongly typed
 # and rejects an unsupported control.  OpenRouter's free-form extra_body is not.
-_REASONING_CONTROLS = frozenset({
-    "openai", "anthropic_adaptive", "anthropic_budget", "gemini_budget", "gemini_level",
-})
+_REASONING_CONTROLS = frozenset(
+    {
+        "openai",
+        "anthropic_adaptive",
+        "anthropic_budget",
+        "gemini_budget",
+        "gemini_level",
+    }
+)
 # ``tools`` keeps its historical ``status`` key so older readers stay valid.
 _VERDICT_KEYS = {"tools": "status"}
 _VERDICTS = {"supported": True, "unsupported": False}
@@ -98,9 +104,10 @@ def probe_needed(data, capability, kind=None, current=None):
         return False
     if (data.get("capabilities") or {}).get(capability) is not None:
         return False
-    if capability == "reasoning" and reasoning_control(
-        kind or "", data.get("model_id", "")
-    ) not in _REASONING_CONTROLS:
+    if (
+        capability == "reasoning"
+        and reasoning_control(kind or "", data.get("model_id", "")) not in _REASONING_CONTROLS
+    ):
         return False
     stored = record(data)
     if not stored:

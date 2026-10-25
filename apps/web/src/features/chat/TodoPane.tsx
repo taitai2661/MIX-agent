@@ -1,5 +1,5 @@
 import { t } from "@/app/i18n";
-import { CheckCircle2, Circle, ListTodo, Loader2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, Circle, ListTodo, Loader2 } from "lucide-react";
 
 type Status = "pending" | "in_progress" | "completed";
 type TodoItem = { content: string; status: Status };
@@ -30,28 +30,61 @@ export function TodoPane({ items }: { items?: unknown }) {
   const list = normalizeTodos(items);
   if (!list.length) return null;
   const done = list.filter((item) => item.status === "completed").length;
+  const allCompleted = done === list.length;
+  const current =
+    list.find((item) => item.status === "in_progress") ??
+    list.find((item) => item.status === "pending");
+  const progressPercent = Math.round((done / list.length) * 100);
+
   return (
-    <section className="todo-panel" aria-label={t("この会話のTodo")}>
-      <div className="todo-panel-heading">
-        <ListTodo size={15} />
-        <strong>{t("Todo")}</strong>
-        <span>{done}/{list.length}</span>
-      </div>
-      <ul className="todo-panel-list">
-        {list.map((item, index) => (
-          <li key={index} className={"todo-item " + item.status}>
-            {item.status === "completed" ? (
-              <CheckCircle2 size={15} />
-            ) : item.status === "in_progress" ? (
-              <Loader2 size={15} className="spin" />
-            ) : (
-              <Circle size={15} />
+    <section
+      className={`todo-panel${allCompleted ? " is-completed" : ""}`}
+      aria-label={t("この会話のTodo")}
+    >
+      <details className="todo-panel-details" open={!allCompleted}>
+        <summary className="todo-panel-heading">
+          <div className="todo-panel-summary-left">
+            <span className="todo-panel-icon">
+              {allCompleted ? <CheckCircle2 size={15} /> : <ListTodo size={15} />}
+            </span>
+            <strong className="todo-panel-title">{t("Todo")}</strong>
+            <span className="todo-panel-badge">
+              {done}/{list.length}
+            </span>
+            {current && (
+              <span className="todo-panel-current" title={current.content}>
+                {current.content}
+              </span>
             )}
-            <span className="todo-item-text">{item.content}</span>
-            <span className="todo-item-status">{t(labels[item.status])}</span>
-          </li>
-        ))}
-      </ul>
+          </div>
+          <ChevronDown size={14} className="todo-panel-chevron" />
+        </summary>
+        <div className="todo-panel-progress-track">
+          <div
+            className="todo-panel-progress-bar"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        <ul className="todo-panel-list">
+          {list.map((item, index) => (
+            <li key={index} className={"todo-item " + item.status}>
+              <span className="todo-item-icon">
+                {item.status === "completed" ? (
+                  <CheckCircle2 size={15} />
+                ) : item.status === "in_progress" ? (
+                  <Loader2 size={15} className="spin" />
+                ) : (
+                  <Circle size={15} />
+                )}
+              </span>
+              <span className="todo-item-text">{item.content}</span>
+              <span className={"todo-item-status " + item.status}>
+                {t(labels[item.status])}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
     </section>
   );
 }

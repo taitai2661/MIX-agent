@@ -1,0 +1,11 @@
+# Local and CI builds resolve to the same toolchain.
+# Pinned (not "stable") so clippy `-D warnings` stays deterministic: a new
+# stable with new lints must not turn CI red without a local change.
+# CI passes the same version to dtolnay/rust-toolchain (see ci.yml /
+# desktop-release.yml). `components` guarantees rustfmt/clippy locally too.
+# Floor is 1.90 (tray-icon 0.25 / edition2024 deps); 1.82 and older cannot
+# parse the lockfile. Keep `rust-version` in Cargo.toml and `msrv` in
+# clippy.toml in sync with each other.
+[toolchain]
+channel = "1.91.0"
+components = ["rustfmt", "clippy"]

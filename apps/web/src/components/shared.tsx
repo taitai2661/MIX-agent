@@ -2,17 +2,13 @@ import { api, type Row } from "@/app/api";
 import { useQuery } from "@tanstack/react-query";
 import { CircleHelp } from "lucide-react";
 import { type ReactNode } from "react";
+import { ErrorBox } from "./error-box";
 
 export function useRows<T = Row>(path: string) {
   return useQuery<T[]>({ queryKey: [path], queryFn: () => api(path) });
 }
-export function ErrorBox({ error }: { error: unknown }) {
-  return error ? (
-    <div role="alert" className="error">
-      {error instanceof Error ? error.message : String(error)}
-    </div>
-  ) : null;
-}
+
+export { ErrorBox };
 export function Empty({ children }: { children: ReactNode }) {
   return (
     <div className="empty">

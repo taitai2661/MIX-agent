@@ -74,7 +74,7 @@ async def test_known_context_is_filled_when_provider_omits_it(monkeypatch):
     async def fake_lookup(provider_ids, model_id):
         return {"context_window": 128_000} if model_id == "gpt-4o-mini" else {}
 
-    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    monkeypatch.setattr(metadata.models_dev, "lookup", fake_lookup)
     original = httpx.AsyncClient
 
     def handle(request):
@@ -83,7 +83,7 @@ async def test_known_context_is_filled_when_provider_omits_it(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
     models = await Adapter({"kind": "openai", "base_url": "https://provider.example/v1"}, "test-key").list_models()
     assert models[0]["context_window"] == 128000
-    assert models[0]["context_source"] == "model_info"
+    assert models[0]["context_source"] == "models_dev"
     assert models[1]["context_window"] is None
 
 
@@ -163,17 +163,17 @@ async def test_metadata_resolver_prefers_provider_api_and_records_evidence(monke
     async def fake_lookup(provider_ids, model_id):
         return {"context_window": 128_000, "max_output_tokens": 16_384}
 
-    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    monkeypatch.setattr(metadata.models_dev, "lookup", fake_lookup)
     result = await resolve("openai", "gpt-4o-mini", {"id": "gpt-4o-mini", "context_length": 64_000})
     evidence = result["metadata"]["context_window"]
     assert evidence["value"] == 64_000
     assert evidence["source"] == "provider_api"
     assert evidence["confidence"] == "official"
-    assert result["metadata_candidates"]["model_info"]["context_window"]["value"] == 128_000
+    assert result["metadata_candidates"]["models_dev"]["context_window"]["value"] == 128_000
     assert result["metadata"]["max_output_tokens"]["value"] == 16_384
 
 
-async def test_metadata_resolver_reads_model_info_when_provider_says_nothing(monkeypatch):
+async def test_metadata_resolver_reads_models_dev_when_provider_says_nothing(monkeypatch):
     from mix_agent.providers import metadata
 
     async def fake_lookup(provider_ids, model_id):
@@ -181,15 +181,15 @@ async def test_metadata_resolver_reads_model_info_when_provider_says_nothing(mon
         return {"context_window": 131_072}
 
     seen = {}
-    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    monkeypatch.setattr(metadata.models_dev, "lookup", fake_lookup)
     result = await resolve("compatible", "nvidia/llama-3.3-nemotron-super-49b-v1.5", {},
                            preset_id="nvidia-nim")
     evidence = result["metadata"]["context_window"]
     assert evidence["value"] == 131_072
-    assert evidence["source"] == "model_info"
+    assert evidence["source"] == "models_dev"
     assert evidence["confidence"] == "external"
     assert seen["keys"] == ("nvidia",)
-    assert result["metadata_candidates"]["model_info"]["context_window"]["value"] == 131_072
+    assert result["metadata_candidates"]["models_dev"]["context_window"]["value"] == 131_072
 
 
 async def test_metadata_resolver_leaves_context_unknown_without_any_source(monkeypatch):
@@ -198,7 +198,7 @@ async def test_metadata_resolver_leaves_context_unknown_without_any_source(monke
     async def empty_lookup(provider_ids, model_id):
         return {}
 
-    monkeypatch.setattr(metadata.model_info, "lookup", empty_lookup)
+    monkeypatch.setattr(metadata.models_dev, "lookup", empty_lookup)
     result = await resolve("compatible", "some/undocumented-model", {}, preset_id="nvidia-nim")
     assert result["metadata"] == {}
 
@@ -217,7 +217,7 @@ async def test_documented_capabilities_fill_only_unknown_slots(monkeypatch):
         return {"capabilities": {"tools": True, "vision": False, "reasoning": None,
                                  "structured_output": True}}
 
-    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    monkeypatch.setattr(metadata.models_dev, "lookup", fake_lookup)
     original = httpx.AsyncClient
 
     def undocumented(request):
@@ -447,7 +447,7 @@ def test_delete_provider_rejects_unknown_key(signed):
     assert signed.delete("/api/v1/providers/missing").status_code == 404
 
 
-async def test_opencode_presets_resolve_metadata_through_model_info(monkeypatch):
+async def test_opencode_presets_resolve_metadata_through_models_dev(monkeypatch):
     from mix_agent.providers import metadata
 
     seen = {}
@@ -456,7 +456,7 @@ async def test_opencode_presets_resolve_metadata_through_model_info(monkeypatch)
         seen["keys"] = tuple(provider_ids)
         return {"context_window": 1_000_000}
 
-    monkeypatch.setattr(metadata.model_info, "lookup", fake_lookup)
+    monkeypatch.setattr(metadata.models_dev, "lookup", fake_lookup)
     go = await resolve("compatible", "glm-5.3-flash", {}, preset_id="opencode-go")
     assert go["metadata"]["context_window"]["value"] == 1_000_000
     assert seen["keys"] == ("opencode-go",)

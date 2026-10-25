@@ -1,4 +1,5 @@
 """VAPID authenticated, aes128gcm Web Push delivery for saved notifications."""
+
 import asyncio
 import base64
 import json
@@ -20,8 +21,10 @@ from mix_agent.db.session import SessionLocal
 
 log = logging.getLogger(__name__)
 PUSH_HOSTS = (
-    "fcm.googleapis.com", "push.services.mozilla.com",
-    "updates.push.services.mozilla.com", "web.push.apple.com",
+    "fcm.googleapis.com",
+    "push.services.mozilla.com",
+    "updates.push.services.mozilla.com",
+    "web.push.apple.com",
 )
 
 
@@ -36,9 +39,15 @@ def unb64(value):
 def valid_endpoint(value):
     try:
         url = urlsplit(value)
-        return (url.scheme == "https" and url.hostname in PUSH_HOSTS and
-                url.port in (None, 443) and not url.username and not url.password and
-                not url.fragment and len(value) <= 2048)
+        return (
+            url.scheme == "https"
+            and url.hostname in PUSH_HOSTS
+            and url.port in (None, 443)
+            and not url.username
+            and not url.password
+            and not url.fragment
+            and len(value) <= 2048
+        )
     except ValueError:
         return False
 
@@ -49,8 +58,9 @@ def private_key():
         return serialization.load_pem_private_key(path.read_bytes(), password=None)
     except FileNotFoundError:
         key = ec.generate_private_key(ec.SECP256R1())
-        payload = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                    serialization.NoEncryption())
+        payload = key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+        )
         try:
             with path.open("xb") as file:
                 os.chmod(path, 0o600)
@@ -61,8 +71,11 @@ def private_key():
 
 
 def public_key():
-    return b64(private_key().public_key().public_bytes(serialization.Encoding.X962,
-                                                       serialization.PublicFormat.UncompressedPoint))
+    return b64(
+        private_key()
+        .public_key()
+        .public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    )
 
 
 def _derive(secret, salt, info, length):
@@ -75,8 +88,9 @@ def encrypt(payload, client_key, auth):
         raise ValueError("Invalid subscription keys")
     peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), recipient)
     local = ec.generate_private_key(ec.SECP256R1())
-    sender = local.public_key().public_bytes(serialization.Encoding.X962,
-                                              serialization.PublicFormat.UncompressedPoint)
+    sender = local.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+    )
     shared = local.exchange(ec.ECDH(), peer)
     ikm = _derive(shared, unb64(auth), b"WebPush: info\x00" + recipient + sender, 32)
     salt = os.urandom(16)
@@ -91,35 +105,60 @@ def headers(endpoint):
     point = public_key()
     origin = f"https://{urlsplit(endpoint).hostname}"
     head = b64(b'{"typ":"JWT","alg":"ES256"}')
-    subject = os.getenv("WEB_PUSH_SUBJECT", config.PUBLIC_ORIGIN if config.PUBLIC_ORIGIN.startswith("https://")
-                        else "mailto:admin@example.com")
-    claims = b64(json.dumps({"aud": origin, "exp": int(time.time()) + 3600,
-                             "sub": subject}, separators=(",", ":")).encode())
+    subject = os.getenv(
+        "WEB_PUSH_SUBJECT",
+        config.PUBLIC_ORIGIN if config.PUBLIC_ORIGIN.startswith("https://") else "mailto:admin@example.com",
+    )
+    claims = b64(
+        json.dumps(
+            {"aud": origin, "exp": int(time.time()) + 3600, "sub": subject}, separators=(",", ":")
+        ).encode()
+    )
     signed = (head + "." + claims).encode()
     signature = key.sign(signed, ec.ECDSA(hashes.SHA256()))
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
     r, s = decode_dss_signature(signature)
     token = head + "." + claims + "." + b64(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
-    return {"Authorization": f"vapid t={token}, k={point}", "TTL": "86400",
-            "Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream"}
+    return {
+        "Authorization": f"vapid t={token}, k={point}",
+        "TTL": "86400",
+        "Content-Encoding": "aes128gcm",
+        "Content-Type": "application/octet-stream",
+    }
 
 
 def deliver_pending():
     with SessionLocal() as db, httpx.Client(timeout=10, follow_redirects=False) as client:
         for sub in db.scalars(select(PushSubscription)).all():
-            pending = db.scalars(select(Notification).where(
-                Notification.owner_id == sub.owner_id,
-                or_(Notification.created_at > sub.cursor_at,
-                    (Notification.created_at == sub.cursor_at) & (Notification.id > sub.cursor_id)),
-            ).order_by(Notification.created_at, Notification.id).limit(20)).all()
+            pending = db.scalars(
+                select(Notification)
+                .where(
+                    Notification.owner_id == sub.owner_id,
+                    or_(
+                        Notification.created_at > sub.cursor_at,
+                        (Notification.created_at == sub.cursor_at) & (Notification.id > sub.cursor_id),
+                    ),
+                )
+                .order_by(Notification.created_at, Notification.id)
+                .limit(20)
+            ).all()
             for notification in pending:
                 try:
-                    data = json.dumps({"id": notification.id,
-                                       "title": notification.data.get("title", "MIX agent"),
-                                       "kind": notification.data.get("kind", ""),
-                                       "url": "/schedules"}, ensure_ascii=False).encode()
-                    response = client.post(sub.endpoint, content=encrypt(data, sub.data["p256dh"], sub.data["auth"]),
-                                           headers=headers(sub.endpoint))
+                    data = json.dumps(
+                        {
+                            "id": notification.id,
+                            "title": notification.data.get("title", "MIX agent"),
+                            "kind": notification.data.get("kind", ""),
+                            "url": "/schedules",
+                        },
+                        ensure_ascii=False,
+                    ).encode()
+                    response = client.post(
+                        sub.endpoint,
+                        content=encrypt(data, sub.data["p256dh"], sub.data["auth"]),
+                        headers=headers(sub.endpoint),
+                    )
                     if response.status_code in (404, 410):
                         db.delete(sub)
                         db.commit()

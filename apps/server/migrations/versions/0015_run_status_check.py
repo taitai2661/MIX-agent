@@ -29,10 +29,7 @@ def _existing_constraints(bind):
 
 
 def _stored_statuses(bind):
-    return {
-        row[0]
-        for row in bind.execute(sa.text("SELECT DISTINCT status FROM runs"))
-    }
+    return {row[0] for row in bind.execute(sa.text("SELECT DISTINCT status FROM runs"))}
 
 
 def upgrade():

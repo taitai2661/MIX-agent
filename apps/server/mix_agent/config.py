@@ -36,10 +36,11 @@ BROWSER_URL = os.getenv("BROWSER_URL", "http://browser-runner:8005")
 BROWSER_PROVISIONER_URL = os.getenv("BROWSER_PROVISIONER_URL", "http://browser-provisioner:8006")
 PUBLIC_ORIGIN = os.getenv("PUBLIC_ORIGIN", "http://localhost:8080").rstrip("/")
 COOKIE_SECURE = PUBLIC_ORIGIN.startswith("https://")
-# Where the model-info catalog lives: an https address (GitHub Pages) or a
-# local directory containing a model-info checkout with its ``v1/`` output.
-MODEL_INFO_URL = (
-    os.getenv("MIX_MODEL_INFO_URL") or "https://taitai2661.github.io/model-info/v1"
+# Where the models.dev catalog lives: the published ``api.json`` or a local
+# file.  ``MIX_MODEL_INFO_URL`` is a deprecated read-only alias; pointing it at
+# the old ``v1/`` layout simply yields no catalog.
+MODELS_DEV_URL = (
+    os.getenv("MIX_MODELS_DEV_URL") or os.getenv("MIX_MODEL_INFO_URL") or "https://models.dev/api.json"
 ).rstrip("/")
 MAX_UPLOAD = 20 * 1024 * 1024
 # Bump when the capability-probe semantics change so previously stored

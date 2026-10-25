@@ -1,4 +1,5 @@
 """Add owner-scoped projects; existing conversations remain unassigned."""
+
 from alembic import op
 
 from mix_agent.db.models import Project

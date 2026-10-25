@@ -43,7 +43,17 @@ def _validate_identity(name, description):
         raise ValueError("; ".join(errors))
 
 
-def change(db, owner, name=None, description=None, content=None, skill_id=None, delete=False, enabled=True, source_run=None):
+def change(
+    db,
+    owner,
+    name=None,
+    description=None,
+    content=None,
+    skill_id=None,
+    delete=False,
+    enabled=True,
+    source_run=None,
+):
     if skill_id:
         row = db.get(Skill, skill_id)
         if not row or row.owner_id != owner:
@@ -60,10 +70,28 @@ def change(db, owner, name=None, description=None, content=None, skill_id=None, 
                 description if description_changed else row.data.get("description", ""),
             )
         db.add(SkillRevision(owner_id=owner, data={"skill_id": row.id, "previous": row.data}))
-        row.data = {**row.data, **({"name": name} if name is not None else {}), **({"description": description} if description is not None else {}), **({"content": content} if content is not None else {}), "enabled": enabled, "deleted": delete, "source_run": source_run or row.data.get("source_run")}
+        row.data = {
+            **row.data,
+            **({"name": name} if name is not None else {}),
+            **({"description": description} if description is not None else {}),
+            **({"content": content} if content is not None else {}),
+            "enabled": enabled,
+            "deleted": delete,
+            "source_run": source_run or row.data.get("source_run"),
+        }
     else:
         _validate_identity(name, description or "")
-        row = Skill(owner_id=owner, data={"name": name, "description": description or "", "content": content, "enabled": enabled, "deleted": False, "source_run": source_run})
+        row = Skill(
+            owner_id=owner,
+            data={
+                "name": name,
+                "description": description or "",
+                "content": content,
+                "enabled": enabled,
+                "deleted": False,
+                "source_run": source_run,
+            },
+        )
         db.add(row)
     db.flush()
     return {"id": row.id, **row.data}

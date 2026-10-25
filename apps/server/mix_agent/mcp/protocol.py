@@ -44,13 +44,15 @@ def _headers(method: str, tool: str = "", headers: dict | None = None) -> dict:
 def _request(method: str, params: dict | None = None) -> dict:
     params = dict(params or {})
     meta = dict(params.get("_meta") or {})
-    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.3.5"}
+    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.2.3"}
     meta["io.modelcontextprotocol/protocolVersion"] = MODERN_VERSION
     params["_meta"] = meta
     return {"jsonrpc": "2.0", "id": next(_IDS), "method": method, "params": params}
 
 
-async def modern_call(url: str, method: str, params: dict | None = None, *, tool: str = "", headers: dict | None = None) -> dict:
+async def modern_call(
+    url: str, method: str, params: dict | None = None, *, tool: str = "", headers: dict | None = None
+) -> dict:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Remote MCP requires a public HTTPS URL")
@@ -75,4 +77,6 @@ async def discover(url: str, headers: dict | None = None) -> dict:
 
 
 async def call(url: str, tool: str, arguments: dict, headers: dict | None = None) -> dict:
-    return await modern_call(url, "tools/call", {"name": tool, "arguments": arguments}, tool=tool, headers=headers)
+    return await modern_call(
+        url, "tools/call", {"name": tool, "arguments": arguments}, tool=tool, headers=headers
+    )

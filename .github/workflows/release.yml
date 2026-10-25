@@ -1,5 +1,7 @@
 name: Release MIX-agent
 
+# Docker images and ZimaOS store. Desktop releases (.dmg, installers) are
+# built in parallel by `desktop-release.yml` for unified distribution on GitHub Releases.
 on:
   push:
     tags:

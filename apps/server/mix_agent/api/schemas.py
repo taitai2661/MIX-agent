@@ -15,8 +15,15 @@ class RecordView(BaseModel):
 
 ChatMode = Literal["chat", "thinking", "agent"]
 RunStatus = Literal[
-    "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
-    "completed", "failed", "cancelled", "interrupted",
+    "queued",
+    "running",
+    "waiting_approval",
+    "paused",
+    "budget_extension_pending",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
 ]
 ApprovalDecision = Literal["once", "always", "denied"]
 ApprovalStatus = Literal["pending", "once", "always", "denied", "expired"]
@@ -203,6 +210,7 @@ class RunView(BaseModel):
     stagnation: list[dict] | None = None
     checkpoint_resumed_from: dict | None = None
     checkpoints: list[RunCheckpointView] = Field(default_factory=list)
+    context_trace: dict | None = None
 
 
 class StatisticsSummaryView(BaseModel):
@@ -371,7 +379,9 @@ class SessionRevocationInput(Input):
 class ProviderInput(Input):
     name: str = Field(min_length=1, max_length=100)
     # kind remains accepted for records created before the catalog existed.
-    kind: Literal["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"] | None = None
+    kind: (
+        Literal["openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible"] | None
+    ) = None
     preset_id: str | None = Field(default=None, max_length=100)
     base_url: str = Field(default="", max_length=2000)
     api_key: str | None = Field(default=None, max_length=2000)
@@ -473,44 +483,40 @@ class DecisionInput(Input):
 
 
 class MemoryInput(Input):
+    """ChatGPT-style flat input: content only (+ compat extras ignored)."""
+
     content: str = Field(min_length=1, max_length=10000)
+    pinned: bool = False
+    # Compat: old clients still send these; service ignores them.
     scope: str = Field(default="user", max_length=100)
     gist: str | None = Field(default=None, max_length=1000)
-    strength: float | None = Field(default=None, ge=0, le=1)
-    confidence: float | None = Field(default=None, ge=0, le=1)
-    salience: float | None = Field(default=None, ge=0, le=1)
-    lifecycle_state: Literal[
-        "candidate", "active", "superseded", "expired", "archived", "disputed",
-        # legacy aliases kept for backward compatibility
-        "latent", "established", "deleted",
-    ] | None = None
+    role: str | None = None
+    source_kind: str | None = None
+    role_metadata: dict | None = None
+    verification: str | None = None
     entities: list[str] | None = Field(default=None, max_length=50)
     concepts: list[str] | None = Field(default=None, max_length=50)
     temporal_context: str | None = Field(default=None, max_length=200)
     metadata: dict | None = None
-    # Role-based taxonomy
-    role: Literal[
-        "fact", "decision", "preference", "goal", "constraint",
-        "experience", "failure", "solution", "observation",
-        "hypothesis", "question",
-    ] | None = None
-    source_kind: Literal[
-        "user", "agent", "tool", "browser", "external", "consolidation",
-    ] | None = None
-    role_metadata: dict | None = None
-    verification: Literal[
-        "unverified", "pending", "verified", "disputed", "rejected",
-    ] | None = None
-    # Deprecated compatibility inputs. Category is retained only as legacy metadata.
     importance: int = Field(default=2, ge=1, le=5)
     category: str | None = Field(default=None, max_length=50)
-    pinned: bool = False
+    strength: float | None = Field(default=None, ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    salience: float | None = Field(default=None, ge=0, le=1)
+    lifecycle_state: str | None = None
 
 
 class MemoryEvidenceInput(Input):
     kind: Literal[
-        "user_message", "conversation", "tool_result", "browser",
-        "file", "code_change", "external", "agent_action", "observation",
+        "user_message",
+        "conversation",
+        "tool_result",
+        "browser",
+        "file",
+        "code_change",
+        "external",
+        "agent_action",
+        "observation",
     ]
     ref: str = Field(default="", max_length=500)
     summary: str = Field(default="", max_length=2000)
@@ -519,22 +525,41 @@ class MemoryEvidenceInput(Input):
 
 
 class MemoryResolveConflictInput(Input):
-    resolution: Literal["prefer_a", "prefer_b", "merge", "dismiss"]
+    """Spec §3 ``resolve_conflict`` over HTTP, shaped like §7.2's writes.
+
+    ``resolution`` is the reason recorded on the RESOLVE event: everything but
+    the ``dismiss`` family leaves the rejected row ``superseded`` (§3),
+    ``dismiss`` leaves it ``expired``. ``"resolved"`` is the value §3's own
+    settlement uses when it has nothing more specific to say.
+
+    ``prefer`` names the row that wins and must be one of the two conflicting
+    memories. **Omitting it is §3's default** — the memory ``disputed_by_id``
+    points at (the one already stored) wins — and the UI must not pre-fill it
+    just because one side is showing: the default is a spec contract, not an
+    unset form field.
+    """
+
+    resolution: Literal["resolved", "prefer_a", "prefer_b", "merge", "dismiss"] = "resolved"
     prefer: str | None = Field(default=None, max_length=36)
 
 
+class MemoryResolveConflictView(BaseModel):
+    """§7.2's response keys (``decision`` / ``id`` / ``reason``) + §3's outcome."""
+
+    decision: Literal["resolved"] = "resolved"
+    id: str
+    loser_id: str
+    loser_state: str
+    reason: str
+
+
 class MemoryRememberInput(Input):
-    """Reduced-shape ``memory.remember`` tool surface."""
+    """ChatGPT-style ``memory remember``: content only."""
+
     content: str = Field(min_length=1, max_length=10000)
-    role: Literal[
-        "fact", "decision", "preference", "goal", "constraint",
-        "experience", "failure", "solution", "observation",
-        "hypothesis", "question",
-    ] = "fact"
-    scope: Literal["working", "task", "project", "user", "world"] = "task"
-    source_kind: Literal[
-        "user", "agent", "tool", "browser", "external", "consolidation",
-    ] | None = None
+    role: str | None = None
+    scope: str | None = None
+    source_kind: str | None = None
     role_metadata: dict | None = None
     entities: list[str] | None = Field(default=None, max_length=50)
     concepts: list[str] | None = Field(default=None, max_length=50)
@@ -617,6 +642,9 @@ class SettingsInput(Input):
     memory_auto_formation: bool = True
     memory_seed_limit: int = Field(default=24, ge=4, le=64)
     memory_result_limit: int = Field(default=8, ge=1, le=30)
+    # §4 source (3): §5 embedding neighbours become links only when this is on
+    # (spec §4: "(3) は既定オフ").
+    memory_link_embedding_neighbors: bool = False
 
 
 class FeedbackInput(Input):

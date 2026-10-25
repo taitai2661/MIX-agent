@@ -12,7 +12,9 @@ def upgrade():
     Knowledge.__table__.create(op.get_bind(), checkfirst=True)
     if op.get_bind().dialect.name == "postgresql":
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-        op.execute("CREATE INDEX IF NOT EXISTS knowledge_text_trgm ON knowledge USING gin ((data->>'content') gin_trgm_ops)")
+        op.execute(
+            "CREATE INDEX IF NOT EXISTS knowledge_text_trgm ON knowledge USING gin ((data->>'content') gin_trgm_ops)"
+        )
 
 
 def downgrade():

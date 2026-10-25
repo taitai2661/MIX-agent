@@ -12,7 +12,7 @@ const groups = [
       ["providers", "AI Providers", "接続済みのAIサービス", Server],
       ["models", "モデル", "会話で使うモデル", Sparkles],
       ["auto", "Auto", "自動選択の候補と再試行", Sparkles],
-      ["memory", "Associative Memory", "記憶の形成・想起・管理", Brain],
+      ["memory", "Memory", "記憶の形成・想起・管理", Brain],
     ],
   },
   {

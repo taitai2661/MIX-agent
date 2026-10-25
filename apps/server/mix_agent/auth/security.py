@@ -76,9 +76,7 @@ def new_session_csrf():
 
 def encrypt(value: str, purpose: str):
     nonce = secrets.token_bytes(12)
-    cipher = AESGCM(_get_master_key()).encrypt(
-        nonce, value.encode(), purpose.encode()
-    )
+    cipher = AESGCM(_get_master_key()).encrypt(nonce, value.encode(), purpose.encode())
     return {
         "ciphertext": base64.b64encode(cipher).decode(),
         "nonce": base64.b64encode(nonce).decode(),

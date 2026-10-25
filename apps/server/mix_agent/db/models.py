@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -107,26 +108,23 @@ class Feedback(Record, Base):
 
 class AutoReliabilityEvent(Record, Base):
     """A privacy-minimal, time-bounded record of an Auto provider attempt."""
+
     __tablename__ = "auto_reliability_events"
-    __table_args__ = (
-        Index("auto_reliability_owner_created", "owner_id", "created_at"),
-    )
+    __table_args__ = (Index("auto_reliability_owner_created", "owner_id", "created_at"),)
 
 
 class PerformanceEvent(Record, Base):
     """A privacy-minimal, time-bounded measurement of a completed answer."""
+
     __tablename__ = "performance_events"
-    __table_args__ = (
-        Index("performance_event_owner_created", "owner_id", "created_at"),
-    )
+    __table_args__ = (Index("performance_event_owner_created", "owner_id", "created_at"),)
 
 
 class ModelUsageEvent(Record, Base):
     """A privacy-minimal, time-bounded record of one model call's token usage."""
+
     __tablename__ = "model_usage_events"
-    __table_args__ = (
-        Index("model_usage_owner_created", "owner_id", "created_at"),
-    )
+    __table_args__ = (Index("model_usage_owner_created", "owner_id", "created_at"),)
 
 
 class ScheduledJob(Record, Base):
@@ -179,71 +177,143 @@ class Permission(Record, Base):
 
 
 class Memory(Record, Base):
-    """A single Memory Item.
+    """A single ChatGPT-style Memory item: one short user fact per row.
 
-    The model keeps the existing associative-memory columns (``strength``,
-    ``confidence``, ``salience``, ``activation_count``) so legacy retrieval and
-    tests continue to work.  The new role-based columns are additive:
+    ``content`` stays first-class (not buried in JSONB) so list/search/edit
+    remains trivial, and ``data`` keeps the row-specific extras spec §1.1
+    leaves to each edition: ``pinned`` / ``source`` / ``source_run`` /
+    ``strength`` / ``activation_count`` / ``embedding``.
 
-    - ``role`` distinguishes what kind of knowledge the item holds (Fact,
-      Decision, Failure, Experience, ...).  ``scope`` separates where the
-      knowledge belongs (Working, Task, Project, User, World).
-    - ``lifecycle_state`` is widened from the old 5-value vocabulary to
-      ``candidate / active / superseded / expired / archived / disputed``.
-    - ``verification`` carries the human/system verdict for items that need it
-      (Decisions, Failures, Hypotheses).  ``superseded_by_id`` and
-      ``disputed_by_id`` point at the items that overtook or contested them.
-    - ``task_id`` ties an item to the Run that produced or owns it.
-    - ``source_kind`` distinguishes user / agent / tool / browser / external /
-      consolidation so the agent can reason about how trustworthy an item is.
+    Judgment change (recorded in ``docs/memory-roadmap.md`` §2.2, decision B):
+    migration 0022 dropped the whole taxonomy *and* the four graph tables.
+    Spec §1 is the contract for both editions, so migration 0024 restores the
+    eight columns it needs — ``lifecycle_state``, ``superseded_by_id``,
+    ``disputed_by_id``, ``confidence``, ``salience``, ``role``, ``scope``,
+    ``source_kind`` — and those eight are now real columns, not constants
+    echoed back by ``service._trace_data``.
+
+    What 0022 deleted and is still deliberately *not* back:
+    ``title`` / ``verification`` / ``activation_count`` / ``task_id`` as
+    columns (the flat UI does not render them; ``activation_count`` rides in
+    ``data``), and three of the four graph tables ``MemoryAssociation`` /
+    ``MemoryFeature`` / ``MemoryConflict`` / ``MemoryEvidence``.
+    Supersession and conflict are expressed *on the row* (§1's
+    ``superseded_by_id`` / ``disputed_by_id``); associations get the single
+    ``memory_links`` table of spec §4, restored by migration 0025.
+    Re-adding a per-concept table is a spec change, not an implementation
+    detail — see the NOTE below.
     """
 
     __tablename__ = "memories"
-    lifecycle_state: Mapped[str] = mapped_column(String(20), default="established", index=True)
-    role: Mapped[str] = mapped_column(String(20), default="fact", index=True)
-    scope: Mapped[str] = mapped_column(String(20), default="user", index=True)
-    source_kind: Mapped[str] = mapped_column(String(20), default="agent", index=True)
-    confidence: Mapped[float] = mapped_column(default=0.7)
-    salience: Mapped[float] = mapped_column(default=0.5)
-    strength: Mapped[float] = mapped_column(default=0.6)
-    activation_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    superseded_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    disputed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    verification: Mapped[str] = mapped_column(String(40), default="unverified", index=True)
+
+    # --- spec §1, restored by migration 0024 (defaults are spec §1's) --------
+    # Validated against ``memory/types.py`` (spec §2) before every write; an
+    # unknown value never reaches the column.
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="established",
+        server_default="established",
+    )
+    superseded_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    disputed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.7,
+        server_default="0.7",
+    )
+    salience: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.5,
+        server_default="0.5",
+    )
+    role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="fact",
+        server_default="fact",
+    )
+    scope: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="user",
+        server_default="user",
+    )
+    source_kind: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="agent",
+        server_default="agent",
+    )
     __table_args__ = (
-        Index("memory_owner_state_created", "owner_id", "lifecycle_state", "created_at"),
-        Index("memory_owner_role_scope", "owner_id", "role", "scope"),
-        Index("memory_owner_task", "owner_id", "task_id"),
+        Index("memory_owner_updated", "owner_id", "updated_at"),
+        Index("ix_memories_lifecycle_state", "lifecycle_state"),
     )
 
 
-class MemoryAssociation(Record, Base):
-    __tablename__ = "memory_associations"
-    source_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"), index=True)
-    target_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"), index=True)
-    weight: Mapped[float] = mapped_column(default=0.2, index=True)
-    confidence: Mapped[float] = mapped_column(default=0.5)
-    coactivation_count: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    __table_args__ = (
-        UniqueConstraint("owner_id", "source_memory_id", "target_memory_id"),
-        Index("memory_assoc_source_weight", "owner_id", "source_memory_id", "weight"),
+# NOTE: migration 0022 dropped memory_associations / memory_features /
+# memory_conflicts / memory_evidences, and 0024 deliberately did *not* bring
+# any of them back: supersession and conflict live on the row itself
+# (``superseded_by_id`` / ``disputed_by_id``, spec §1/§3) and evidence and
+# features stay in the row's ``data``. Migration 0025 then restored *exactly
+# one* table — spec §4's ``memory_links`` (decision A = plan B: the flat UI
+# keeps its one-row-per-fact shape, associations get the single link table).
+# The other three stay deleted: re-creating four per-concept tables would be
+# a spec change, not an implementation detail.
+
+
+class MemoryLink(Base):
+    """One directed relation between two memories (spec §4).
+
+    The table is the *shadow* of §3 for the two transition kinds: a
+    ``supersedes`` link exists because the target row carries
+    ``superseded_by_id`` pointing at the source, and ``contradicts`` exists
+    because the target carries ``disputed_by_id`` (§4: "二重管理にしない").
+    ``memory.service.sync_links`` is the single writer that keeps the pair
+    equal, so neither side can move alone. The other §2 ``relation_kinds``
+    (``supports`` / ``derived_from`` / ``caused_by`` / ``relates_to``) have no
+    column and live only here.
+
+    ``ondelete="CASCADE"`` keeps §7.2's ``forget`` working: deleting a memory
+    drops its links in the same statement instead of blocking on the foreign
+    key.
+    """
+
+    __tablename__ = "memory_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source_memory_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("memories.id", ondelete="CASCADE"),
+        nullable=False,
     )
-
-
-class MemoryFeature(Record, Base):
-    __tablename__ = "memory_features"
-    memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id"), index=True)
-    kind: Mapped[str] = mapped_column(String(20))
-    value: Mapped[str] = mapped_column(String(160))
-    weight: Mapped[float] = mapped_column(default=1.0)
+    target_memory_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("memories.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.2, server_default="0.2")
+    coactivation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
     __table_args__ = (
-        UniqueConstraint("memory_id", "kind", "value"),
-        Index("memory_feature_lookup", "owner_id", "kind", "value"),
+        # Spec §4: (owner, source, target, kind) is unique — a duplicate upsert
+        # updates one row instead of adding a second edge.
+        UniqueConstraint(
+            "owner_id",
+            "source_memory_id",
+            "target_memory_id",
+            "kind",
+            name="uq_memory_links_owner_source_target_kind",
+        ),
+        Index("memory_link_owner_source", "owner_id", "source_memory_id"),
+        Index("memory_link_owner_target", "owner_id", "target_memory_id"),
     )
 
 
@@ -269,47 +339,6 @@ class MemoryActionEvent(Record, Base):
 
 class MemoryRevision(Record, Base):
     __tablename__ = "memory_revisions"
-
-
-class MemoryEvidence(Record, Base):
-    """First-class Evidence record.
-
-    Memory items keep a list of evidence ids; the actual evidence lives here so
-    the agent can cite or re-validate a memory without losing the original
-    tool output, user message, browser observation or code-change reference.
-    """
-
-    __tablename__ = "memory_evidences"
-    kind: Mapped[str] = mapped_column(String(20), index=True)
-    ref: Mapped[str] = mapped_column(String(500), default="")
-    summary: Mapped[str] = mapped_column(Text, default="")
-    memory_id: Mapped[str] = mapped_column(String(36), index=True)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
-    __table_args__ = (
-        Index("memory_evidence_owner_memory", "owner_id", "memory_id"),
-        Index("memory_evidence_owner_kind", "owner_id", "kind"),
-    )
-
-
-class MemoryConflict(Record, Base):
-    """A recorded disagreement between two Memory items.
-
-    Items do not silently overwrite each other: when a new item contradicts an
-    active one, both stay alive and a Conflict row ties them together until
-    the agent (or user) resolves the dispute.
-    """
-
-    __tablename__ = "memory_conflicts"
-    memory_a_id: Mapped[str] = mapped_column(String(36), index=True)
-    memory_b_id: Mapped[str] = mapped_column(String(36), index=True)
-    reason: Mapped[str] = mapped_column(Text, default="")
-    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
-    resolution: Mapped[str] = mapped_column(String(40), default="unresolved", index=True)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    __table_args__ = (
-        Index("memory_conflict_owner_resolved", "owner_id", "resolved", "created_at"),
-        UniqueConstraint("owner_id", "memory_a_id", "memory_b_id"),
-    )
 
 
 class Skill(Record, Base):
@@ -345,9 +374,15 @@ class Run(Record, Base):
             "one_active_run",
             "conversation_id",
             unique=True,
-            postgresql_where=status.in_([
-                "queued", "running", "waiting_approval", "paused", "budget_extension_pending",
-            ]),
+            postgresql_where=status.in_(
+                [
+                    "queued",
+                    "running",
+                    "waiting_approval",
+                    "paused",
+                    "budget_extension_pending",
+                ]
+            ),
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'waiting_approval', 'paused', "

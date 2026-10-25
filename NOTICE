@@ -12,5 +12,5 @@ redistributing them.
 Bundled icon assets (Docker edition) include glyphs from GitHub Octicons
 (https://github.com/primer/octicons), Copyright (c) 2018 GitHub Inc.,
 licensed under the MIT License. See
-docker/MIX-agent/apps/MIX-agent/OCTICONS-LICENSE and
-docker/MIX-agent/apps/web/public/OCTICONS-LICENSE for the full license text.
+apps/MIX-agent/OCTICONS-LICENSE and
+apps/web/public/OCTICONS-LICENSE for the full license text.

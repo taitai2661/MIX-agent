@@ -1,0 +1,24 @@
+{
+  "name": "mix-agent-monorepo",
+  "version": "0.5.0",
+  "private": true,
+  "description": "MIX-agent — Unified Monorepo for MIX-agent (Docker/Server/Web) and Desktop",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "web:dev": "pnpm --filter mix-agent-web dev",
+    "web:build": "pnpm --filter mix-agent-web build",
+    "web:test": "pnpm --filter mix-agent-web test",
+    "desktop:ui:dev": "pnpm --filter mix-agent-desktop-ui dev",
+    "desktop:ui:build": "pnpm --filter mix-agent-desktop-ui build",
+    "desktop:ui:test": "pnpm --filter mix-agent-desktop-ui test",
+    "desktop:dev": "pnpm --filter mix-agent-desktop-workspace tauri:dev",
+    "desktop:build": "pnpm --filter mix-agent-desktop-workspace tauri:build",
+    "desktop:build:dmg": "pnpm --filter mix-agent-desktop-workspace tauri:build:dmg",
+    "desktop:package": "pnpm --filter mix-agent-desktop-workspace tauri:build:dmg",
+    "licenses:generate": "node scripts/generate-third-party-licenses.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1"
+  }
+}

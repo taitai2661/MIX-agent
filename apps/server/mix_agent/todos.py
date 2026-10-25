@@ -79,10 +79,7 @@ def render_for_prompt(raw) -> str:
     if not items:
         return ""
     marks = {"completed": "x", "in_progress": "~", "pending": " "}
-    lines = [
-        "- [" + marks[item["status"]] + "] " + item["content"]
-        for item in items
-    ]
+    lines = ["- [" + marks[item["status"]] + "] " + item["content"] for item in items]
     return (
         "Todo list carried over from earlier in this conversation. Keep "
         "update_plan.steps aligned with these items, keep unfinished ones in "

@@ -785,6 +785,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations/{key}/messages/{message_id}/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Edit Message
+         * @description Replace a user turn and regenerate from it.
+         *
+         *     The edited turn and every turn after it are removed together with the new
+         *     Run, so the regenerated Run is built from the surviving prefix alone and a
+         *     failure while building it leaves the original conversation intact. Keeping
+         *     later replies would leave them answering wording the user never sent.
+         */
+        post: operations["edit_message_api_v1_conversations__key__messages__message_id__edit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/messages/{key}/feedback": {
         parameters: {
             query?: never;
@@ -1064,11 +1089,48 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Memories */
+        /**
+         * Memories
+         * @description Flat listing. ``state`` narrows it to one §2 ``lifecycle_state``.
+         *
+         *     A value outside §2 is a **422**, not an empty list: answering "nothing
+         *     matched" for a typo is the same failure mode as ignoring ``state``
+         *     outright, which is what this parameter used to do.
+         */
         get: operations["memories_api_v1_memories_get"];
         put?: never;
         /** Add Memory */
         post: operations["add_memory_api_v1_memories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memories/{key}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Memory Conflict
+         * @description Spec §3 ``resolve_conflict`` over HTTP: settle a dispute in place.
+         *
+         *     The UI reaches this from a row that §1 already reports as ``disputed``.
+         *     Everything the settlement does stays §3's: the adopted row goes back to
+         *     ``active``, the rejected one becomes ``superseded`` (``expired`` for
+         *     ``dismiss``) and points at the winner, both rows keep a revision first, and
+         *     §4's mirrors follow in the same transaction.
+         *
+         *     ``prefer`` is passed through untouched and **left alone when the client
+         *     does not send it**: §3's default — the memory ``disputed_by_id`` points at
+         *     is the one already stored, and it wins — is decided here, not in the form.
+         */
+        post: operations["resolve_memory_conflict_api_v1_memories__key__resolve_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1082,7 +1144,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Memory Associations */
+        /**
+         * Memory Associations
+         * @description Spec §4: the `memory_links` edges touching one memory (§9 #3).
+         *
+         *     Both directions, owner-scoped through the same `own()` guard every other
+         *     `/memories/{key}` route uses, so an edge can never be enumerated by
+         *     guessing another owner's ids. Returns the flat edge dicts (source,
+         *     target, kind, weight, coactivation_count) — §4 is the contract for the
+         *     shape, not the trace view.
+         */
         get: operations["memory_associations_api_v1_memories__key__associations_get"];
         put?: never;
         post?: never;
@@ -1103,6 +1174,29 @@ export interface paths {
         get: operations["debug_memory_search_api_v1_memories_debug_search_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memories-debug/reembed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Debug Reembed
+         * @description Backfill embeddings for rows written before this feature existed.
+         *
+         *     Kept behind the debug namespace: it spends provider quota, so it is an
+         *     operator action rather than something the UI should trigger implicitly.
+         */
+        post: operations["debug_reembed_api_v1_memories_debug_reembed_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2174,10 +2268,18 @@ export interface components {
              */
             confirm_volume: string;
         };
-        /** MemoryInput */
+        /**
+         * MemoryInput
+         * @description ChatGPT-style flat input: content only (+ compat extras ignored).
+         */
         MemoryInput: {
             /** Content */
             content: string;
+            /**
+             * Pinned
+             * @default false
+             */
+            pinned: boolean;
             /**
              * Scope
              * @default user
@@ -2185,14 +2287,16 @@ export interface components {
             scope: string;
             /** Gist */
             gist?: string | null;
-            /** Strength */
-            strength?: number | null;
-            /** Confidence */
-            confidence?: number | null;
-            /** Salience */
-            salience?: number | null;
-            /** Lifecycle State */
-            lifecycle_state?: ("candidate" | "active" | "superseded" | "expired" | "archived" | "disputed" | "latent" | "established" | "deleted") | null;
+            /** Role */
+            role?: string | null;
+            /** Source Kind */
+            source_kind?: string | null;
+            /** Role Metadata */
+            role_metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Verification */
+            verification?: string | null;
             /** Entities */
             entities?: string[] | null;
             /** Concepts */
@@ -2203,16 +2307,6 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
-            /** Role */
-            role?: ("fact" | "decision" | "preference" | "goal" | "constraint" | "experience" | "failure" | "solution" | "observation" | "hypothesis" | "question") | null;
-            /** Source Kind */
-            source_kind?: ("user" | "agent" | "tool" | "browser" | "external" | "consolidation") | null;
-            /** Role Metadata */
-            role_metadata?: {
-                [key: string]: unknown;
-            } | null;
-            /** Verification */
-            verification?: ("unverified" | "pending" | "verified" | "disputed" | "rejected") | null;
             /**
              * Importance
              * @default 2
@@ -2220,11 +2314,59 @@ export interface components {
             importance: number;
             /** Category */
             category?: string | null;
+            /** Strength */
+            strength?: number | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Salience */
+            salience?: number | null;
+            /** Lifecycle State */
+            lifecycle_state?: string | null;
+        };
+        /**
+         * MemoryResolveConflictInput
+         * @description Spec §3 ``resolve_conflict`` over HTTP, shaped like §7.2's writes.
+         *
+         *     ``resolution`` is the reason recorded on the RESOLVE event: everything but
+         *     the ``dismiss`` family leaves the rejected row ``superseded`` (§3),
+         *     ``dismiss`` leaves it ``expired``. ``"resolved"`` is the value §3's own
+         *     settlement uses when it has nothing more specific to say.
+         *
+         *     ``prefer`` names the row that wins and must be one of the two conflicting
+         *     memories. **Omitting it is §3's default** — the memory ``disputed_by_id``
+         *     points at (the one already stored) wins — and the UI must not pre-fill it
+         *     just because one side is showing: the default is a spec contract, not an
+         *     unset form field.
+         */
+        MemoryResolveConflictInput: {
             /**
-             * Pinned
-             * @default false
+             * Resolution
+             * @default resolved
+             * @enum {string}
              */
-            pinned: boolean;
+            resolution: "resolved" | "prefer_a" | "prefer_b" | "merge" | "dismiss";
+            /** Prefer */
+            prefer?: string | null;
+        };
+        /**
+         * MemoryResolveConflictView
+         * @description §7.2's response keys (``decision`` / ``id`` / ``reason``) + §3's outcome.
+         */
+        MemoryResolveConflictView: {
+            /**
+             * Decision
+             * @default resolved
+             * @constant
+             */
+            decision: "resolved";
+            /** Id */
+            id: string;
+            /** Loser Id */
+            loser_id: string;
+            /** Loser State */
+            loser_state: string;
+            /** Reason */
+            reason: string;
         };
         /** MessageDataView */
         MessageDataView: {
@@ -2631,6 +2773,10 @@ export interface components {
             } | null;
             /** Checkpoints */
             checkpoints?: components["schemas"]["RunCheckpointView"][];
+            /** Context Trace */
+            context_trace?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ScheduledJobInput */
         ScheduledJobInput: {
@@ -2813,6 +2959,11 @@ export interface components {
              * @default 8
              */
             memory_result_limit: number;
+            /**
+             * Memory Link Embedding Neighbors
+             * @default false
+             */
+            memory_link_embedding_neighbors: boolean;
         };
         /** SkillImportInput */
         SkillImportInput: {
@@ -4759,6 +4910,42 @@ export interface operations {
             };
         };
     };
+    edit_message_api_v1_conversations__key__messages__message_id__edit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendMessageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_message_feedback_api_v1_messages__key__feedback_put: {
         parameters: {
             query?: never;
@@ -5341,6 +5528,41 @@ export interface operations {
             };
         };
     };
+    resolve_memory_conflict_api_v1_memories__key__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryResolveConflictInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryResolveConflictView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     memory_associations_api_v1_memories__key__associations_get: {
         parameters: {
             query?: never;
@@ -5376,6 +5598,37 @@ export interface operations {
         parameters: {
             query: {
                 q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    debug_reembed_api_v1_memories_debug_reembed_post: {
+        parameters: {
+            query?: {
+                limit?: number;
             };
             header?: never;
             path?: never;

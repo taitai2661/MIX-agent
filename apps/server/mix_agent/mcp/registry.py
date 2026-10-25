@@ -57,13 +57,18 @@ def normalize(server_response: dict) -> dict:
         parsed = urlsplit(url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             continue
-        remotes.append({
-            "kind": "remote",
-            "transport": str(transport.get("type") or "streamable-http"),
-            "url": url,
-            "headers": [_input(value) for value in transport.get("headers") or []],
-            "variables": {key: _input({"name": key, **value}) for key, value in (transport.get("variables") or {}).items()},
-        })
+        remotes.append(
+            {
+                "kind": "remote",
+                "transport": str(transport.get("type") or "streamable-http"),
+                "url": url,
+                "headers": [_input(value) for value in transport.get("headers") or []],
+                "variables": {
+                    key: _input({"name": key, **value})
+                    for key, value in (transport.get("variables") or {}).items()
+                },
+            }
+        )
     packages = []
     unsupported = []
     for package in server.get("packages") or []:
@@ -74,7 +79,9 @@ def normalize(server_response: dict) -> dict:
         identifier = str(package.get("identifier") or "")
         package_version = _exact_version(package.get("version") or version)
         registry_base = str(package.get("registryBaseUrl") or "")
-        if kind in ALLOWED_REGISTRIES and registry_base.rstrip("/") not in {v.rstrip("/") for v in ALLOWED_REGISTRIES[kind]}:
+        if kind in ALLOWED_REGISTRIES and registry_base.rstrip("/") not in {
+            v.rstrip("/") for v in ALLOWED_REGISTRIES[kind]
+        }:
             continue
         if kind == "oci":
             host = identifier.split("/", 1)[0].lower()
@@ -87,16 +94,18 @@ def normalize(server_response: dict) -> dict:
         transport = package.get("transport") or {}
         if transport.get("type", "stdio") != "stdio":
             continue
-        packages.append({
-            "kind": kind,
-            "identifier": identifier,
-            "version": package_version,
-            "registry_base_url": registry_base,
-            "runtime_hint": str(package.get("runtimeHint") or ""),
-            "runtime_arguments": [_input(value) for value in package.get("runtimeArguments") or []],
-            "package_arguments": [_input(value) for value in package.get("packageArguments") or []],
-            "environment": [_input(value) for value in package.get("environmentVariables") or []],
-        })
+        packages.append(
+            {
+                "kind": kind,
+                "identifier": identifier,
+                "version": package_version,
+                "registry_base_url": registry_base,
+                "runtime_hint": str(package.get("runtimeHint") or ""),
+                "runtime_arguments": [_input(value) for value in package.get("runtimeArguments") or []],
+                "package_arguments": [_input(value) for value in package.get("packageArguments") or []],
+                "environment": [_input(value) for value in package.get("environmentVariables") or []],
+            }
+        )
     packages.sort(key=lambda item: PACKAGE_PRIORITY[item["kind"]])
     candidates = remotes + packages
     selected = remotes[0] if remotes else (packages[0] if packages else None)

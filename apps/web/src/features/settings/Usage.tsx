@@ -11,7 +11,9 @@ type UsageView = components["schemas"]["UsageView"];
 type UsageGroup = UsageView["groups"][number];
 
 const modeLabels: Record<string, string> = { chat: "Chat", thinking: "Thinking", agent: "Agent", tool: "Tool Calling" };
-const sourceLabels: Record<string, string> = { manual: "手動設定", model_info: "model-info", unknown: "不明" };
+const sourceLabels: Record<string, string> = {
+  manual: "手動設定", models_dev: "models.dev", model_info: "models.dev (旧)", unknown: "不明",
+};
 const sortLabels: Record<string, string> = { tokens: "トークン順", cost: "コスト順", requests: "リクエスト順" };
 
 function compact(value: number): string {

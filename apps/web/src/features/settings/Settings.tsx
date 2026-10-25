@@ -6,12 +6,13 @@ import {
   Database,
   Globe,
   Network,
+  Search,
   Server,
   Settings2,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 
 import { MCP } from "@/features/mcp/MCP";
@@ -39,7 +40,7 @@ const groups = [
       ["providers", "AI Providers", Server],
       ["models", "モデル", Sparkles],
       ["auto", "Auto", Sparkles],
-      ["memory", "Associative Memory", Brain],
+      ["memory", "Memory", Brain],
     ],
   },
   {
@@ -80,11 +81,29 @@ export function Settings({
   onLogout: () => void;
 }) {
   useLanguage();
+  const [query, setQuery] = useState("");
+  const filteredGroups = groups.map((group) => ({
+    ...group,
+    items: group.items.filter(([_, label]) =>
+      String(label).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+    ),
+  })).filter((group) => group.items.length > 0);
+
   return (
     <div className="settings-layout">
       <nav className="settings-nav">
         <div className="settings-nav-heading"><h2>{t("設定")}</h2><p>{t("ワークスペースを管理")}</p></div>
-        {groups.map((group) => (
+        <label className="settings-search" style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 10px", marginBottom: 12, border: "1px solid var(--line)", borderRadius: 8 }}>
+          <Search size={14} style={{ color: "var(--muted)" }} />
+          <input
+            type="search"
+            placeholder={t("設定を検索")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ flex: 1, padding: "8px 0", border: 0, background: "transparent", fontSize: 12, outline: "none" }}
+          />
+        </label>
+        {filteredGroups.map((group) => (
           <Fragment key={group.label ?? "home"}>
             {group.label && <p className="settings-nav-label">{t(group.label)}</p>}
             {group.items.map(([path, label, Icon]) => (
