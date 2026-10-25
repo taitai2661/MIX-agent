@@ -13,7 +13,7 @@
 確認した項目:
 
 - JSON / YAML、Python compileall、`uv lock --check`、`git diff --check`が成功。ZimaOS Composeは`v0.5.0`で2回再生成し、出力が一致。
-- [GitHub Validate run 40171835517](https://github.com/taitai2661/MIX-agent/actions/runs/40171835517)が成功。PostgreSQL service付きapp suiteは583 passed / 1 skipped。Docker release image build、legacy ZimaOS/CasaOS archive検証、Web frontendも成功。
+- [GitHub Validate run 40173309285](https://github.com/taitai2661/MIX-agent/actions/runs/40173309285)がcommit `f30255f`で成功。PostgreSQL service付きapp suiteは583 passed / 1 skipped / 1 warning。Docker release image build、legacy ZimaOS/CasaOS archive validation、Web frontendも成功。
 - Web版: `pnpm install --frozen-lockfile`、Vitest 21ファイル158テスト、production buildが成功。Buildは500 kBを超えるchunkの注意を出すが、正常終了。
 - Desktop UI: lint、TypeScript typecheck、Vitest 32ファイル250テスト、production buildが成功。
 - Desktop Rust/Linux: `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`が成功。Rust workspaceのテスト集計は595 passed / 0 failed。PTY terminalのsentinel/cwd marker raceを修正し、terminal focused tests 18件も成功。
