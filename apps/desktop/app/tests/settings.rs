@@ -18,7 +18,6 @@ fn full_settings() -> SettingsView {
         default_model_id: Some("prov:model-a".into()),
         default_mode: Some("agent".into()),
         egress_allowlist: vec!["https://api.example.com".into()],
-        auto_update: true,
         telemetry_consent: true,
         language: Some("ja".into()),
         theme: Some("dark".into()),
@@ -138,7 +137,6 @@ async fn the_second_save_replaces_every_field_and_stays_a_single_row() {
     assert_eq!(read.language, None);
     assert_eq!(read.theme, None);
     assert!(read.egress_allowlist.is_empty());
-    assert!(!read.auto_update);
     assert_eq!(read.onboarding_completed, None);
 }
 

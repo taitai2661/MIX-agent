@@ -11,7 +11,6 @@ pub mod push;
 pub mod run_events;
 pub mod scheduler;
 pub mod tray;
-pub mod updater;
 
 use mixd_core::runs::engine::{ProviderRegistry, RunEngine};
 use mixd_mcp::McpHost;
@@ -982,7 +981,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
             let app_handle = app.handle().clone();
@@ -1071,7 +1069,6 @@ pub fn run() {
             menu::install(&app_handle)?;
             tray::install(&app_handle)?;
             push::install(&app_handle);
-            updater::install(&app_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1176,9 +1173,6 @@ pub fn run() {
             commands::diagnostics::collect_diagnostics,
             commands::diagnostics::get_recent_logs,
             commands::diagnostics::export_diagnostics,
-            updater::is_updater_configured,
-            updater::check_for_updates,
-            updater::install_update,
         ])
         .run(tauri::generate_context!());
 

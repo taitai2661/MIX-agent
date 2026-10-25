@@ -3,8 +3,8 @@ name: desktop-release
 # Builds MIX-agent Desktop artifacts for the currently enabled release targets.
 #
 # Tag scheme: `desktop-v*` (e.g. desktop-v0.5.0) or `v*` (e.g. v0.5.0).
-# Tagging with `v*` triggers both Docker releases and Desktop DMG / installer builds,
-# uploading them as unified GitHub Release assets.
+# Tagging with `v*` triggers both Docker releases and Desktop macOS DMG builds,
+# uploading them as GitHub Release assets.
 #
 # v0.5.0 Desktop release scope: Apple Silicon and Intel macOS only.
 # Windows and Linux Desktop installers are deferred by release scope decision;
@@ -27,10 +27,9 @@ name: desktop-release
 # macOS v0.5.0 builds are intentionally not Apple-code-signed or notarized;
 # Gatekeeper may warn or block launch. Do not import Apple certificates or pass
 # Apple signing/notarization secrets to the build.
-# Auto-update uses a separate updater key and the embedded verification public
-# key. Releases still require TAURI_SIGNING_PRIVATE_KEY in Actions Secrets, and
-# the release job validates updater bundle signatures before publication.
-# See docs/desktop/architecture.md ("Automatic updates" section).
+# v0.5.0 uses manual DMG downloads only: the Tauri updater plugin and updater
+# artifacts are disabled. Releases contain the two macOS DMGs and SHA256SUMS;
+# no latest.json or updater signatures are generated.
 
 on:
   push:
@@ -43,7 +42,7 @@ on:
         description: "Tag to build (e.g. desktop-v0.5.0 or v0.5.0)"
         required: true
       dry_run:
-        description: "Build/sign/validate artifacts without creating or updating a GitHub Release"
+        description: "Build/validate artifacts without creating or updating a GitHub Release"
         required: false
         type: boolean
         default: true
@@ -72,11 +71,13 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+            asset_arch: Apple-Silicon
             bundles: app,dmg
             cft: mac-arm64
             cft_key: MAC_ARM64
           - os: macos-latest
             target: x86_64-apple-darwin
+            asset_arch: Intel
             bundles: app,dmg
             cft: mac-x64
             cft_key: MAC_X64
@@ -203,48 +204,39 @@ jobs:
           CFT_KEY: ${{ matrix.cft_key }}
           MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
 
-      - name: Require updater signing key
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not configured in GitHub Actions Secrets."
-            exit 1
-          fi
       # macOS app code signing/notarization are intentionally disabled for v0.5.0.
-      # No Apple certificate, signing identity, or Apple account secrets are
-      # passed; Tauri builds an unsigned app and the updater artifacts remain
-      # independently signed by TAURI_SIGNING_PRIVATE_KEY.
+      # No Apple certificate, signing identity, Apple account, or updater key
+      # secrets are passed; users install updates manually from the Release.
       - name: Build and bundle
         working-directory: apps/desktop
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
-            echo "::warning::Apple app signing/notarization are disabled for this release; Gatekeeper may warn or block launch."
+            echo "::warning::Apple app signing/notarization and automatic updates are disabled for this release; Gatekeeper may warn or block launch."
           fi
           pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           MIX_REQUIRE_CHROMIUM: "1"
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Stage manual-download DMG
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' dmgs < <(find "target/${{ matrix.target }}/release/bundle" -type f -name '*.dmg' -print0 | sort -z)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::Expected one DMG for ${{ matrix.asset_arch }}, found ${#dmgs[@]}."
+            exit 1
+          fi
+          mkdir -p release-assets
+          cp "${dmgs[0]}" "release-assets/MIX-agent-Desktop-${{ matrix.asset_arch }}.dmg"
 
       - name: Collect artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mix-agent-desktop-${{ matrix.target }}
-          path: |
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.dmg
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.msi
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.exe
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.deb
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.AppImage
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz.sig
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip.sig
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/latest.json
-          if-no-files-found: warn
+          path: apps/desktop/release-assets/*.dmg
+          if-no-files-found: error
           retention-days: 14
 
   checksums:
@@ -255,48 +247,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Merge manifests and verify updater signatures
+      - name: Build a checksum manifest for macOS DMGs
         shell: bash
-        env:
-          UPDATER_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
-            --repo "$GITHUB_REPOSITORY" --tag "$UPDATER_TAG"
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          const manifest = JSON.parse(readFileSync("artifacts/latest.json", "utf8"));
-          const platforms = Object.entries(manifest.platforms ?? {});
-          if (!manifest.version || platforms.length === 0) {
-            throw new Error("Updater manifest has no version or platform entries");
-          }
-          for (const [platform, artifact] of platforms) {
-            if (!artifact.signature || !artifact.url) {
-              throw new Error(`Updater entry is missing signature or URL: ${platform}`);
-            }
-          }
-          console.log(`Validated signed updater entries: ${platforms.map(([name]) => name).join(", ")}`);
-          NODE
-
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minisign
-          public_key="$(jq -er '.plugins.updater.pubkey | select(type == "string" and length > 0)' apps/desktop/app/tauri.conf.json)"
-          signature_count=0
-          while IFS= read -r -d '' signature_file; do
-            artifact_file="${signature_file%.sig}"
-            test -s "$artifact_file"
-            minisign -V -m "$artifact_file" -x "$signature_file" -P "$public_key" >/dev/null
-            signature_count=$((signature_count + 1))
-          done < <(find artifacts -type f -name '*.sig' -print0)
-          test "$signature_count" -gt 0
-          echo "Cryptographically verified updater bundle signatures: $signature_count"
-      - name: Build a checksum manifest
-        run: |
-          cd artifacts
-          find . -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
-            -o -name '*.deb' -o -name '*.AppImage' \) \
-            -print0 | sort -z | xargs -0 -I{} sh -c 'sha256sum "$1" >> SHA256SUMS' _ {}
-          cat SHA256SUMS
+          mapfile -d '' dmgs < <(find artifacts -type f -name '*.dmg' -print0 | sort -z)
+          if [ "${#dmgs[@]}" -ne 2 ]; then
+            echo "::error::Expected exactly two macOS DMGs (Apple Silicon and Intel), found ${#dmgs[@]}."
+            exit 1
+          fi
+          : > artifacts/SHA256SUMS
+          for dmg in "${dmgs[@]}"; do
+            (cd "$(dirname "$dmg")" && sha256sum "$(basename "$dmg")") >> artifacts/SHA256SUMS
+          done
+          cat artifacts/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: mix-agent-desktop-checksums
@@ -305,8 +269,8 @@ jobs:
 
   release:
     needs: [bundle, checksums]
-    # Tag pushes publish. Manual runs are signing preflights by default; set
-    # dry_run=false explicitly to create/update a GitHub Release.
+    # Tag pushes publish. Manual runs are packaging dry-runs by default; set
+    # dry_run=false explicitly to create/update a manual-download GitHub Release.
     if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     runs-on: ubuntu-latest
     permissions:
@@ -318,42 +282,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Merge multi-platform updater manifests
-        run: |
-          node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
-            --repo ${{ github.repository }} \
-            --tag ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      - name: Validate signed updater manifest
-        shell: bash
-        run: |
-          test -s artifacts/latest.json
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          const manifest = JSON.parse(readFileSync("artifacts/latest.json", "utf8"));
-          const platforms = Object.entries(manifest.platforms ?? {});
-          if (!manifest.version || platforms.length === 0) {
-            throw new Error("Updater manifest has no version or platform entries");
-          }
-          for (const [platform, artifact] of platforms) {
-            if (!artifact.signature || !artifact.url) {
-              throw new Error(`Updater entry is missing signature or URL: ${platform}`);
-            }
-          }
-          console.log(`Validated signed updater entries: ${platforms.map(([name]) => name).join(", ")}`);
-          NODE
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           files: |
             artifacts/**/*.dmg
-            artifacts/**/*.msi
-            artifacts/**/*.exe
-            artifacts/**/*.deb
-            artifacts/**/*.AppImage
-            artifacts/**/*.tar.gz
-            artifacts/**/*.tar.gz.sig
-            artifacts/**/*.zip
-            artifacts/**/*.zip.sig
-            artifacts/latest.json
             artifacts/**/SHA256SUMS
           fail_on_unmatched_files: false

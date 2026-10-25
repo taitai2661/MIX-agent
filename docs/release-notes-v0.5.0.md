@@ -2,7 +2,7 @@
 
 > **Desktop版を追加し、Docker／Web版と同じリポジトリ・GitHub Releaseから配布できるようにしたメジャーアップデートです。**
 
-v0.5.0は、v0.3.5のセルフホスト版を土台に、ネイティブDesktop版、統合配布ワークフロー、モデル情報・Memory・Agent実行基盤の更新をまとめたリリースです。Docker版（FastAPI + PostgreSQL）とDesktop版（Tauri 2 + Rust + SQLite）は、同一リポジトリで管理し、今回のリリースではアプリ内版・Updater版・GitHub Releaseタグを`0.5.0`に統一しています。
+v0.5.0は、v0.3.5のセルフホスト版を土台に、ネイティブDesktop版、統合配布ワークフロー、モデル情報・Memory・Agent実行基盤の更新をまとめたリリースです。Docker版（FastAPI + PostgreSQL）とDesktop版（Tauri 2 + Rust + SQLite）は、同一リポジトリで管理し、DesktopアプリのバージョンとGitHub Releaseタグを`0.5.0`に統一しています。
 
 ## 主なハイライト
 
@@ -22,10 +22,10 @@ Desktop版は単一ユーザーのローカル利用を想定したアプリで�
 - OpenAI / Anthropic / GeminiなどのProviderとモデル選択、Capability Probe、Autoルーティング
 - Tool Registryと権限ゲート、Browser Operator、Remote MCP、Skills、Knowledge、Memory
 - Agentの実行予算・進捗表示、チェックポイントからの再開、停滞検知
-- OSメニューからNew Chat／Settings／Backup／Diagnostics／Update確認を操作でき、OSトレイ・通知・`mix-agent-desktop://` deep link・バックアップ・Keychain連携にも対応
+- OSメニューからNew Chat／Settings／Backup／Diagnosticsを操作でき、OSトレイ・通知・`mix-agent-desktop://` deep link・バックアップ・Keychain連携にも対応
 - UIの差分表示、スラッシュコマンド、`@`メンション、Tool実行のインライン表示
 
-**自動更新について:** DesktopアプリはGitHub Releasesの`latest.json`を参照する設定です。自動更新用のアーカイブはUpdater専用鍵で署名し、アプリ内の公開鍵で検証します。この署名はAppleのアプリ署名とは別です。
+**更新について:** v0.5.0では自動更新、アプリ内の更新確認、Updater署名アーティファクトの生成を無効にしています。新しい版はGitHub Releasesから対応するmacOS用DMGを手動でダウンロードしてインストールしてください。公開するDMGには`SHA256SUMS`を添付します。
 
 ## Docker / Web版、Memory、Agentの変更
 
@@ -58,7 +58,7 @@ v2 Community Storeおよび旧クライアント向けアーカイブを従来�
 ## 既知の制約
 
 - サーバー版は単一管理者が信頼できるLAN/VPN内で利用する初期開発版です。インターネットへ直接公開しないでください。
-- Desktop版は初期リリースです。v0.5.0のmacOSアプリ本体はApple Developer IDで署名せず、公証もしません。Gatekeeperが警告を表示したり、起動を制限したりする場合があります。Updater用アーカイブの署名は別途行い、アプリに埋め込まれたUpdater公開鍵で検証します。
+- Desktop版は初期リリースです。v0.5.0では自動更新を提供せず、更新はGitHub Releasesから手動で行ってください。macOSアプリ本体はApple Developer IDで署名せず、公証もしません。Gatekeeperが警告を表示したり、起動を制限したりする場合があります。配布元と`SHA256SUMS`を確認し、警告の意味を理解したうえで利用してください。
 - v0.5.0で配布するDesktop版はApple Silicon / Intel macOSのみです。WindowsおよびLinux向けDesktop版は見送り、macOS universal binary、Windows ARM64、Linux ARM64も対象外です。
 - Provider、MCP Server、Runner、Dockerイメージの実環境受入確認は利用環境に依存します。自動テスト・ビルド成功だけで実運用の安全性を保証するものではありません。
 - Knowledgeはテキストのチャンク検索を中心とし、外部資料の自動同期や実環境での検索品質評価は今後の課題です。

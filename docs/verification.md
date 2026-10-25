@@ -6,7 +6,16 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [追記] v0.5.0 Desktopを手動DMG配布へ変更（2026-10-25）
+
+- ユーザーは「自動更新を無効化し、DMGの手動配布に切り替える」方針を選択しました。v0.5.0ではアプリ起動時・アプリ内の更新確認と自動適用を行わず、GitHub ReleasesからmacOS DMGを取得する手順にします。
+- Tauri updater plugin、Updater用Rust/TypeScript runtime・IPC・メニュー操作、Updater key/public key/endpoint設定、Updater署名付きartifact生成を削除・無効化。Release workflowはApple SiliconとIntelのDMG2件をアーキテクチャ名付きで添付し、`SHA256SUMS`を生成します。Apple Developer ID署名・公証はユーザー指示により行わず、Gatekeeper warningをRelease notes/UIへ明記します。
+- Update settings画面は手動配布案内とGitHub Releasesへのリンクに置き換え、既存のtelemetry consent toggleは保持します。Docker/Web/ZimaOS配布とMemory・Agent等の変更は引き続きv0.5.0対象です。Windows/Linux Desktop installerは今回見送ります。
+- ローカルDesktop検証: `cargo check --workspace --all-targets`、`pnpm lint`、`pnpm test`、`pnpm ui:build`がsuccess。UIはNode 22.19.0環境で32 test files / 250 tests success。初回のNode 22.13.0実行は依存`undici@8.12.3`のNode `>=22.19.0`要件未満で失敗したため、互換Nodeで再実行し成功を確認しました。Rust workspace test targetsも全件success。
+- Updater signing keyはこのリリース方式では不要です。GitHub Actions Secretsの確認・取得・変更・再生成は行わず、秘密値を表示または外部送信していません。
+- この変更を含むGitHub CI、PostgreSQL/Docker/Web Validate、macOS-only unsigned DMG dry-runはpush後に実施します。最新mainに対するこれらの完了前にtag作成・公開は行いません。現在の`v0.5.0` tag、GitHub Release、配布assetsは未作成です。
 
 ## [追記] v0.5.0 Desktop公開対象の変更と署名preflight（2026-10-25）
 

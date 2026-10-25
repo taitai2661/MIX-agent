@@ -17,7 +17,6 @@ pub struct SettingsView {
     pub default_model_id: Option<String>,
     pub default_mode: Option<String>,
     pub egress_allowlist: Vec<String>,
-    pub auto_update: bool,
     pub telemetry_consent: bool,
     /// UI language override: `"ja" | "en"`; `None` follows the browser.
     pub language: Option<String>,
@@ -84,7 +83,6 @@ impl Default for SettingsView {
             default_model_id: None,
             default_mode: None,
             egress_allowlist: Vec::new(),
-            auto_update: false,
             telemetry_consent: false,
             language: None,
             theme: None,

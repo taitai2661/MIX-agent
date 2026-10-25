@@ -13,7 +13,6 @@ import {
   PanelLeft,
   PanelRight,
   Search,
-  Sparkles,
 } from "lucide-react";
 import { api } from "./lib/api";
 import { useUi, type View } from "./lib/ui";
@@ -64,7 +63,6 @@ import {
   useAppShortcuts,
   useCreateThread,
   useShellEvents,
-  useUpdateNotice,
 } from "./features/shell/useShellEvents";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/layout";
@@ -193,14 +191,6 @@ export function App() {
   }, [settings.data]);
 
   const createThread = useCreateThread();
-  const {
-    update,
-    isInstalling,
-    downloadProgress,
-    error: installError,
-    install: installUpdate,
-    dismiss,
-  } = useUpdateNotice();
   // The sidebar and the file tree are fixed-width `shrink-0` panes; the right
   // panel is an overlay drawer, so opening it never takes width from the
   // centre column. `panelCap` only clamps the inline panes on narrow windows.
@@ -377,80 +367,6 @@ export function App() {
           }
           className="flex min-w-0 flex-1 flex-col bg-bg outline-none"
         >
-          {update && (
-            <div
-              className="flex shrink-0 flex-col border-b border-brand/20 bg-brand-soft px-4 py-2 text-xs text-fg"
-              role="status"
-            >
-              <div className="flex items-center gap-3">
-                <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand/15 text-brand">
-                  <Sparkles size={14} aria-hidden="true" />
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {t("アップデートがあります")}: {update.current_version} →{" "}
-                  <strong className="font-semibold">{update.version}</strong>
-                </span>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={isInstalling}
-                  onClick={() => {
-                    void installUpdate().catch(() => {});
-                  }}
-                >
-                  {isInstalling ? (
-                    <span className="flex items-center gap-1.5">
-                      <Spinner size={12} />
-                      {downloadProgress?.percent != null
-                        ? `${Math.round(downloadProgress.percent)}%`
-                        : t("ダウンロード中...")}
-                    </span>
-                  ) : (
-                    t("インストールして再起動")
-                  )}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={isInstalling}
-                  onClick={() => {
-                    dismiss();
-                  }}
-                >
-                  {t("閉じる")}
-                </Button>
-              </div>
-              {isInstalling && downloadProgress && (
-                <div className="mt-2 flex items-center gap-3">
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
-                    <div
-                      className="h-full bg-brand transition-all duration-150"
-                      style={{
-                        width: `${downloadProgress.percent ?? 0}%`,
-                      }}
-                    />
-                  </div>
-                  {downloadProgress.total_bytes && (
-                    <span className="text-[10px] text-muted font-mono">
-                      {(
-                        downloadProgress.downloaded_bytes /
-                        1024 /
-                        1024
-                      ).toFixed(1)}{" "}
-                      /{" "}
-                      {(downloadProgress.total_bytes / 1024 / 1024).toFixed(1)}{" "}
-                      MB
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {installError && (
-            <div className="shrink-0 border-b border-line px-3 py-2">
-              <ErrorBox error={installError} />
-            </div>
-          )}
           {/* The menu / shortcut path goes through `createThread` directly, so
               a failure there never reached the sidebar's own error surface. */}
           {createThread.isError && (

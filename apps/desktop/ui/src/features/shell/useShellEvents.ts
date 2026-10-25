@@ -8,7 +8,6 @@ import {
   PENDING_APPROVALS_QUERY_KEY,
 } from "@/lib/queries";
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
-import { useUpdater } from "@/lib/updater";
 
 /** Create a thread from whatever mode / model / project is selected *now*.
  *
@@ -44,26 +43,6 @@ export function useCreateThread() {
       setView("chat");
     },
   });
-}
-
-/** The update banner's state, plus the two ways it gets set. */
-export function useUpdateNotice() {
-  const store = useUpdater();
-
-  useEffect(() => {
-    return store.init();
-  }, [store]);
-
-  return {
-    update: store.update,
-    isChecking: store.isChecking,
-    isInstalling: store.isInstalling,
-    downloadProgress: store.downloadProgress,
-    error: store.error,
-    check: store.check,
-    install: store.install,
-    dismiss: store.dismiss,
-  };
 }
 
 /** Tauri menu events, the run-event bridge and cache invalidations.

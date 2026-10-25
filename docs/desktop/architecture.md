@@ -165,42 +165,18 @@ MIX_SKIP_CHROMIUM=1 cargo check              # 取得をスキップ
 MIX_CHROMIUM_VERSION=154.0.8037.57 node scripts/fetch-chromium.mjs  # 固定
 ```
 
-`pnpm tauri build` の `beforeBuildCommand` が UI ビルド後に自動で取得します。
-macOS 配布時は同梱の `Chromium.app` も署名対象になります。signing / notarization /
-staple の各手順は `desktop-release.yml` に実装済みです（署名証明書のインポート →
-ビルド時署名 → notarization + staple）。いずれも secrets（`APPLE_CERTIFICATE` /
-`APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` /
-`APPLE_TEAM_ID`）が無い場合はスキップされ、無署名ビルドとして警告付きで継続します。
-配布に署名・公証が必要な場合は、これらの secrets を用意してください。
+`pnpm tauri build` の `beforeBuildCommand` が UI ビルド後に Chromium を自動取得します。
+**v0.5.0のmacOSアプリはApple Developer IDコード署名・公証を行いません。**
+ビルドにApple証明書・AppleアカウントSecretsを渡さず、Gatekeeperの警告や起動制限の可能性をRelease notesに明記します。
 
-## 自動更新
+## 更新方法（v0.5.0）
 
-`app/src/updater.rs` が起動 20 秒後に更新を確認し、新しい版があれば
-`update_available` を emit します。UI はそれを受け取って上部バナーおよび「設定 ▸ アップデート」画面に表示し、
-「インストールして再起動」でダウンロード（進捗プログレスバー表示）→ インストール → 再起動を行います。
-起動時の自動確認は設定の `auto_update`（有効/無効）に従います。
-また、「設定 ▸ アップデート」タブおよび `Help ▸ Check for Updates` からの手動確認・リリースノート確認も可能です。
+v0.5.0ではTauri updater plugin、起動時・アプリ内の更新確認、自動更新、Updater署名アーティファクトを無効にしています。
+アプリにはUpdater公開鍵や`latest.json`エンドポイントを設定せず、リリースワークフローも`latest.json`や`.sig`を生成しません。
+「設定 ▸ アップデート」からGitHub Releasesを開き、利用者が対応するApple Silicon／Intel用DMGを手動でダウンロードしてインストールしてください。
+リリースにはDMGの`SHA256SUMS`を添付します。アプリ本体は署名・公証なしのため、インストール前に配布元とチェックサムを確認し、Gatekeeper警告を理解したうえで利用してください。
 
-**配信エンドポイント:**
-GitHub Releases の `https://github.com/taitai2661/MIX-agent/releases/latest/download/latest.json` を使用します。
-CI（`.github/workflows/desktop-release.yml`）内で、各プラットフォームビルド後に `scripts/merge-updater-manifests.mjs` が自動実行され、マルチプラットフォーム（macOS arm64/x64, Windows, Linux）対応の単一 `latest.json` が生成・発行されます。
-
-署名鍵の準備・有効化手順:
-
-```bash
-# 1) 署名鍵を生成する（機密: リポジトリにコミットしないこと）
-pnpm --filter mix-agent-desktop-workspace tauri signer generate -w ~/.tauri/mix-agent.key \
-  -p "MIX-agent Desktop" --force
-
-# 2) 生成された公開鍵（~/.tauri/mix-agent.key.pub）の文字列を
-#    app/tauri.conf.json の plugins.updater.pubkey に登録
-
-# 3) 生成された秘密鍵の内容およびパスワードを GitHub リポジトリの Secrets に設定:
-#    - TAURI_SIGNING_PRIVATE_KEY
-#    - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-```
-
-ローカル環境等で `pubkey` が未設定またはエンドポイントへの疎通ができない場合でも、アプリ起動が失敗しないよう安全にフォールバックされます。
+将来、自動更新を再導入する場合はTauri updater plugin、署名鍵と埋め込み公開鍵、`latest.json`生成・検証を明示的に復元し、対応する鍵ペアおよび各OSでの実機更新を検証してください。v0.5.0の配布にUpdater署名鍵は不要です。
 
 ## Backup / Restore
 
@@ -241,15 +217,10 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 | 3 | Agent 自律性 + context 圧縮 / retrieval | ✅ |
 | 4 | MCP host + Browser Operator | ✅ |
 | 5 | Memory / Knowledge / Skills / Projects / Schedules / Agents | ✅ |
-| 6 | tray / menu / notification / auto-update / backup / release CI | ✅ |
+| 6 | tray / menu / notification / backup / manual DMG release CI（auto-updateはv0.5.0で無効） | ✅ |
 | 7 | macOS 完成 + Windows α + Linux α | ⏳ |
 
-Phase 6 にはDesktop updaterと配布CIの基盤が含まれています。`tauri.conf.json` は
-GitHub Releasesの`latest.json`を参照し、公開鍵で署名を検証する設定です。
-`desktop-release.yml` は `TAURI_SIGNING_PRIVATE_KEY` をActions Secretから読み込み、
-署名済みアーティファクトとマニフェストをReleaseへ添付します。Release前にSecretの
-設定・鍵ペアの一致・全対象OSの署名・実機での更新確認が必要です。Apple署名・公証は
-別のApple用Secretsが設定されている場合に行います。
+Phase 6 の従来のUpdater基盤はv0.5.0では配布対象から外しました。`desktop-release.yml` はApple Silicon／Intel macOSの未署名DMGと`SHA256SUMS`だけをReleaseへ添付し、Updater鍵・`latest.json`・`.sig`を使いません。
 Phase 7（macOS 完成 + Windows α + Linux α）が未着手です。
 
 ## 空チャットの挨拶（2026-10-01 追記）
@@ -373,8 +344,7 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 
 ## 既知の残タスク
 
-- auto-update の署名鍵・公開鍵の一致、Release上の全OS向け`latest.json`と署名の検証、
-  各OS実機での更新適用確認（設定とCI基盤は実装済み）。
+- v0.5.0ではアプリ内自動更新を無効化し、DMGの手動配布のみとする。自動更新は将来再導入する場合に別途設計・検証する。
 - Knowledge は lexical 検索のみ。embedding 検索は未実装（上記参照）。
 - Memory の自動生成（Run 後の抽出）は未実装。手動 CRUD + revision + `memory` ツールのみ。
 - シグナル / PTY ベースの対話 terminal（現在は上限付きの実行のみ）。
