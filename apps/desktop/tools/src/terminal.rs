@@ -112,9 +112,7 @@ fn detect_shell_inner(mix_shell_override: Option<&str>) -> ShellLaunchConfig {
         if let Some(bash) = find_windows_bash() {
             return ShellLaunchConfig {
                 program: bash,
-                // Keep Git Bash's login environment, but do not enable prompt
-                // echo under ConPTY; framed commands are fed over stdin.
-                args: vec!["--login".into()],
+                args: vec!["--login".into(), "-i".into()],
                 is_posix: true,
             };
         }
@@ -471,6 +469,18 @@ impl ShellSession {
         };
         if !done {
             // Drain whatever arrived so a timeout does not corrupt the next call.
+            #[cfg(test)]
+            {
+                let transcript = self.output.lock().await;
+                let tail = transcript.len().saturating_sub(8 * 1024);
+                eprintln!(
+                    "[PTY timeout debug] shell={:?} args={:?} command={:?} transcript={:?}",
+                    self.config.program,
+                    self.config.args,
+                    command,
+                    String::from_utf8_lossy(&transcript[tail..])
+                );
+            }
             self.output.lock().await.clear();
             return Err(format!("timed out after {max_ms} ms"));
         }
