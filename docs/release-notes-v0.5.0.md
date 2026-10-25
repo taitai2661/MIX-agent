@@ -25,7 +25,7 @@ Desktop版は単一ユーザーのローカル利用を想定したアプリで�
 - OSメニューからNew Chat／Settings／Backup／Diagnostics／Update確認を操作でき、OSトレイ・通知・`mix-agent-desktop://` deep link・バックアップ・Keychain連携にも対応
 - UIの差分表示、スラッシュコマンド、`@`メンション、Tool実行のインライン表示
 
-**自動更新について:** DesktopアプリはGitHub Releasesの`latest.json`を参照する設定です。更新用成果物は署名が必要です。GitHub ActionsでApple Silicon／Intel macOS向けの署名済みマニフェスト・アセットを生成し、公開後にmacOS実機で更新確認ができることをリリース時に確認してください。
+**自動更新について:** DesktopアプリはGitHub Releasesの`latest.json`を参照する設定です。自動更新用のアーカイブはUpdater専用鍵で署名し、アプリ内の公開鍵で検証します。この署名はAppleのアプリ署名とは別です。
 
 ## Docker / Web版、Memory、Agentの変更
 
@@ -41,7 +41,7 @@ Desktop版は単一ユーザーのローカル利用を想定したアプリで�
 
 ### Desktop版
 
-[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases)からApple SiliconまたはIntel Macに合う`.dmg`を取得してください。配布物と`SHA256SUMS`のチェックサムを確認してからインストールしてください。WindowsおよびLinux向けDesktop版はv0.5.0では配布しません。
+[GitHub Releases](https://github.com/taitai2661/MIX-agent/releases)からApple SiliconまたはIntel Macに合う`.dmg`を取得してください。配布物と`SHA256SUMS`のチェックサムを確認してください。v0.5.0のmacOSアプリはApple Developer IDでコード署名せず、公証もしません。初回起動時にmacOS Gatekeeperの警告や起動制限が表示される場合があります。配布元とチェックサムを確認し、警告の意味を理解したうえで利用者自身の判断で起動してください。WindowsおよびLinux向けDesktop版はv0.5.0では配布しません。
 
 ### Docker版
 
@@ -58,7 +58,7 @@ v2 Community Storeおよび旧クライアント向けアーカイブを従来�
 ## 既知の制約
 
 - サーバー版は単一管理者が信頼できるLAN/VPN内で利用する初期開発版です。インターネットへ直接公開しないでください。
-- Desktop版は初期リリースです。macOS用バイナリの署名・公証はApple用Secretsの設定状況に依存します。未署名の場合、Gatekeeperの警告が出ることがあります。
+- Desktop版は初期リリースです。v0.5.0のmacOSアプリ本体はApple Developer IDで署名せず、公証もしません。Gatekeeperが警告を表示したり、起動を制限したりする場合があります。Updater用アーカイブの署名は別途行い、アプリに埋め込まれたUpdater公開鍵で検証します。
 - v0.5.0で配布するDesktop版はApple Silicon / Intel macOSのみです。WindowsおよびLinux向けDesktop版は見送り、macOS universal binary、Windows ARM64、Linux ARM64も対象外です。
 - Provider、MCP Server、Runner、Dockerイメージの実環境受入確認は利用環境に依存します。自動テスト・ビルド成功だけで実運用の安全性を保証するものではありません。
 - Knowledgeはテキストのチャンク検索を中心とし、外部資料の自動同期や実環境での検索品質評価は今後の課題です。

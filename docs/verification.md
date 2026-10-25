@@ -10,6 +10,7 @@
 
 ## [追記] v0.5.0 Desktop公開対象の変更と署名preflight（2026-10-25）
 
+- ユーザー指示によりv0.5.0 macOSアプリ本体はApple Developer IDコード署名・公証なしで配布します。Gatekeeperの警告や起動制限が出る可能性をRelease notesに記載します。Updater用アーカイブの署名は別機構のため維持します。
 - ユーザーの公開範囲変更により、v0.5.0で配布するDesktopインストーラーをApple Silicon／Intel macOSに限定し、Windows/Linux版は見送ります。`.github/workflows/desktop-release.yml`、Release notes、公開checklistをこの範囲へ合わせました。Docker/Web版とZimaOS配布は従来どおり対象です。
 - Windowsを含むクロスプラットフォームCI [run 40185098158](https://github.com/taitai2661/MIX-agent/actions/runs/40185098158) は、PTY integration testを直列化したcommit `dd59c77`でsuccess。PostgreSQL・Docker/Webを含む[Validate run 40185131436](https://github.com/taitai2661/MIX-agent/actions/runs/40185131436)もsuccess。
 - macOS署名dry-run [run 40185138619](https://github.com/taitai2661/MIX-agent/actions/runs/40185138619)では、Apple Silicon／Intelの両jobを含めて`Build and bundle`がfailureとなり、`checksums`と`release`はskip。macOSの失敗ログには`security import`がkeychain certificateのimportに失敗した旨がありました。Apple証明書のSecret値は参照・表示・変更していません。

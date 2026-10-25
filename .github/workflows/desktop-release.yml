@@ -1,6 +1,6 @@
 name: desktop-release
 
-# Builds installable MIX-agent Desktop artifacts for all three platforms.
+# Builds MIX-agent Desktop artifacts for the currently enabled release targets.
 #
 # Tag scheme: `desktop-v*` (e.g. desktop-v0.5.0) or `v*` (e.g. v0.5.0).
 # Tagging with `v*` triggers both Docker releases and Desktop DMG / installer builds,
@@ -24,10 +24,12 @@ name: desktop-release
 # and variables; when a target has none, the version assertion below is the
 # only gate.
 #
-# Auto-update: the Tauri config enables signed updates using the embedded
-# verification public key and the GitHub latest.json endpoint. Releases require
-# TAURI_SIGNING_PRIVATE_KEY in Actions Secrets. The release job validates that
-# signed updater manifests were produced before uploading the release assets.
+# macOS v0.5.0 builds are intentionally not Apple-code-signed or notarized;
+# Gatekeeper may warn or block launch. Do not import Apple certificates or pass
+# Apple signing/notarization secrets to the build.
+# Auto-update uses a separate updater key and the embedded verification public
+# key. Releases still require TAURI_SIGNING_PRIVATE_KEY in Actions Secrets, and
+# the release job validates updater bundle signatures before publication.
 # See docs/desktop/architecture.md ("Automatic updates" section).
 
 on:
@@ -210,84 +212,22 @@ jobs:
             echo "::error::TAURI_SIGNING_PRIVATE_KEY is not configured in GitHub Actions Secrets."
             exit 1
           fi
-      # macOS signing certificate must be in the keychain BEFORE `tauri build`
-      # so signing happens during bundling (post-hoc codesign invalidates it).
-      # Runs only on macOS; without a certificate the step warns and exits, and
-      # the build below remains clearly unsigned.
-      - name: Import macOS signing certificate
-        if: runner.os == 'macOS'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ github.repository }}
-        run: |
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "::warning::No APPLE_CERTIFICATE — producing an unsigned macOS build."
-            exit 0
-          fi
-          echo "::add-mask::$KEYCHAIN_PASSWORD"
-          trap 'security delete-keychain build.keychain 2>/dev/null; rm -f /tmp/cert.p12' EXIT
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import /tmp/cert.p12 -k build.keychain \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm -f /tmp/cert.p12
-
-      # Signing happens DURING `tauri build` via the Apple env below, not as a      # post-hoc codesign of the bundled .app (post-hoc signing invalidates the
-      # bundle). Without APPLE_SIGNING_IDENTITY the build still succeeds but is
-      # clearly labeled unsigned (see the guard echo).
+      # macOS app code signing/notarization are intentionally disabled for v0.5.0.
+      # No Apple certificate, signing identity, or Apple account secrets are
+      # passed; Tauri builds an unsigned app and the updater artifacts remain
+      # independently signed by TAURI_SIGNING_PRIVATE_KEY.
       - name: Build and bundle
         working-directory: apps/desktop
         shell: bash
         run: |
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && [ "${{ runner.os }}" = "macOS" ]; then
-            echo "::warning::No APPLE_SIGNING_IDENTITY — producing an UNSIGNED macOS build."
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            echo "::warning::Apple app signing/notarization are disabled for this release; Gatekeeper may warn or block launch."
           fi
           pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           MIX_REQUIRE_CHROMIUM: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
-      # Notarization runs after the (already signed) bundle exists. The nested
-      # Chromium.app is signed BEFORE the outer app; the outer signature would
-      # otherwise be invalidated. Creates the notarytool keychain profile from
-      # secrets; without all credentials, the step warns and exits successfully.
-      - name: Notarize and staple the macOS build
-        if: runner.os == 'macOS'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
-            echo "::warning::Apple notarization credentials are incomplete; skipping notarization."
-            exit 0
-          fi
-          xcrun notarytool store-credentials "notary" \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD"
-          APP="target/${{ matrix.target }}/release/bundle/macos/MIX-agent Desktop.app"
-          SIGN="${APPLE_SIGNING_IDENTITY:-Developer ID Application: $APPLE_TEAM_ID}"
-          if [ -d "$APP/Contents/Resources/chromium" ]; then
-            find "$APP/Contents/Resources/chromium" -name "*.app" -depth -exec \
-              codesign --force --sign "$SIGN" --options runtime --timestamp {} \;
-          fi
-          codesign --force --sign "$SIGN" --options runtime --timestamp "$APP"
-          xcrun notarytool submit "$APP" --keychain-profile "notary" --wait
-          xcrun stapler staple "$APP"
 
       - name: Collect artifacts
         uses: actions/upload-artifact@v4
