@@ -16,7 +16,6 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -203,6 +202,47 @@ fn find_executable_in_path(name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Strip the Win32 verbatim prefix returned by `std::fs::canonicalize`.
+/// Git Bash and MSYS tools expect ordinary drive/UNC paths instead.
+fn normalize_windows_path(path: &std::path::Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(rest) = raw.strip_prefix(r"\\?\") {
+            if let Some(unc) = rest.strip_prefix("UNC\\") {
+                return PathBuf::from(format!(r"\\{unc}"));
+            }
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+fn canonicalize_portable(path: &std::path::Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(|canonical| normalize_windows_path(&canonical))
+}
+
+fn native_path_string(path: &std::path::Path) -> String {
+    normalize_windows_path(path).to_string_lossy().into_owned()
+}
+
+fn posix_path_expression(path: &std::path::Path) -> String {
+    if cfg!(windows) {
+        let windows_path = native_path_string(path).replace('\\', "/");
+        format!("$(cygpath -u {})", shell_quote(&windows_path))
+    } else {
+        shell_quote(&path.to_string_lossy())
+    }
+}
+
+fn posix_cwd_expression() -> &'static str {
+    if cfg!(windows) {
+        "$(cygpath -w \"$PWD\")"
+    } else {
+        "$PWD"
+    }
+}
+
 /// A PTY plus the reader thread draining its output.
 ///
 /// The writer is behind a mutex rather than stored bare: a tool is shared
@@ -236,7 +276,8 @@ impl ShellSession {
             })
             .ok()?;
         let mut cmd = portable_pty::CommandBuilder::new(&config.program);
-        cmd.cwd(cwd);
+        let shell_cwd = normalize_windows_path(std::path::Path::new(cwd));
+        cmd.cwd(&shell_cwd);
         for arg in &config.args {
             cmd.arg(arg);
         }
@@ -366,14 +407,17 @@ impl ShellSession {
         // this script: the shell echoes every line it reads, so without it the
         // `__mixd_rc=$?` / `printf ...` lines leak into the result (the whole
         // script text was returned as the command's own output).
-        let status_str = status_path.to_string_lossy().replace('\\', "/");
+        let status_str = native_path_string(&status_path);
+        let status_expr = posix_path_expression(&status_path);
+        let cwd_expr = posix_cwd_expression();
         let script = if self.config.is_posix {
             format!(
-                "printf '\\n%s\\n' '{start}'\n{command}\n__mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > '{status}' 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"$PWD\"\n",
+                "printf '\\n%s\\n' '{start}'\n{command}\n__mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > {status} 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"{cwd}\"\n",
                 start = start_marker,
-                status = status_str,
+                status = status_expr,
                 sentinel = sentinel,
                 cwd_marker = cwd_marker,
+                cwd = cwd_expr,
             )
         } else {
             // PowerShell in raw PTY mode handles CRLF reliably for interactive evaluation
@@ -612,7 +656,7 @@ impl Tool for TerminalTool {
         // Fail closed: an unresolvable workspace root is an error, never a
         // lexical fallback (the old `unwrap_or(workdir)` kept going on a
         // path an attacker had just replaced).
-        let workdir = match std::fs::canonicalize(&workdir) {
+        let workdir = match canonicalize_portable(&workdir) {
             Ok(canon) => canon,
             Err(err) => {
                 return Err(anyhow::anyhow!("workspace root not found: {}", err));
@@ -635,7 +679,7 @@ impl Tool for TerminalTool {
                 } else {
                     workdir.join(requested.trim_start_matches('/'))
                 };
-                let canon = match std::fs::canonicalize(&candidate) {
+                let canon = match canonicalize_portable(&candidate) {
                     Ok(canon) => canon,
                     Err(_) => {
                         return Ok(ToolResult {
@@ -799,7 +843,11 @@ impl TerminalTool {
         // because turn N ended there. Both sides are canonicalized so a
         // symlinked `$PWD` cannot fake containment.
         if !cwd_inside(&session.cwd().await, project_root) {
-            let home = shell_quote(&key);
+            let home = if session.config.is_posix {
+                posix_path_expression(std::path::Path::new(&key))
+            } else {
+                powershell_quote(&key)
+            };
             let cd_cmd = if session.config.is_posix {
                 format!("cd {home}")
             } else {
@@ -909,12 +957,16 @@ fn shell_quote(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+fn powershell_quote(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "''"))
+}
+
 /// True when `cwd` (a live `$PWD` read back from the shell) resolves inside
 /// `root`. Canonicalizes both sides so a symlinked cwd cannot fake
 /// containment; an unresolvable cwd is treated as outside.
 fn cwd_inside(cwd: &str, root: &std::path::Path) -> bool {
     let cwd_path = std::path::Path::new(cwd);
-    if let Ok(canon) = std::fs::canonicalize(cwd_path) {
+    if let Ok(canon) = canonicalize_portable(cwd_path) {
         return canon.starts_with(root);
     }
     // The cwd may have just been deleted from under the shell; fall back to
@@ -1209,12 +1261,19 @@ mod tests {
     async fn the_direct_exec_path_bypasses_the_shell() {
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("argv");
+        #[cfg(windows)]
+        let (command, args) = (
+            "cmd.exe",
+            vec!["/C".to_string(), "echo hello from argv".to_string()],
+        );
+        #[cfg(not(windows))]
+        let (command, args) = ("/bin/echo", vec!["hello from argv".to_string()]);
         let result = tool
             .invoke(
                 context,
                 serde_json::json!({
-                    "command": "/bin/echo",
-                    "args": ["hello from argv"],
+                    "command": command,
+                    "args": args,
                     "max_wall_clock_ms": 10000,
                 }),
             )
@@ -1264,5 +1323,26 @@ mod tests {
             std::path::PathBuf::from("C:\\Windows\\System32\\cmd.exe")
         );
         assert!(!config_cmd.is_posix);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_normalized_at_the_git_bash_boundary() {
+        let drive_path = std::path::Path::new(r"\\?\C:\Users\runner\My Project\file");
+        assert_eq!(
+            normalize_windows_path(drive_path),
+            PathBuf::from(r"C:\Users\runner\My Project\file")
+        );
+        assert_eq!(
+            posix_path_expression(drive_path),
+            "$(cygpath -u 'C:/Users/runner/My Project/file')"
+        );
+        assert_eq!(posix_cwd_expression(), "$(cygpath -w \"$PWD\")");
+
+        let unc_path = std::path::Path::new(r"\\?\UNC\server\share\project");
+        assert_eq!(
+            normalize_windows_path(unc_path),
+            PathBuf::from(r"\\server\share\project")
+        );
     }
 }

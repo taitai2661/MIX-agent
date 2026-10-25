@@ -8,6 +8,13 @@
 
 現在の日付順（新しい順）: 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
 
+## [追記] Windows Desktop CIのpath修正（2026-10-25）
+
+- main commit `90d18ad`の[CI run 40175459776](https://github.com/taitai2661/MIX-agent/actions/runs/40175459776)では、Desktop UI、Ubuntu/macOS Rust、Docker backend/frontend、lint、format、Memory parityが成功。Windows Rustのみ102 passed / 6 failedで、主にpersistent Git Bash PTYのcwd/exit-status marker timeoutとUnix executableを前提にしたdirect-exec testが失敗しました。
+- 調査ではGit BashのPOSIX cwd (`/c/...`) とWindows native pathの境界が原因と特定。candidateの作業ツリーに`cygpath`変換、verbatim path正規化、Windows direct-exec test、workspace traversalの早期拒否を追加し、Linuxで`cargo fmt`、Clippy、`cargo test --workspace`が成功しました。
+- [この追記時点] 上記修正はcandidateの作業ツリーにありpush前で、Windows CIによる再検証待ちです。`v0.5.0` tagとGitHub Releaseは未作成です。Actions Secretsの値・登録状態・秘密鍵にはアクセスしていません。
+- [ZimaOS workflow 40175459775](https://github.com/taitai2661/MIX-agent/actions/runs/40175459775)自体はsuccessですが、v0.5.0のGHCR imageがまだ存在しないためstore build/publishはskipでした。
+
 ## v0.5.0公開準備の確認（2026-10-25）
 
 確認した項目:

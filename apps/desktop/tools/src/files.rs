@@ -127,7 +127,9 @@ impl FilesTool {
         // path fails whenever the leaf does not exist yet — which is every
         // `write` / `create` — and the lexical fallback that followed let a
         // symlinked directory in the middle of the path escape the workspace.
-        let relative = candidate.strip_prefix(&root_canon).unwrap_or(&candidate);
+        let relative = candidate
+            .strip_prefix(&root_canon)
+            .map_err(|_| anyhow::anyhow!("path escapes workspace: {}", path))?;
         let mut resolved = root_canon.clone();
         for component in relative.components() {
             let next = resolved.join(component.as_os_str());

@@ -297,9 +297,11 @@ mod tests {
             )
             .await
             .unwrap_err();
+        let message = err.to_string();
+        let message_lower = message.to_ascii_lowercase();
         assert!(
-            err.to_string().contains("outside the workspace")
-                || err.to_string().contains("escapes")
+            message_lower.contains("outside the workspace") || message_lower.contains("escapes"),
+            "unexpected error for traversal rejection: {message}"
         );
     }
 
