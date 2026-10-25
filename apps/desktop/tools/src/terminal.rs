@@ -469,18 +469,6 @@ impl ShellSession {
         };
         if !done {
             // Drain whatever arrived so a timeout does not corrupt the next call.
-            #[cfg(test)]
-            {
-                let transcript = self.output.lock().await;
-                let tail = transcript.len().saturating_sub(8 * 1024);
-                eprintln!(
-                    "[PTY timeout debug] shell={:?} args={:?} command={:?} transcript={:?}",
-                    self.config.program,
-                    self.config.args,
-                    command,
-                    String::from_utf8_lossy(&transcript[tail..])
-                );
-            }
             self.output.lock().await.clear();
             return Err(format!("timed out after {max_ms} ms"));
         }
@@ -534,10 +522,52 @@ impl ShellSession {
 /// Index of the line whose trimmed content is exactly `needle`.
 ///
 /// Matching whole lines is what separates a real marker from the shell's echo
-/// of the command that printed it.
+/// of the command that printed it. ConPTY may prepend cursor-control sequences
+/// to a marker line, so those are removed for comparison only.
 fn find_line(text: &str, needle: &str) -> Option<usize> {
-    text.lines()
-        .position(|line| line.trim_end_matches('\r') == needle)
+    text.lines().enumerate().find_map(|(index, line)| {
+        let normalized = strip_terminal_escape_sequences(line);
+        (normalized.trim_end_matches('\r') == needle).then_some(index)
+    })
+}
+
+/// Strip ANSI CSI/OSC escape sequences when matching protocol markers. The raw
+/// transcript remains unchanged so command output is not silently reformatted.
+fn strip_terminal_escape_sequences(text: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Text,
+        Escape,
+        Csi,
+        Osc,
+        OscEscape,
+    }
+
+    let mut state = State::Text;
+    let mut clean = String::with_capacity(text.len());
+    for ch in text.chars() {
+        state = match state {
+            State::Text if ch == '\u{1b}' => State::Escape,
+            State::Text => {
+                clean.push(ch);
+                State::Text
+            }
+            State::Escape => match ch {
+                '[' => State::Csi,
+                ']' => State::Osc,
+                _ => State::Text,
+            },
+            State::Csi if ('@'..='~').contains(&ch) => State::Text,
+            State::Csi => State::Csi,
+            State::Osc if ch == '\u{7}' => State::Text,
+            State::Osc if ch == '\u{1b}' => State::OscEscape,
+            State::Osc => State::Osc,
+            State::OscEscape if ch == '\\' => State::Text,
+            State::OscEscape if ch == '\u{1b}' => State::OscEscape,
+            State::OscEscape => State::Osc,
+        };
+    }
+    clean
 }
 
 /// Slice real command output out of a raw PTY transcript: everything strictly
@@ -1096,6 +1126,23 @@ mod tests {
         ]
         .join("\n");
         assert_eq!(slice_output(&transcript, start, done), "2026-10-12");
+    }
+
+    #[test]
+    fn protocol_markers_ignore_conpty_cursor_sequences() {
+        let start = "__MIXD_START_1__";
+        let done = "__MIXD_DONE_1__";
+        let transcript = [
+            "\u{1b}[?25l\u{1b}[5;1H__MIXD_START_1__\r",
+            "hello from the command",
+            "\u{1b}[?25l\u{1b}[20;1H__MIXD_DONE_1__\r",
+        ]
+        .join("\n");
+        assert_eq!(find_line(&transcript, done), Some(2));
+        assert_eq!(
+            slice_output(&transcript, start, done),
+            "hello from the command"
+        );
     }
 
     #[test]
