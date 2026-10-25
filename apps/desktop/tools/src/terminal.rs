@@ -469,6 +469,44 @@ impl ShellSession {
         };
         if !done {
             // Drain whatever arrived so a timeout does not corrupt the next call.
+            #[cfg(test)]
+            {
+                let transcript = self.output.lock().await;
+                let text = String::from_utf8_lossy(&transcript);
+                let sentinel_at = find_line(&text, &sentinel);
+                let marker_lines: Vec<String> = text
+                    .lines()
+                    .filter_map(|line| {
+                        let clean = strip_terminal_escape_sequences(line);
+                        if clean.contains(&start_marker) {
+                            Some(format!("start:{:?}", clean.trim()))
+                        } else if clean.contains(&sentinel) {
+                            Some(format!("done:{:?}", clean.trim()))
+                        } else if clean.contains(&cwd_marker) {
+                            Some(format!(
+                                "cwd-marker-present:{}",
+                                clean.contains(&cwd_marker)
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let cwd_after = sentinel_at
+                    .map(|at| {
+                        text.lines()
+                            .skip(at + 1)
+                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
+                    })
+                    .unwrap_or(false);
+                eprintln!(
+                    "[PTY marker debug] start={} done={} cwd_after_done={} lines={:?}",
+                    find_line(&text, &start_marker).is_some(),
+                    sentinel_at.is_some(),
+                    cwd_after,
+                    marker_lines
+                );
+            }
             self.output.lock().await.clear();
             return Err(format!("timed out after {max_ms} ms"));
         }
