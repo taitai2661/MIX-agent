@@ -60,6 +60,7 @@ v2 Community Storeおよび旧クライアント向けアーカイブを従来�
 - サーバー版は単一管理者が信頼できるLAN/VPN内で利用する初期開発版です。インターネットへ直接公開しないでください。
 - Desktop版は初期リリースです。v0.5.0では自動更新を提供せず、更新はGitHub Releasesから手動で行ってください。macOSアプリ本体はApple Developer IDで署名せず、公証もしません。Gatekeeperが警告を表示したり、起動を制限したりする場合があります。配布元と`SHA256SUMS`を確認し、警告の意味を理解したうえで利用してください。
 - v0.5.0で配布するDesktop版はApple Silicon / Intel macOSのみです。WindowsおよびLinux向けDesktop版は見送り、macOS universal binary、Windows ARM64、Linux ARM64も対象外です。
+- Windows向けDesktopは配布対象外です。v0.5.0のmain CIでは、Windows実機のPTYテスト2件（`a_shell_that_exits_is_replaced_on_the_next_call`、`the_shell_state_persists_between_calls`）がタイムアウトで失敗しています。macOS/Docker版の配布物には影響しませんが、WindowsでDesktopのTerminal機能を開発・検証する際の既知の制約として扱います。
 - Provider、MCP Server、Runner、Dockerイメージの実環境受入確認は利用環境に依存します。自動テスト・ビルド成功だけで実運用の安全性を保証するものではありません。
 - Knowledgeはテキストのチャンク検索を中心とし、外部資料の自動同期や実環境での検索品質評価は今後の課題です。
 - 画像生成・編集、Registry Store、外部向けOpenAI Compatible APIは未実装です。

@@ -19,7 +19,8 @@
 - Windows PTYテストのタイムアウトを60秒へ延長し、direct-execテストもPTYテストと同じ直列ロックで実行するよう変更した。macOS上で`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（全suite）が成功。
 - PostgreSQL test profileは583 passed / 1 skipped。8種類のrelease image target（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）はローカルDockerでbuild成功。
 - Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-legacy-store.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
-- 未確認: この環境にはGitHubへの書き込み権限がなく、修正後のGitHub Actions（CI／Validate／desktop-releaseのmacOS dry-run）は実行できていない。Windows実機のPTYテストとmacOS実機のDMG起動も未確認。`v0.5.0`タグとGitHub Releaseは引き続き未作成。
+- [追記] 修正後のGitHub Actionsを実行した。`Validate release candidate`とmacOS-only `desktop-release` dry-runは成功。`CI`はWindowsのPTYテスト2件（`a_shell_that_exits_is_replaced_on_the_next_call`、`the_shell_state_persists_between_calls`）のみfailure。Windows Desktopはv0.5.0の配布対象外であり、ユーザーの判断でこの2件を既知の制約としてmacOS/Docker版を先行リリースする。
+- 未確認: Windows実機のPTYテストとmacOS実機のDMG起動。`v0.5.0`タグとGitHub Releaseはこの記録の時点では未作成。
 
 ## [追記] v0.5.0 Desktopを手動DMG配布へ変更（2026-10-25）
 
