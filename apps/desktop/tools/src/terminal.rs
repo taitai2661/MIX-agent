@@ -435,20 +435,6 @@ impl ShellSession {
         {
             let mut writer = self.writer.lock().await;
             if let Err(err) = writer.write_all(script.as_bytes()) {
-                #[cfg(all(test, target_os = "windows"))]
-                if command == "echo alive" {
-                    let output = self.output.lock().await;
-                    let text = String::from_utf8_lossy(&output).to_ascii_lowercase();
-                    eprintln!(
-                        "[PTY write summary] bytes={} lines={} start_marker={} bash_error={} fork_error={} resource_error={}",
-                        output.len(),
-                        text.lines().count(),
-                        text.contains(&start_marker.to_ascii_lowercase()),
-                        text.contains("bash:"),
-                        text.contains("fork"),
-                        text.contains("resource") || text.contains("memory")
-                    );
-                }
                 return Err(format!("shell write failed: {err:#}"));
             }
             writer
@@ -485,29 +471,6 @@ impl ShellSession {
         };
         if !done {
             // Drain whatever arrived so a timeout does not corrupt the next call.
-            #[cfg(all(test, target_os = "windows"))]
-            if command == "echo alive" {
-                let output = self.output.lock().await;
-                let text = String::from_utf8_lossy(&output);
-                let sentinel_at = find_line(&text, &sentinel);
-                let cwd_after_done = sentinel_at
-                    .map(|at| {
-                        text.lines()
-                            .skip(at + 1)
-                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
-                    })
-                    .unwrap_or(false);
-                eprintln!(
-                    "[PTY timeout summary] bytes={} lines={} start={} done={} cwd_after_done={} command_echo={} output_text={}",
-                    output.len(),
-                    text.lines().count(),
-                    find_line(&text, &start_marker).is_some(),
-                    sentinel_at.is_some(),
-                    cwd_after_done,
-                    text.contains("echo alive"),
-                    text.contains("alive")
-                );
-            }
             self.output.lock().await.clear();
             return Err(format!("timed out after {max_ms} ms"));
         }
@@ -1076,6 +1039,11 @@ fn cwd_marker_path(line: &str, marker: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // Windows ConPTY and Git Bash are unreliable when several interactive
+    // shells are launched concurrently by the Rust test harness. Serialize
+    // only the integration tests that exercise a real persistent PTY.
+    static PTY_INTEGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// One directory per test. The persistent shell is keyed by workspace, so
     /// sharing a root would make the tests queue behind each other on one
     /// session and hide ordering bugs.
@@ -1249,6 +1217,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_shell_state_persists_between_calls() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("persist");
         let sub = dir.join("sub");
@@ -1277,6 +1246,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_directory_escape_does_not_persist_into_the_next_call() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("escape");
 
@@ -1323,6 +1293,7 @@ mod tests {
 
     #[tokio::test]
     async fn reports_a_nonzero_exit_code() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("exitcode");
         let result = tool
@@ -1341,6 +1312,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_shell_that_exits_is_replaced_on_the_next_call() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("exit");
 
