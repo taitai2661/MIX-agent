@@ -16,7 +16,6 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -203,6 +202,47 @@ fn find_executable_in_path(name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Strip the Win32 verbatim prefix returned by `std::fs::canonicalize`.
+/// Git Bash and MSYS tools expect ordinary drive/UNC paths instead.
+fn normalize_windows_path(path: &std::path::Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(rest) = raw.strip_prefix(r"\\?\") {
+            if let Some(unc) = rest.strip_prefix("UNC\\") {
+                return PathBuf::from(format!(r"\\{unc}"));
+            }
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+fn canonicalize_portable(path: &std::path::Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(|canonical| normalize_windows_path(&canonical))
+}
+
+fn native_path_string(path: &std::path::Path) -> String {
+    normalize_windows_path(path).to_string_lossy().into_owned()
+}
+
+fn posix_path_expression(path: &std::path::Path) -> String {
+    if cfg!(windows) {
+        let windows_path = native_path_string(path).replace('\\', "/");
+        format!("\"$(cygpath -u {})\"", shell_quote(&windows_path))
+    } else {
+        shell_quote(&path.to_string_lossy())
+    }
+}
+
+fn posix_cwd_expression() -> &'static str {
+    if cfg!(windows) {
+        "$(cygpath -w \"$PWD\")"
+    } else {
+        "$PWD"
+    }
+}
+
 /// A PTY plus the reader thread draining its output.
 ///
 /// The writer is behind a mutex rather than stored bare: a tool is shared
@@ -236,7 +276,8 @@ impl ShellSession {
             })
             .ok()?;
         let mut cmd = portable_pty::CommandBuilder::new(&config.program);
-        cmd.cwd(cwd);
+        let shell_cwd = normalize_windows_path(std::path::Path::new(cwd));
+        cmd.cwd(&shell_cwd);
         for arg in &config.args {
             cmd.arg(arg);
         }
@@ -363,17 +404,22 @@ impl ShellSession {
             }
         }
         // A start marker separates real command output from the PTY echo of
-        // this script: the shell echoes every line it reads, so without it the
-        // `__mixd_rc=$?` / `printf ...` lines leak into the result (the whole
-        // script text was returned as the command's own output).
-        let status_str = status_path.to_string_lossy().replace('\\', "/");
+        // this script. Run the POSIX command with eval so its state changes
+        // persist, and capture `$?` on the same input line: interactive Git
+        // Bash prompt hooks run between input lines and can otherwise replace
+        // the command's exit status before the wrapper reads it.
+        let status_str = native_path_string(&status_path);
+        let status_expr = posix_path_expression(&status_path);
+        let cwd_expr = posix_cwd_expression();
         let script = if self.config.is_posix {
             format!(
-                "printf '\\n%s\\n' '{start}'\n{command}\n__mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > '{status}' 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"$PWD\"\n",
+                "printf '\\n%s\\n' '{start}'\neval {command}; __mixd_rc=$?\nprintf '%s' \"$__mixd_rc\" > {status} 2>/dev/null\nprintf '\\n%s\\n' '{sentinel}'\nprintf '{cwd_marker}%s__\\n' \"{cwd}\"\n",
                 start = start_marker,
-                status = status_str,
+                command = shell_quote(command),
+                status = status_expr,
                 sentinel = sentinel,
                 cwd_marker = cwd_marker,
+                cwd = cwd_expr,
             )
         } else {
             // PowerShell in raw PTY mode handles CRLF reliably for interactive evaluation
@@ -388,9 +434,9 @@ impl ShellSession {
 
         {
             let mut writer = self.writer.lock().await;
-            writer
-                .write_all(script.as_bytes())
-                .map_err(|e| format!("shell write failed: {e:#}"))?;
+            if let Err(err) = writer.write_all(script.as_bytes()) {
+                return Err(format!("shell write failed: {err:#}"));
+            }
             writer
                 .flush()
                 .map_err(|e| format!("shell flush failed: {e:#}"))?;
@@ -398,11 +444,24 @@ impl ShellSession {
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_ms);
         let done = loop {
-            let seen = {
+            // The shell writes the sentinel and cwd marker separately. A PTY
+            // reader may observe the sentinel first; draining at that point
+            // loses the live cwd and lets the next call trust a stale value.
+            let complete = {
                 let buffer = self.output.lock().await;
-                find_line(&String::from_utf8_lossy(&buffer), &sentinel)
+                let text = String::from_utf8_lossy(&buffer);
+                let sentinel_at = find_line(text.as_ref(), &sentinel);
+                let cwd_seen = sentinel_at
+                    .map(|at| {
+                        text.lines()
+                            .skip(at + 1)
+                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
+                    })
+                    .unwrap_or(false);
+                let sentinel_seen = sentinel_at.is_some();
+                sentinel_seen && cwd_seen
             };
-            if seen.is_some() {
+            if complete {
                 break true;
             }
             if std::time::Instant::now() >= deadline {
@@ -411,9 +470,21 @@ impl ShellSession {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         };
         if !done {
-            // Drain whatever arrived so a timeout does not corrupt the next call.
-            self.output.lock().await.clear();
-            return Err(format!("timed out after {max_ms} ms"));
+            // Drain whatever arrived so a timeout does not corrupt the next
+            // call. Keep a short tail for the error: on Windows CI a marker
+            // timeout without the transcript is almost impossible to diagnose.
+            let tail = {
+                let mut guard = self.output.lock().await;
+                let text = String::from_utf8_lossy(&guard);
+                let tail = diagnostic_tail(text.as_ref(), 2_000);
+                guard.clear();
+                tail
+            };
+            return Err(if tail.is_empty() {
+                format!("timed out after {max_ms} ms")
+            } else {
+                format!("timed out after {max_ms} ms; last shell output: {tail:?}")
+            });
         }
 
         // Take the buffer and reset it in one lock: the reader thread keeps
@@ -431,12 +502,7 @@ impl ShellSession {
         let cwd = lines
             .iter()
             .skip(marker_at)
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix(&cwd_marker)
-                    .and_then(|rest| rest.strip_suffix("__"))
-                    .map(|raw| raw.to_string())
-            })
+            .find_map(|line| cwd_marker_path(line, &cwd_marker))
             .unwrap_or(known_cwd);
         *self.cwd.lock().await = cwd.clone();
 
@@ -467,13 +533,58 @@ impl ShellSession {
     }
 }
 
-/// Index of the line whose trimmed content is exactly `needle`.
+/// Index of a line whose trimmed content is `needle` or ends with `needle`.
 ///
-/// Matching whole lines is what separates a real marker from the shell's echo
-/// of the command that printed it.
+/// Matching the suffix separates the actual marker from the shell's echoed
+/// `printf` command (which has a closing quote after the marker). Git Bash's
+/// ConPTY can print the marker over the end of the prompt/echo line instead of
+/// starting a new line. ANSI cursor-control sequences are removed for matching
+/// only; the raw transcript is preserved.
 fn find_line(text: &str, needle: &str) -> Option<usize> {
-    text.lines()
-        .position(|line| line.trim_end_matches('\r') == needle)
+    text.lines().enumerate().find_map(|(index, line)| {
+        let normalized = strip_terminal_escape_sequences(line);
+        let normalized = normalized.trim_end_matches('\r');
+        (normalized == needle || normalized.ends_with(needle)).then_some(index)
+    })
+}
+
+/// Strip ANSI CSI/OSC escape sequences when matching protocol markers. The raw
+/// transcript remains unchanged so command output is not silently reformatted.
+fn strip_terminal_escape_sequences(text: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Text,
+        Escape,
+        Csi,
+        Osc,
+        OscEscape,
+    }
+
+    let mut state = State::Text;
+    let mut clean = String::with_capacity(text.len());
+    for ch in text.chars() {
+        state = match state {
+            State::Text if ch == '\u{1b}' => State::Escape,
+            State::Text => {
+                clean.push(ch);
+                State::Text
+            }
+            State::Escape => match ch {
+                '[' => State::Csi,
+                ']' => State::Osc,
+                _ => State::Text,
+            },
+            State::Csi if ('@'..='~').contains(&ch) => State::Text,
+            State::Csi => State::Csi,
+            State::Osc if ch == '\u{7}' => State::Text,
+            State::Osc if ch == '\u{1b}' => State::OscEscape,
+            State::Osc => State::Osc,
+            State::OscEscape if ch == '\\' => State::Text,
+            State::OscEscape if ch == '\u{1b}' => State::OscEscape,
+            State::OscEscape => State::Osc,
+        };
+    }
+    clean
 }
 
 /// Slice real command output out of a raw PTY transcript: everything strictly
@@ -511,6 +622,17 @@ fn truncate_output(text: &str) -> String {
         "{head}\n… [truncated: {cut} of {} bytes shown, {kept_lines} lines]",
         text.len()
     )
+}
+
+/// Keep the end of a transcript for timeout diagnostics.
+///
+/// The start of a PTY transcript is startup noise and the marker lines that
+/// were already parsed; the useful part when a marker never arrives is the
+/// tail. Count in characters so a multi-byte UTF-8 prompt cannot panic.
+fn diagnostic_tail(text: &str, max_chars: usize) -> String {
+    let mut chars: Vec<char> = text.chars().rev().take(max_chars).collect();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 /// Cut `text` to at most `max_bytes` on a character boundary.
@@ -604,7 +726,7 @@ impl Tool for TerminalTool {
         // Fail closed: an unresolvable workspace root is an error, never a
         // lexical fallback (the old `unwrap_or(workdir)` kept going on a
         // path an attacker had just replaced).
-        let workdir = match std::fs::canonicalize(&workdir) {
+        let workdir = match canonicalize_portable(&workdir) {
             Ok(canon) => canon,
             Err(err) => {
                 return Err(anyhow::anyhow!("workspace root not found: {}", err));
@@ -627,7 +749,7 @@ impl Tool for TerminalTool {
                 } else {
                     workdir.join(requested.trim_start_matches('/'))
                 };
-                let canon = match std::fs::canonicalize(&candidate) {
+                let canon = match canonicalize_portable(&candidate) {
                     Ok(canon) => canon,
                     Err(_) => {
                         return Ok(ToolResult {
@@ -791,7 +913,11 @@ impl TerminalTool {
         // because turn N ended there. Both sides are canonicalized so a
         // symlinked `$PWD` cannot fake containment.
         if !cwd_inside(&session.cwd().await, project_root) {
-            let home = shell_quote(&key);
+            let home = if session.config.is_posix {
+                posix_path_expression(std::path::Path::new(&key))
+            } else {
+                powershell_quote(&key)
+            };
             let cd_cmd = if session.config.is_posix {
                 format!("cd {home}")
             } else {
@@ -901,12 +1027,16 @@ fn shell_quote(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+fn powershell_quote(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "''"))
+}
+
 /// True when `cwd` (a live `$PWD` read back from the shell) resolves inside
 /// `root`. Canonicalizes both sides so a symlinked cwd cannot fake
 /// containment; an unresolvable cwd is treated as outside.
 fn cwd_inside(cwd: &str, root: &std::path::Path) -> bool {
     let cwd_path = std::path::Path::new(cwd);
-    if let Ok(canon) = std::fs::canonicalize(cwd_path) {
+    if let Ok(canon) = canonicalize_portable(cwd_path) {
         return canon.starts_with(root);
     }
     // The cwd may have just been deleted from under the shell; fall back to
@@ -914,9 +1044,53 @@ fn cwd_inside(cwd: &str, root: &std::path::Path) -> bool {
     cwd_path.starts_with(root)
 }
 
+/// Extract a live absolute cwd from a PTY line. The echoed `printf` command
+/// also contains the marker text, so reject its non-path payload rather than
+/// mistaking it for the result line.
+fn cwd_marker_path(line: &str, marker: &str) -> Option<String> {
+    let line = line.trim();
+    let marker_at = line.find(marker)?;
+    let rest = &line[marker_at + marker.len()..];
+    let end = rest.rfind("__")?;
+    let path = &rest[..end];
+    std::path::Path::new(path)
+        .is_absolute()
+        .then(|| path.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Windows ConPTY and Git Bash are unreliable when several interactive
+    // shells are launched concurrently by the Rust test harness. Serialize
+    // only the integration tests that exercise a real persistent PTY.
+    static PTY_INTEGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Restore `MIX_SHELL` when a Windows fallback test ends, including on
+    /// panic. The environment is process-global and the PTY tests are
+    /// serialized, so this is the only test that may mutate it.
+    #[cfg(windows)]
+    struct ShellEnvGuard(Option<std::ffi::OsString>);
+
+    #[cfg(windows)]
+    impl Drop for ShellEnvGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("MIX_SHELL", value),
+                None => std::env::remove_var("MIX_SHELL"),
+            }
+        }
+    }
+
+    // Git Bash/ConPTY startup and teardown routinely take several seconds on
+    // a loaded Windows runner. A 10 s budget made the exit-code and respawn
+    // assertions fail intermittently, so keep the integration budget generous
+    // while leaving the intentionally-timing-out `exit` case short.
+    #[cfg(windows)]
+    const PTY_TEST_TIMEOUT_MS: u64 = 60_000;
+    #[cfg(not(windows))]
+    const PTY_TEST_TIMEOUT_MS: u64 = 10_000;
 
     /// One directory per test. The persistent shell is keyed by workspace, so
     /// sharing a root would make the tests queue behind each other on one
@@ -971,6 +1145,13 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_tail_keeps_the_end_and_respects_char_boundaries() {
+        assert_eq!(diagnostic_tail("one\ntwo", 20), "one\ntwo");
+        assert_eq!(diagnostic_tail("あいうえお", 2), "えお");
+        assert_eq!(diagnostic_tail("", 10), "");
+    }
+
+    #[test]
     fn the_char_boundary_walk_is_shared_with_the_workspace_preview() {
         // `truncate_to_char_boundary` is the single boundary walk behind both
         // `truncate_output` here and the `git_diff` truncation in
@@ -1013,6 +1194,41 @@ mod tests {
     }
 
     #[test]
+    fn protocol_markers_ignore_conpty_cursor_sequences() {
+        let start = "__MIXD_START_1__";
+        let done = "__MIXD_DONE_1__";
+        let transcript = [
+            "\u{1b}[?25l\u{1b}[5;1H__MIXD_START_1__\r",
+            "hello from the command",
+            "\u{1b}[?25l\u{1b}[20;1H__MIXD_DONE_1__\r",
+        ]
+        .join("\n");
+        assert_eq!(find_line(&transcript, done), Some(2));
+        assert_eq!(
+            slice_output(&transcript, start, done),
+            "hello from the command"
+        );
+    }
+
+    #[test]
+    fn protocol_markers_match_at_the_end_of_prompt_prefixed_conpty_lines() {
+        let start = "__MIXD_START_1__";
+        let done = "__MIXD_DONE_1__";
+        let transcript = [
+            "$ printf '\\n%s\\n' '__MIXD_START_1__'__MIXD_START_1__",
+            "hello from the command",
+            "$ printf '\\n%s\\n' '__MIXD_DONE_1__'__MIXD_DONE_1__",
+        ]
+        .join("\n");
+        assert_eq!(find_line(&transcript, start), Some(0));
+        assert_eq!(find_line(&transcript, done), Some(2));
+        assert_eq!(
+            slice_output(&transcript, start, done),
+            "hello from the command"
+        );
+    }
+
+    #[test]
     fn missing_markers_keep_the_transcript_instead_of_dropping_a_line() {
         // Timeout residue or a killed shell may have no markers at all: the
         // old `unwrap_or(0) + 1` dropped the first line in that case.
@@ -1036,22 +1252,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cwd_marker_parser_accepts_prompt_prefixed_paths_but_not_echoed_printf() {
+        let marker = "__MIXD_CWD_1__";
+        let expected = std::env::temp_dir()
+            .join("mixd-pty-project")
+            .to_string_lossy()
+            .to_string();
+        let output = format!("\u{1b}]0;prompt\u{7}{marker}{expected}__");
+        assert_eq!(
+            cwd_marker_path(&output, marker).as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            cwd_marker_path("printf '__MIXD_CWD_1__%s__\\n' \"$PWD\"", marker),
+            None
+        );
+    }
+
     #[tokio::test]
     async fn the_shell_state_persists_between_calls() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("persist");
         let sub = dir.join("sub");
         std::fs::create_dir_all(&sub).unwrap();
 
         let first = tool
-            .invoke(context.clone(), serde_json::json!({ "command": "cd sub" }))
+            .invoke(
+                context.clone(),
+                serde_json::json!({ "command": "cd sub", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+            )
             .await
             .expect("first call");
         // If no PTY is available the fallback still succeeds; the persistence
         // assertion below is then vacuous, so only assert the happy path here.
         if first.content["persistent"] == true {
             let second = tool
-                .invoke(context.clone(), serde_json::json!({ "command": "pwd" }))
+                .invoke(
+                    context.clone(),
+                    serde_json::json!({ "command": "pwd", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+                )
                 .await
                 .expect("second call");
             let out = second.content["stdout"].as_str().unwrap_or_default();
@@ -1066,11 +1307,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_directory_escape_does_not_persist_into_the_next_call() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("escape");
 
         let first = tool
-            .invoke(context.clone(), serde_json::json!({ "command": "cd /tmp" }))
+            .invoke(
+                context.clone(),
+                serde_json::json!({ "command": "cd /tmp", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+            )
             .await
             .expect("first call");
         if first.content["persistent"] != true {
@@ -1078,7 +1323,10 @@ mod tests {
             return; // no PTY on this platform
         }
         let second = tool
-            .invoke(context.clone(), serde_json::json!({ "command": "pwd" }))
+            .invoke(
+                context.clone(),
+                serde_json::json!({ "command": "pwd", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+            )
             .await
             .expect("second call");
         let out = second.content["stdout"].as_str().unwrap_or_default();
@@ -1112,12 +1360,13 @@ mod tests {
 
     #[tokio::test]
     async fn reports_a_nonzero_exit_code() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("exitcode");
         let result = tool
             .invoke(
                 context,
-                serde_json::json!({ "command": "(exit 3)", "max_wall_clock_ms": 10000 }),
+                serde_json::json!({ "command": "(exit 3)", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
             )
             .await
             .expect("invoke");
@@ -1130,6 +1379,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_shell_that_exits_is_replaced_on_the_next_call() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("exit");
 
@@ -1138,7 +1388,7 @@ mod tests {
                 context.clone(),
                 // `exit` kills the shell before the marker is printed, so this
                 // call is expected to time out; keep the timeout short.
-                serde_json::json!({ "command": "exit 0", "max_wall_clock_ms": 2000 }),
+                serde_json::json!({ "command": "exit 0", "max_wall_clock_ms": 5000 }),
             )
             .await
             .expect("first call");
@@ -1150,7 +1400,7 @@ mod tests {
         let second = tool
             .invoke(
                 context.clone(),
-                serde_json::json!({ "command": "echo alive", "max_wall_clock_ms": 10000 }),
+                serde_json::json!({ "command": "echo alive", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
             )
             .await
             .expect("second call");
@@ -1165,17 +1415,71 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Windows without Git for Windows must still get a working persistent
+    /// shell. Git Bash is preferred on CI, so the PowerShell branch would
+    /// otherwise never be exercised there.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn powershell_fallback_runs_commands_and_reports_exit_code() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+        let _env = ShellEnvGuard(std::env::var_os("MIX_SHELL"));
+        std::env::set_var("MIX_SHELL", "powershell.exe");
+
+        let tool = TerminalTool::default();
+        let (context, dir) = ctx_for("powershell");
+
+        let output = tool
+            .invoke(
+                context.clone(),
+                serde_json::json!({
+                    "command": "Write-Output 'hello from powershell'",
+                    "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
+                }),
+            )
+            .await
+            .expect("powershell output call");
+        assert_eq!(output.content["persistent"].as_bool(), Some(true));
+        assert_eq!(output.content["exit_code"].as_i64(), Some(0));
+        assert!(output.content["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("hello from powershell"));
+
+        let failed = tool
+            .invoke(
+                context,
+                serde_json::json!({
+                    "command": "cmd.exe /c exit 7",
+                    "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
+                }),
+            )
+            .await
+            .expect("powershell exit call");
+        assert_eq!(failed.content["persistent"].as_bool(), Some(true));
+        assert_eq!(failed.content["exit_code"].as_i64(), Some(7));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[tokio::test]
     async fn the_direct_exec_path_bypasses_the_shell() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("argv");
+        #[cfg(windows)]
+        let (command, args) = (
+            "cmd.exe",
+            vec!["/C".to_string(), "echo hello from argv".to_string()],
+        );
+        #[cfg(not(windows))]
+        let (command, args) = ("/bin/echo", vec!["hello from argv".to_string()]);
         let result = tool
             .invoke(
                 context,
                 serde_json::json!({
-                    "command": "/bin/echo",
-                    "args": ["hello from argv"],
-                    "max_wall_clock_ms": 10000,
+                    "command": command,
+                    "args": args,
+                    "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
                 }),
             )
             .await
@@ -1224,5 +1528,26 @@ mod tests {
             std::path::PathBuf::from("C:\\Windows\\System32\\cmd.exe")
         );
         assert!(!config_cmd.is_posix);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_normalized_at_the_git_bash_boundary() {
+        let drive_path = std::path::Path::new(r"\\?\C:\Users\runner\My Project\file");
+        assert_eq!(
+            normalize_windows_path(drive_path),
+            PathBuf::from(r"C:\Users\runner\My Project\file")
+        );
+        assert_eq!(
+            posix_path_expression(drive_path),
+            "\"$(cygpath -u 'C:/Users/runner/My Project/file')\""
+        );
+        assert_eq!(posix_cwd_expression(), "$(cygpath -w \"$PWD\")");
+
+        let unc_path = std::path::Path::new(r"\\?\UNC\server\share\project");
+        assert_eq!(
+            normalize_windows_path(unc_path),
+            PathBuf::from(r"\\server\share\project")
+        );
     }
 }

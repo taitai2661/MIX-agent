@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-monorepo",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "MIX-agent — Unified Monorepo for MIX-agent (Docker/Server/Web) and Desktop",
   "license": "Apache-2.0",
@@ -15,6 +15,7 @@
     "desktop:dev": "pnpm --filter mix-agent-desktop-workspace tauri:dev",
     "desktop:build": "pnpm --filter mix-agent-desktop-workspace tauri:build",
     "desktop:build:dmg": "pnpm --filter mix-agent-desktop-workspace tauri:build:dmg",
+    "desktop:build:windows": "pnpm --filter mix-agent-desktop-workspace tauri:build:windows",
     "desktop:package": "pnpm --filter mix-agent-desktop-workspace tauri:build:dmg",
     "licenses:generate": "node scripts/generate-third-party-licenses.mjs"
   },

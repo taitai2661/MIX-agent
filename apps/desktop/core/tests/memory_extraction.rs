@@ -260,8 +260,8 @@ async fn count_for(storage: &Storage, sql: &str, bind: &str) -> i64 {
 // The shared prompt and the parser
 // ---------------------------------------------------------------------------
 
-/// The prompt is a *byte-for-byte* copy of spec §6 — the parity script fails
-/// CI on a one-character drift, so pin it here too.
+/// The prompt is copied exactly from spec §6. Normalize Windows CRLF checkout
+/// line endings before checking the block so only content drift fails parity.
 #[test]
 fn extraction_prompt_matches_the_spec_verbatim() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -273,7 +273,9 @@ fn extraction_prompt_matches_the_spec_verbatim() {
             manifest.join("../../../docs/memory-spec.md")
         }
     };
-    let spec = std::fs::read_to_string(&spec_path).expect("read docs/memory-spec.md");
+    let spec = std::fs::read_to_string(&spec_path)
+        .expect("read docs/memory-spec.md")
+        .replace("\r\n", "\n");
     let marker = "**共通抽出プロンプト**:\n\n```\n";
     let start = spec.find(marker).expect("spec has the prompt marker") + marker.len();
     let end = start + spec[start..].find("\n```").expect("prompt fence closes");

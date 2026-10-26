@@ -10,7 +10,6 @@ use tauri::{AppHandle, Emitter, Runtime};
 /// Menu event ids, mirrored by the frontend router.
 pub const EVT_NEW_CHAT: &str = "menu://new-chat";
 pub const EVT_OPEN_SETTINGS: &str = "menu://settings";
-pub const EVT_CHECK_UPDATES: &str = "menu://check-updates";
 pub const EVT_BACKUP: &str = "menu://backup";
 pub const EVT_DIAGNOSTICS: &str = "menu://diagnostics";
 
@@ -43,15 +42,22 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         "Diagnostics",
         Some("CmdOrCtrl+Shift+D"),
     )?;
-    let check_updates = item(app, EVT_CHECK_UPDATES, "Check for Updates…", None)?;
     let quit = PredefinedMenuItem::quit(app, Some("Quit MIX-agent"))?;
     let sep = || PredefinedMenuItem::separator(app);
 
+    #[cfg(target_os = "macos")]
     let file = Submenu::with_items(
         app,
         "File",
         true,
         &[&new_chat, &sep()?, &backup, &sep()?, &quit],
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let file = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[&new_chat, &settings, &sep()?, &backup, &sep()?, &quit],
     )?;
 
     let edit = Submenu::with_items(
@@ -83,7 +89,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         ],
     )?;
 
-    let help = Submenu::with_items(app, "Help", true, &[&diagnostics, &sep()?, &check_updates])?;
+    let help = Submenu::with_items(app, "Help", true, &[&diagnostics])?;
 
     // Settings lives in the app menu on macOS and in File elsewhere, so it is
     // reachable on Windows and Linux too.
@@ -117,12 +123,11 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 }
 
 /// Re-emit every application-menu activation to the WebView under its item id.
-///
 /// Tauri delivers menu events to Rust listeners only, so before this the menu
-/// was inert: "Settings…" / ⌘, "New Chat" / ⌘N, "Create Backup…" / ⌘B,
-/// "Diagnostics" / ⌘⇧D and "Check for Updates…" all rendered and claimed their
-/// accelerators, yet neither a click nor the keystroke ever reached the page —
-/// the frontend listens for `menu://…` events that nothing emitted.
+/// was inert: "Settings…" / ⌘, "New Chat" / ⌘N, "Create Backup…" / ⌘B and
+/// "Diagnostics" / ⌘⇧D all rendered and claimed their accelerators, yet a click
+/// or keystroke never reached the page — the frontend listens for `menu://…`
+/// events that nothing emitted.
 fn forward_activations<R: Runtime>(app: &AppHandle<R>) {
     app.on_menu_event(|handle, event| {
         let id: &str = event.id().as_ref();

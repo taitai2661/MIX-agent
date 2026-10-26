@@ -2,8 +2,11 @@
 
 ## 配布の仕組み
 
-公開リポジトリの `store-config.json` と `Apps/MIX-agent/docker-compose.yml` から、
-新しいZimaOS向けのv2ストアと、旧クライアント互換のv1ストアを同時に生成します。
+公開リポジトリの `store-config.json` と `apps/MIX-agent/docker-compose.yml` から、
+両世代のストアを同時に生成します。v1/v2ビルダーが要求する `Apps/` レイアウトは、
+`scripts/stage-store-source.sh` で一時ディレクトリへ生成します。リポジトリに
+`Apps/` と `apps/` を同時に置くと、macOSなど大文字小文字を区別しない環境で
+チェックアウトできないためです。
 
 Releaseタグ `vX.Y.Z` を作成すると、GitHub Actionsは次の順番で自動処理します。
 
@@ -65,9 +68,11 @@ ZimaOS側はストアごとにインストールを分離するため、同名�
 
 ```sh
 python -m pip install PyYAML==6.0.2
-VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' Apps/MIX-agent/docker-compose.yml)"
+VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' apps/MIX-agent/docker-compose.yml)"
 python scripts/render_zimaos_compose.py "v$VERSION"
-docker compose -f Apps/MIX-agent/docker-compose.yml config --quiet
+docker compose -f apps/MIX-agent/docker-compose.yml config --quiet
+bash scripts/stage-store-source.sh out/store-source
+docker compose -f out/store-source/Apps/MIX-agent/docker-compose.yml config --quiet
 ```
 
 通常の `compose.yaml` にサービスを追加・変更した場合は、生成ファイルも更新してください。

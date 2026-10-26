@@ -12,6 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Reject case-colliding Apps/ tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Both store builders expect an `Apps/` tree. Keeping it in Git makes
+          # checkout fail on case-insensitive filesystems; stage it instead.
+          if git ls-files 'Apps/*' | grep -q .; then
+            echo "::error::Do not commit a top-level Apps/ tree; use scripts/stage-store-source.sh."
+            exit 1
+          fi
       - name: Check generated store manifest
         working-directory: .
         shell: bash
@@ -23,10 +33,18 @@ jobs:
           python scripts/render_zimaos_compose.py "v$VERSION"
           git diff --exit-code -- apps/MIX-agent/docker-compose.yml
           docker compose -f apps/MIX-agent/docker-compose.yml config --quiet
+      - name: Stage ZimaOS store source
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/stage-store-source.sh out/store-source
+          test -f out/store-source/Apps/MIX-agent/docker-compose.yml
+          test -f out/store-source/store-config.json
+          test -f out/store-source/supported-languages.json
       - name: Build legacy ZimaOS/CasaOS store
         uses: IceWhaleTech/CasaOS-AppStore/.github/actions/build-store-v1@0909364b800950030e71ea82355a5969a1c08b39
         with:
-          source: .
+          source: out/store-source
           output-zip: dist/store/main.zip
           report-json: out/build-v1-report.json
           report-title: MIX-agent legacy ZimaOS store validation

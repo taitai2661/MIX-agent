@@ -11,11 +11,11 @@ export function Setup() {
   const [step, setStep] = useState(0),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false);
-    
+
   const [installBrowser, setInstallBrowser] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<"openai" | "anthropic" | "gemini" | "">("");
   const [apiKey, setApiKey] = useState("");
-  
+
   const navigate = useNavigate();
 
   async function changeLanguage(value: "ja" | "en") {
@@ -34,7 +34,7 @@ export function Setup() {
         gemini: { name: "Google Gemini", kind: "gemini", url: "https://generativelanguage.googleapis.com" },
       };
       const preset = presets[selectedProvider];
-      
+
       await api("/providers", "POST", {
         name: preset.name,
         preset_id: selectedProvider,
@@ -63,7 +63,7 @@ export function Setup() {
         const ok = await connectProvider();
         if (!ok) return;
       }
-      
+
       const s = await api("/settings");
       const { default_model_id = "", auto_model_ids = [], allowed_domains = [] } = s.data;
       await api("/settings", "PUT", {
@@ -177,7 +177,7 @@ export function Setup() {
   return (
     <main className="setup-page" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div className="setup-shell" style={{ width: "100%", maxWidth: 800, display: "flex", flexDirection: "column", minHeight: "auto", borderRadius: 24, padding: 40, border: "1px solid var(--line)", background: "var(--surface)", boxShadow: "var(--shadow)" }}>
-        
+
         <header className="setup-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 30 }}>
           <div>
             <p className="eyebrow">STEP {step + 1} OF {steps.length}</p>
@@ -189,18 +189,18 @@ export function Setup() {
             <option value="en">English</option>
           </select>
         </header>
-        
+
         <div className="setup-content" style={{ flex: 1 }}>
           {steps[step].content}
         </div>
-        
+
         <ErrorBox error={error} />
-        
+
         <div className="setup-footer" style={{ display: "flex", justifyContent: "space-between", marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--line)" }}>
           <Button variant="ghost" onClick={() => step === 0 ? navigate("/") : setStep(step - 1)}>
             {step === 0 ? t("あとで設定する") : <><ChevronLeft size={15} />{t("戻る")}</>}
           </Button>
-          
+
           {step < steps.length - 1 ? (
             <Button disabled={busy} onClick={handleNext}>
               {t(selectedProvider && !apiKey && step === 1 ? "スキップ" : "次へ")}<ChevronRight size={15} />
@@ -209,7 +209,7 @@ export function Setup() {
             <Button disabled={busy} onClick={complete}>{t(busy ? "処理中…" : "完了して始める")}<Check size={15} /></Button>
           )}
         </div>
-        
+
       </div>
     </main>
   );

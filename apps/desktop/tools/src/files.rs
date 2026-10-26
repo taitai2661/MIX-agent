@@ -127,7 +127,9 @@ impl FilesTool {
         // path fails whenever the leaf does not exist yet — which is every
         // `write` / `create` — and the lexical fallback that followed let a
         // symlinked directory in the middle of the path escape the workspace.
-        let relative = candidate.strip_prefix(&root_canon).unwrap_or(&candidate);
+        let relative = candidate
+            .strip_prefix(&root_canon)
+            .map_err(|_| anyhow::anyhow!("path escapes workspace: {}", path))?;
         let mut resolved = root_canon.clone();
         for component in relative.components() {
             let next = resolved.join(component.as_os_str());
@@ -555,6 +557,7 @@ mod tests {
         assert!(FilesTool::safe_join(&root, "a/../../outside.txt").is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn safe_join_blocks_symlink_escape() {
         let root = temp_root("join-symlink");
@@ -562,9 +565,7 @@ mod tests {
             std::env::temp_dir().join(format!("mixd-files-outside-{}", std::process::id()));
         std::fs::create_dir_all(&outside).unwrap();
         let link = root.join("link");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &link).unwrap();
-        #[cfg(unix)]
         assert!(FilesTool::safe_join(&root, "link").is_err());
     }
 

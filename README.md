@@ -59,12 +59,21 @@ Docker や複雑なサーバー設定なしで、OpenCode のようにローカ�
 [GitHub Releases](https://github.com/taitai2661/MIX-agent/releases) からお使いの OS に合わせた最新インストーラーをダウンロードします：
 
 - **macOS**:
-  - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
-  - Intel Mac: `mix-agent-desktop_*_x64.dmg`
+  - Apple Silicon (M1/M2/M3/M4): `MIX-agent-Desktop-Apple-Silicon.dmg`
+  - Intel Mac: `MIX-agent-Desktop-Intel.dmg`
   - *インストール手順*: `.dmg` を開き、`MIX-agent Desktop` を `Applications` フォルダへドラッグ＆ドロップします。
   - *macOS Gatekeeper の注意*: 開発版のため未署名・未公証です。初回起動時に警告が出た場合は、Control キーを押しながらアプリアイコンをクリックして「開く」を選択するか、ターミナルで `xattr -cr "/Applications/MIX-agent Desktop.app"` を実行してください。
-- **Windows**: `mix-agent-desktop_*_x64-setup.exe` または `*.msi` インストーラー
-- **Linux**: `mix-agent-desktop_*_amd64.deb` または `*.AppImage` パッケージ
+- **Windows (x64)**:
+  - ※ Windowsインストーラーは次回リリース以降で配布します。v0.5.0時点ではmacOSのみです。
+  - 推奨: `MIX-agent-Desktop-Windows-x64-Setup.exe`（NSIS。日本語/英語、ユーザー単位インストール）
+  - `MIX-agent-Desktop-Windows-x64.msi`（英語。組織配布向け）
+  - *対応 OS*: Windows 10 1809 以降 / Windows 11
+  - *WebView2*: 初回インストール時にブートストラップが導入を試みます。WebView2 が未導入の場合はインターネット接続が必要です。
+  - *Windows SmartScreen の注意*: 未署名のため「Windows によって PC が保護されました」と表示される場合があります。「詳細情報」→「実行」を選択してください。
+  - *ターミナル / Git*: [Git for Windows](https://gitforwindows.org/)（Git Bash）を推奨します。未導入の場合、ターミナルは PowerShell にフォールバックしますが、POSIX コマンド（`ls` / `grep` など）や Git 連携の一部は使えません。
+- **Linux**: 現在の GitHub Release では配布していません。必要な場合はソースからビルドしてください。
+
+ダウンロード後は、Release に添付された `SHA256SUMS` とファイルのチェックサムを照合してください。
 
 #### 2. ソースコードから起動・ビルド
 
@@ -77,7 +86,11 @@ pnpm install
 # デスクトップ版の起動（開発モード）
 pnpm desktop:dev
 
-# macOS 向け .dmg パッケージのローカルビルド
+# 現在の OS 向けインストーラーのローカルビルド
+# macOS: .dmg / Windows: NSIS + MSI
+pnpm desktop:build
+
+# macOS 向け .dmg のみをビルド
 pnpm desktop:build:dmg
 ```
 

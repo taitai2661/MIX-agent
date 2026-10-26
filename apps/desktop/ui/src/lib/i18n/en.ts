@@ -264,22 +264,14 @@ export const en: Record<string, string> = {
   "パネル幅を拡大": "Expand panel width",
   "ネットワーク": "Network",
   "アップデート": "Updates",
-  "アップデート状態": "Update status",
-  "最終確認": "Last checked",
-  "GitHub Releases 経由で最新リリースを確認します":
-    "Checks for latest releases via GitHub Releases",
-  "確認中...": "Checking...",
-  "今すぐ更新を確認": "Check for updates",
-  "お使いのバージョンは最新です": "You are on the latest version",
-  "更新の確認に失敗しました": "Failed to check for updates",
-  "利用可能なアップデート": "Update available",
-  "ダウンロードして再起動": "Download and restart",
-  "アップデートをダウンロード中...": "Downloading update...",
-  "ダウンロード中...": "Downloading...",
-  "リリースノート": "Release notes",
-  "アップデート設定": "Update settings",
-  "起動時にバックグラウンドで新しいバージョンを確認します":
-    "Check for new versions in the background on startup",
+  "手動アップデート": "Manual updates",
+  "v0.5.0では自動更新とアプリ内の更新確認を無効にしています。最新版はGitHub ReleasesからMac用DMGを手動でダウンロードしてください。":
+    "Automatic and in-app update checks are disabled in v0.5.0. Download the latest macOS DMG manually from GitHub Releases.",
+  "GitHub Releasesを開く": "Open GitHub Releases",
+  "ダウンロードしたDMGのSHA256SUMSチェックサムを確認してください。":
+    "Verify the downloaded DMG against SHA256SUMS.",
+  "macOSアプリはAppleコード署名・公証なしです。Gatekeeperが警告または起動を制限する場合があります。":
+    "The macOS app is not Apple-code-signed or notarized. Gatekeeper may warn or block launch.",
   "アプリの改善のため匿名の診断情報を共有します":
     "Share anonymous diagnostics to improve the app",
   "バックアップ": "Backup",
@@ -466,13 +458,11 @@ export const en: Record<string, string> = {
   "Chromiumが見つかりません。システムのChromiumを入れるか、バンドル版を用意してください。":
     "No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.",
 
-  // Health indicator / update banner
+  // Health indicator
   "正常": "OK",
   "接続エラー": "Connection error",
   "確認中": "Checking…",
   "ヘルス": "Health",
-  "アップデートがあります": "Update available",
-  "インストールして再起動": "Install & restart",
 
   // Command palette
   "一致する項目がありません": "No matching commands",
@@ -497,7 +487,6 @@ export const en: Record<string, string> = {
   "Egress 許可リスト": "Egress allowlist",
   "未設定時は Tool がすべての公開ドメインへ到達可能。ワイルドカード (*) と完全一致ドメインを混在可。":
     "With no list, tools can reach any public domain. Wildcard (*) and exact hosts can be mixed.",
-  "自動更新を有効化": "Enable automatic updates",
   "匿名の利用統計を共有 (将来)":
     "Share anonymous usage statistics (coming soon)",
 

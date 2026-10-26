@@ -1,5 +1,7 @@
 # MIX-agent v0.4.0
 
+> Archived draft: v0.4.0 was not published. Use [`v0.5.0` release notes](release-notes-v0.5.0.md) for the release prepared from this source.
+
 > **Desktop 版を同じリポジトリに統合し、モデルメタデータの取得元を models.dev へ移行したリリースです。**
 
 v0.4.0は、v0.3.5で導入したMemory Runtime（役割分類・Evidence・Conflict）と長時間Agent実行基盤を土台に、Desktop 版（Tauri 2 + Rust）をモノレポへ統合し、リリース・ストア公開の自動化を成立させました。Docker 版（FastAPI + PostgreSQL）と Desktop 版（Rust + SQLite）は同一リポジトリで管理しますが、両者は共通の仕様書（`docs/memory-spec.md` / `docs/desktop/architecture.md`）で結ばれ、コードは共有しません。

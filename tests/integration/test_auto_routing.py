@@ -884,4 +884,3 @@ def test_auto_priority_setting_persists_and_is_snapshotted(signed, monkeypatch):
         run = db.get(Run, response.json()["run_id"])
         assert run.data["snapshot"]["auto_priority"] == "speed"
         assert run.data["auto_routing"]["priority"] == "speed"
-

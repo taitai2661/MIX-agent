@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.2.3
+Run with: python scripts/render_zimaos_compose.py v0.5.0
 PyYAML is required for this maintainer-only script.
 """
 
@@ -13,7 +13,10 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "apps/MIX-agent/docker-compose.yml"
+# The v2 store source uses `apps/`. Both upstream store builders need an
+# `Apps/` tree, but committing both spellings breaks case-insensitive
+# filesystems; the release workflows stage it with scripts/stage-store-source.sh.
+OUTS = (ROOT / "apps/MIX-agent/docker-compose.yml",)
 PACKAGE = "ghcr.io/taitai2661/mix-agent"
 TARGETS = {
     "init": "init",
@@ -38,16 +41,16 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
-    "v0.4.0": {
-        "update_at": "2026-10-22",
+    "v0.5.0": {
+        "update_at": "2026-10-25",
         "notes": {
             "en_US": (
                 "Adds the Desktop edition, moves model metadata to models.dev, "
-                "and reworks the chat composer with diffs, slash commands and git tools."
+                "and updates Memory, long-running agents, and release packaging."
             ),
             "ja_JP": (
-                "Desktop版を追加し、モデルメタデータを models.dev へ移行。"
-                "ChatのComposerにDiff・スラッシュコマンド・gitツールを追加。"
+                "Desktop版を追加し、モデル情報をmodels.devへ移行。"
+                "Memory・長時間Agent実行基盤・配布ワークフローを更新。"
             ),
         },
     },
@@ -160,5 +163,7 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    OUT.write_text(render(sys.argv[1] if len(sys.argv) == 2 else "v0.4.0"))
-
+    rendered = render(sys.argv[1] if len(sys.argv) == 2 else "v0.5.0")
+    for output in OUTS:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered)

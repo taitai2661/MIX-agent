@@ -146,7 +146,6 @@ export interface SettingsView {
   default_model_id: string | null;
   default_mode: string | null;
   egress_allowlist: string[];
-  auto_update: boolean;
   telemetry_consent: boolean;
   language: string | null;
   theme: string | null;
@@ -465,20 +464,4 @@ export interface GitDiffView {
   scope: string;
   unified_diff: string;
   truncated: boolean;
-}
-
-/** Payload of the `update_available` event and of `check_for_updates`. */
-export interface UpdateNotice {
-  version: string;
-  current_version: string;
-  notes: string;
-  date: string | null;
-}
-
-/** Progress payload emitted during update download. */
-export interface UpdateProgress {
-  chunk_bytes: number;
-  downloaded_bytes: number;
-  total_bytes: number | null;
-  percent: number | null;
 }

@@ -6,7 +6,89 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [実装] Windows Desktopリリース対応（2026-10-26）
+
+- `.github/workflows/desktop-release.yml` にWindows x64（`x86_64-pc-windows-msvc`、NSIS + MSI）を追加した。macOSのApple Silicon／Intel DMGは維持し、Linux Desktopは引き続き対象外。
+- Windows用の成果物名を`MIX-agent-Desktop-Windows-x64-Setup.exe`と`MIX-agent-Desktop-Windows-x64.msi`に固定し、checksums jobはmacOS 2件とWindows 2件の計4件を明示的に検証して`SHA256SUMS`を生成するようにした。
+- ChromiumのWindows既定プラットフォームを`win32`から`win64`へ修正し、release matrixも`cft: win64` / `cft_key: WIN64`にした。`MIX_CHROMIUM_SHA256_WIN64` / `MIX_CHROMIUM_SIZE_WIN64`は未設定でもバージョン・プラットフォーム検証でfail closedになる。
+- `apps/desktop/app/tauri.conf.json`にNSIS（currentUser、English/Japanese、言語選択）とWiX en-USを設定し、WebView2は`downloadBootstrapper`を明示した。
+- `ci.yml`にWindowsでの`tauri build --bundles nsis,msi` smoke jobを追加した。Chromiumはplaceholder（`MIX_SKIP_CHROMIUM=1`）を使う。
+- タグと`package.json`／`apps/desktop/package.json`／`apps/desktop/ui/package.json`／`tauri.conf.json`／`apps/desktop/Cargo.toml`のバージョン一致を検証する`scripts/check-version-consistency.mjs`を追加した。
+- ターミナルのタイムアウト時にPTY出力の末尾をエラーへ含めるようにし、Windows CIでmarker未検出の原因を追えるようにした。
+- ローカルmacOSで`cargo fmt --all -- --check`、`cargo clippy -p mixd-tools --all-targets -- -D warnings`、`cargo test -p mixd-tools terminal::`（21 passed）が成功。ワークフローYAML・`tauri.conf.json`・`check-version-consistency.mjs`の構文とバージョン一致も確認した。
+- 未検証: Windows CI（`desktop-rust`と新規packaging job）の実結果、`desktop-release` dry-run、Windows 10/11実機でのインストール・起動・ターミナル・Credential Manager・同梱Chromium、macOS実機のDMG起動。署名・公証は今回も行わない。
+
+## v0.5.0公開結果（2026-10-26）
+
+- `v0.5.0` タグとGitHub Releaseを作成した: https://github.com/taitai2661/MIX-agent/releases/tag/v0.5.0
+- Release assets: `MIX-agent-Desktop-Apple-Silicon.dmg`、`MIX-agent-Desktop-Intel.dmg`、`SHA256SUMS`、`mix-agent-zimaos-store-v0.5.0.tar.gz`、`mix-agent-zimaos-legacy-v0.5.0.zip`。
+- GHCRの8種類のAMD64イメージ（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）が`v0.5.0`で参照可能なことを確認。
+- `gh-pages`の`index.json`に`io.github.taitai2661.mix-agent`の`0.5.0`が含まれることを確認。
+- 初回のtag起点`Release MIX-agent`は、v2ストアビルダーも`Apps/`を要求するためZimaOSストア生成だけfailureになった。mainで両ビルダー用のステージ処理を修正し、`Publish ZimaOS store`（`tag=v0.5.0`）を手動実行してstore tar.gz/legacy zipをReleaseへ追加した（run 40248344738）。
+- Windows PTYテスト2件は既知の制約としてRelease notesに記載した。Windows Desktopはv0.5.0の配布対象外。
+
+## v0.5.0公開前の問題修正（2026-10-26）
+
+- `desktop-release`のmacOS DMG収集が`mapfile`（macOS標準bash 3.2に無い）で失敗していたため、`find -print0` + `read -d ''`のbash 3.2互換ループへ変更した。DMG 1件／2件の収集を`/bin/bash` 3.2で再現し、成功を確認。
+- `apps/desktop/ui/src/features/settings/UpdateSettings.tsx`へPrettierを適用。`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、Vitest 31ファイル249テストが成功。
+- ルート`pnpm-lock.yaml`から削除済み`@tauri-apps/plugin-updater`の残存entryを除去した。`pnpm install --frozen-lockfile`が全4ワークスペースで成功。これがCI `docker-frontend`／`Validate release candidate`の`ERR_PNPM_OUTDATED_LOCKFILE`の原因だった。
+- WebはVitest 21ファイル158テストとproduction buildが成功。ZimaOS Composeの再生成・`docker compose config`も成功。
+- 手動DMG配布へ切り替えた後に残っていた`apps/desktop/scripts/merge-updater-manifests.mjs`とそのテストを削除し、`THIRD_PARTY_LICENSES.md`を再生成した。
+- `Apps/MIX-agent`と`apps/MIX-agent`の大文字小文字重複を解消した。v1/v2ストア用の`Apps/`レイアウトは`scripts/stage-store-source.sh`で一時生成し、v1 archiveの`build/sysroot/.../Apps/MIX-agent/docker-compose.yml`を確認した。macOSのケース非依存ファイルシステムでも`apps/`のみでチェックアウトできる。
+- Windows PTYテストのタイムアウトを60秒へ延長し、direct-execテストもPTYテストと同じ直列ロックで実行するよう変更した。macOS上で`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（全suite）が成功。
+- PostgreSQL test profileは583 passed / 1 skipped。8種類のrelease image target（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）はローカルDockerでbuild成功。
+- Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-store-source.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
+- [追記] 修正後のGitHub Actionsを実行した。`Validate release candidate`とmacOS-only `desktop-release` dry-runは成功。`CI`はWindowsのPTYテスト2件（`a_shell_that_exits_is_replaced_on_the_next_call`、`the_shell_state_persists_between_calls`）のみfailure。Windows Desktopはv0.5.0の配布対象外であり、ユーザーの判断でこの2件を既知の制約としてmacOS/Docker版を先行リリースする。
+- 未確認: Windows実機のPTYテストとmacOS実機のDMG起動。`v0.5.0`タグとGitHub Releaseはこの記録の時点では未作成（その後、上の公開結果の節で作成済み）。
+
+## [追記] v0.5.0 Desktopを手動DMG配布へ変更（2026-10-25）
+
+- ユーザーは「自動更新を無効化し、DMGの手動配布に切り替える」方針を選択しました。v0.5.0ではアプリ起動時・アプリ内の更新確認と自動適用を行わず、GitHub ReleasesからmacOS DMGを取得する手順にします。
+- Tauri updater plugin、Updater用Rust/TypeScript runtime・IPC・メニュー操作、Updater key/public key/endpoint設定、Updater署名付きartifact生成を削除・無効化。Release workflowはApple SiliconとIntelのDMG2件をアーキテクチャ名付きで添付し、`SHA256SUMS`を生成します。Apple Developer ID署名・公証はユーザー指示により行わず、Gatekeeper warningをRelease notes/UIへ明記します。
+- Update settings画面は手動配布案内とGitHub Releasesへのリンクに置き換え、既存のtelemetry consent toggleは保持します。Docker/Web/ZimaOS配布とMemory・Agent等の変更は引き続きv0.5.0対象です。Windows/Linux Desktop installerは今回見送ります。
+- ローカルDesktop検証: `cargo check --workspace --all-targets`、`pnpm lint`、`pnpm test`、`pnpm ui:build`がsuccess。UIはNode 22.19.0環境で32 test files / 250 tests success。初回のNode 22.13.0実行は依存`undici@8.12.3`のNode `>=22.19.0`要件未満で失敗したため、互換Nodeで再実行し成功を確認しました。Rust workspace test targetsも全件success。
+- Updater signing keyはこのリリース方式では不要です。GitHub Actions Secretsの確認・取得・変更・再生成は行わず、秘密値を表示または外部送信していません。
+- この変更を含むGitHub CI、PostgreSQL/Docker/Web Validate、macOS-only unsigned DMG dry-runはpush後に実施します。最新mainに対するこれらの完了前にtag作成・公開は行いません。現在の`v0.5.0` tag、GitHub Release、配布assetsは未作成です。
+
+## [追記] v0.5.0 Desktop公開対象の変更と署名preflight（2026-10-25）
+
+- ユーザー指示によりv0.5.0 macOSアプリ本体はApple Developer IDコード署名・公証なしで配布します。Gatekeeperの警告や起動制限が出る可能性をRelease notesに記載します。Updater用アーカイブの署名は別機構のため維持します。
+- ユーザーの公開範囲変更により、v0.5.0で配布するDesktopインストーラーをApple Silicon／Intel macOSに限定し、Windows/Linux版は見送ります。`.github/workflows/desktop-release.yml`、Release notes、公開checklistをこの範囲へ合わせました。Docker/Web版とZimaOS配布は従来どおり対象です。
+- Windowsを含むクロスプラットフォームCI [run 40185098158](https://github.com/taitai2661/MIX-agent/actions/runs/40185098158) は、PTY integration testを直列化したcommit `dd59c77`でsuccess。PostgreSQL・Docker/Webを含む[Validate run 40185131436](https://github.com/taitai2661/MIX-agent/actions/runs/40185131436)もsuccess。
+- 先行macOS署名dry-run [run 40185138619](https://github.com/taitai2661/MIX-agent/actions/runs/40185138619)ではApple Silicon／Intelの`Build and bundle`が`security import`のkeychain certificate importでfailureでした。これはAppleコード署名を使っていた時点の履歴であり、後述のユーザー指示によってApple証明書・署名・公証をワークフローから削除しました。
+- [Tauri公式macOS signing guide](https://v2.tauri.app/distribute/sign/macos/)はApple証明書を使ったmacOSアプリ署名を説明しています。ユーザーはこの署名・公証を望まずGatekeeper警告を許容するため、証明書importを復活させない方針です。
+- 署名なしmacOSの現行preflight [run 40187871556](https://github.com/taitai2661/MIX-agent/actions/runs/40187871556)（commit `5239184`）では、Apple証明書エラーなしで進み、Apple Silicon／Intel両jobがUpdater用`TAURI_SIGNING_PRIVATE_KEY`のBase64 decode `Invalid padding`で`Build and bundle` failure。`checksums`および`release`はskipされました。秘密値は取得・表示していません。
+- 同commitの[Validate run 40187862943](https://github.com/taitai2661/MIX-agent/actions/runs/40187862943)はsuccess。一方、[CI run 40187854500](https://github.com/taitai2661/MIX-agent/actions/runs/40187854500)はWindows `cargo test`でPTY integration testが1件failureでした。
+- Updater用署名はAppleのアプリ本体署名と別機構です。公開鍵で検証できるアップデートを生成するには有効な既存Updater keyが必要ですが、今回そのdecodeに失敗しました。key値の取得・表示・外部送信・再生成・変更は行っていません。
+- `v0.5.0` tag、GitHub Release、Desktop配布assetは作成していません。Updater keyの扱いが解決し、必要なdry-run/CI条件を満たすまでtag作成を保留します。
+
+## [追記] Windows Desktop CIのpath修正（2026-10-25）
+
+- main commit `90d18ad`の[CI run 40175459776](https://github.com/taitai2661/MIX-agent/actions/runs/40175459776)では、Desktop UI、Ubuntu/macOS Rust、Docker backend/frontend、lint、format、Memory parityが成功。Windows Rustのみ102 passed / 6 failedで、主にpersistent Git Bash PTYのcwd/exit-status marker timeoutとUnix executableを前提にしたdirect-exec testが失敗しました。
+- 調査ではGit BashのPOSIX cwd (`/c/...`) とWindows native pathの境界が原因と特定。candidateの作業ツリーに`cygpath`変換、verbatim path正規化、Windows direct-exec test、workspace traversalの早期拒否を追加し、Linuxで`cargo fmt`、Clippy、`cargo test --workspace`が成功しました。
+- [この追記時点] 上記修正はcandidateの作業ツリーにありpush前で、Windows CIによる再検証待ちです。`v0.5.0` tagとGitHub Releaseは未作成です。Actions Secretsの値・登録状態・秘密鍵にはアクセスしていません。
+- [ZimaOS workflow 40175459775](https://github.com/taitai2661/MIX-agent/actions/runs/40175459775)自体はsuccessですが、v0.5.0のGHCR imageがまだ存在しないためstore build/publishはskipでした。
+
+## v0.5.0公開準備の確認（2026-10-25）
+
+確認した項目:
+
+- JSON / YAML、Python compileall、`uv lock --check`、`git diff --check`が成功。ZimaOS Composeは`v0.5.0`で2回再生成し、出力が一致。
+- [GitHub Validate run 40173309285](https://github.com/taitai2661/MIX-agent/actions/runs/40173309285)がcommit `f30255f`で成功。PostgreSQL service付きapp suiteは583 passed / 1 skipped / 1 warning。Docker release image build、legacy ZimaOS/CasaOS archive validation、Web frontendも成功。
+- Web版: `pnpm install --frozen-lockfile`、Vitest 21ファイル158テスト、production buildが成功。Buildは500 kBを超えるchunkの注意を出すが、正常終了。
+- Desktop UI: lint、TypeScript typecheck、Vitest 32ファイル250テスト、production buildが成功。
+- Desktop Rust/Linux: `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`が成功。Rust workspaceのテスト集計は595 passed / 0 failed。PTY terminalのsentinel/cwd marker raceを修正し、terminal focused tests 18件も成功。
+- Agent schedulerの誤importを修正。Memory revisionから削除済みMemoryを同一IDで復元する実装・回帰テスト、Windows/Linux Settings OS menu、Desktop clean-checkout Rust CIのChromium placeholder準備も追加。
+
+未確認の項目:
+
+- `cargo build --workspace --release`がoptimized profileで成功。macOS/Windows Rust matrixおよび各OS installer packagingは未実施。
+- GitHub Secretsの値・登録状態・鍵ペアにはアクセスしていない。署名済み`latest.json`と各OS実機のupdater動作は未確認。署名を含むDesktop release workflowはmain上の`v0.5.0` tagが必要。
+- Composeを用いた長時間runtimeの実機受入確認は未実施。
+
+PR作成は既存GitHub integrationからGraphQL / RESTの両方で403 `Resource not accessible by integration`となり、Pull Requests: write権限が不足している。mainへの反映、`v0.5.0` tag、GitHub Releaseは未実施。
 
 ## v0.3.5リリース候補の確認（2026-10-01）
 

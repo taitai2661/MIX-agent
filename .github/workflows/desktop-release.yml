@@ -1,14 +1,13 @@
 name: desktop-release
 
-# Builds installable MIX-agent Desktop artifacts for all three platforms.
+# Builds MIX-agent Desktop installers for macOS and Windows.
 #
-# Tag scheme: `desktop-v*` (e.g. desktop-v0.1.0) or `v*` (e.g. v0.3.5).
-# Tagging with `v*` triggers both Docker releases and Desktop DMG / installer builds,
-# uploading them as unified GitHub Release assets.
+# Tag scheme: `desktop-v*` (e.g. desktop-v0.6.0) or `v*` (e.g. v0.6.0).
+# Tagging with `v*` triggers both Docker releases and Desktop installer builds,
+# uploading them as GitHub Release assets.
 #
-# Alpha scope: x64 macOS + ARM macOS + x64 Windows + x64 Linux only.
-# Deferred (no runner / untested CfT bundle): aarch64-linux, universal-macos,
-# win-arm64. Add them as explicit matrix entries when a runner exists.
+# Release scope: Apple Silicon + Intel macOS DMGs, and a Windows x64 NSIS
+# installer plus MSI. Deferred: universal-macos, win-arm64, and Linux Desktop.
 #
 # Bundled Chromium is fetched explicitly below (pinned MIX_CHROMIUM_VERSION),
 # and the release build fails closed (MIX_REQUIRE_CHROMIUM=1) rather than
@@ -18,17 +17,18 @@ name: desktop-release
 # `cft` is the Chrome-for-Testing platform that matches the *bundle target*,
 # not the runner: the two macOS entries build from the same runner label, so
 # without it the Intel bundle would ship an arm64 Chromium (or the reverse).
+# The Windows entry is x64, so it must use CfT `win64`, not `win32`.
 # Checksums are per CfT platform too — each one ships its own zip — so
 # MIX_CHROMIUM_SHA256_<KEY> / MIX_CHROMIUM_SIZE_<KEY> are optional secrets
 # and variables; when a target has none, the version assertion below is the
 # only gate.
 #
-# Auto-update: Phase 6 ships "release CI without updates" — the updater plugin
-# stays inactive (endpoints: [], active: false) and no .sig/latest.json is
-# published. To enable updates: set TAURI_SIGNING_PRIVATE_KEY, flip
-# plugins.updater active/endpoints/pubkey, and uncomment the updater-artifacts
-# upload in the release job. See docs/desktop/architecture.md ("Automatic
-# updates" section).
+# Desktop builds are intentionally not code-signed or notarized for this
+# release line: macOS Gatekeeper and Windows SmartScreen may warn or block
+# launch. Do not import Apple certificates or pass Windows signing secrets to
+# the build. Distribution is manual-download only: the Tauri updater plugin
+# and updater artifacts stay disabled, so Releases contain the installers and
+# SHA256SUMS but no latest.json or updater signatures.
 
 on:
   push:
@@ -38,8 +38,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. desktop-v0.1.0 or v0.3.5)"
+        description: "Tag to build (e.g. desktop-v0.6.0 or v0.6.0)"
         required: true
+      dry_run:
+        description: "Build/validate artifacts without creating or updating a GitHub Release"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -57,7 +62,7 @@ env:
 
 jobs:
   bundle:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,27 +70,24 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+            asset_arch: Apple-Silicon
             bundles: app,dmg
             cft: mac-arm64
             cft_key: MAC_ARM64
           - os: macos-latest
             target: x86_64-apple-darwin
+            asset_arch: Intel
             bundles: app,dmg
             cft: mac-x64
             cft_key: MAC_X64
-          # Deferred: universal-macos (requires lipo of both targets; add when needed).
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bundles: msi,nsis
-            cft: win32
-            cft_key: WIN32
-          # Deferred: win-arm64 (CfT win-arm64 bundle untested; no ARM runner yet).
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            bundles: deb,appimage
-            cft: linux64
-            cft_key: LINUX64
-          # Deferred: aarch64-linux (no ARM Linux runner in CI yet).
+            asset_arch: Windows-x64
+            bundles: nsis,msi
+            cft: win64
+            cft_key: WIN64
+          # Deferred: universal-macos (requires lipo of both targets), win-arm64,
+          # and Linux x86_64/ARM64 Desktop installers.
 
     steps:
       # workflow_dispatch builds the tag passed as `inputs.tag`; tag pushes
@@ -109,6 +111,15 @@ jobs:
         with:
           node-version: "22"
 
+      # Keep the tag, package manifests, Tauri config and Cargo workspace in
+      # lockstep. A dry-run may pass a branch name (`tag=main`); the script only
+      # compares a ref when it looks like a release tag.
+      - name: Verify tag matches app version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: node scripts/check-version-consistency.mjs --tag "$RELEASE_TAG"
+
       - uses: pnpm/action-setup@v4
         with:
           # Single source of truth for the pnpm version is packageManager in
@@ -120,15 +131,14 @@ jobs:
 
       # Chromium needs these at build time on Linux; tauri also needs them to
       # package .deb and .AppImage.
-      # NOTE: jobs stay on ubuntu-22.04 (not 24.04): 24.04 renamed libssl to
-      # libssl3t64 and moved libwebkit2gtk-4.1/libappindicator3 out of the
-      # default archive, so the apt set below would need rework before bumping.
+      # NOTE: jobs stay on ubuntu-22.04 (not 24.04): WebKitGTK/AppIndicator
+      # package names and archive availability differ; re-check before bumping.
       - name: Install Linux bundling + Chromium dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
             libssl-dev libxdo-dev libgtk-3-dev libayatana-appindicator3-dev \
             fuse3
 
@@ -197,102 +207,102 @@ jobs:
           else
             echo "::warning::MIX_CHROMIUM_SHA256_${CFT_KEY} is not set — falling back to version and platform assertions only."
           fi
-          jq -e --arg v "$MIX_CHROMIUM_VERSION" '.version == $v' \
-            app/resources/chromium/chromium-version.json > /dev/null
-          jq -e --arg p "$MIX_CHROMIUM_CFT" '.platform == $p' \
-            app/resources/chromium/chromium-version.json > /dev/null
+          # Use Node instead of jq: jq is present on the Linux and macOS
+          # runners but is not part of the Windows runner contract.
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(
+              fs.readFileSync("app/resources/chromium/chromium-version.json", "utf8"),
+            );
+            const wantVersion = process.env.MIX_CHROMIUM_VERSION;
+            const wantPlatform = process.env.MIX_CHROMIUM_CFT;
+            if (manifest.version !== wantVersion) {
+              console.error(
+                `chromium-version.json version ${manifest.version} != ${wantVersion}`,
+              );
+              process.exit(1);
+            }
+            if (manifest.platform !== wantPlatform) {
+              console.error(
+                `chromium-version.json platform ${manifest.platform} != ${wantPlatform}`,
+              );
+              process.exit(1);
+            }
+          '
         env:
           MIX_CHROMIUM_VERSION: ${{ env.MIX_CHROMIUM_VERSION }}
           MIX_CHROMIUM_CFT: ${{ matrix.cft }}
           CFT_KEY: ${{ matrix.cft_key }}
           MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
 
-      # macOS signing certificate must be in the keychain BEFORE `tauri build`
-      # so signing happens during bundling (post-hoc codesign invalidates it).
-      # Skipped without secrets: the build below then stays clearly unsigned.
-      - name: Import macOS signing certificate
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ github.repository }}
-        run: |
-          echo "::add-mask::$KEYCHAIN_PASSWORD"
-          trap 'security delete-keychain build.keychain 2>/dev/null; rm -f /tmp/cert.p12' EXIT
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import /tmp/cert.p12 -k build.keychain \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm -f /tmp/cert.p12
-
-      # Signing happens DURING `tauri build` via the Apple env below, not as a      # post-hoc codesign of the bundled .app (post-hoc signing invalidates the
-      # bundle). Without APPLE_SIGNING_IDENTITY the build still succeeds but is
-      # clearly labeled unsigned (see the guard echo).
+      # App code signing/notarization is intentionally disabled for this release
+      # line. No Apple certificate, signing identity, Apple account, Windows
+      # certificate, or updater key secrets are passed; users install updates
+      # manually from the Release.
       - name: Build and bundle
         working-directory: apps/desktop
         shell: bash
         run: |
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && [ "${{ runner.os }}" = "macOS" ]; then
-            echo "::warning::No APPLE_SIGNING_IDENTITY — producing an UNSIGNED macOS build."
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            echo "::warning::Apple app signing/notarization and automatic updates are disabled for this release; Gatekeeper may warn or block launch."
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            echo "::warning::The Windows installer is unsigned; SmartScreen may warn or block launch."
           fi
           pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           MIX_REQUIRE_CHROMIUM: "1"
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # Notarization runs after the (already signed) bundle exists. The nested
-      # Chromium.app is signed BEFORE the outer app; the outer signature would
-      # otherwise be invalidated. Creates the notarytool keychain profile from
-      # secrets; skipped entirely without them.
-      - name: Notarize and staple the macOS build
-        if: runner.os == 'macOS' && secrets.APPLE_ID != ''
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      - name: Stage manual-download artifacts
+        working-directory: apps/desktop
+        shell: bash
         run: |
-          xcrun notarytool store-credentials "notary" \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD"
-          APP="target/${{ matrix.target }}/release/bundle/macos/MIX-agent Desktop.app"
-          SIGN="${APPLE_SIGNING_IDENTITY:-Developer ID Application: $APPLE_TEAM_ID}"
-          if [ -d "$APP/Contents/Resources/chromium" ]; then
-            find "$APP/Contents/Resources/chromium" -name "*.app" -depth -exec \
-              codesign --force --sign "$SIGN" --options runtime --timestamp {} \;
+          set -euo pipefail
+          mkdir -p release-assets
+
+          # macOS runners still use bash 3.2, which has no `mapfile`. Read the
+          # NUL-delimited find output with a portable loop instead. The same
+          # shape works in Git Bash on the Windows runner.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            dmgs=()
+            while IFS= read -r -d '' dmg; do
+              dmgs+=("$dmg")
+            done < <(find "target/${{ matrix.target }}/release/bundle" -type f -name '*.dmg' -print0)
+            if [ "${#dmgs[@]}" -ne 1 ]; then
+              echo "::error::Expected one DMG for ${{ matrix.asset_arch }}, found ${#dmgs[@]}."
+              exit 1
+            fi
+            cp "${dmgs[0]}" "release-assets/MIX-agent-Desktop-${{ matrix.asset_arch }}.dmg"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            setups=()
+            while IFS= read -r -d '' setup; do
+              setups+=("$setup")
+            done < <(find "target/${{ matrix.target }}/release/bundle/nsis" -type f -name '*-setup.exe' -print0)
+            if [ "${#setups[@]}" -ne 1 ]; then
+              echo "::error::Expected one NSIS setup executable, found ${#setups[@]}."
+              exit 1
+            fi
+            cp "${setups[0]}" "release-assets/MIX-agent-Desktop-Windows-x64-Setup.exe"
+
+            msis=()
+            while IFS= read -r -d '' msi; do
+              msis+=("$msi")
+            done < <(find "target/${{ matrix.target }}/release/bundle/msi" -type f -name '*.msi' -print0)
+            if [ "${#msis[@]}" -ne 1 ]; then
+              echo "::error::Expected one MSI installer, found ${#msis[@]}. Check bundle.windows.wix.language."
+              exit 1
+            fi
+            cp "${msis[0]}" "release-assets/MIX-agent-Desktop-Windows-x64.msi"
+          else
+            echo "::error::No artifact staging rule for ${{ runner.os }}."
+            exit 1
           fi
-          codesign --force --sign "$SIGN" --options runtime --timestamp "$APP"
-          xcrun notarytool submit "$APP" --keychain-profile "notary" --wait
-          xcrun stapler staple "$APP"
 
       - name: Collect artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mix-agent-desktop-${{ matrix.target }}
-          path: |
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.dmg
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.msi
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.exe
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.deb
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.AppImage
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.tar.gz.sig
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/*.zip.sig
-            apps/desktop/target/${{ matrix.target }}/release/bundle/**/latest.json
-          if-no-files-found: warn
+          path: apps/desktop/release-assets/*
+          if-no-files-found: error
           retention-days: 14
 
   checksums:
@@ -303,13 +313,33 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Build a checksum manifest
+      - name: Build a checksum manifest for all installers
+        shell: bash
         run: |
-          cd artifacts
-          find . -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
-            -o -name '*.deb' -o -name '*.AppImage' \) \
-            -print0 | sort -z | xargs -0 -I{} sh -c 'sha256sum "$1" >> SHA256SUMS' _ {}
-          cat SHA256SUMS
+          set -euo pipefail
+          # Keep this loop bash-3.2 compatible: the release workflow is easy to
+          # move between macOS and Linux runners. The expected set is explicit
+          # so a missing Windows or macOS artifact fails here instead of
+          # producing a Release with a silently incomplete SHA256SUMS.
+          expected=(
+            "MIX-agent-Desktop-Apple-Silicon.dmg"
+            "MIX-agent-Desktop-Intel.dmg"
+            "MIX-agent-Desktop-Windows-x64-Setup.exe"
+            "MIX-agent-Desktop-Windows-x64.msi"
+          )
+          : > artifacts/SHA256SUMS
+          for name in "${expected[@]}"; do
+            matches=()
+            while IFS= read -r -d '' file; do
+              matches+=("$file")
+            done < <(find artifacts -type f -name "$name" -print0)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one $name, found ${#matches[@]}."
+              exit 1
+            fi
+            (cd "$(dirname "${matches[0]}")" && sha256sum "$(basename "${matches[0]}")") >> artifacts/SHA256SUMS
+          done
+          cat artifacts/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: mix-agent-desktop-checksums
@@ -318,9 +348,9 @@ jobs:
 
   release:
     needs: [bundle, checksums]
-    # Tag pushes match the ref; manual dispatches use the `tag` input (the
-    # bundle job checks out that same ref above).
-    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Tag pushes publish. Manual runs are packaging dry-runs by default; set
+    # dry_run=false explicitly to create/update a manual-download GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -331,24 +361,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Merge multi-platform updater manifests
-        run: |
-          node apps/desktop/scripts/merge-updater-manifests.mjs artifacts artifacts/latest.json \
-            --repo ${{ github.repository }} \
-            --tag ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           files: |
             artifacts/**/*.dmg
-            artifacts/**/*.msi
             artifacts/**/*.exe
-            artifacts/**/*.deb
-            artifacts/**/*.AppImage
-            artifacts/**/*.tar.gz
-            artifacts/**/*.tar.gz.sig
-            artifacts/**/*.zip
-            artifacts/**/*.zip.sig
-            artifacts/latest.json
+            artifacts/**/*.msi
             artifacts/**/SHA256SUMS
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true

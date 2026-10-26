@@ -17,7 +17,6 @@ export const DEFAULT_SETTINGS: SettingsView = {
   default_model_id: null,
   default_mode: null,
   egress_allowlist: [],
-  auto_update: true,
   telemetry_consent: false,
   language: null,
   theme: null,

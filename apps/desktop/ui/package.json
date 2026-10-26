@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-desktop-ui",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -34,7 +34,6 @@
     "@tauri-apps/plugin-os": "^2.0.0",
     "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.1",
-    "@tauri-apps/plugin-updater": "^2.0.0",
     "@tauri-apps/plugin-window-state": "^2.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

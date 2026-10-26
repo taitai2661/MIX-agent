@@ -374,6 +374,7 @@ def test_memory_revision_restore(signed):
         == 200
     )
     rows = signed.get("/api/v1/memories?q=日本語").json()
+    assert rows[0]["id"] == key
     assert rows[0]["data"]["content"] == "日本語を好む"
 
 

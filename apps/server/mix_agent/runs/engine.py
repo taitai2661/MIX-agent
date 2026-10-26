@@ -2358,7 +2358,7 @@ async def scheduler():
                 delay = 2.0
             else:
                 with SessionLocal() as db:
-                    from mix_agent.api.routes import purge_expired_conversations
+                    from mix_agent.api.helpers.cleanup import purge_expired_conversations
 
                     purge_expired_conversations(db)
                     from mix_agent.schedules import tick

@@ -42,7 +42,6 @@ import type {
   SkillResourceView,
   SkillView,
   ToolView,
-  UpdateNotice,
 } from "./types";
 
 export const api = {
@@ -353,18 +352,6 @@ export const api = {
       needs_restart: boolean;
     }>("restore_backup", { input }),
   relaunchApp: () => invoke<void>("relaunch_app"),
-
-  checkForUpdates: () => invoke<UpdateNotice | null>("check_for_updates"),
-  installUpdate: () => invoke<void>("install_update"),
-  isUpdaterConfigured: () => invoke<boolean>("is_updater_configured"),
-  getAppVersion: async (): Promise<string> => {
-    try {
-      const { getVersion } = await import("@tauri-apps/api/app");
-      return await getVersion();
-    } catch {
-      return "0.1.0";
-    }
-  },
 
   getSettings: () => invoke<SettingsView>("get_settings"),
   updateSettings: (input: SettingsView) =>
