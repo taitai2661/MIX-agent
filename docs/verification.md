@@ -15,10 +15,10 @@
 - ルート`pnpm-lock.yaml`から削除済み`@tauri-apps/plugin-updater`の残存entryを除去した。`pnpm install --frozen-lockfile`が全4ワークスペースで成功。これがCI `docker-frontend`／`Validate release candidate`の`ERR_PNPM_OUTDATED_LOCKFILE`の原因だった。
 - WebはVitest 21ファイル158テストとproduction buildが成功。ZimaOS Composeの再生成・`docker compose config`も成功。
 - 手動DMG配布へ切り替えた後に残っていた`apps/desktop/scripts/merge-updater-manifests.mjs`とそのテストを削除し、`THIRD_PARTY_LICENSES.md`を再生成した。
-- `Apps/MIX-agent`と`apps/MIX-agent`の大文字小文字重複を解消した。v1ストア用の`Apps/`レイアウトは`scripts/stage-legacy-store.sh`で一時生成し、v1 archiveの`build/sysroot/.../Apps/MIX-agent/docker-compose.yml`を確認した。macOSのケース非依存ファイルシステムでも`apps/`のみでチェックアウトできる。
+- `Apps/MIX-agent`と`apps/MIX-agent`の大文字小文字重複を解消した。v1/v2ストア用の`Apps/`レイアウトは`scripts/stage-store-source.sh`で一時生成し、v1 archiveの`build/sysroot/.../Apps/MIX-agent/docker-compose.yml`を確認した。macOSのケース非依存ファイルシステムでも`apps/`のみでチェックアウトできる。
 - Windows PTYテストのタイムアウトを60秒へ延長し、direct-execテストもPTYテストと同じ直列ロックで実行するよう変更した。macOS上で`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（全suite）が成功。
 - PostgreSQL test profileは583 passed / 1 skipped。8種類のrelease image target（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）はローカルDockerでbuild成功。
-- Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-legacy-store.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
+- Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-store-source.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
 - [追記] 修正後のGitHub Actionsを実行した。`Validate release candidate`とmacOS-only `desktop-release` dry-runは成功。`CI`はWindowsのPTYテスト2件（`a_shell_that_exits_is_replaced_on_the_next_call`、`the_shell_state_persists_between_calls`）のみfailure。Windows Desktopはv0.5.0の配布対象外であり、ユーザーの判断でこの2件を既知の制約としてmacOS/Docker版を先行リリースする。
 - 未確認: Windows実機のPTYテストとmacOS実機のDMG起動。`v0.5.0`タグとGitHub Releaseはこの記録の時点では未作成。
 

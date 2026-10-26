@@ -3,8 +3,8 @@
 ## 配布の仕組み
 
 公開リポジトリの `store-config.json` と `apps/MIX-agent/docker-compose.yml` から、
-両世代のストアを同時に生成します。v1ビルダーが要求する `Apps/` レイアウトは、
-`scripts/stage-legacy-store.sh` で一時ディレクトリへ生成します。リポジトリに
+両世代のストアを同時に生成します。v1/v2ビルダーが要求する `Apps/` レイアウトは、
+`scripts/stage-store-source.sh` で一時ディレクトリへ生成します。リポジトリに
 `Apps/` と `apps/` を同時に置くと、macOSなど大文字小文字を区別しない環境で
 チェックアウトできないためです。
 
@@ -71,8 +71,8 @@ python -m pip install PyYAML==6.0.2
 VERSION="$(awk '/^  version:/ {gsub(/["\047]/, "", $2); print $2; exit}' apps/MIX-agent/docker-compose.yml)"
 python scripts/render_zimaos_compose.py "v$VERSION"
 docker compose -f apps/MIX-agent/docker-compose.yml config --quiet
-bash scripts/stage-legacy-store.sh out/legacy-store
-docker compose -f out/legacy-store/Apps/MIX-agent/docker-compose.yml config --quiet
+bash scripts/stage-store-source.sh out/store-source
+docker compose -f out/store-source/Apps/MIX-agent/docker-compose.yml config --quiet
 ```
 
 通常の `compose.yaml` にサービスを追加・変更した場合は、生成ファイルも更新してください。

@@ -13,9 +13,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-# The v2 store uses `apps/`. The legacy v1 builder needs an `Apps/` tree, but
-# committing both spellings breaks case-insensitive filesystems; the release
-# workflows stage it with scripts/stage-legacy-store.sh instead.
+# The v2 store source uses `apps/`. Both upstream store builders need an
+# `Apps/` tree, but committing both spellings breaks case-insensitive
+# filesystems; the release workflows stage it with scripts/stage-store-source.sh.
 OUTS = (ROOT / "apps/MIX-agent/docker-compose.yml",)
 PACKAGE = "ghcr.io/taitai2661/mix-agent"
 TARGETS = {
