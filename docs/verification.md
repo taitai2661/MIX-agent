@@ -6,7 +6,16 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## v0.5.0公開結果（2026-10-26）
+
+- `v0.5.0` タグとGitHub Releaseを作成した: https://github.com/taitai2661/MIX-agent/releases/tag/v0.5.0
+- Release assets: `MIX-agent-Desktop-Apple-Silicon.dmg`、`MIX-agent-Desktop-Intel.dmg`、`SHA256SUMS`、`mix-agent-zimaos-store-v0.5.0.tar.gz`、`mix-agent-zimaos-legacy-v0.5.0.zip`。
+- GHCRの8種類のAMD64イメージ（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）が`v0.5.0`で参照可能なことを確認。
+- `gh-pages`の`index.json`に`io.github.taitai2661.mix-agent`の`0.5.0`が含まれることを確認。
+- 初回のtag起点`Release MIX-agent`は、v2ストアビルダーも`Apps/`を要求するためZimaOSストア生成だけfailureになった。mainで両ビルダー用のステージ処理を修正し、`Publish ZimaOS store`（`tag=v0.5.0`）を手動実行してstore tar.gz/legacy zipをReleaseへ追加した（run 40248344738）。
+- Windows PTYテスト2件は既知の制約としてRelease notesに記載した。Windows Desktopはv0.5.0の配布対象外。
 
 ## v0.5.0公開前の問題修正（2026-10-26）
 
@@ -20,7 +29,7 @@
 - PostgreSQL test profileは583 passed / 1 skipped。8種類のrelease image target（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）はローカルDockerでbuild成功。
 - Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-store-source.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
 - [追記] 修正後のGitHub Actionsを実行した。`Validate release candidate`とmacOS-only `desktop-release` dry-runは成功。`CI`はWindowsのPTYテスト2件（`a_shell_that_exits_is_replaced_on_the_next_call`、`the_shell_state_persists_between_calls`）のみfailure。Windows Desktopはv0.5.0の配布対象外であり、ユーザーの判断でこの2件を既知の制約としてmacOS/Docker版を先行リリースする。
-- 未確認: Windows実機のPTYテストとmacOS実機のDMG起動。`v0.5.0`タグとGitHub Releaseはこの記録の時点では未作成。
+- 未確認: Windows実機のPTYテストとmacOS実機のDMG起動。`v0.5.0`タグとGitHub Releaseはこの記録の時点では未作成（その後、上の公開結果の節で作成済み）。
 
 ## [追記] v0.5.0 Desktopを手動DMG配布へ変更（2026-10-25）
 
