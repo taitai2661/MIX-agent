@@ -113,7 +113,7 @@ export const Composer = memo(function Composer(props: {
     content: string,
     attachments: DraftAttachment[],
     options: { temporaryMode: boolean; allowTools: boolean },
-  ) => void;
+  ) => void | Promise<unknown>;
   onStop: () => void;
   /** Key shortcut used to send messages (Enter vs Cmd/Ctrl+Enter). */
   sendShortcut?: SendShortcut;
@@ -419,13 +419,23 @@ export const Composer = memo(function Composer(props: {
     return subscribePromptInsert(onInsert);
   }, [setMode, allowedModes]);
 
-  const submit = () => {
+  const submit = async () => {
     if (!canSend) return;
     const trimmed = draft.trim();
+    const pending = onSend(trimmed, attachments, { temporaryMode, allowTools });
+    if (pending && typeof (pending as Promise<unknown>).then === "function") {
+      try {
+        await pending;
+      } catch {
+        // Keep the prompt and its attachments so the user can retry. The error is
+        // surfaced by the mutation's ErrorBox above the composer.
+        textareaRef.current?.focus();
+        return;
+      }
+    }
     pushPromptHistory(trimmed);
     historyIndexRef.current = -1;
     historyDraftRef.current = "";
-    onSend(trimmed, attachments, { temporaryMode, allowTools });
     setDraft("");
     clearAttachments();
     removeKey(`mix:composer-draft:${draftKeyRef.current ?? "none"}`);
@@ -728,13 +738,13 @@ export const Composer = memo(function Composer(props: {
                     // Modifier mode: Cmd+Enter or Ctrl+Enter sends; regular Enter inserts newline.
                     if (e.metaKey || e.ctrlKey) {
                       e.preventDefault();
-                      submit();
+                      void submit();
                     }
                   } else {
                     // Enter mode: Enter sends (unless Shift is pressed); Cmd/Ctrl+Enter also sends.
                     if (e.metaKey || e.ctrlKey || !e.shiftKey) {
                       e.preventDefault();
-                      submit();
+                      void submit();
                     }
                   }
                 }
@@ -926,7 +936,7 @@ export const Composer = memo(function Composer(props: {
                   variant="primary"
                   size="icon"
                   disabled={!canSend}
-                  onClick={submit}
+                  onClick={() => void submit()}
                   aria-label={
                     sendDisabledReason
                       ? `${t("送信")} — ${sendDisabledReason}`

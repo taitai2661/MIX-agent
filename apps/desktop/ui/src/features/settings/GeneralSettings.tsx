@@ -71,10 +71,7 @@ export function GeneralSettings() {
           <p className="m-0 text-xs text-muted">
             {t("チャット入力欄でのメッセージ送信ショートカットを設定します。")}
           </p>
-          <Segmented
-            aria-label={t("メッセージ送信キー")}
-            className="w-full max-w-md"
-          >
+          <Segmented aria-label={t("メッセージ送信キー")} className="w-full">
             <SegmentedOption
               value="enter"
               label={t("Enter で送信 (Shift+Enter で改行)")}

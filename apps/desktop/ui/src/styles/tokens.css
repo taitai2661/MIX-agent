@@ -34,7 +34,7 @@
 
   --color-fg: #232529;
   --color-muted: #5d6066;
-  --color-faint: #7d8087;
+  --color-faint: #62656b;
 
   --color-line: rgba(28, 25, 23, 0.08);
   --color-line-strong: rgba(28, 25, 23, 0.15);
@@ -191,78 +191,102 @@
 
 /* ------------------------------------------------------------------ base */
 
-* {
-  box-sizing: border-box;
-}
+/* Element resets live in the `base` layer, not unlayered. Unlayered rules
+   beat *every* `@layer` (including Tailwind's utilities), so keeping these
+   here meant a button's `text-xs`/`text-brand` and a list's `list-disc` were
+   silently discarded in favour of `font: inherit`, `color: inherit` and
+   `list-style: none` — the control inherited its parent's colour and size
+   instead of the one its class asked for. */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
 
-html,
-body,
-#root {
-  height: 100%;
-}
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
 
-body {
-  margin: 0;
-  overflow: hidden;
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--color-fg);
-  background: var(--color-bg);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  /* Theme flips are animated, but only the two surface colours — animating
-     every element's colour on a theme switch reads as a flicker. */
-  transition:
-    background-color 0.18s ease-out,
-    color 0.18s ease-out;
-}
+  body {
+    margin: 0;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--color-fg);
+    background: var(--color-bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Theme flips are animated, but only the two surface colours — animating
+       every element's colour on a theme switch reads as a flicker. */
+    transition:
+      background-color 0.18s ease-out,
+      color 0.18s ease-out;
+  }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
 
-/* Ensure inline SVGs inside buttons and interactive controls stay inline */
-button svg,
-[role="button"] svg,
-[role="radio"] svg,
-[role="tab"] svg {
-  display: inline-block;
-  vertical-align: middle;
-}
+  /* Ensure inline SVGs inside buttons and interactive controls stay inline */
+  button svg,
+  [role="button"] svg,
+  [role="radio"] svg,
+  [role="tab"] svg {
+    display: inline-block;
+    vertical-align: middle;
+  }
 
-h1,
-h2,
-h3,
-h4,
-p,
-figure {
-  margin: 0;
-}
+  h1,
+  h2,
+  h3,
+  h4,
+  p,
+  figure {
+    margin: 0;
+  }
 
-ul,
-ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+  ul,
+  ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
-a {
-  color: var(--color-brand);
-  text-decoration: none;
-}
+  a {
+    color: var(--color-brand);
+    text-decoration: none;
+  }
 
-a:hover {
-  text-decoration: underline;
-}
+  a:hover {
+    text-decoration: underline;
+  }
 
-::selection {
-  background: var(--color-brand-soft);
-  color: inherit;
+  ::selection {
+    background: var(--color-brand-soft);
+    color: inherit;
+  }
+
+  /* The single focus ring for the whole app. Every natively focusable element
+     matches this rule on its own; the few elements with their own focus
+     treatment opt out with `outline-none` (a utility, which now wins because
+     this rule sits in the base layer). */
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Keyboard-only affordance: pointer users keep the border treatment on
+     inputs, keyboard users always get the ring. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
 }
 
 /* Stable scroll containers: reserve the gutter so the arrival of a scrollbar
@@ -284,21 +308,6 @@ a:hover {
   .animate-fade {
     will-change: opacity, transform;
   }
-}
-
-/* The single focus ring for the whole app. Every natively focusable element
-   matches this rule on its own; the few elements with their own focus
-   treatment opt out with `outline-none`. */
-:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-/* Keyboard-only affordance: pointer users keep the border treatment on
-   inputs, keyboard users always get the ring. */
-:focus:not(:focus-visible) {
-  outline: none;
 }
 
 .app-titlebar {

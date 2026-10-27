@@ -37,7 +37,7 @@ import { Input, SearchField } from "@/components/ui/input";
 import { NavRow, SectionLabel } from "@/components/layout";
 import { DeleteIconButton, SearchEmptyState } from "@/components/common";
 import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
-import { useCreateThread } from "./useShellEvents";
+import { useNewThread } from "./useShellEvents";
 import { panelStyle } from "./usePanelCap";
 
 const NAV_ITEMS: { id: View; label: string; icon: React.ReactNode }[] = [
@@ -128,7 +128,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
   const conversations = useConversations();
   const approvals = usePendingApprovals();
-  const createConversation = useCreateThread();
+  const newThread = useNewThread();
 
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
@@ -307,24 +307,11 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
           variant="primary"
           size="lg"
           className="h-10 w-full justify-start gap-2"
-          onClick={() => createConversation.mutate()}
-          disabled={createConversation.isPending}
+          onClick={() => newThread()}
         >
           {isAgent ? <Bot size={15} /> : <Plus size={15} />}
           {isAgent ? t("新規タスク") : t("新規チャット")}
         </Button>
-        {/* Thread creation failures used to be silent — the button just
-            stopped spinning and nothing appeared. */}
-        {createConversation.isError && (
-          <ErrorBox
-            error={
-              createConversation.error ||
-              (isAgent
-                ? t("タスクを作成できませんでした")
-                : t("スレッドを作成できませんでした"))
-            }
-          />
-        )}
         <SearchField
           icon={<Search size={13} />}
           value={search}

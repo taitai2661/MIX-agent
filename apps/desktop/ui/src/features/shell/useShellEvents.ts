@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { api, listenRunEvents } from "@/lib/api";
 import { useRunEvents } from "@/lib/runStore";
 import {
@@ -8,6 +9,40 @@ import {
   PENDING_APPROVALS_QUERY_KEY,
 } from "@/lib/queries";
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
+import { t } from "@/lib/i18n";
+
+const ZOOM_KEY = "mix-agent-zoom";
+function applyZoom(next: number) {
+  const value = Math.min(1.5, Math.max(0.8, Math.round(next * 10) / 10));
+  try {
+    localStorage.setItem(ZOOM_KEY, String(value));
+  } catch {
+    // Storage can be unavailable in a preview; zoom still applies for the session.
+  }
+  document.documentElement.style.zoom = String(value);
+}
+function currentZoom() {
+  try {
+    const stored = Number(localStorage.getItem(ZOOM_KEY));
+    return Number.isFinite(stored) && stored > 0 ? stored : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Open a blank chat without creating an empty conversation row.
+ *
+ * The backend conversation is created on first send by `ChatPane`, so clicking
+ * 新規チャット three times no longer leaves three untitled rows behind.
+ */
+export function useNewThread() {
+  const setConversationId = useUi((s) => s.setConversationId);
+  const setView = useUi((s) => s.setView);
+  return () => {
+    setConversationId(null);
+    setView("chat");
+  };
+}
 
 /** Create a thread from whatever mode / model / project is selected *now*.
  *
@@ -115,6 +150,19 @@ export function useShellEvents(handlers: {
         window.dispatchEvent(new CustomEvent("mix:new-thread"));
       }),
     );
+    track(
+      listen("app://hidden-to-tray", () => {
+        if (!active) return;
+        try {
+          sendNotification({
+            title: "MIX-agent",
+            body: t("実行はバックグラウンドで継続しています。トレイから再表示できます。"),
+          });
+        } catch {
+          // Notification permission may be denied; the tray icon is still there.
+        }
+      }),
+    );
     // DOM-level event so the command palette can trigger the same flow.
     const onNewThread = () => {
       if (active) handlersRef.current.newThread();
@@ -173,12 +221,15 @@ export function useAppShortcuts() {
   });
 
   useEffect(() => {
+    applyZoom(currentZoom());
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const {
         setPaletteOpen: palette,
         toggleFileTree: tree,
         toggleSidebar: sidebar,
-        openSettings: settings,
         setRightPanel: rightPanelSetter,
         setSurface: surface,
         setShortcutsOpen: shortcuts,
@@ -186,24 +237,32 @@ export function useAppShortcuts() {
 
       const isMod = e.metaKey || e.ctrlKey;
 
+      // Text scaling for low-vision users / small laptop panels. WebView zoom
+      // is not exposed by the platform menu, so keep the standard chords here.
+      if (isMod && !e.altKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        applyZoom(currentZoom() + 0.1);
+        return;
+      }
+      if (isMod && !e.altKey && e.key === "-") {
+        e.preventDefault();
+        applyZoom(currentZoom() - 0.1);
+        return;
+      }
+      if (isMod && !e.altKey && e.key === "0") {
+        e.preventDefault();
+        applyZoom(1);
+        return;
+      }
+
       if (isMod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         palette(true);
         return;
       }
-      if (isMod && !e.shiftKey && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("mix:new-thread"));
-        return;
-      }
       if (isMod && !e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         sidebar();
-        return;
-      }
-      if (isMod && !e.shiftKey && e.key === ",") {
-        e.preventDefault();
-        settings();
         return;
       }
       if (isMod && e.shiftKey && e.key.toLowerCase() === "e") {

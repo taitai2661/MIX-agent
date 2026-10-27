@@ -357,6 +357,12 @@ svg {
   padding-right: 0;
   border: 0;
 }
+/* The row menu is absolutely positioned inside the scrolling history list.
+   Letting it overflow while open stops it being cut off on the last rows. */
+.sidebar.menu-open,
+.sidebar.menu-open .history {
+  overflow: visible;
+}
 .sidebar-brand {
   display: flex;
   align-items: center;
@@ -550,11 +556,59 @@ svg {
 .mobile {
   display: none;
 }
+.skip-link {
+  position: fixed;
+  top: -60px;
+  left: 12px;
+  z-index: 100;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  transition: top 0.15s ease;
+}
+.skip-link:focus {
+  top: 12px;
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.main:focus {
+  outline: none;
+}
 .chat-page {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+.chat-heading {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px max(24px, calc((100% - 760px) / 2));
+  border-bottom: 1px solid var(--line);
+}
+.chat-heading h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.message-skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.message-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 620px;
 }
 .chat-toolbar {
   display: flex;
@@ -791,6 +845,32 @@ svg {
   flex: 1;
   overflow: auto;
   padding: 20px max(24px, calc((100% - 760px) / 2));
+}
+.messages-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.scroll-to-bottom {
+  position: absolute;
+  z-index: 5;
+  bottom: 14px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+.scroll-to-bottom:hover {
+  background: var(--hover);
 }
 .message {
   max-width: 100%;
@@ -6556,3 +6636,24 @@ body {
 .error-expand svg { transition: transform 0.15s; }
 .error-expand svg.expanded { transform: rotate(180deg); }
 .error-details { margin: 0; padding: 10px 14px; border-top: 1px solid #c23b3b30; font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Touch and safe-area polish (mobile Safari / installed PWA). */
+@media (pointer: coarse) {
+  .icon,
+  .send,
+  .conversation-sidebar-menu-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (max-width: 760px) {
+  .composer-wrap {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .sidebar {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .toast-stack {
+    bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+}

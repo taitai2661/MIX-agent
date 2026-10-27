@@ -1,5 +1,5 @@
 import { getLanguage, t } from "@/app/i18n";
-import { api } from "@/app/api";
+import { api, type Row } from "@/app/api";
 import { ErrorBox, Title } from "@/components/shared";
 import type { components } from "@/generated/api";
 import { useQuery } from "@tanstack/react-query";
@@ -38,6 +38,10 @@ export function Diagnostics() {
     queryKey: ["/settings/diagnostics"],
     queryFn: () => api("/settings/diagnostics"),
     refetchInterval: 60_000,
+  });
+  const audit = useQuery<Row[]>({
+    queryKey: ["/audit-events"],
+    queryFn: () => api("/audit-events?limit=20"),
   });
   const data = query.data;
   const hasWarnings = Boolean(data && (
@@ -78,6 +82,15 @@ export function Diagnostics() {
         {data.runs.recent_failures.length ? <div className="diagnostics-failures">{data.runs.recent_failures.map((run, index) => <article key={`${run.created_at}-${index}`}>
           <b>{run.status === "failed" ? t("失敗") : t("中断")} · {run.mode}</b><time dateTime={run.created_at}>{new Date(run.created_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</time>
         </article>)}</div> : <p className="diagnostics-empty">{t("直近の失敗・中断はありません。")}</p>}
+      </section>
+
+      <section className="card diagnostics-section">
+        <h2><Activity size={18} /> {t("監査ログ")}</h2>
+        <ErrorBox error={audit.error} />
+        {audit.data?.length ? <div className="diagnostics-failures">{audit.data.map((row) => <article key={row.id}>
+          <b>{row.data.action}</b><small>{row.data.target || t("対象なし")}</small>
+          <time dateTime={row.created_at}>{new Date(row.created_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</time>
+        </article>)}</div> : <p className="diagnostics-empty">{t("監査ログはまだありません。")}</p>}
       </section>
     </>}
   </div>;

@@ -99,7 +99,7 @@ export function Account({
       {confirming ? <div className="notice"><ShieldCheck size={16} /><span>{confirming === "all" ? t("この端末も含め、すべての端末で再ログインが必要になります。") : t("この端末以外のログインを終了します。")}<span className="row-actions"><Button type="button" variant="destructive" disabled={busy} onClick={() => revoke(confirming)}>{t("実行する")}</Button><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirming(null)}>{t("キャンセル")}</Button></span></span></div> : <div className="row-actions"><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirming("others")}>{t("他の端末をログアウト")}</Button><Button type="button" variant="destructive" disabled={busy} onClick={() => setConfirming("all")}>{t("全端末をログアウト")}</Button></div>}
     </section>
     <section className="card">
-      <h3>{t("ログイン履歴")}</h3><p>{t("直近100件のログイン結果です。接続元や端末情報は保存しません。")}</p>
+      <h3>{t("ログイン履歴")}</h3><p>{t("直近100件のログイン結果です。接続元IPは保存しますが、この画面には表示しません。")}</p>
       <div className="login-history">{history.data?.length ? history.data.map((event, index) => <div className="revision" key={`${event.created_at}-${index}`}><span>{event.successful ? t("ログイン成功") : t("ログイン失敗")}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</time></div>) : <p>{t("まだログイン履歴はありません。")}</p>}</div>
     </section>
   </>;

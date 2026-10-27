@@ -21,6 +21,23 @@
         }
       }
     },
+    "/live": {
+      "get": {
+        "summary": "Live",
+        "description": "Liveness probe: the process is up even while a dependency is down.",
+        "operationId": "live_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "post": {
         "summary": "Create",
@@ -923,6 +940,7 @@
     "/api/v1/conversations": {
       "get": {
         "summary": "List Conversations",
+        "description": "List conversations using SQL filters instead of loading every row.\n\nThe old implementation loaded every conversation (and, when searching,\nevery message for every conversation) into Python.  Filtering and paging\nnow happen in PostgreSQL; ``limit`` is optional for compatibility with the\nexisting sidebar, which still asks for the full active list.",
         "operationId": "list_conversations_api_v1_conversations_get",
         "parameters": [
           {
@@ -930,6 +948,11 @@
             "in": "query",
             "required": false,
             "schema": {
+              "enum": [
+                "active",
+                "archived",
+                "trash"
+              ],
               "type": "string",
               "default": "active",
               "title": "State"
@@ -976,6 +999,35 @@
               "default": "",
               "title": "Q"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 500,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
           }
         ],
         "responses": {
@@ -983,7 +1035,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecordView"
+                  },
+                  "title": "Response List Conversations Api V1 Conversations Get"
+                }
               }
             }
           },
@@ -1857,6 +1915,63 @@
                     "$ref": "#/components/schemas/ToolCallHistoryView"
                   },
                   "title": "Response Conversation Tool Calls Api V1 Conversations  Key  Tool Calls Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audit-events": {
+      "get": {
+        "summary": "Audit Events",
+        "description": "Read-only audit trail.  Writes already existed; this exposes them.",
+        "operationId": "audit_events_api_v1_audit_events_get",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Action"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecordView"
+                  },
+                  "title": "Response Audit Events Api V1 Audit Events Get"
                 }
               }
             }
@@ -7296,6 +7411,7 @@
           },
           "auto_retry_count": {
             "type": "integer",
+            "maximum": 10.0,
             "minimum": 0.0,
             "title": "Auto Retry Count",
             "default": 3

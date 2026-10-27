@@ -1,5 +1,7 @@
 import os
 import socket
+import threading
+import time
 from datetime import timedelta
 from ipaddress import ip_address
 from pathlib import Path
@@ -59,15 +61,30 @@ PROBE_SELECT_BATCH = 3
 PROBE_TICK_TIMEOUT_SECONDS = 45
 
 
+_ORIGIN_DNS_CACHE: dict[str, tuple[float, frozenset]] = {}
+_ORIGIN_DNS_LOCK = threading.Lock()
+_ORIGIN_DNS_TTL_SECONDS = 60.0
+
+
 def _origin_ips(hostname):
     """Resolve a hostname back to the set of IP addresses it may use.
 
     Accepts literal IPs too.  ``localhost`` resolves to its loopback
     address(es) instead of being rejected by ``ip_address`` only accepting
     literals.  Returns an empty set when nothing resolves.
+
+    ``getaddrinfo`` is blocking, and this runs inside the async Origin
+    middleware for every non-GET request.  A short process-local cache keeps a
+    slow or hostile resolver from stalling the event loop on every request.
     """
     if not hostname:
         return set()
+    key = hostname.lower().rstrip(".")
+    now = time.monotonic()
+    with _ORIGIN_DNS_LOCK:
+        cached = _ORIGIN_DNS_CACHE.get(key)
+    if cached and now - cached[0] < _ORIGIN_DNS_TTL_SECONDS:
+        return set(cached[1])
     resolved = set()
     try:
         resolved.add(ip_address(hostname))
@@ -85,6 +102,8 @@ def _origin_ips(hostname):
             resolved.add(ip_address(ip))
         except ValueError:
             continue
+    with _ORIGIN_DNS_LOCK:
+        _ORIGIN_DNS_CACHE[key] = (now, frozenset(resolved))
     return resolved
 
 

@@ -1,6 +1,7 @@
 import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
+import { ConfirmButton } from "@/components/modal";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, RefreshCw, Server } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
@@ -189,7 +190,6 @@ export function Providers() {
     }
   }
   async function remove(row: Row) {
-    if (!confirm(t("Providerと取得済みのモデルを削除しますか？ 元に戻せません。"))) return;
     setBusy(true);
     setError(null);
     try {
@@ -425,9 +425,16 @@ export function Providers() {
               >
                 {t("編集")}
               </Button>
-              <Button variant="ghost" disabled={busy} onClick={() => remove(row)}>
+              <ConfirmButton
+                variant="ghost"
+                disabled={busy}
+                title={t("Providerを削除")}
+                message={t("Providerと取得済みのモデルを削除しますか？ 元に戻せません。")}
+                confirmLabel={t("削除")}
+                onConfirm={() => remove(row)}
+              >
                 {t("削除")}
-              </Button>
+              </ConfirmButton>
             </div>
           </div>
         );

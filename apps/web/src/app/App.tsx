@@ -22,8 +22,8 @@ import {
   Pencil,
   Pin,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { Empty, ErrorBox, Logo } from "@/components/shared";
 import { ThemeController } from "@/components/theme";
@@ -58,15 +58,26 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
+type Me = { username: string; csrf: string };
+
+/** Keyed wrapper so switching conversations remounts the composer. That lets
+ *  the per-conversation draft survive a session-expiry round trip through the
+ *  login screen instead of vanishing with the unmounted component. */
+function ChatRoute({ workspace }: { workspace: WorkspaceSnapshot | null }) {
+  const { id } = useParams();
+  return <Chat key={id ?? "new"} workspace={workspace} />;
+}
+
 export function App() {
   useLanguage();
   const sidebarMinimum = 220,
     sidebarMaximum = 380,
     sidebarDefault = 248;
-  const [user, setUser] = useState<any>(null),
+  const [user, setUser] = useState<Me | null>(null),
     [ready, setReady] = useState(false),
     [needsAdmin, setNeedsAdmin] = useState(false),
     [error, setError] = useState<unknown>(null),
+    [sessionExpired, setSessionExpired] = useState(false),
     [sidebar, setSidebar] = useState(false),
     [collapsed, setCollapsed] = useState(() => localStorage.getItem("mix-agent-sidebar-collapsed") === "1"),
     [resizingSidebar, setResizingSidebar] = useState(false),
@@ -76,6 +87,11 @@ export function App() {
     });
   const isMobile = useMediaQuery("(max-width: 760px)");
   const navigate = useNavigate();
+  const location = useLocation();
+  const firstRoute = useRef(true);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarCloseRef = useRef<HTMLButtonElement>(null);
   const qc = useQueryClient();
   const [openConversationMenu, setOpenConversationMenu] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Row | null>(null);
@@ -99,6 +115,22 @@ export function App() {
     };
     const keydown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") setOpenConversationMenu(null);
+      const target = conversations.data?.find((row) => row.id === openConversationMenu);
+      if (!target) return;
+      if (event.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+      const key = event.key.toLowerCase();
+      if (key === "p") {
+        event.preventDefault();
+        void updateConversation(target.id, { pinned: !target.data.pinned });
+      } else if (key === "r") {
+        event.preventDefault();
+        setRenameTarget(target);
+        setOpenConversationMenu(null);
+      } else if (key === "d") {
+        event.preventDefault();
+        setTrashTarget(target);
+        setOpenConversationMenu(null);
+      }
     };
     document.addEventListener("click", close);
     document.addEventListener("keydown", keydown);
@@ -127,6 +159,87 @@ export function App() {
     queryFn: () => api("/conversations?state=active"),
     enabled: !!user,
   });
+  useEffect(() => {
+    // A session can expire while the tab is open.  The API client emits this
+    // event instead of surfacing a generic network error, so drop the cached
+    // identity and let the Auth screen take over without a full reload.
+    const unauthorized = () => {
+      setCSRF("");
+      setSessionExpired(true);
+      setUser(null);
+    };
+    window.addEventListener("mix:unauthorized", unauthorized);
+    return () => window.removeEventListener("mix:unauthorized", unauthorized);
+  }, []);
+  useEffect(() => {
+    const path = location.pathname;
+    const label = path === "/" ? "新しいチャット"
+      : path.startsWith("/chat/") ? "チャット"
+      : path.startsWith("/projects") ? "プロジェクト"
+      : path.startsWith("/history") ? "会話"
+      : path.startsWith("/agents") ? "エージェント"
+      : path.startsWith("/skills") ? "スキル"
+      : path.startsWith("/schedules") ? "定期実行"
+      : path.startsWith("/settings") ? "設定"
+      : path.startsWith("/setup") ? "セットアップ"
+      : "MIX agent";
+    // A conversation owns its own title (set by Chat from the last turn).
+    if (!path.startsWith("/chat/")) {
+      document.title = label === "MIX agent" ? label : `${t(label)} · MIX agent`;
+    }
+    if (firstRoute.current) {
+      firstRoute.current = false;
+      return;
+    }
+    // Announce the new page to keyboard/screen-reader users. Every route had
+    // the same document title and left focus wherever the previous page was.
+    document.getElementById("main-content")?.focus({ preventScroll: true });
+  }, [location.pathname]);
+  useEffect(() => {
+    const el = sidebarRef.current;
+    if (!el) return;
+    if (isMobile && !sidebar) {
+      el.setAttribute("inert", "");
+      el.setAttribute("aria-hidden", "true");
+    } else {
+      el.removeAttribute("inert");
+      el.removeAttribute("aria-hidden");
+    }
+  }, [isMobile, sidebar]);
+  useEffect(() => {
+    if (!isMobile || !sidebar) return;
+    const el = sidebarRef.current;
+    const returnFocus = document.activeElement as HTMLElement | null;
+    sidebarCloseRef.current?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSidebar(false);
+        return;
+      }
+      if (event.key !== "Tab" || !el) return;
+      const items = Array.from(
+        el.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((node) => node.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      (returnFocus ?? sidebarToggleRef.current)?.focus();
+    };
+  }, [isMobile, sidebar]);
   // 新しいチャット画面の挨拶に使う、ワークスペースの状況だけを渡す。
   const workspace = useMemo<WorkspaceSnapshot | null>(() => {
     const rows = conversations.data;
@@ -142,8 +255,9 @@ export function App() {
       lastMessageAt: stamps.length ? Math.max(...stamps) : null,
     };
   }, [conversations.data]);
-  async function authenticated(value: any) {
+  async function authenticated(value: Me) {
     setCSRF(value.csrf);
+    setSessionExpired(false);
     setUser(value);
     if (needsAdmin) {
       try { await api("/settings", "PUT", { ui_language: getLanguage() }); }
@@ -159,11 +273,11 @@ export function App() {
     return (
       <main className="auth">
         <ErrorBox error={error} />
-        <Button onClick={() => location.reload()}>{t("再読み込み")}</Button>
+        <Button onClick={() => window.location.reload()}>{t("再読み込み")}</Button>
       </main>
     );
   if (!ready) return <main className="auth">{t(ja.loading)}</main>;
-  if (!user) return <Auth setup={needsAdmin} onDone={authenticated} />;
+  if (!user) return <Auth setup={needsAdmin} sessionExpired={sessionExpired} onDone={authenticated} />;
   async function newChat() {
     navigate("/");
     setSidebar(false);
@@ -227,7 +341,8 @@ export function App() {
   return (
     <ToastProvider>
     <div className={"shell " + (sidebar ? "sidebar-open " : "") + (collapsed ? "sidebar-collapsed " : "") + (resizingSidebar ? "sidebar-resizing" : "")}>
-      <aside id="main-navigation" className="sidebar" aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
+      <a className="skip-link" href="#main-content">{t("本文へスキップ")}</a>
+      <aside id="main-navigation" ref={sidebarRef} className={"sidebar" + (openConversationMenu ? " menu-open" : "")} aria-label={t("メインメニュー")} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
         <div className="sidebar-brand">
           {collapsed && !isMobile ? (
             <button className="brand-toggle" type="button" onClick={() => setCollapsed(false)} aria-label={t("サイドバーを展開する")} title={t("サイドバーを展開する")}>
@@ -239,7 +354,7 @@ export function App() {
           <div className="sidebar-controls">
             <ThemeController />
             <button className="icon sidebar-collapse-toggle" onClick={() => setCollapsed(true)} aria-label={t("サイドバーを折りたたむ")} title={t("サイドバーを折りたたむ")}><PanelLeftClose size={18} /></button>
-            <button className="icon mobile" onClick={() => setSidebar(false)} aria-label={t("閉じる")}><X size={18} /></button>
+            <button className="icon mobile" ref={sidebarCloseRef} onClick={() => setSidebar(false)} aria-label={t("閉じる")}><X size={18} /></button>
           </div>
         </div>
         <nav className="primary-nav" aria-label={t("ワークスペース")}>
@@ -309,12 +424,13 @@ export function App() {
       </aside>
       {sidebar && <button className="sidebar-backdrop" type="button" aria-label={t("メニューを閉じる")} onClick={() => setSidebar(false)} />}
       <div className="sidebar-resizer" role="separator" aria-label={t("サイドバーの幅を調整")} aria-orientation="vertical" aria-valuemin={sidebarMinimum} aria-valuemax={sidebarMaximum} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={resizeSidebar} onKeyDown={resizeSidebarWithKeyboard} />
-      <div className="main">
+      <main id="main-content" className="main" tabIndex={-1}>
         <header className="topbar">
           {isMobile || collapsed ? (
             <>
               <button
                 className="icon"
+                ref={sidebarToggleRef}
                 aria-label={isMobile ? (sidebar ? t("メニューを閉じる") : t("メニュー")) : t("サイドバーを展開する")}
                 aria-expanded={isMobile ? sidebar : undefined}
                 aria-controls="main-navigation"
@@ -327,10 +443,10 @@ export function App() {
           ) : null}
         </header>
         <ErrorBoundary>
-          <Suspense fallback={<div className="page-loading">読み込み中…</div>}>
+          <Suspense fallback={<div className="page-loading">{t("読み込み中…")}</div>}>
           <Routes>
-            <Route path="/" element={<Chat workspace={workspace} />} />
-            <Route path="/chat/:id" element={<Chat workspace={workspace} />} />
+            <Route path="/" element={<ChatRoute workspace={workspace} />} />
+            <Route path="/chat/:id" element={<ChatRoute workspace={workspace} />} />
             <Route path="/projects/:projectId/chat" element={<Chat workspace={workspace} />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<Projects />} />
@@ -378,6 +494,8 @@ export function App() {
         {trashTarget && <ConfirmModal
           title={t("チャットを削除")}
           message={t("このチャットをごみ箱へ移動しますか？")}
+          confirmLabel={t("ごみ箱へ移動")}
+          tone="danger"
           onConfirm={() => {
             const id = trashTarget.id;
             setTrashTarget(null);
@@ -390,7 +508,7 @@ export function App() {
           onCancel={() => setTrashTarget(null)}
         />}
         {showTour && <Tour onClose={() => { setShowTour(false); localStorage.setItem("mix-agent-tour-done", "1"); }} />}
-      </div>
+      </main>
     </div>
     </ToastProvider>
   );

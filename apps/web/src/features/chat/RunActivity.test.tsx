@@ -34,7 +34,7 @@ describe("RunActivity", () => {
     }]} />);
     expect(html).toContain("承認待ち");
     expect(html).toContain("今回のみ");
-    expect(html).toContain("常に許可");
+    expect(html).toContain("この操作を常に許可");
     expect(html).toContain('class="run-activity-details" open');
   });
 

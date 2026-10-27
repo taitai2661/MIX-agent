@@ -96,33 +96,33 @@ export function Setup() {
 
   const steps = [
     {
-      title: "Welcome to MIX agent",
-      desc: "あなたの指示に従ってコードを書いたり、Webを調べたりする自律型AIエージェントです。設定はたったの数ステップで終わります。",
+      title: t("Welcome to MIX agent"),
+      desc: t("あなたの指示に従ってコードを書いたり、Webを調べたりする自律型AIエージェントです。設定はたったの数ステップで終わります。"),
       content: (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <Bot size={64} style={{ color: "var(--accent)", marginBottom: 20 }} />
-          <h2>AIエージェントを始めましょう</h2>
-          <p style={{ color: "var(--muted)", marginTop: 10 }}>初期設定はすぐに完了します。後から設定画面でいつでも変更可能です。</p>
+          <h2>{t("AIエージェントを始めましょう")}</h2>
+          <p style={{ color: "var(--muted)", marginTop: 10 }}>{t("初期設定はすぐに完了します。後から設定画面でいつでも変更可能です。")}</p>
           <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 30 }}>
             <div style={{ textAlign: "center" }}>
               <Zap size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
-              <p style={{ fontSize: 12, color: "var(--muted)" }}>高速な応答</p>
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>{t("高速な応答")}</p>
             </div>
             <div style={{ textAlign: "center" }}>
               <Shield size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
-              <p style={{ fontSize: 12, color: "var(--muted)" }}>安全な実行環境</p>
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>{t("安全な実行環境")}</p>
             </div>
             <div style={{ textAlign: "center" }}>
               <Globe2 size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
-              <p style={{ fontSize: 12, color: "var(--muted)" }}>Webアクセス</p>
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>{t("Webアクセス")}</p>
             </div>
           </div>
         </div>
       )
     },
     {
-      title: "AIモデルの接続",
-      desc: "利用するAIプロバイダを選択し、APIキーを入力してください。",
+      title: t("AIモデルの接続"),
+      desc: t("利用するAIプロバイダを選択し、APIキーを入力してください。"),
       content: (
         <div className="card form-grid" style={{ marginTop: 20 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
@@ -142,8 +142,8 @@ export function Setup() {
       )
     },
     {
-      title: "ブラウザ機能の準備",
-      desc: "AIがウェブを検索したり、ページを読んだりできるようにしますか？",
+      title: t("ブラウザ機能の準備"),
+      desc: t("AIがウェブを検索したり、ページを読んだりできるようにしますか？"),
       content: (
         <section className="card setup-browser-card" style={{ marginTop: 20 }}>
           <div className="setup-browser-icon"><Globe2 size={24} /></div>
@@ -160,12 +160,12 @@ export function Setup() {
       )
     },
     {
-      title: "準備完了",
-      desc: "すべての設定が終わりました！",
+      title: t("準備完了"),
+      desc: t("すべての設定が終わりました！"),
       content: (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <Sparkles size={64} style={{ color: "var(--accent)", marginBottom: 20 }} />
-          <h2>さあ、始めましょう！</h2>
+          <h2>{t("さあ、始めましょう！")}</h2>
           <p style={{ color: "var(--muted)", marginTop: 10 }}>
             {t("追加のモデル設定やMCPツールの追加は、左下の「設定」からいつでも行えます。")}
           </p>

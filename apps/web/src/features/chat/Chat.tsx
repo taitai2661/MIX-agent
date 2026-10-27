@@ -6,6 +6,7 @@ import type { components } from "@/generated/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowDown,
   ArrowUp,
   Bot,
   Brain,
@@ -24,7 +25,7 @@ import {
   UserCog,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Markdown from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import remarkBreaks from "remark-breaks";
@@ -75,8 +76,24 @@ type ChatAgent = Row & { data: { mode: ChatMode; model_id?: string; name: string
 type Feedback = components["schemas"]["FeedbackInput"]["value"];
 const modes = ["chat", "thinking", "agent"] as const satisfies readonly ChatMode[];
 
+type RunStatus = "queued" | "running" | "waiting_approval" | "paused" | "budget_extension_pending" | "completed" | "failed" | "cancelled" | "interrupted";
+const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "paused",
+  "budget_extension_pending",
+];
+const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
+
 export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const { id, projectId } = useParams();
+  const draftKey = `mix:web-draft:${id ?? "new"}`;
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { addToast } = useToast();
@@ -88,6 +105,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       queryFn: () => api("/tools"),
     }),
     permissionRules = useRows<PermissionRule>("/permission-rules");
+  const settings = useQuery<{ data: { default_model_id?: string } }>({
+    queryKey: ["/settings"],
+    queryFn: () => api("/settings"),
+  });
   const [model, setModel] = useState("auto"),
     [temporaryMode, setTemporaryMode] = useState(false),
     [allowTools, setAllowTools] = useState(false),
@@ -95,10 +116,17 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     [researchMode, setResearchMode] = useState(false),
     [selectedProject, setSelectedProject] = useState(projectId || ""),
     [agent, setAgent] = useState(""),
-    [text, setText] = useState(""),
+    [text, setText] = useState(() => {
+      try {
+        return sessionStorage.getItem(draftKey) || "";
+      } catch {
+        return "";
+      }
+    }),
     [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
     [attachments, setAttachments] = useState<Artifact[]>([]),
+    [uploading, setUploading] = useState(false),
     [runId, setRunId] = useState(""),
     [streamText, setStreamText] = useState(""),
     [reasoning, setReasoning] = useState(""),
@@ -114,15 +142,52 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   // fragment list) would be bumped twice per mount.
   const welcomePicked = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null),
-    composer = useRef<HTMLTextAreaElement>(null),
-    bottom = useRef<HTMLDivElement>(null);
+    composer = useRef<HTMLTextAreaElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  // True while the transcript is pinned to the newest message. Streaming must
+  // not yank the viewport away from a user who scrolled up to read history.
+  const [atBottom, setAtBottom] = useState(true);
+  const atBottomRef = useRef(true);
   const eventSourceRef = useRef<EventSource | null>(null);
+  // SSE can deliver dozens of text fragments per second.  Buffer them in refs
+  // and flush once per animation frame instead of re-rendering the whole
+  // transcript for every event.
+  const streamTextBuffer = useRef("");
+  const reasoningBuffer = useRef("");
+  const streamFrame = useRef<number | null>(null);
+  function flushStreamBuffers() {
+    if (streamFrame.current !== null) {
+      cancelAnimationFrame(streamFrame.current);
+      streamFrame.current = null;
+    }
+    setStreamText(streamTextBuffer.current);
+    setReasoning(reasoningBuffer.current);
+  }
+  function scheduleStreamFlush() {
+    if (streamFrame.current !== null) return;
+    streamFrame.current = requestAnimationFrame(() => {
+      streamFrame.current = null;
+      setStreamText(streamTextBuffer.current);
+      setReasoning(reasoningBuffer.current);
+    });
+  }
+  function resetStreamBuffers() {
+    if (streamFrame.current !== null) {
+      cancelAnimationFrame(streamFrame.current);
+      streamFrame.current = null;
+    }
+    streamTextBuffer.current = "";
+    reasoningBuffer.current = "";
+    setStreamText("");
+    setReasoning("");
+  }
   const pendingSend = useRef<{
     signature: string;
     key: string;
     conversation: string | undefined;
   } | null>(null);
   const restoredConversation = useRef<string | undefined>(undefined);
+  const modelInitializedFor = useRef<string | null>(null);
   const reconciledRun = useRef<string | null>(null);
   const history = useQuery<ConversationHistory>({
     queryKey: ["messages", id],
@@ -130,6 +195,13 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     enabled: !!id,
   });
   useEffect(() => { if (projectId) setSelectedProject(projectId); }, [projectId]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(draftKey, text);
+    } catch {
+      // Storage can be disabled; the draft simply stays in memory.
+    }
+  }, [draftKey, text]);
   useEffect(() => {
     if (welcomePicked.current || !workspace) return;
     welcomePicked.current = true;
@@ -146,10 +218,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     queryFn: () => api("/runs/" + runId),
     enabled: !!runId,
     refetchInterval: (q) =>
-      !streamConnected && (q.state.data?.status === "queued" || q.state.data?.status === "running" || q.state.data?.status === "waiting_approval" || q.state.data?.status === "paused")
+      !streamConnected && ACTIVE_RUN_STATUSES.includes(q.state.data?.status as RunStatus)
         ? 1500 : false,
   });
-  const runActive = run.data?.status === "queued" || run.data?.status === "running" || run.data?.status === "waiting_approval" || run.data?.status === "paused";
+  const runActive = ACTIVE_RUN_STATUSES.includes(run.data?.status as RunStatus);
   const toolHistory = useQuery<ToolCallHistory[]>({
     queryKey: ["tool-calls", id],
     queryFn: () => api("/conversations/" + id + "/tool-calls"),
@@ -167,10 +239,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   }, [id, qc, run.data, runId, streamConnected]);
   useEffect(() => {
     restoredConversation.current = undefined;
+    modelInitializedFor.current = null;
     setRunId("");
     setEvents([]);
-    setStreamText("");
-    setReasoning("");
+    resetStreamBuffers();
     setStreamConnected(false);
   }, [id]);
   useEffect(() => {
@@ -181,7 +253,6 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       setSelectedProject((history.data as ConversationHistory & { project_id?: string }).project_id || "");
       const selection = history.data.selection;
       if (selection) {
-        setModel(selection.model_id);
         setAgent(selection.agent_id || "");
         setMode(selection.mode || "chat");
         setResearchMode(Boolean((selection as { research_mode?: boolean }).research_mode));
@@ -189,24 +260,53 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     }
   }, [history.data, id]);
   useEffect(() => {
+    // The composer used to start every chat on "auto", so the model chosen in
+    // Settings ▸ 既定モデル was silently ignored. Seed it from the conversation
+    // selection, then the app default. Only once per conversation so an explicit
+    // pick is never overwritten by a refetch.
+    if (!settings.data) return;
+    if (id && !history.data) return;
+    if (modelInitializedFor.current === (id ?? "")) return;
+    modelInitializedFor.current = id ?? "";
+    setModel(
+      history.data?.selection?.model_id ||
+        settings.data.data.default_model_id ||
+        "auto",
+    );
+  }, [history.data, id, settings.data]);
+  useEffect(() => {
     if (!runId) return;
+    // Opening a finished conversation used to attach an EventSource that
+    // replayed every stored token, briefly rendering the last answer a second
+    // time. Terminal runs have nothing to stream; the messages query is enough.
+    const storedRun = history.data?.runs?.find((r) => r.id === runId);
+    if (storedRun && TERMINAL_RUN_STATUSES.includes(storedRun.status as RunStatus)) {
+      setStreamConnected(false);
+      return;
+    }
     setEvents([]);
-    setStreamText("");
-    setReasoning("");
+    resetStreamBuffers();
     const source = new EventSource("/api/v1/runs/" + runId + "/events");
     eventSourceRef.current = source;
-    source.onopen = () => setStreamConnected(true);
+    let reconnectErrors = 0;
+    source.onopen = () => {
+      reconnectErrors = 0;
+      setStreamConnected(true);
+    };
     // A run is bounded by its budget on the server; if the stream never
-    // terminates, bail out and let the polling fallback take over.
+    // terminates, bail out and let the polling fallback take over.  The
+    // browser reconnects transient SSE failures itself, so this watchdog only
+    // covers a stream that stays open but silent for an hour.
     const watchdog = setTimeout(() => {
       if (source.readyState === EventSource.OPEN) {
         source.close();
         setStreamConnected(false);
       }
-    }, 15 * 60 * 1000);
+    }, 60 * 60 * 1000);
     const finish = () => {
       clearTimeout(watchdog);
       source.close();
+      flushStreamBuffers();
       setBusy(false);
       setStreamConnected(false);
       qc.invalidateQueries({ queryKey: ["messages", id] });
@@ -216,11 +316,16 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       if (!(event instanceof MessageEvent) || typeof event.data !== "string") return;
       const v = parseRunEvent(event.data);
       if (!v) return;
-      if (v.kind === "text") setStreamText((t) => t + v.text);
-      else if (v.kind === "reasoning") setReasoning((t) => t + v.text);
-      else if (v.kind === "model_started") {
-        setStreamText("");
-        setReasoning((t) => (t ? t + "\n\n" : t));
+      if (v.kind === "text") {
+        streamTextBuffer.current += v.text;
+        scheduleStreamFlush();
+      } else if (v.kind === "reasoning") {
+        reasoningBuffer.current += v.text;
+        scheduleStreamFlush();
+      } else if (v.kind === "model_started") {
+        streamTextBuffer.current = "";
+        reasoningBuffer.current = reasoningBuffer.current ? reasoningBuffer.current + "\n\n" : "";
+        flushStreamBuffers();
         setEvents((xs) => [...xs, v]);
         // A new step was committed on the server; refresh steps/budget.
         qc.invalidateQueries({ queryKey: ["run", runId] });
@@ -231,7 +336,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
         }
         if (v.kind === "status" || v.kind === "context_summary") qc.invalidateQueries({ queryKey: ["run", runId] });
         if (v.kind === "message") {
-          setStreamText("");
+          streamTextBuffer.current = "";
+          flushStreamBuffers();
           qc.invalidateQueries({ queryKey: ["messages", id] });
         }
       }
@@ -256,36 +362,96 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     source.addEventListener("activity", onActivity);
     source.addEventListener("done", finish);
     source.onerror = () => {
-      clearTimeout(watchdog);
-      source.close();
-      setBusy(false);
+      // EventSource reconnects with Last-Event-ID by itself.  Keep the stream
+      // state false so polling can cover the gap, and only give up after a few
+      // consecutive failures (for example an expired session).
       setStreamConnected(false);
-      setError(new Error(ja.streamLost));
+      reconnectErrors += 1;
+      if (source.readyState === EventSource.CLOSED || reconnectErrors >= 5) {
+        clearTimeout(watchdog);
+        source.close();
+        setBusy(false);
+        setError(new Error(ja.streamLost));
+        qc.invalidateQueries({ queryKey: ["messages", id] });
+        qc.invalidateQueries({ queryKey: ["run", runId] });
+      }
     };
     return () => {
       clearTimeout(watchdog);
       source.close();
+      if (streamFrame.current !== null) {
+        cancelAnimationFrame(streamFrame.current);
+        streamFrame.current = null;
+      }
       if (eventSourceRef.current === source) eventSourceRef.current = null;
     };
   }, [runId, id, qc]);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    if (!atBottomRef.current) return;
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [streamText, history.data]);
+  useEffect(() => {
+    // Entering another conversation starts at its newest message.
+    const el = messagesRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+    atBottomRef.current = true;
+    setAtBottom(true);
+  }, [id]);
+  const handleMessagesScroll = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const next =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (next !== atBottomRef.current) {
+      atBottomRef.current = next;
+      setAtBottom(next);
+    }
+  };
+  const scrollToBottom = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+    atBottomRef.current = true;
+    setAtBottom(true);
+  };
   useEffect(() => {
     if (composer.current) {
       composer.current.style.height = "auto";
       composer.current.style.height = composer.current.scrollHeight + "px";
     }
   }, [text]);
-  const active =
-    run.data &&
-    ["running", "queued", "waiting_approval", "paused"].includes(run.data.status);
+  const active = Boolean(
+    run.data && ACTIVE_RUN_STATUSES.includes(run.data.status as RunStatus),
+  );
   const live = liveToolCalls(events, runId);
+  // Precompute run → message once; the old render did a nested filter/find for
+  // every message on every streamed frame (O(n²) on long chats).
+  const callsByMessage = useMemo(() => {
+    const runToMessage = new Map(
+      (history.data?.runs || []).map((run) => [run.id, run.message_id]),
+    );
+    const byMessage = new Map<string, ToolCallHistory[]>();
+    for (const call of toolHistory.data || []) {
+      const messageId = runToMessage.get(call.run_id);
+      if (!messageId) continue;
+      const list = byMessage.get(messageId);
+      if (list) list.push(call);
+      else byMessage.set(messageId, [call]);
+    }
+    return byMessage;
+  }, [history.data?.runs, toolHistory.data]);
   const currentRunMessageId = history.data?.runs?.find((r) => r.id === runId)?.message_id;
   const latestUserMessageId = [...(history.data?.messages || [])].reverse().find((msg) => msg.data.role === "user")?.id;
   async function send(e?: FormEvent) {
     e?.preventDefault();
-    if ((!text.trim() && !attachments.length) || busy || active) return;
+    if ((!text.trim() && !attachments.length) || busy || active || uploading) return;
     setError(null);
     setBusy(true);
     try {
@@ -318,6 +484,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
         "POST",
         body,
         pendingSend.current.key,
+        { retryUnsafe: true },
       );
       pendingSend.current = null;
       setText("");
@@ -337,15 +504,28 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   async function attach(files: File[]) {
     if (!files.length) return;
     setError(null);
+    setUploading(true);
+    const failed: string[] = [];
     try {
       for (const file of files) {
-        const f = new FormData();
-        f.set("file", file);
-        const a = await api<Artifact>("/artifacts", "POST", f);
-        setAttachments((xs) => [...xs, a]);
+        if (file.size > 20 * 1024 * 1024) {
+          failed.push(`${file.name}: ${t("20MBを超えています")}`);
+          continue;
+        }
+        try {
+          const f = new FormData();
+          f.set("file", file);
+          const a = await api<Artifact>("/artifacts", "POST", f);
+          setAttachments((xs) => [...xs, a]);
+        } catch (cause) {
+          failed.push(`${file.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
       }
-    } catch (e) {
-      setError(e);
+      if (failed.length) {
+        setError(new Error(failed.join("\n")));
+      }
+    } finally {
+      setUploading(false);
     }
   }
   const selected = models.data?.find((x) => x.id === model);
@@ -382,8 +562,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   }
   /** Replace a sent user turn and regenerate from it. The backend drops that
    *  turn and everything after it, so the reply stream starts clean. */
-  async function saveEdit(m: Row) {
-    const content = editText.trim();
+  async function regenerate(m: Row, contentOverride?: string) {
+    const content = (contentOverride ?? editText).trim();
     if (!content || !id || savingEdit || active || busy) return;
     setSavingEdit(true);
     setError(null);
@@ -403,6 +583,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
         "POST",
         body,
         uuid(),
+        { retryUnsafe: true },
       );
       cancelEdit();
       setRunId(r.run_id);
@@ -415,11 +596,55 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       setSavingEdit(false);
     }
   }
+  const saveEdit = (m: Row) => regenerate(m);
+  const lastUserMessage = [...(history.data?.messages || [])]
+    .reverse()
+    .find((m) => m.data.role === "user");
+  async function retryLastRun() {
+    if (!lastUserMessage) return;
+    await regenerate(lastUserMessage, String(lastUserMessage.data.content || ""));
+  }
+  function retryRequest() {
+    setError(null);
+    if (runId) {
+      setRunId("");
+      setTimeout(() => setRunId(runId), 10);
+    }
+    void history.refetch();
+    void models.refetch();
+    void tools.refetch();
+    void permissionRules.refetch();
+    void settings.refetch();
+  }
+  const conversationTitle = (() => {
+    const content = String(lastUserMessage?.data.content || "").trim();
+    if (!content) return t("チャット");
+    return content.length > 60 ? content.slice(0, 60) + "…" : content;
+  })();
+  useEffect(() => {
+    if (!id) return;
+    document.title = `${conversationTitle} · MIX agent`;
+  }, [conversationTitle, id]);
   return (
     <div className="chat-page">
+      {id && (
+        <header className="chat-heading">
+          <h1 title={conversationTitle}>{conversationTitle}</h1>
+        </header>
+      )}
       <div className="chat-body">
         <div className="conversation">
-          {!id && !history.data?.messages?.length && welcome ? (
+          {id && history.isLoading ? (
+            <div className="messages message-skeleton-list" aria-busy="true" aria-label={t("読み込み中…")}>
+              {[0, 1, 2].map((i) => (
+                <div className="message-skeleton" key={i}>
+                  <div className="skeleton skeleton-title" />
+                  <div className="skeleton skeleton-text" />
+                  <div className="skeleton skeleton-text short" />
+                </div>
+              ))}
+            </div>
+          ) : !id && !history.data?.messages?.length && welcome ? (
             <section className="welcome">
               <div className="welcome-icon">
                 <Sparkles size={30} />
@@ -445,7 +670,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
               </div>
             </section>
           ) : (
-            <div className="messages">
+            <div className="messages-wrap">
+            <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
               {history.data?.messages.map((m) => (
                 <div key={m.id}>
                 {m.data.role === "user" && history.data?.runs?.filter(r => r.message_id === m.id && r.context_summary?.text).map(r => (
@@ -499,7 +725,14 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                     </div>
                   ) : (
                     <div className="markdown">
-                      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                      <Markdown
+                        remarkPlugins={[remarkGfm, remarkBreaks]}
+                        components={{
+                          a: ({ node: _node, ...props }) => (
+                            <a {...props} target="_blank" rel="noopener noreferrer" />
+                          ),
+                        }}
+                      >
                         {m.data.content}
                       </Markdown>
                     </div>
@@ -539,9 +772,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                 {m.data.role === "user" && <RunActivity
                   running={active && currentRunMessageId === m.id}
                   calls={(() => {
-                    const calls = (toolHistory.data || []).filter((call) =>
-                      history.data?.runs?.find((run) => run.id === call.run_id)?.message_id === m.id,
-                    );
+                    const calls = callsByMessage.get(m.id) || [];
                     if (!active || currentRunMessageId !== m.id) return calls;
                     const known = new Set(calls.map((call) => call.id));
                     return [...calls, ...live.filter((call) => !known.has(call.id))];
@@ -572,22 +803,38 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                     MIX agent <span className="pulse" />
                   </div>
                   <div className="markdown">
-                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                    <Markdown
+                      remarkPlugins={[remarkGfm, remarkBreaks]}
+                      components={{
+                        a: ({ node: _node, ...props }) => (
+                          <a {...props} target="_blank" rel="noopener noreferrer" />
+                        ),
+                      }}
+                    >
                       {streamText}
                     </Markdown>
                   </div>
                 </article>
               )}
               {active && !streamText && (
-                <p className="processing">
+                <p className="processing" role="status">
                   <span className="pulse" />
-                  {t(run.data.status === "paused" ? "ブラウザを手動操作中" : run.data.status === "waiting_approval"
+                  {t(run.data?.status === "paused" ? "ブラウザを手動操作中" : run.data?.status === "waiting_approval"
                     ? "操作の承認を待っています"
                     : "処理しています…")}
                 </p>
               )}
               {run.data?.reason && (
-                <div className="notice">{run.data.reason}</div>
+                <div className="notice">
+                  <span>{run.data.reason}</span>
+                  {(run.data.status === "failed" || run.data.status === "cancelled") && lastUserMessage && (
+                    <span className="notice-actions">
+                      <Button type="button" variant="outline" onClick={() => void retryLastRun()} disabled={active || savingEdit}>
+                        {t("再試行")}
+                      </Button>
+                    </span>
+                  )}
+                </div>
               )}
               {run.data && active && (
                 <RunBudget run={run.data} active={!!active} fetchedAt={run.dataUpdatedAt} />
@@ -615,12 +862,25 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
               {run.data?.stagnation && run.data.stagnation.length > 0 && (
                 <StagnationPanel findings={run.data.stagnation as StagnationFinding[]} />
               )}
-              <div ref={bottom} />
+            </div>
+            {!atBottom && (
+              <button
+                type="button"
+                className="scroll-to-bottom"
+                onClick={scrollToBottom}
+                aria-label={t("最新のメッセージへ")}
+                title={t("最新のメッセージへ")}
+              >
+                <ArrowDown size={15} />
+                <span>{t("最新へ")}</span>
+              </button>
+            )}
             </div>
           )}
           <div className="composer-wrap">
             <ErrorBox
-              error={error || history.error || models.error || tools.error || permissionRules.error}
+              error={error || history.error || models.error || tools.error || permissionRules.error || settings.error}
+              onRetry={retryRequest}
             />
             <form className="composer" onSubmit={send}>
               {temporaryMode && <p className="temporary-notice" role="status">{t("一時モード: Run終了後にMIX側の会話・回答・送信した添付を削除します。選択した添付は送信前にアップロードされます。Toolは")}{t(allowTools ? "許可中（外部への送信や副作用が残る場合があります）" : "無効")}。</p>}
@@ -765,6 +1025,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                   </div>
                 </details>
                 <div className="composer-actions">
+                  {uploading && <span className="send-hint" role="status">{t("アップロード中…")}</span>}
                   <span className="send-hint">{t("Enterで送信 / Shift+Enterで改行")}</span>
                   <button
                     type="button"
@@ -804,7 +1065,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                       className="send"
                       aria-label={t("送信")}
                       disabled={
-                        busy || (!text.trim() && !attachments.length)
+                        busy || uploading || (!text.trim() && !attachments.length)
                       }
                     >
                       <ArrowUp size={19} />

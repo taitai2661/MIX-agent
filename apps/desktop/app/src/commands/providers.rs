@@ -522,8 +522,7 @@ pub async fn connect_provider(
                 .context_length
                 .or(entry.input_token_limit)
                 .unwrap_or(0),
-            parameter_size: None,
-            quantization: None,
+            ..Default::default()
         })
         .collect();
 

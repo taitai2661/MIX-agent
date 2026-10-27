@@ -8,9 +8,11 @@ import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 
 export function Auth({
   setup,
+  sessionExpired = false,
   onDone,
 }: {
   setup: boolean;
+  sessionExpired?: boolean;
   onDone: (v: any) => void;
 }) {
   const [error, setError] = useState<unknown>(null),
@@ -39,11 +41,13 @@ export function Auth({
         <Logo />
         <p className="eyebrow">YOUR AI. YOUR SPACE.</p>
         <label className="field"><span>{t("表示言語")}</span><select aria-label={t("表示言語")} value={getLanguage()} onChange={e => setLanguage(e.target.value as "ja" | "en")}><option value="ja">{t("日本語")}</option><option value="en">English</option></select></label>
-        <h1>{t(setup ? "ようこそ、MIX agentへ。" : "おかえりなさい。")}</h1>
+        <h1>{t(setup ? "ようこそ、MIX agentへ。" : sessionExpired ? "セッションの有効期限が切れました。" : "おかえりなさい。")}</h1>
         <p>
           {t(setup
             ? "まずは管理者アカウントを作成しましょう。"
-            : "あなたのワークスペースにログインします。")}
+            : sessionExpired
+              ? "入力中の内容は保存されています。再ログインすると元の画面に戻ります。"
+              : "あなたのワークスペースにログインします。")}
         </p>
         <form onSubmit={submit}>
           <Field label={t("ユーザー名")}>

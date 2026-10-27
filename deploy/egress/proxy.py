@@ -24,10 +24,23 @@ CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "10"))
 MAX_HEADER = 16384
 
 
-def load_policy(path):
-    """Load a policy file, failing closed with a sentinel on any error."""
+def load_policy(path, *, required=True):
+    """Load a policy file, failing closed with a sentinel on any error.
+
+    The global policy is required: a missing file is a deployment error, not
+    permission to fall back to unrestricted public egress.  The MCP policy is
+    optional, because deployments without an MCP manager may legitimately not
+    have created it yet; absence then means "no per-source overrides", while
+    the global allow-list still applies.
+    """
+    if not path.exists():
+        if required:
+            logger.error("Required policy file is missing: %s", path)
+            return {"unreadable": True}
+        return {}
     try:
-        return json.loads(path.read_text()) if path.exists() else {}
+        value = json.loads(path.read_text())
+        return value if isinstance(value, dict) else {"unreadable": True}
     except Exception:
         logger.exception("Policy file unreadable: %s", path)
         return {"unreadable": True}
@@ -68,7 +81,7 @@ async def handle(reader, writer):
                 raise ValueError()
             host, port = parsed.hostname.lower(), parsed.port or 80
         policy = load_policy(POLICY)
-        mcp_policy = load_policy(MCP_POLICY)
+        mcp_policy = load_policy(MCP_POLICY, required=False)
         # Fail closed: never interpret a broken policy file as allow-all.
         if policy.get("unreadable") or mcp_policy.get("unreadable"):
             raise ValueError()

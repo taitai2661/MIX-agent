@@ -9,9 +9,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote, urlsplit
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
-from sqlalchemy import Float, case, cast, delete, func, select
+from sqlalchemy import Float, case, cast, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from mix_agent import config, pricing, project_docs
@@ -221,14 +221,13 @@ def record_login(db, owner_id, successful, ip="unknown"):
     """Keep only the latest 100 outcomes for this account, with connection metadata."""
     db.add(LoginEvent(owner_id=owner_id, successful=successful, ip=ip))
     db.flush()
-    stale = db.scalars(
-        select(LoginEvent)
+    stale_ids = (
+        select(LoginEvent.id)
         .where(LoginEvent.owner_id == owner_id)
         .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
         .offset(100)
     )
-    for event in stale:
-        db.delete(event)
+    db.execute(delete(LoginEvent).where(LoginEvent.id.in_(stale_ids)))
 
 
 def revoke_sessions(db, owner_id, current_session_id=None):
@@ -388,12 +387,12 @@ async def probe_auto_candidates(db, owner_id, allowed_ids, capabilities, limit=N
 
 
 @router.get("/setup")
-async def setup(db=Depends(get_db)):
+def setup(db=Depends(get_db)):
     return {"needs_admin": db.scalar(select(User.id)) is None}
 
 
 @router.post("/setup/admin")
-async def setup_admin(body: Credentials, response: Response, db=Depends(get_db)):
+def setup_admin(body: Credentials, response: Response, db=Depends(get_db)):
     if db.scalar(select(User.id)):
         raise HTTPException(409, "初期設定は完了しています")
     user = User(username=body.username, password_hash=passwords.hash(body.password))
@@ -456,6 +455,11 @@ async def login(body: Credentials, request: Request, response: Response, db=Depe
             record_login(db, user.id, False, ip)
             db.commit()
         raise HTTPException(401, "ユーザー名またはパスワードが違います")
+    # A valid password clears this account's failure budget.  The IP bucket is
+    # intentionally left alone: resetting it on any successful login would let
+    # an attacker with one valid account clear the address-wide brute-force
+    # protection for every other account on the same address.
+    clear_attempts(account_key)
     session = new_session(db, user.id, response)
     record_login(db, user.id, True, ip)
     db.commit()
@@ -463,13 +467,13 @@ async def login(body: Credentials, request: Request, response: Response, db=Depe
 
 
 @router.get("/auth/me")
-async def me(ctx=Depends(context)):
+def me(ctx=Depends(context)):
     db, session = ctx
     return {"username": db.get(User, session.owner_id).username, "csrf": session.csrf}
 
 
 @router.post("/auth/logout")
-async def logout(response: Response, ctx=Depends(context)):
+def logout(response: Response, ctx=Depends(context)):
     db, session = ctx
     db.delete(session)
     db.commit()
@@ -527,7 +531,7 @@ async def change_username(body: UsernameChangeInput, ctx=Depends(context)):
 
 
 @router.post("/auth/sessions/revoke")
-async def revoke_account_sessions(body: SessionRevocationInput, response: Response, ctx=Depends(context)):
+def revoke_account_sessions(body: SessionRevocationInput, response: Response, ctx=Depends(context)):
     db, session = ctx
     revoke_sessions(db, session.owner_id, None if body.scope == "all" else session.id)
     audit(db, session.owner_id, "sessions_revoked", body.scope)
@@ -538,7 +542,7 @@ async def revoke_account_sessions(body: SessionRevocationInput, response: Respon
 
 
 @router.get("/auth/login-history")
-async def login_history(ctx=Depends(context)):
+def login_history(ctx=Depends(context)):
     db, session = ctx
     rows = db.scalars(
         select(LoginEvent)
@@ -593,10 +597,17 @@ async def provider_values(body, db, owner, previous=None):
             raise HTTPException(422, "LAN接続先は「プライベート接続を許可」を明示してください")
     data["base_url"] = url
     data["extra_config"] = body.extra_config
-    if previous:
-        data["secret_id"] = previous.get("secret_id")
+    old_secret_id = previous.get("secret_id") if previous else None
     if body.api_key is not None:
         data["secret_id"] = store_secret(db, owner, body.api_key, "provider") if body.api_key else None
+        # Replacing or clearing a key must not leave the previous ciphertext
+        # orphaned in the secrets table.
+        if old_secret_id and old_secret_id != data["secret_id"]:
+            old_secret = db.get(Secret, old_secret_id)
+            if old_secret and old_secret.owner_id == owner:
+                db.delete(old_secret)
+    elif previous:
+        data["secret_id"] = old_secret_id
     return data
 
 
@@ -690,13 +701,13 @@ def provider_response(row, sync):
 
 
 @router.get("/providers")
-async def providers(ctx=Depends(context)):
+def providers(ctx=Depends(context)):
     db, s = ctx
     return [public(r) for r in db.scalars(select(Provider).where(Provider.owner_id == s.owner_id))]
 
 
 @router.get("/provider-presets")
-async def provider_presets(ctx=Depends(context)):
+def provider_presets(ctx=Depends(context)):
     # Require an authenticated admin session: this catalog describes outbound services.
     return catalog()
 
@@ -740,7 +751,7 @@ async def edit_provider(key: str, body: ProviderInput, ctx=Depends(context)):
 
 
 @router.delete("/providers/{key}")
-async def delete_provider(key: str, ctx=Depends(context)):
+def delete_provider(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Provider, key, s.owner_id)
     models = [
@@ -908,7 +919,7 @@ async def browser_update(ctx=Depends(context)):
 
 
 @router.get("/settings/statistics", response_model=StatisticsView)
-async def settings_statistics(ctx=Depends(context)):
+def settings_statistics(ctx=Depends(context)):
     """Return privacy-minimal, local reliability statistics for the account.
 
     Aggregation happens in SQL so a busy account never loads a month of raw
@@ -1074,7 +1085,7 @@ async def settings_statistics(ctx=Depends(context)):
 
 
 @router.get("/settings/usage", response_model=UsageView)
-async def settings_usage(days: int = 30, ctx=Depends(context)):
+def settings_usage(days: int = 30, ctx=Depends(context)):
     """Return per-model token usage and estimated cost for the account.
 
     Only token counts and resolved prices are aggregated; prompt and completion
@@ -1084,10 +1095,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
     from mix_agent.usage import RETENTION
 
     db, s = ctx
-    try:
-        days = int(days)
-    except (TypeError, ValueError):
-        days = 30
+    # FastAPI already coerced and validated the query parameter.
     days = max(1, min(RETENTION.days, days))
     since = datetime.now(UTC) - timedelta(days=days)
     models = {row.id: row.data for row in db.scalars(select(Model).where(Model.owner_id == s.owner_id))}
@@ -1260,7 +1268,7 @@ async def settings_usage(days: int = 30, ctx=Depends(context)):
 
 
 @router.put("/settings")
-async def set_settings(body: SettingsInput, ctx=Depends(context)):
+def set_settings(body: SettingsInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Settings, "settings", s.owner_id)
     domains = [
@@ -1332,7 +1340,7 @@ async def set_settings(body: SettingsInput, ctx=Depends(context)):
 
 
 @router.post("/browser/enable")
-async def enable_browser_tools(ctx=Depends(context)):
+def enable_browser_tools(ctx=Depends(context)):
     """Apply the explicit setup choice as one auditable Browser permission bundle."""
     db, s = ctx
     settings = own(db, Settings, "settings", s.owner_id)
@@ -1365,7 +1373,7 @@ async def enable_browser_tools(ctx=Depends(context)):
 
 
 @router.get("/tools", response_model=list[ToolView])
-async def tools_list(ctx=Depends(context)):
+def tools_list(ctx=Depends(context)):
     db, s = ctx
     # Report the permission the tool actually falls back to, so the Tools screen
     # never shows "always allow" for a destructive tool that will ask.
@@ -1373,7 +1381,7 @@ async def tools_list(ctx=Depends(context)):
 
 
 @router.post("/permission-rules")
-async def set_permission(body: PermissionInput, ctx=Depends(context)):
+def set_permission(body: PermissionInput, ctx=Depends(context)):
     db, s = ctx
     tool = registry(db, s.owner_id).get(body.tool_id)
     if not tool:
@@ -1396,7 +1404,7 @@ async def set_permission(body: PermissionInput, ctx=Depends(context)):
 
 
 @router.get("/conversation-folders")
-async def list_conversation_folders(ctx=Depends(context)):
+def list_conversation_folders(ctx=Depends(context)):
     db, s = ctx
     return [
         public(row)
@@ -1409,17 +1417,18 @@ async def list_conversation_folders(ctx=Depends(context)):
 
 
 @router.post("/conversation-folders")
-async def create_conversation_folder(body: ConversationFolderInput, ctx=Depends(context)):
+def create_conversation_folder(body: ConversationFolderInput, ctx=Depends(context)):
     db, s = ctx
     row = ConversationFolder(owner_id=s.owner_id, data=body.model_dump())
     db.add(row)
+    db.flush()
     audit(db, s.owner_id, "conversation-folder.create", row.id)
     db.commit()
     return public(row)
 
 
 @router.patch("/conversation-folders/{key}")
-async def edit_conversation_folder(key: str, body: ConversationFolderInput, ctx=Depends(context)):
+def edit_conversation_folder(key: str, body: ConversationFolderInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, ConversationFolder, key, s.owner_id)
     row.data = body.model_dump()
@@ -1429,7 +1438,7 @@ async def edit_conversation_folder(key: str, body: ConversationFolderInput, ctx=
 
 
 @router.delete("/conversation-folders/{key}")
-async def delete_conversation_folder(key: str, ctx=Depends(context)):
+def delete_conversation_folder(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, ConversationFolder, key, s.owner_id)
     for conversation in db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)):
@@ -1441,58 +1450,70 @@ async def delete_conversation_folder(key: str, ctx=Depends(context)):
     return {"ok": True}
 
 
-@router.get("/conversations")
-async def list_conversations(
-    state: str = "active",
+@router.get("/conversations", response_model=list[RecordView])
+def list_conversations(
+    state: Literal["active", "archived", "trash"] = "active",
     folder_id: str | None = None,
     project_id: str | None = None,
     q: str = "",
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     ctx=Depends(context),
 ):
+    """List conversations using SQL filters instead of loading every row.
+
+    The old implementation loaded every conversation (and, when searching,
+    every message for every conversation) into Python.  Filtering and paging
+    now happen in PostgreSQL; ``limit`` is optional for compatibility with the
+    existing sidebar, which still asks for the full active list.
+    """
     db, s = ctx
     if project_id:
         own(db, Project, project_id, s.owner_id)
-    conversations = list(db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)))
-    query = q.strip().casefold()
-    messages_by_conv: dict[str, str] = {}
-    if query and conversations:
-        all_msg = db.scalars(
-            select(Message).where(Message.conversation_id.in_([c.id for c in conversations]))
-        ).all()
-        for msg in all_msg:
-            messages_by_conv[msg.conversation_id] = (
-                messages_by_conv.get(msg.conversation_id, "") + "\n" + (msg.data.get("content", "") or "")
+    deleted = Conversation.data["deleted_at"].astext
+    archived = Conversation.data["archived_at"].astext
+    statement = select(Conversation).where(Conversation.owner_id == s.owner_id)
+    if state == "trash":
+        statement = statement.where(deleted.is_not(None))
+    elif state == "archived":
+        statement = statement.where(deleted.is_(None), archived.is_not(None))
+    else:
+        statement = statement.where(
+            deleted.is_(None),
+            archived.is_(None),
+            Conversation.data["cron_hidden"].astext.is_distinct_from("true"),
+        )
+    if folder_id is not None:
+        statement = statement.where(Conversation.data["folder_id"].astext == folder_id)
+    if project_id is not None:
+        statement = statement.where(Conversation.data["project_id"].astext == project_id)
+    query = q.strip()
+    if query:
+        matching_messages = select(Message.conversation_id).where(
+            Message.owner_id == s.owner_id,
+            Message.data["content"].astext.icontains(query, autoescape=True),
+        )
+        statement = statement.where(
+            or_(
+                Conversation.data["title"].astext.icontains(query, autoescape=True),
+                Conversation.id.in_(matching_messages),
             )
-    result = []
-    for row in conversations:
-        data = row.data
-        is_deleted, is_archived = bool(data.get("deleted_at")), bool(data.get("archived_at"))
-        if state == "trash" and not is_deleted:
-            continue
-        if state == "archived" and (is_deleted or not is_archived):
-            continue
-        if state == "active" and (is_deleted or is_archived or data.get("cron_hidden")):
-            continue
-        if folder_id is not None and data.get("folder_id") != folder_id:
-            continue
-        if project_id is not None and data.get("project_id") != project_id:
-            continue
-        if query:
-            contents = messages_by_conv.get(row.id, "")
-            if query not in (data.get("title", "") + "\n" + contents).casefold():
-                continue
-        result.append(public(row))
-    # Keep pinned conversations first, then show the most recently active chat.
-    # The id tie-breaker keeps equal timestamps deterministic without changing
-    # the persisted conversation data.
-    result.sort(
-        key=lambda row: (row["data"].get("last_message_at") or row["created_at"], row["id"]), reverse=True
+        )
+    last_activity = func.coalesce(
+        Conversation.data["last_message_at"].astext,
+        func.to_char(Conversation.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US'),
     )
-    return sorted(result, key=lambda row: not row["data"].get("pinned", False))
+    pinned = case((Conversation.data["pinned"].astext == "true", 1), else_=0)
+    statement = statement.order_by(pinned.desc(), last_activity.desc(), Conversation.id.desc())
+    if offset:
+        statement = statement.offset(offset)
+    if limit is not None:
+        statement = statement.limit(limit)
+    return [public(row) for row in db.scalars(statement)]
 
 
 @router.delete("/projects/{key}")
-async def delete_project(key: str, ctx=Depends(context)):
+def delete_project(key: str, ctx=Depends(context)):
     db, s = ctx
     project = own(db, Project, key, s.owner_id)
     for conversation in db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)):
@@ -1505,7 +1526,7 @@ async def delete_project(key: str, ctx=Depends(context)):
 
 
 @router.get("/scheduled-jobs")
-async def list_scheduled_jobs(ctx=Depends(context)):
+def list_scheduled_jobs(ctx=Depends(context)):
     db, s = ctx
     from mix_agent.schedules import next_at
 
@@ -1529,7 +1550,7 @@ async def list_scheduled_jobs(ctx=Depends(context)):
 
 
 @router.post("/scheduled-jobs")
-async def create_scheduled_job(body: ScheduledJobInput, ctx=Depends(context)):
+def create_scheduled_job(body: ScheduledJobInput, ctx=Depends(context)):
     db, s = ctx
     from mix_agent.schedules import next_at
 
@@ -1543,13 +1564,14 @@ async def create_scheduled_job(body: ScheduledJobInput, ctx=Depends(context)):
         own(db, Conversation, body.target_id, s.owner_id)
     row = ScheduledJob(owner_id=s.owner_id, data=body.model_dump())
     db.add(row)
+    db.flush()
     audit(db, s.owner_id, "scheduled-job.create", row.id)
     db.commit()
     return public(row)
 
 
 @router.patch("/scheduled-jobs/{key}")
-async def edit_scheduled_job(key: str, body: ScheduledJobInput, ctx=Depends(context)):
+def edit_scheduled_job(key: str, body: ScheduledJobInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, ScheduledJob, key, s.owner_id)
     from mix_agent.schedules import next_at
@@ -1569,7 +1591,7 @@ async def edit_scheduled_job(key: str, body: ScheduledJobInput, ctx=Depends(cont
 
 
 @router.delete("/scheduled-jobs/{key}")
-async def delete_scheduled_job(key: str, ctx=Depends(context)):
+def delete_scheduled_job(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, ScheduledJob, key, s.owner_id)
     db.delete(row)
@@ -1579,7 +1601,7 @@ async def delete_scheduled_job(key: str, ctx=Depends(context)):
 
 
 @router.post("/scheduled-jobs/{key}/run")
-async def run_scheduled_job(key: str, ctx=Depends(context)):
+def run_scheduled_job(key: str, ctx=Depends(context)):
     db, s = ctx
     job = own(db, ScheduledJob, key, s.owner_id)
     from mix_agent.schedules import claim
@@ -1595,7 +1617,7 @@ async def run_scheduled_job(key: str, ctx=Depends(context)):
 
 
 @router.get("/scheduled-jobs/{key}/runs")
-async def list_scheduled_runs(key: str, ctx=Depends(context)):
+def list_scheduled_runs(key: str, ctx=Depends(context)):
     db, s = ctx
     own(db, ScheduledJob, key, s.owner_id)
     rows = []
@@ -1616,7 +1638,7 @@ async def list_scheduled_runs(key: str, ctx=Depends(context)):
 
 
 @router.get("/notifications")
-async def list_notifications(unread: bool = False, ctx=Depends(context)):
+def list_notifications(unread: bool = False, ctx=Depends(context)):
     db, s = ctx
     query = select(Notification).where(Notification.owner_id == s.owner_id)
     if unread:
@@ -1625,14 +1647,14 @@ async def list_notifications(unread: bool = False, ctx=Depends(context)):
 
 
 @router.get("/push/key")
-async def push_key(ctx=Depends(context)):
+def push_key(ctx=Depends(context)):
     from mix_agent.push import public_key
 
     return {"public_key": public_key()}
 
 
 @router.get("/push/subscriptions")
-async def push_subscriptions(ctx=Depends(context)):
+def push_subscriptions(ctx=Depends(context)):
     db, s = ctx
     return {
         "endpoints": [
@@ -1643,7 +1665,7 @@ async def push_subscriptions(ctx=Depends(context)):
 
 
 @router.post("/push/subscriptions")
-async def save_push_subscription(body: dict, ctx=Depends(context)):
+def save_push_subscription(body: dict, ctx=Depends(context)):
     from mix_agent.push import unb64, valid_endpoint
 
     db, s = ctx
@@ -1668,7 +1690,7 @@ async def save_push_subscription(body: dict, ctx=Depends(context)):
 
 
 @router.delete("/push/subscriptions")
-async def delete_push_subscription(body: dict, ctx=Depends(context)):
+def delete_push_subscription(body: dict, ctx=Depends(context)):
     db, s = ctx
     endpoint = body.get("endpoint")
     if not isinstance(endpoint, str):
@@ -1683,7 +1705,7 @@ async def delete_push_subscription(body: dict, ctx=Depends(context)):
 
 
 @router.patch("/notifications/{key}")
-async def read_notification(key: str, body: NotificationReadInput, ctx=Depends(context)):
+def read_notification(key: str, body: NotificationReadInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Notification, key, s.owner_id)
     row.read_at = now() if body.read else None
@@ -1692,7 +1714,7 @@ async def read_notification(key: str, body: NotificationReadInput, ctx=Depends(c
 
 
 @router.patch("/conversations/{key}/state")
-async def set_conversation_state(key: str, body: ConversationStateInput, ctx=Depends(context)):
+def set_conversation_state(key: str, body: ConversationStateInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Conversation, key, s.owner_id)
     values = body.model_dump(exclude_unset=True)
@@ -1716,7 +1738,7 @@ async def set_conversation_state(key: str, body: ConversationStateInput, ctx=Dep
 
 
 @router.post("/conversations/{key}/restore")
-async def restore_conversation(key: str, ctx=Depends(context)):
+def restore_conversation(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Conversation, key, s.owner_id)
     row.data = {**row.data, "deleted_at": None}
@@ -1758,7 +1780,7 @@ async def delete_conversation(key: str, permanent: bool = False, ctx=Depends(con
 
 
 @router.get("/conversations/{key}/markdown")
-async def export_conversation_markdown(
+def export_conversation_markdown(
     key: str, scope: Literal["answers", "conversation", "activity"] = "conversation", ctx=Depends(context)
 ):
     db, s = ctx
@@ -1800,7 +1822,7 @@ async def export_conversation_markdown(
 
 
 @router.get("/conversations/{key}/messages", response_model=ConversationMessagesView)
-async def messages(key: str, ctx=Depends(context)):
+def messages(key: str, ctx=Depends(context)):
     db, s = ctx
     conversation = own(db, Conversation, key, s.owner_id)
     rows = [
@@ -1809,9 +1831,19 @@ async def messages(key: str, ctx=Depends(context)):
             select(Message).where(Message.conversation_id == key).order_by(Message.created_at)
         )
     ]
+    message_ids = [row["id"] for row in rows]
     feedback = {
         item.message_id: item.data.get("value")
-        for item in db.scalars(select(Feedback).where(Feedback.owner_id == s.owner_id))
+        for item in (
+            db.scalars(
+                select(Feedback).where(
+                    Feedback.owner_id == s.owner_id,
+                    Feedback.message_id.in_(message_ids),
+                )
+            )
+            if message_ids
+            else []
+        )
     }
     for row in rows:
         if row["id"] in feedback:
@@ -1876,7 +1908,7 @@ def _redact_tool_result(value):
 
 
 @router.get("/conversations/{key}/tool-calls", response_model=list[ToolCallHistoryView])
-async def conversation_tool_calls(key: str, ctx=Depends(context)):
+def conversation_tool_calls(key: str, ctx=Depends(context)):
     db, s = ctx
     own(db, Conversation, key, s.owner_id)
     runs = list(db.scalars(select(Run).where(Run.conversation_id == key).order_by(Run.created_at)))
@@ -1952,8 +1984,23 @@ async def conversation_tool_calls(key: str, ctx=Depends(context)):
     return result
 
 
+@router.get("/audit-events", response_model=list[RecordView])
+def audit_events(
+    action: str = "",
+    limit: int = Query(default=100, ge=1, le=500),
+    ctx=Depends(context),
+):
+    """Read-only audit trail.  Writes already existed; this exposes them."""
+    db, s = ctx
+    statement = select(Audit).where(Audit.owner_id == s.owner_id)
+    if action.strip():
+        statement = statement.where(Audit.data["action"].astext == action.strip())
+    statement = statement.order_by(Audit.created_at.desc()).limit(limit)
+    return [public(row) for row in db.scalars(statement)]
+
+
 @router.get("/settings/diagnostics", response_model=DiagnosticsView)
-async def settings_diagnostics(ctx=Depends(context)):
+def settings_diagnostics(ctx=Depends(context)):
     """Return a privacy-minimal operational snapshot for the signed-in owner."""
     db, session = ctx
     owner_id = session.owner_id
@@ -2214,7 +2261,7 @@ async def _build_history_payload(
     # Retrieval is trigger-aware but pipeline-shared: temporary runs skip
     # memory/skills entirely; scheduled runs use the same builder.
     if temporary_mode:
-        memories, skill_rows = [], []
+        memories, skill_rows, knowledge_rows = [], [], []
     else:
         memories = context_retrievers.search_memories(
             db,
@@ -2227,6 +2274,7 @@ async def _build_history_payload(
         skill_rows = context_retrievers.search_skills(
             db, s.owner_id, body.content, agent.get("skill_ids") or None
         )
+        knowledge_rows = context_retrievers.search_knowledge(db, s.owner_id, body.content)
     memory_trace_ids = [item["id"] for item in memories if isinstance(item, dict) and item.get("id")]
     content = body.content
     image_refs: list[str] = []
@@ -2259,7 +2307,7 @@ async def _build_history_payload(
         task_goal=body.content,
         memories=memories,
         skills=skill_rows,
-        knowledge=[],
+        knowledge=knowledge_rows,
         tools=[available[t] for t in tool_ids if t in available],
         window_info=window_info,
         model_id=model.data.get("model_id", ""),
@@ -2674,7 +2722,7 @@ async def edit_message(key: str, message_id: str, body: MessageInput, request: R
 
 
 @router.put("/messages/{key}/feedback")
-async def set_message_feedback(key: str, body: FeedbackInput, ctx=Depends(context)):
+def set_message_feedback(key: str, body: FeedbackInput, ctx=Depends(context)):
     db, s = ctx
     message = own(db, Message, key, s.owner_id)
     if message.data.get("role") != "assistant" or not message.data.get("auto_selection"):
@@ -2718,7 +2766,7 @@ async def verify_model_tools(key: str, ctx=Depends(context)):
 
 
 @router.get("/runs/{key}", response_model=RunView)
-async def get_run(key: str, ctx=Depends(context)):
+def get_run(key: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     snapshot = run.data["snapshot"]
@@ -2778,7 +2826,7 @@ async def get_run(key: str, ctx=Depends(context)):
 
 
 @router.get("/runs/{key}/checkpoints")
-async def list_checkpoints(key: str, ctx=Depends(context)):
+def list_checkpoints(key: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     from mix_agent.runs import checkpoints as run_checkpoints
@@ -2787,9 +2835,13 @@ async def list_checkpoints(key: str, ctx=Depends(context)):
 
 
 @router.get("/runs/{key}/events")
-async def run_events(key: str, request: Request, after: int = 0, ctx=Depends(context)):
-    db, s = ctx
-    own(db, Run, key, s.owner_id)
+async def run_events(key: str, request: Request, after: int = 0):
+    # Authenticate with a short-lived session.  Keeping the request-scoped
+    # dependency session alive for the lifetime of an SSE stream would pin a
+    # connection from the small SQLAlchemy pool per connected browser tab.
+    with SessionLocal() as auth_db:
+        session = authenticate(request, auth_db)
+        own(auth_db, Run, key, session.owner_id)
     try:
         cursor = max(after, int(request.headers.get("last-event-id", "0")))
     except ValueError:
@@ -2880,14 +2932,14 @@ def _record_browser_frame(db, run, frame, tool="manual"):
 
 
 @router.get("/runs/{key}/browser-frames")
-async def browser_frames(key: str, ctx=Depends(context)):
+def browser_frames(key: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     return run.data.get("browser_frames", [])
 
 
 @router.get("/runs/{key}/browser-frames/{artifact_id}")
-async def browser_frame_image(key: str, artifact_id: str, ctx=Depends(context)):
+def browser_frame_image(key: str, artifact_id: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     if not any(item.get("artifact_id") == artifact_id for item in run.data.get("browser_frames", [])):
@@ -2908,7 +2960,7 @@ async def browser_frame_image(key: str, artifact_id: str, ctx=Depends(context)):
 
 
 @router.post("/runs/{key}/browser-pause")
-async def browser_pause(key: str, ctx=Depends(context)):
+def browser_pause(key: str, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     if not run.data.get("browser_frames"):
@@ -3001,7 +3053,7 @@ async def browser_return(key: str, ctx=Depends(context)):
 
 
 @router.post("/runs/{key}/resume")
-async def resume(key: str, body: ResumeInput, ctx=Depends(context)):
+def resume(key: str, body: ResumeInput, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     if run.status != "interrupted":
@@ -3085,7 +3137,7 @@ async def resume(key: str, body: ResumeInput, ctx=Depends(context)):
 
 
 @router.post("/runs/{key}/budget-extension")
-async def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=Depends(context)):
+def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=Depends(context)):
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     if run.status != "budget_extension_pending":
@@ -3155,7 +3207,7 @@ async def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, 
 
 
 @router.post("/approvals/{key}/decision")
-async def decide(key: str, body: DecisionInput, ctx=Depends(context)):
+def decide(key: str, body: DecisionInput, ctx=Depends(context)):
     db, s = ctx
     approval = own(db, Approval, key, s.owner_id)
     if approval.status != "pending":
@@ -3214,7 +3266,7 @@ async def upload(file: UploadFile = File(...), ctx=Depends(context)):
 
 
 @router.get("/artifacts/{key}")
-async def download(key: str, ctx=Depends(context)):
+def download(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Artifact, key, s.owner_id)
     name = row.data["name"]
@@ -3236,7 +3288,7 @@ async def download(key: str, ctx=Depends(context)):
 
 
 @router.get("/memories")
-async def memories(q: str = "", state: str | None = None, ctx=Depends(context)):
+def memories(q: str = "", state: str | None = None, ctx=Depends(context)):
     """Flat listing. ``state`` narrows it to one §2 ``lifecycle_state``.
 
     A value outside §2 is a **422**, not an empty list: answering "nothing
@@ -3269,7 +3321,7 @@ async def memories(q: str = "", state: str | None = None, ctx=Depends(context)):
 
 
 @router.post("/memories/{key}/resolve", response_model=MemoryResolveConflictView)
-async def resolve_memory_conflict(key: str, body: MemoryResolveConflictInput, ctx=Depends(context)):
+def resolve_memory_conflict(key: str, body: MemoryResolveConflictInput, ctx=Depends(context)):
     """Spec §3 ``resolve_conflict`` over HTTP: settle a dispute in place.
 
     The UI reaches this from a row that §1 already reports as ``disputed``.
@@ -3301,7 +3353,7 @@ async def resolve_memory_conflict(key: str, body: MemoryResolveConflictInput, ct
 
 
 @router.get("/memories/{key}/associations")
-async def memory_associations(key: str, ctx=Depends(context)):
+def memory_associations(key: str, ctx=Depends(context)):
     """Spec §4: the `memory_links` edges touching one memory (§9 #3).
 
     Both directions, owner-scoped through the same `own()` guard every other
@@ -3338,7 +3390,7 @@ async def debug_reembed(limit: int = 50, ctx=Depends(context)):
 
 
 @router.get("/memories-debug/actions")
-async def debug_memory_actions(run_id: str | None = None, ctx=Depends(context)):
+def debug_memory_actions(run_id: str | None = None, ctx=Depends(context)):
     db, s = ctx
     statement = select(MemoryActionEvent).where(MemoryActionEvent.owner_id == s.owner_id)
     if run_id:
@@ -3379,7 +3431,7 @@ async def edit_memory(key: str, body: MemoryInput, ctx=Depends(context)):
 
 
 @router.get("/memories/{key}/revisions")
-async def memory_history(key: str, ctx=Depends(context)):
+def memory_history(key: str, ctx=Depends(context)):
     db, s = ctx
     own(db, Memory, key, s.owner_id)
     rows = db.scalars(
@@ -3391,7 +3443,7 @@ async def memory_history(key: str, ctx=Depends(context)):
 
 
 @router.post("/memories/{key}/restore/{revision}")
-async def restore_memory(key: str, revision: str, ctx=Depends(context)):
+def restore_memory(key: str, revision: str, ctx=Depends(context)):
     db, s = ctx
     rev = own(db, MemoryRevision, revision, s.owner_id)
     revision_data = rev.data if isinstance(rev.data, dict) else {}
@@ -3420,7 +3472,7 @@ async def restore_memory(key: str, revision: str, ctx=Depends(context)):
 
 
 @router.get("/skills")
-async def list_skills(q: str = "", ctx=Depends(context)):
+def list_skills(q: str = "", ctx=Depends(context)):
     db, s = ctx
     return [
         public(r)
@@ -3433,7 +3485,7 @@ async def list_skills(q: str = "", ctx=Depends(context)):
 
 
 @router.post("/skills")
-async def add_skill(body: SkillInput, ctx=Depends(context)):
+def add_skill(body: SkillInput, ctx=Depends(context)):
     db, s = ctx
     try:
         result = skills.change(db, s.owner_id, **body.model_dump())
@@ -3450,7 +3502,7 @@ async def add_skill(body: SkillInput, ctx=Depends(context)):
 
 
 @router.patch("/skills/{key}")
-async def edit_skill(key: str, body: SkillInput, ctx=Depends(context)):
+def edit_skill(key: str, body: SkillInput, ctx=Depends(context)):
     db, s = ctx
     own(db, Skill, key, s.owner_id)
     try:
@@ -3462,7 +3514,7 @@ async def edit_skill(key: str, body: SkillInput, ctx=Depends(context)):
 
 
 @router.get("/skills/{key}/revisions")
-async def skill_history(key: str, ctx=Depends(context)):
+def skill_history(key: str, ctx=Depends(context)):
     db, s = ctx
     own(db, Skill, key, s.owner_id)
     rows = db.scalars(
@@ -3474,7 +3526,7 @@ async def skill_history(key: str, ctx=Depends(context)):
 
 
 @router.post("/skills/{key}/restore/{revision}")
-async def restore_skill(key: str, revision: str, ctx=Depends(context)):
+def restore_skill(key: str, revision: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Skill, key, s.owner_id)
     rev = own(db, SkillRevision, revision, s.owner_id)
@@ -3487,7 +3539,7 @@ async def restore_skill(key: str, revision: str, ctx=Depends(context)):
 
 
 @router.post("/skills/import")
-async def import_skill(body: SkillImportInput, ctx=Depends(context)):
+def import_skill(body: SkillImportInput, ctx=Depends(context)):
     db, s = ctx
     try:
         parsed = skill_package.parse_skill_md(body.text)
@@ -3536,7 +3588,7 @@ async def import_skill_directory(ctx=Depends(context)):
 
 
 @router.get("/skills/{key}/export")
-async def export_skill(key: str, ctx=Depends(context)):
+def export_skill(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Skill, key, s.owner_id)
     return PlainTextResponse(
@@ -3547,7 +3599,7 @@ async def export_skill(key: str, ctx=Depends(context)):
 
 
 @router.get("/skills/{key}/export.zip")
-async def export_skill_zip(key: str, ctx=Depends(context)):
+def export_skill_zip(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Skill, key, s.owner_id)
     return Response(
@@ -3558,7 +3610,7 @@ async def export_skill_zip(key: str, ctx=Depends(context)):
 
 
 @router.get("/skills/{key}/resources")
-async def skill_resource(key: str, path: str = "", ctx=Depends(context)):
+def skill_resource(key: str, path: str = "", ctx=Depends(context)):
     db, s = ctx
     own(db, Skill, key, s.owner_id)
     try:
@@ -3568,7 +3620,7 @@ async def skill_resource(key: str, path: str = "", ctx=Depends(context)):
 
 
 @router.get("/mcp/connections")
-async def mcp_connections(ctx=Depends(context)):
+def mcp_connections(ctx=Depends(context)):
     db, s = ctx
     return [public(r) for r in db.scalars(select(MCPConnection).where(MCPConnection.owner_id == s.owner_id))]
 
@@ -3689,7 +3741,7 @@ async def install_registry_mcp(body: MCPInstallInput, ctx=Depends(context)):
 
 
 @router.get("/mcp/oauth/client-metadata.json")
-async def mcp_oauth_client_metadata():
+def mcp_oauth_client_metadata():
     return mcp_oauth.client_metadata()
 
 
@@ -3784,7 +3836,7 @@ async def mcp_oauth_callback(
 
 
 @router.post("/mcp/connections")
-async def create_mcp(body: MCPInput, ctx=Depends(context)):
+def create_mcp(body: MCPInput, ctx=Depends(context)):
     db, s = ctx
     data = body.model_dump(exclude={"credentials"})
     if body.credentials:
@@ -3798,7 +3850,7 @@ async def create_mcp(body: MCPInput, ctx=Depends(context)):
 
 
 @router.patch("/mcp/connections/{key}")
-async def update_mcp(key: str, body: MCPInput, ctx=Depends(context)):
+def update_mcp(key: str, body: MCPInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, MCPConnection, key, s.owner_id)
     data = body.model_dump(exclude={"credentials"})
@@ -4114,7 +4166,7 @@ async def edit_entity(collection: str, key: str, request: Request, ctx=Depends(c
 
 
 @router.delete("/{collection}/{key}")
-async def delete_entity(collection: str, key: str, ctx=Depends(context)):
+def delete_entity(collection: str, key: str, ctx=Depends(context)):
     db, s = ctx
     if collection == "memories":
         own(db, Memory, key, s.owner_id)
@@ -4128,10 +4180,16 @@ async def delete_entity(collection: str, key: str, ctx=Depends(context)):
         ]
         row = own(db, cls, key, s.owner_id)
         if db.scalar(
-            select(Run.id).where(Run.status.in_(["running", "queued", "waiting_approval", "paused"]))
+            select(Run.id).where(
+                Run.owner_id == s.owner_id,
+                Run.status.in_(["running", "queued", "waiting_approval", "paused"]),
+            )
         ):
             raise HTTPException(409, "実行を停止してから削除してください")
-        if collection == "providers" and any(m.data["provider_id"] == key for m in db.scalars(select(Model))):
+        if collection == "providers" and any(
+            model.data.get("provider_id") == key
+            for model in db.scalars(select(Model).where(Model.owner_id == s.owner_id))
+        ):
             raise HTTPException(409, "先に関連モデルを削除してください")
         db.delete(row)
     else:

@@ -381,7 +381,7 @@ export const useUi = create<UiState>((set) => ({
         surface === "desktop-agent"
           ? state.agentConversationId
           : state.chatConversationId;
-      return { surface, mode: nextMode, conversationId: targetConvId };
+      return { surface, mode: nextMode, conversationId: targetConvId, view: "chat" };
     });
   },
   threadFilter: readThreadFilter(),

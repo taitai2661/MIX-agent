@@ -47,6 +47,14 @@ const GROUPS: ShortcutGroup[] = [
       { keys: ["Esc"], label: "ダイアログを閉じる" },
     ],
   },
+  {
+    title: "表示",
+    items: [
+      { keys: ["Mod", "+"], label: "拡大" },
+      { keys: ["Mod", "-"], label: "縮小" },
+      { keys: ["Mod", "0"], label: "拡大率をリセット" },
+    ],
+  },
 ];
 
 /** `?` (or the palette entry) opens this cheat sheet. */

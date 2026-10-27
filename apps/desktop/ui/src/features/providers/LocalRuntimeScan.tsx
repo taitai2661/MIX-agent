@@ -10,6 +10,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatBytes, formatContext } from "@/lib/format";
 import { t, tf } from "@/lib/i18n";
 import {
   DataTable,
@@ -231,16 +232,41 @@ export function LocalRuntimeScan({
                               className="flex flex-wrap items-center gap-1.5 text-xs"
                             >
                               <span className="font-mono text-fg">{m.id}</span>
+                              {m.loaded && (
+                                <Badge tone="success" size="sm">
+                                  {t("ロード中")}
+                                </Badge>
+                              )}
+                              {m.family && (
+                                <Badge size="sm">{m.family}</Badge>
+                              )}
                               {m.parameter_size && (
                                 <Badge size="sm">{m.parameter_size}</Badge>
                               )}
                               {m.quantization && (
                                 <Badge size="sm">{m.quantization}</Badge>
                               )}
+                              {m.size_bytes !== null && m.size_bytes > 0 && (
+                                <span className="text-faint">
+                                  {formatBytes(m.size_bytes)}
+                                </span>
+                              )}
                               {m.context_window > 0 && (
                                 <span className="text-faint">
-                                  {`ctx ${Math.round(m.context_window / 1024)}k`}
+                                  {`ctx ${formatContext(m.context_window)}`}
                                 </span>
+                              )}
+                              {m.capabilities?.tools === true && (
+                                <Badge size="sm">tools</Badge>
+                              )}
+                              {m.capabilities?.vision === true && (
+                                <Badge size="sm">vision</Badge>
+                              )}
+                              {m.capabilities?.reasoning === true && (
+                                <Badge size="sm">reasoning</Badge>
+                              )}
+                              {m.capabilities?.embedding === true && (
+                                <Badge size="sm">embedding</Badge>
                               )}
                             </li>
                           ))}

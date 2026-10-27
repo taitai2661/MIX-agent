@@ -36,6 +36,22 @@ export interface ModelView {
   supports_tool_calling: boolean;
   supports_reasoning: boolean;
   auto_candidate: boolean;
+  // Optional so older test fixtures and rows written before native metadata
+  // existed still type-check; the Rust command always serialises them.
+  size_bytes?: number | null;
+  parameter_size?: string | null;
+  quantization?: string | null;
+  family?: string | null;
+  loaded?: boolean;
+  capability_source?: string | null;
+}
+
+export interface ModelCapabilitiesView {
+  chat: boolean | null;
+  tools: boolean | null;
+  vision: boolean | null;
+  reasoning: boolean | null;
+  embedding: boolean | null;
 }
 
 export interface DiscoveredModelView {
@@ -44,6 +60,11 @@ export interface DiscoveredModelView {
   context_window: number;
   parameter_size: string | null;
   quantization: string | null;
+  size_bytes: number | null;
+  family: string | null;
+  loaded: boolean;
+  model_type: string | null;
+  capabilities: ModelCapabilitiesView | null;
 }
 
 export interface LocalRuntimeView {

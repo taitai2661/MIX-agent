@@ -46,6 +46,13 @@ jobs:
       - name: Ruff format check
         working-directory: apps/server
         run: uv run ruff format --check
+      - name: OpenAPI schema is committed
+        working-directory: apps/server
+        env:
+          DATABASE_URL: postgresql+psycopg://mix:test-only-password@localhost/mix
+        run: |
+          uv run python ../../scripts/export-openapi.py
+          git diff --exit-code ../../docs/openapi.json
 
   docker-frontend:
     runs-on: ubuntu-latest
@@ -65,6 +72,15 @@ jobs:
           pnpm build
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
+      - name: Generated API client is current
+        working-directory: apps/web
+        run: |
+          pnpm generate:api
+          git diff --exit-code src/generated/api.ts
+      - name: Third-party license notices are current
+        run: |
+          node scripts/generate-third-party-licenses.mjs
+          git diff --exit-code THIRD_PARTY_LICENSES.md
 
   # Same reasoning as above for Memory: the spec is duplicated in both editions
   # and each edition keeps its own vocabulary constants. This fails when the

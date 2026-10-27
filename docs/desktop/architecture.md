@@ -227,10 +227,11 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 | 4 | MCP host + Browser Operator | ✅ |
 | 5 | Memory / Knowledge / Skills / Projects / Schedules / Agents | ✅ |
 | 6 | tray / menu / notification / backup / 署名付き自動更新 + macOS・Windows・Linux リリースCI | ✅ |
-| 7 | macOS 完成 + Windows x64 + Linux α | ⏳ |
+| 7 | macOS 完成 + Windows x64 + Linux 配布 | ✅（v0.5.1 で Windows x64 追加、v0.5.2 で Linux 追加・アプリ内更新） |
+| 8 | コーディングエージェント化（編集・検証・探索・git・UI 証跡） | ✅（8.1〜8.4。詳細は [`coding-agent-plan.md`](coding-agent-plan.md)） |
 
 Phase 6 で Tauri updater を再有効化しました。`desktop-release.yml` は Apple Silicon／Intel macOS の ad-hoc 署名済み DMG、Windows x64 の未署名 NSIS/MSI、Linux x64 の AppImage/deb に加え、署名済みアップデータ（`.app.tar.gz` / `-setup.exe` / `.AppImage` と各 `.sig`）と `latest.json` を Release へ添付します。秘密鍵は GitHub Actions の Repository Secrets のみに置きます。
-Phase 7 は Windows x64 と Linux x64 の実機更新確認を進行中です。
+Phase 7 は v0.5.1 / v0.5.2 で配布まで到達しました。各 OS 実機での更新適用確認は [`verification.md`](../verification.md) に記録します。
 
 ## 空チャットの挨拶（2026-10-01 追記）
 
@@ -250,8 +251,8 @@ Phase 7 は Windows x64 と Linux x64 の実機更新確認を進行中です。
 直接書けないためここが単一の情報源です。日本語は間なしで、英語は空白区切りで連結し、
 `t()` は文単位で適用します。言語辞書の件数は `pnpm ui:test`（`i18n.keys.test.ts` の孤立キー検査）の出力で確認してください。
 
-Docker 版（`docker/MIX-agent/docs/verification.md` の 2026-10-01 節）と同じ方式ですが、
-`desktop/docs/architecture.md` の冒頭の方針どおりコードは共有していません。Desktop 版は
+Docker 版（[`docs/verification.md`](../verification.md) の 2026-10-01 節）と同じ方式ですが、
+冒頭の方針どおりコードは共有していません。Desktop 版は
 `スレッド` / プロジェクト / 差分 / Browser など自分の語彙で書き下し、提案も
 Desktop が実際に持つ機能（差分・テスト・ブラウザ・プロジェクト）に寄せています。
 既存のクイックプロンプト 4 件は提案プールに吸収したので `i18n.keys.test.ts` の
@@ -353,9 +354,8 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 
 ## 既知の残タスク
 
-- アプリ内自動更新を無効化し、DMG／NSIS／MSIの手動配布のみとする。自動更新は将来再導入する場合に別途設計・検証する。
 - Knowledge は lexical 検索のみ。embedding 検索は未実装（上記参照）。
-- Memory の自動生成（Run 後の抽出）は未実装。手動 CRUD + revision + `memory` ツールのみ。
+- Memory の自動生成（Run 後の抽出）は Phase 2 で実装済みだが、抽出品質の改善は継続課題（[`../memory-roadmap.md`](../memory-roadmap.md) Phase 2 参照）。
 - シグナル / PTY ベースの対話 terminal（現在は上限付きの実行のみ）。
 - OS プロセス sandbox（macOS / Windows / Linux とも未実装）。
 - Provider プリセットは Docker 版の 52 件中 50 件（`cloudflare` と

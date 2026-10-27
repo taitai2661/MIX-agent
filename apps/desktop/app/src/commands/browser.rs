@@ -159,3 +159,23 @@ pub async fn browser_reset_profile(
         .await
         .map_err(crate::error::cmd_err)
 }
+
+/// Read a screenshot (or PDF) captured by the Browser Operator as a data URL.
+///
+/// The activity log previously showed the artifact id as a dead badge: the
+/// file existed on disk but there was no route to it from the UI. Return a data
+/// URL so the WebView can render it without exposing the filesystem path.
+#[tauri::command]
+pub async fn browser_artifact(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let artifacts = state.browser.artifacts().await;
+    let artifact = artifacts
+        .iter()
+        .find(|artifact| artifact.id == id)
+        .ok_or_else(|| "artifact not found".to_string())?;
+    let bytes = tokio::fs::read(&artifact.path)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{};base64,{}", artifact.mime_type, encoded))
+}

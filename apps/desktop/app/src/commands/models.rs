@@ -14,6 +14,15 @@ pub struct ModelView {
     pub supports_tool_calling: bool,
     pub supports_reasoning: bool,
     pub auto_candidate: bool,
+    /// On-disk size from the runtime, when it publishes one.
+    pub size_bytes: Option<u64>,
+    pub parameter_size: Option<String>,
+    pub quantization: Option<String>,
+    pub family: Option<String>,
+    /// Currently resident in the local runtime.
+    pub loaded: bool,
+    /// `native` / `probe` / `unknown` — where the capability flags came from.
+    pub capability_source: Option<String>,
 }
 
 /// Persist a discovered model list for a provider, replacing any previous
@@ -34,27 +43,63 @@ pub async fn sync_models(
             continue;
         }
         let model_id = format!("{provider_id}:{}", model.id);
+        let capabilities = model.capabilities.as_ref();
         let data = serde_json::json!({
             "providerId": provider_id,
             "label": model.label,
             "contextWindow": model.context_window,
-            // Unknown until `verify_tools` probes the live adapter. Guessing
-            // here would advertise tool-calling for a model that lacks it.
-            "vision": false,
-            "toolCalling": false,
-            "reasoning": false,
+            // Native capabilities are authoritative when the runtime publishes
+            // them. Otherwise the row starts unknown and `verify_tools` fills
+            // it in with a real probe.
+            "vision": capabilities.and_then(|caps| caps.vision).unwrap_or(false),
+            "toolCalling": capabilities.and_then(|caps| caps.tools).unwrap_or(false),
+            "reasoning": capabilities.and_then(|caps| caps.reasoning).unwrap_or(false),
             "auto": true,
+            "sizeBytes": model.size_bytes,
+            "parameterSize": model.parameter_size,
+            "quantization": model.quantization,
+            "family": model.family,
+            "loaded": model.loaded,
+            "capabilitySource": if capabilities.is_some() { "native" } else { "unknown" },
         });
-        // Only the discovered fields are patched on conflict. Replacing the row
-        // wholesale reset the three capability flags that `verify_tools` wrote,
-        // so re-fetching the model list silently turned off Vision — and Composer
-        // then refused image attachments.
-        let discovered = serde_json::json!({
-            "providerId": provider_id,
-            "label": model.label,
-            "contextWindow": model.context_window,
-            "auto": true,
-        });
+        // Only the fields the runtime actually published are patched on a
+        // re-sync. Replacing the row wholesale would reset the capability flags
+        // that `verify_tools` wrote, and Composer would then refuse image
+        // attachments or stop offering tools for a model that supports them.
+        let mut discovered = serde_json::Map::new();
+        discovered.insert("providerId".into(), provider_id.into());
+        discovered.insert("label".into(), model.label.clone().into());
+        if model.context_window > 0 {
+            discovered.insert("contextWindow".into(), model.context_window.into());
+        }
+        if let Some(value) = model.size_bytes {
+            discovered.insert("sizeBytes".into(), value.into());
+        }
+        if let Some(value) = &model.parameter_size {
+            discovered.insert("parameterSize".into(), value.clone().into());
+        }
+        if let Some(value) = &model.quantization {
+            discovered.insert("quantization".into(), value.clone().into());
+        }
+        if let Some(value) = &model.family {
+            discovered.insert("family".into(), value.clone().into());
+        }
+        // `loaded` is a live state, not a capability: clearing it when a model
+        // is unloaded is correct.
+        discovered.insert("loaded".into(), model.loaded.into());
+        if let Some(caps) = capabilities {
+            for (key, value) in [
+                ("vision", caps.vision),
+                ("toolCalling", caps.tools),
+                ("reasoning", caps.reasoning),
+            ] {
+                if let Some(value) = value {
+                    discovered.insert(key.into(), value.into());
+                }
+            }
+            discovered.insert("capabilitySource".into(), "native".into());
+            discovered.insert("capabilitiesVerifiedAt".into(), now.clone().into());
+        }
         sqlx::query(
             "INSERT INTO models (id, owner_id, data, created_at) VALUES (?1, ?2, ?3, ?4) \
              ON CONFLICT(id) DO UPDATE SET data = json_patch(data, json(?5))",
@@ -63,32 +108,11 @@ pub async fn sync_models(
         .bind(mixd_storage::records::SINGLE_USER_ID)
         .bind(data.to_string())
         .bind(&now)
-        .bind(discovered.to_string())
+        .bind(serde_json::Value::Object(discovered).to_string())
         .execute(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
-        // Read the effective flags back: on a re-sync they are whatever the
-        // stored row already had, not the `false` written above.
-        let (vision, tool_calling, reasoning): (i64, i64, i64) = sqlx::query_as(
-            "SELECT COALESCE(json_extract(data, '$.vision'), 0), \
-                    COALESCE(json_extract(data, '$.toolCalling'), 0), \
-                    COALESCE(json_extract(data, '$.reasoning'), 0) \
-             FROM models WHERE id = ?",
-        )
-        .bind(&model_id)
-        .fetch_one(state.storage.pool())
-        .await
-        .map_err(crate::error::cmd_err)?;
-        written.push(ModelView {
-            id: model_id,
-            provider_id: provider_id.to_string(),
-            label: model.label.clone(),
-            context_window: model.context_window,
-            supports_vision: vision != 0,
-            supports_tool_calling: tool_calling != 0,
-            supports_reasoning: reasoning != 0,
-            auto_candidate: true,
-        });
+        written.push(fetch_model_view(state.storage.pool(), &model_id).await?);
     }
     Ok(written)
 }
@@ -117,12 +141,98 @@ where
         .map(|_| ())
 }
 
-/// `(id, provider_id, label, context_window, vision, tool_calling, reasoning, auto)`
+/// One model row, in the exact order [`MODEL_SELECT`] returns it.
 ///
-/// `context_window` must be `i64`: `json_extract` returns JSON numbers as
-/// SQLite `INTEGER`, so binding the column to `String` makes the whole query
-/// fail and the UI ends up rendering the empty state on a populated table.
-type ModelRow = (String, String, String, i64, i64, i64, i64, i64);
+/// `context_window` and `size_bytes` must be `i64`: `json_extract` returns JSON
+/// numbers as SQLite `INTEGER`, so binding those columns to `String` makes the
+/// whole query fail and the UI ends up rendering the empty state on a populated
+/// table.
+type ModelRow = (
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+);
+
+/// Shared projection so the list and single-row read cannot drift apart.
+const MODEL_SELECT: &str = "SELECT id, \
+     COALESCE(json_extract(data, '$.providerId'), '') AS provider_id, \
+     COALESCE(json_extract(data, '$.label'), '') AS label, \
+     COALESCE(json_extract(data, '$.contextWindow'), 0) AS context_window, \
+     COALESCE(json_extract(data, '$.vision'), 0) AS vision, \
+     COALESCE(json_extract(data, '$.toolCalling'), 0) AS tool_calling, \
+     COALESCE(json_extract(data, '$.reasoning'), 0) AS reasoning, \
+     COALESCE(json_extract(data, '$.auto'), 0) AS auto, \
+     COALESCE(json_extract(data, '$.sizeBytes'), 0) AS size_bytes, \
+     CAST(json_extract(data, '$.parameterSize') AS TEXT) AS parameter_size, \
+     CAST(json_extract(data, '$.quantization') AS TEXT) AS quantization, \
+     CAST(json_extract(data, '$.family') AS TEXT) AS family, \
+     COALESCE(json_extract(data, '$.loaded'), 0) AS loaded, \
+     CAST(json_extract(data, '$.capabilitySource') AS TEXT) AS capability_source \
+     FROM models";
+
+fn model_view_from_row(row: ModelRow) -> ModelView {
+    let (
+        id,
+        provider_id,
+        label,
+        context_window,
+        vision,
+        tool_calling,
+        reasoning,
+        auto,
+        size_bytes,
+        parameter_size,
+        quantization,
+        family,
+        loaded,
+        capability_source,
+    ) = row;
+    let non_empty = |value: Option<String>| value.filter(|value| !value.is_empty());
+    ModelView {
+        id,
+        provider_id,
+        label,
+        context_window: context_window.max(0) as u32,
+        supports_vision: vision != 0,
+        supports_tool_calling: tool_calling != 0,
+        supports_reasoning: reasoning != 0,
+        auto_candidate: auto != 0,
+        size_bytes: size_bytes
+            .filter(|value| *value > 0)
+            .map(|value| value as u64),
+        parameter_size: non_empty(parameter_size),
+        quantization: non_empty(quantization),
+        family: non_empty(family),
+        loaded: loaded != 0,
+        capability_source: non_empty(capability_source),
+    }
+}
+
+/// Read one model row through the shared projection.
+pub async fn fetch_model_view(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    model_id: &str,
+) -> Result<ModelView, String> {
+    let query = format!("{MODEL_SELECT} WHERE id = ?");
+    let row: Option<ModelRow> = sqlx::query_as(&query)
+        .bind(model_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    row.map(model_view_from_row)
+        .ok_or_else(|| "model not found".to_string())
+}
 
 /// Every model whose provider still exists, newest first.
 ///
@@ -136,36 +246,16 @@ type ModelRow = (String, String, String, i64, i64, i64, i64, i64);
 /// `query_as` fail on a NULL — that failure takes the whole list down, not just
 /// the one row, and an unrecognised row should cost one row.
 pub async fn fetch_models(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<Vec<ModelView>, String> {
-    let rows: Vec<ModelRow> = sqlx::query_as(
-        "SELECT id, COALESCE(json_extract(data, '$.providerId'), '') AS provider_id, \
-         COALESCE(json_extract(data, '$.label'), '') AS label, \
-         json_extract(data, '$.contextWindow') AS context_window, json_extract(data, '$.vision') AS vision, \
-         json_extract(data, '$.toolCalling') AS tool_calling, json_extract(data, '$.reasoning') AS reasoning, \
-         json_extract(data, '$.auto') AS auto \
-         FROM models \
+    let query = format!(
+        "{MODEL_SELECT} \
          WHERE COALESCE(json_extract(data, '$.providerId'), '') IN (SELECT id FROM providers) \
-         ORDER BY created_at DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(crate::error::cmd_err)?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, provider_id, label, context_window, vision, tool_calling, reasoning, auto)| {
-                ModelView {
-                    id,
-                    provider_id,
-                    label,
-                    context_window: context_window.max(0) as u32,
-                    supports_vision: vision != 0,
-                    supports_tool_calling: tool_calling != 0,
-                    supports_reasoning: reasoning != 0,
-                    auto_candidate: auto != 0,
-                }
-            },
-        )
-        .collect())
+         ORDER BY created_at DESC"
+    );
+    let rows: Vec<ModelRow> = sqlx::query_as(&query)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    Ok(rows.into_iter().map(model_view_from_row).collect())
 }
 
 #[tauri::command]
@@ -182,59 +272,42 @@ pub async fn verify_tools(
     model_id: String,
 ) -> Result<ModelView, String> {
     let pool = state.storage.pool();
-    let row: Option<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, json_extract(data, '$.providerId'), json_extract(data, '$.label'), json_extract(data, '$.contextWindow') \
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT id, COALESCE(json_extract(data, '$.providerId'), '') \
          FROM models WHERE id = ?",
     )
     .bind(&model_id)
     .fetch_optional(pool)
     .await
     .map_err(crate::error::cmd_err)?;
-    let (id, provider_id, label, context_window) =
-        row.ok_or_else(|| "model not found".to_string())?;
-    let provider_key = provider_id.clone();
+    let (id, provider_id) = row.ok_or_else(|| "model not found".to_string())?;
     let provider: Arc<dyn Provider> = {
         let guard = state.engine.providers.inner.read().await;
-        guard.get(&provider_key).cloned()
+        guard.get(&provider_id).cloned()
     }
-    .ok_or_else(|| format!("provider not configured: {}", provider_key))?;
-    let caps = provider.capabilities();
-    // Preserve the Auto opt-in across re-verification: `verify_tools` used to
-    // rewrite the whole row with `"auto": false`, silently dropping the model
-    // from every future Auto turn.
-    let auto: Option<i64> =
-        sqlx::query_scalar("SELECT json_extract(data, '$.auto') FROM models WHERE id = ?")
-            .bind(&model_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(crate::error::cmd_err)?
-            .flatten();
-    let auto_candidate = auto.unwrap_or(1) != 0;
-    let data = serde_json::json!({
-        "providerId": provider_id,
-        "label": label,
-        "contextWindow": context_window.max(0) as u32,
-        "vision": caps.vision,
-        "toolCalling": caps.tool_calling,
-        "reasoning": caps.reasoning,
-        "auto": auto_candidate,
-    });
-    sqlx::query("UPDATE models SET data = ? WHERE id = ?")
-        .bind(data.to_string())
-        .bind(&model_id)
-        .execute(pool)
+    .ok_or_else(|| format!("provider not configured: {}", provider_id))?;
+    // The stored id is `<provider_id>:<model>`; split on the first colon so an
+    // Ollama tag (`llama3.1:8b`) keeps its tag.
+    let model_name = id.split_once(':').map(|(_, name)| name).unwrap_or(&id);
+    let supported = mixd_providers::probe_tool_calling(provider.as_ref(), model_name)
         .await
         .map_err(crate::error::cmd_err)?;
-    Ok(ModelView {
-        id,
-        provider_id,
-        label,
-        context_window: context_window.max(0) as u32,
-        supports_vision: caps.vision,
-        supports_tool_calling: caps.tool_calling,
-        supports_reasoning: caps.reasoning,
-        auto_candidate,
-    })
+    // Patch only the probed flag and its provenance. Vision/reasoning, the
+    // context window and the Auto opt-in all survive a re-verification.
+    sqlx::query(
+        "UPDATE models SET data = json_set(data, \
+          '$.toolCalling', ?, \
+          '$.capabilitySource', 'probe', \
+          '$.capabilitiesVerifiedAt', ?) \
+         WHERE id = ?",
+    )
+    .bind(if supported { 1 } else { 0 })
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(&model_id)
+    .execute(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    fetch_model_view(pool, &model_id).await
 }
 
 /// Opt a model into or out of Auto routing.
@@ -242,7 +315,6 @@ pub async fn verify_tools(
 /// Models discovered via `sync_models` start opted in; turning a model off
 /// here removes it from future `auto` resolutions without deleting it.
 #[tauri::command]
-#[allow(clippy::type_complexity)]
 pub async fn set_model_auto(
     state: State<'_, AppState>,
     model_id: String,
@@ -263,31 +335,5 @@ pub async fn set_model_auto(
         .execute(pool)
         .await
         .map_err(crate::error::cmd_err)?;
-    let row: Option<(String, String, String, i64, i64, i64, i64, i64)> =
-        sqlx::query_as::<_, (String, String, String, i64, i64, i64, i64, i64)>(
-            "SELECT id, COALESCE(json_extract(data, '$.providerId'), ''), \
-              COALESCE(json_extract(data, '$.label'), ''), \
-              COALESCE(json_extract(data, '$.contextWindow'), 0), \
-              COALESCE(json_extract(data, '$.vision'), 0), \
-              COALESCE(json_extract(data, '$.toolCalling'), 0), \
-              COALESCE(json_extract(data, '$.reasoning'), 0), \
-              COALESCE(json_extract(data, '$.auto'), 0) \
-              FROM models WHERE id = ?",
-        )
-        .bind(&model_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(crate::error::cmd_err)?;
-    let (id, provider_id, label, context_window, vision, tool_calling, reasoning, auto_flag) =
-        row.ok_or_else(|| "model not found".to_string())?;
-    Ok(ModelView {
-        id,
-        provider_id,
-        label,
-        context_window: context_window.max(0) as u32,
-        supports_vision: vision != 0,
-        supports_tool_calling: tool_calling != 0,
-        supports_reasoning: reasoning != 0,
-        auto_candidate: auto_flag != 0,
-    })
+    fetch_model_view(pool, &model_id).await
 }

@@ -20,6 +20,7 @@ use mixd_providers::{
 };
 use mixd_storage::{SecretStore, Storage};
 use std::sync::Arc;
+use tauri::{Emitter, Manager};
 
 /// Bridges the MCP host into the Tool Registry's `mcp__*` dispatcher.
 struct McpBridge {
@@ -1074,6 +1075,16 @@ pub fn run() {
             push::install(&app_handle);
             Ok(())
         })
+        // Closing the window keeps a live run alive in the tray. Before this,
+        // the default "exit when the last window closes" killed streaming runs
+        // and made the tray unreachable, contradicting its own documentation.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+                let _ = window.app_handle().emit("app://hidden-to-tray", ());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::health::health,
             commands::providers::list_providers,
@@ -1126,6 +1137,7 @@ pub fn run() {
             commands::browser::browser_invoke,
             commands::browser::browser_profiles,
             commands::browser::browser_reset_profile,
+            commands::browser::browser_artifact,
             commands::memories::list_memories,
             commands::memories::create_memory,
             commands::memories::update_memory,
@@ -1180,12 +1192,33 @@ pub fn run() {
             commands::update::check_for_update,
             commands::update::install_update,
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(err) = result {
-        tracing::error!(%err, "MIX-agent Desktop exited with an error");
-        std::process::exit(1);
-    }
+    let app = match result {
+        Ok(app) => app,
+        Err(err) => {
+            tracing::error!(%err, "MIX-agent Desktop exited with an error");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app_handle, event| {
+        // Dock icon / activation on macOS must bring the hidden window back.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } = event
+        {
+            if !has_visible_windows {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app_handle, event);
+    });
 }
 
 #[cfg(test)]

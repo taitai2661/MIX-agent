@@ -7,7 +7,14 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     rollupOptions: {
-      output: { manualChunks: { markdown: ["react-markdown", "remark-gfm"] } },
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          query: ["@tanstack/react-query"],
+          markdown: ["react-markdown", "remark-gfm", "remark-breaks"],
+          icons: ["lucide-react"],
+        },
+      },
     },
   },
   server: {

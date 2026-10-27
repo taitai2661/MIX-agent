@@ -156,6 +156,7 @@ function ChatPaneBody() {
       allowTools: boolean;
     }) => {
       let target = activeConversationId;
+      let createdId: string | null = null;
       // Whether this send created its conversation: a temporary turn in a brand
       // new thread takes the whole thread with it when it is purged.
       const createdConversation = !target;
@@ -167,31 +168,44 @@ function ChatPaneBody() {
           workspace_id: null,
           project_id: activeProjectId,
         });
+        createdId = created.id;
         setConversationId(created.id);
         target = created.id;
       }
-      const out = await api.sendMessage({
-        conversation_id: target,
-        content,
-        model_id: activeModelId,
-        mode,
-        workspace_id: null,
-        attachments: attachments.map((a) => ({ ...a, filename: a.filename })),
-        reasoning: null,
-        temperature: null,
-        max_tokens: null,
-        temporary_mode: temporaryMode,
-        allow_tools: allowTools,
-      });
-      // Return the conversation the run actually belongs to. When this turn
-      // created it, `activeConversationId` in the closure below is still null,
-      // so the run used to be tagged to the wrong conversation and its messages
-      // were invalidated against a null key.
-      return {
-        runId: out.run_id,
-        conversationId: target,
-        purged: temporaryMode && createdConversation,
-      };
+      try {
+        const out = await api.sendMessage({
+          conversation_id: target,
+          content,
+          model_id: activeModelId,
+          mode,
+          workspace_id: null,
+          attachments: attachments.map((a) => ({ ...a, filename: a.filename })),
+          reasoning: null,
+          temperature: null,
+          max_tokens: null,
+          temporary_mode: temporaryMode,
+          allow_tools: allowTools,
+        });
+        // Return the conversation the run actually belongs to. When this turn
+        // created it, `activeConversationId` in the closure below is still null,
+        // so the run used to be tagged to the wrong conversation and its messages
+        // were invalidated against a null key.
+        return {
+          runId: out.run_id,
+          conversationId: target,
+          purged: temporaryMode && createdConversation,
+        };
+      } catch (err) {
+        // A failed first send used to leave an empty thread behind (and the
+        // composer empty). Drop the just-created thread so the draft can be
+        // retried without cluttering history.
+        if (createdId) {
+          await api.deleteConversation(createdId).catch(() => undefined);
+          setConversationId(null);
+          void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+        }
+        throw err;
+      }
     },
     onSuccess: ({ runId, conversationId, purged }) => {
       if (purged) temporaryNewRef.current = conversationId;
@@ -316,9 +330,9 @@ function ChatPaneBody() {
       content: string,
       attachments: DraftAttachment[],
       options: { temporaryMode: boolean; allowTools: boolean },
-    ) => sendMessage.mutate({ content, attachments, ...options }),
+    ) => sendMessage.mutateAsync({ content, attachments, ...options }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sendMessage.mutate],
+    [sendMessage.mutateAsync],
   );
   const onEditMessage = useCallback(
     (messageId: string, content: string) =>

@@ -1,6 +1,7 @@
 import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
+import { ConfirmButton } from "@/components/modal";
 import { ErrorBox, Title } from "@/components/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
@@ -55,7 +56,22 @@ export function Projects() {
       <Button variant="outline" disabled={!source.trim() || project.data.sources.length >= 20} onClick={() => { update({ sources: [...project.data.sources, source.trim()] }); setSource(""); }}>{t("資料を追加")}</Button>
       <h3>{t("会話")}</h3>
       {conversations.data?.filter(item => item.data.project_id === project.id).map(item => <p key={item.id}><Link to={`/chat/${item.id}`}>{item.data.title}</Link></p>)}
-      <Button variant="outline" onClick={async () => { if (!confirm(t("プロジェクトを削除しますか？ 会話は残ります。"))) return; try { await api(`/projects/${project.id}`, "DELETE"); await qc.invalidateQueries({ queryKey: ["/projects"] }); await qc.invalidateQueries({ queryKey: ["/conversations"] }); location.href = "/projects"; } catch (cause) { setError(cause); } }}>{t("プロジェクトを削除")}</Button>
+      <ConfirmButton
+        variant="outline"
+        title={t("プロジェクトを削除")}
+        message={t("プロジェクトを削除しますか？ 会話は残ります。")}
+        confirmLabel={t("削除")}
+        onConfirm={async () => {
+          try {
+            await api(`/projects/${project.id}`, "DELETE");
+            await qc.invalidateQueries({ queryKey: ["/projects"] });
+            await qc.invalidateQueries({ queryKey: ["/conversations"] });
+            window.location.href = "/projects";
+          } catch (cause) {
+            setError(cause);
+          }
+        }}
+      >{t("プロジェクトを削除")}</ConfirmButton>
     </section>}
   </main>;
 }

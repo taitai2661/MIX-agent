@@ -48,12 +48,29 @@ class ContainerRuntimeDriver(ABC):
 
 class DockerAPI:
     def __init__(self):
-        self.client = httpx.AsyncClient(
-            transport=httpx.AsyncHTTPTransport(uds=os.getenv("DOCKER_SOCKET", "/var/run/docker.sock")),
-            base_url="http://docker/v1.47",
-            timeout=120,
-            trust_env=False,
-        )
+        """Talk to Docker through a socket proxy when configured.
+
+        The manager no longer needs the raw host socket.  Production Compose
+        points ``DOCKER_HOST`` at ``docker-socket-proxy``, which exposes only
+        containers, volumes, networks and images; the unix-socket fallback is
+        kept for local development and tests.
+        """
+        docker_host = os.getenv("DOCKER_HOST", "").strip()
+        if docker_host.startswith("tcp://"):
+            docker_host = "http://" + docker_host[len("tcp://") :]
+        if docker_host.startswith("http://") or docker_host.startswith("https://"):
+            base_url = docker_host.rstrip("/")
+            if not base_url.endswith("/v1.47"):
+                base_url += "/v1.47"
+            self.client = httpx.AsyncClient(base_url=base_url, timeout=120, trust_env=False)
+        else:
+            socket = docker_host.removeprefix("unix://") if docker_host else "/var/run/docker.sock"
+            self.client = httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(uds=socket),
+                base_url="http://docker/v1.47",
+                timeout=120,
+                trust_env=False,
+            )
 
     async def call(self, method: str, path: str, *, body=None, ok=(200, 201, 204, 304)) -> dict:
         response = await self.client.request(method, path, json=body)

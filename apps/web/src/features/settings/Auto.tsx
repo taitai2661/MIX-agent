@@ -33,7 +33,7 @@ export function Auto() {
   return <>
     <Title title="Auto" sub={t("タスクに合わせてモデルを選択します。")} />
     <ErrorBox error={error || setting.error} />
-    {setting.data && <form className="card" key={setting.dataUpdatedAt} onSubmit={async (event) => {
+    {setting.data && <form className="card" key={setting.dataUpdatedAt} onInput={() => setSaved(false)} onSubmit={async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       try {

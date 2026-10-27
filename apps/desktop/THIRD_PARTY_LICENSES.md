@@ -4,7 +4,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 722 crates
+- **Rust Dependencies**: 741 crates
 - **Python Dependencies**: 78 packages
 - **Node.js / Web Dependencies**: 51 packages
 
@@ -163,7 +163,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 722 crates compiled into Desktop binaries.
+Total: 741 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -186,6 +186,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `anstyle-query` | `1.1.5` | Rust |
 | `anstyle-wincon` | `3.0.11` | Rust |
 | `anyhow` | `1.0.104` | Rust |
+| `arbitrary` | `1.5.0` | Rust |
 | `argon2` | `0.5.3` | Rust |
 | `async-broadcast` | `0.7.2` | Rust |
 | `async-channel` | `2.5.0` | Rust |
@@ -293,6 +294,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `defmt-parser` | `1.0.0` | Rust |
 | `der` | `0.7.10` | Rust |
 | `deranged` | `0.5.8` | Rust |
+| `derive_arbitrary` | `1.5.0` | Rust |
 | `derive_more` | `2.1.1` | Rust |
 | `derive_more-impl` | `2.1.1` | Rust |
 | `digest` | `0.10.7` | Rust |
@@ -331,6 +333,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `fdeflate` | `0.3.7` | Rust |
 | `field-offset` | `0.3.6` | Rust |
 | `filedescriptor` | `0.8.3` | Rust |
+| `filetime` | `0.2.29` | Rust |
 | `find-msvc-tools` | `0.1.14` | Rust |
 | `flate2` | `1.1.10` | Rust |
 | `flume` | `0.11.1` | Rust |
@@ -431,6 +434,8 @@ Total: 722 crates compiled into Desktop binaries.
 | `jiff-tzdb` | `0.1.8` | Rust |
 | `jiff-tzdb-platform` | `0.1.3` | Rust |
 | `jni` | `0.21.1` | Rust |
+| `jni` | `0.22.4` | Rust |
+| `jni-macros` | `0.22.4` | Rust |
 | `jni-sys` | `0.3.1` | Rust |
 | `jni-sys` | `0.4.1` | Rust |
 | `jni-sys-macros` | `0.4.1` | Rust |
@@ -468,6 +473,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `memoffset` | `0.9.1` | Rust |
 | `mime` | `0.3.17` | Rust |
 | `minimal-lexical` | `0.2.1` | Rust |
+| `minisign-verify` | `0.2.5` | Rust |
 | `miniz_oxide` | `0.8.9` | Rust |
 | `miniz_oxide` | `0.9.1` | Rust |
 | `mio` | `1.2.3` | Rust |
@@ -502,6 +508,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `objc2-exception-helper` | `0.1.1` | Rust |
 | `objc2-foundation` | `0.3.2` | Rust |
 | `objc2-io-surface` | `0.3.2` | Rust |
+| `objc2-osa-kit` | `0.3.2` | Rust |
 | `objc2-quartz-core` | `0.3.2` | Rust |
 | `objc2-ui-kit` | `0.3.2` | Rust |
 | `objc2-user-notifications` | `0.3.2` | Rust |
@@ -510,11 +517,13 @@ Total: 722 crates compiled into Desktop binaries.
 | `once_cell_polyfill` | `1.70.2` | Rust |
 | `opaque-debug` | `0.3.1` | Rust |
 | `open` | `5.4.4` | Rust |
+| `openssl-probe` | `0.2.2` | Rust |
 | `option-ext` | `0.2.0` | Rust |
 | `ordered-multimap` | `0.7.3` | Rust |
 | `ordered-stream` | `0.2.0` | Rust |
 | `os_info` | `3.15.0` | Rust |
 | `os_pipe` | `1.2.3` | Rust |
+| `osakit` | `0.3.1` | Rust |
 | `pango` | `0.18.3` | Rust |
 | `pango-sys` | `0.18.0` | Rust |
 | `parking` | `2.2.1` | Rust |
@@ -596,11 +605,15 @@ Total: 722 crates compiled into Desktop binaries.
 | `rustc-hash` | `2.1.3` | Rust |
 | `rustix` | `1.1.5` | Rust |
 | `rustls` | `0.23.45` | Rust |
+| `rustls-native-certs` | `0.8.5` | Rust |
 | `rustls-pki-types` | `1.15.1` | Rust |
+| `rustls-platform-verifier` | `0.7.1` | Rust |
+| `rustls-platform-verifier-android` | `0.2.0` | Rust |
 | `rustls-webpki` | `0.103.15` | Rust |
 | `rustversion` | `1.0.23` | Rust |
 | `ryu` | `1.0.23` | Rust |
 | `same-file` | `1.0.6` | Rust |
+| `schannel` | `0.1.30` | Rust |
 | `schemars` | `0.8.22` | Rust |
 | `schemars` | `0.9.0` | Rust |
 | `schemars` | `1.2.2` | Rust |
@@ -641,6 +654,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `signal-hook` | `0.4.4` | Rust |
 | `signal-hook-registry` | `1.4.8` | Rust |
 | `signature` | `2.2.0` | Rust |
+| `simd_cesu8` | `1.2.0` | Rust |
 | `simd-adler32` | `0.3.10` | Rust |
 | `simdutf8` | `0.1.5` | Rust |
 | `siphasher` | `1.0.4` | Rust |
@@ -678,6 +692,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `system-deps` | `6.2.2` | Rust |
 | `tao` | `0.37.1` | Rust |
 | `tao-macros` | `0.1.4` | Rust |
+| `tar` | `0.4.46` | Rust |
 | `target-lexicon` | `0.12.16` | Rust |
 | `tauri` | `2.12.0` | Rust |
 | `tauri-build` | `2.7.0` | Rust |
@@ -695,6 +710,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `tauri-plugin-shell` | `2.4.0` | Rust |
 | `tauri-plugin-single-instance` | `2.5.0` | Rust |
 | `tauri-plugin-store` | `2.5.0` | Rust |
+| `tauri-plugin-updater` | `2.13.1` | Rust |
 | `tauri-plugin-window-state` | `2.5.0` | Rust |
 | `tauri-runtime` | `2.12.0` | Rust |
 | `tauri-runtime-wry` | `2.12.0` | Rust |
@@ -788,6 +804,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `web-time` | `1.1.0` | Rust |
 | `webkit2gtk` | `2.0.2` | Rust |
 | `webkit2gtk-sys` | `2.0.2` | Rust |
+| `webpki-root-certs` | `1.0.11` | Rust |
 | `webpki-roots` | `1.0.9` | Rust |
 | `webview2-com` | `0.39.1` | Rust |
 | `webview2-com-macros` | `0.8.1` | Rust |
@@ -872,6 +889,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `wry` | `0.57.0` | Rust |
 | `x11` | `2.21.0` | Rust |
 | `x11-dl` | `2.21.0` | Rust |
+| `xattr` | `1.6.1` | Rust |
 | `yoke` | `0.8.3` | Rust |
 | `yoke-derive` | `0.8.3` | Rust |
 | `zbus` | `5.19.0` | Rust |
@@ -887,6 +905,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `zerotrie` | `0.2.5` | Rust |
 | `zerovec` | `0.11.8` | Rust |
 | `zerovec-derive` | `0.11.6` | Rust |
+| `zip` | `4.6.1` | Rust |
 | `zlib-rs` | `0.6.8` | Rust |
 | `zmij` | `1.0.23` | Rust |
 | `zvariant` | `5.15.0` | Rust |

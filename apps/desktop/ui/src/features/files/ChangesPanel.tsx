@@ -21,9 +21,11 @@ import { Button } from "@/components/ui/button";
 import {
   EmptyState,
   ErrorAlert,
+  ErrorBadge,
   ErrorBox,
   ListSkeleton,
 } from "@/components/shared";
+import { useConfirm } from "@/components/ui/dialog";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { GitStatusBadge } from "@/components/ui/status";
 import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
@@ -70,8 +72,10 @@ const GitDiffBlock = memo(function GitDiffBlock({
   scope?: Scope;
 }) {
   const queryClient = useQueryClient();
+  const { confirm, dialog } = useConfirm();
   const [split, setSplit] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
 
   const label = useMemo(() => {
     const firstLine = block.split("\n")[0];
@@ -86,13 +90,21 @@ const GitDiffBlock = memo(function GitDiffBlock({
 
   const handleRestore = async () => {
     if (!root || busy) return;
+    const ok = await confirm({
+      title: t("変更を元に戻す"),
+      description: `${label} ${t("の未コミット変更を破棄します。元に戻せません。")}`,
+      confirmLabel: t("元に戻す"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
+    setError(null);
     try {
       await api.gitRestore(root, label, scope === "staged");
       void queryClient.invalidateQueries({ queryKey: ["git_status"] });
       void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
-    } catch {
-      // restore failed
+    } catch (err) {
+      setError(err);
     } finally {
       setBusy(false);
     }
@@ -101,12 +113,13 @@ const GitDiffBlock = memo(function GitDiffBlock({
   const handleStage = async () => {
     if (!root || busy) return;
     setBusy(true);
+    setError(null);
     try {
       await api.gitStage(root, label, scope === "staged");
       void queryClient.invalidateQueries({ queryKey: ["git_status"] });
       void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
-    } catch {
-      // stage failed
+    } catch (err) {
+      setError(err);
     } finally {
       setBusy(false);
     }
@@ -165,12 +178,18 @@ const GitDiffBlock = memo(function GitDiffBlock({
           )}
         </div>
       </div>
+      {error !== null && (
+        <div className="px-1">
+          <ErrorBadge error={error} />
+        </div>
+      )}
       <DiffLines lines={lines} split={split} />
       {capped && (
         <p className="text-xs text-faint">
           {t("大きな差分のため先頭2000行のみ表示します")}
         </p>
       )}
+      {dialog}
     </div>
   );
 });

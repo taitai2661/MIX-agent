@@ -1,6 +1,7 @@
 import { t } from "@/app/i18n";
 import { api, binary, type Row } from "@/app/api";
 import { Button } from "@/components/button";
+import { ConfirmButton } from "@/components/modal";
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
 import { BookOpen, Download, FileArchive, Upload } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -118,7 +119,7 @@ export function Skills() {
           <Button variant="ghost" onClick={() => download("/skills/" + skill.id + "/export", skill.data.name + ".SKILL.md")}><Download size={15} />SKILL.md</Button>
           {files.length > 0 && <Button variant="ghost" onClick={() => download("/skills/" + skill.id + "/export.zip", skill.data.name + ".zip")}><FileArchive size={15} />zip</Button>}
           <Button variant="ghost" onClick={() => setEditing(skill)}>{t("編集")}</Button>
-          {!skill.data.deleted && <Button variant="ghost" onClick={async () => { if (confirm(t("このSkillを削除しますか？履歴から復元できます。"))) { try { await api("/skills/" + skill.id, "DELETE"); reload(); } catch (err) { setError(err); } } }}>{t("削除")}</Button>}
+          {!skill.data.deleted && <ConfirmButton variant="ghost" title={t("Skillを削除")} message={t("このSkillを削除しますか？履歴から復元できます。")} confirmLabel={t("削除")} onConfirm={async () => { try { await api("/skills/" + skill.id, "DELETE"); reload(); } catch (err) { setError(err); } }}>{t("削除")}</ConfirmButton>}
         </div>
       </div>;
     })}

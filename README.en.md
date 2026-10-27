@@ -73,7 +73,9 @@ Download the installer for your OS from [GitHub Releases](https://github.com/tai
   - *WebView2*: The installer bootstrapper tries to install the runtime. An internet connection is required when WebView2 is missing.
   - *Windows SmartScreen*: The installer is unsigned, so Windows may show "Windows protected your PC". Choose "More info" → "Run anyway".
   - *Terminal / Git*: [Git for Windows](https://gitforwindows.org/) (Git Bash) is recommended. Without it, MIX-agent falls back to PowerShell, where POSIX commands such as `ls` and `grep` and some Git integration are unavailable.
-- **Linux**: Not currently published on GitHub Releases. Build from source if needed.
+- **Linux (x64)**:
+  - `AppImage` and `deb` packages are distributed since v0.5.2.
+  - AppImage supports in-app updates (Settings ▸ Updates). For deb, update manually from GitHub Releases.
 
 After downloading, verify the file against the `SHA256SUMS` asset attached to the Release.
 
@@ -204,6 +206,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 | Document | Content |
 | :--- | :--- |
+| [Documentation Index](docs/README.md) | Full index of `docs/`, placement constraints, and release notes |
+| [Memory Specification](docs/memory-spec.md) | Memory contract shared by both editions |
 | [Desktop README](apps/desktop/README.md) | Desktop edition internals, tool specifications, and packaging |
 | [Architecture Overview](docs/architecture.md) | High-level monorepo architecture and design philosophy |
 | [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) design and API mapping |

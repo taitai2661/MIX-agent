@@ -15,6 +15,12 @@ export interface ApiOptions {
   timeoutMs?: number;
   maxRetries?: number;
   retryDelayMs?: number;
+  /**
+   * Opt in to retrying a mutating request. Only endpoints that honour an
+   * Idempotency-Key (send/edit message) may safely do this; everything else
+   * would risk creating the same provider, upload, or schedule twice.
+   */
+  retryUnsafe?: boolean;
 }
 
 export const DEFAULT_MAX_RETRIES = 4;
@@ -60,12 +66,42 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   status?: number;
   constructor(message: string, status?: number) {
     super(message);
     this.name = "HttpError";
     this.status = status;
+  }
+}
+
+type ErrorDetail = Array<{ loc?: unknown[]; msg?: string }> | string | undefined;
+
+function errorMessage(detail: ErrorDetail): string {
+  if (typeof detail === "string") return t(detail);
+  if (Array.isArray(detail)) {
+    const fields = detail
+      .map((item) => {
+        if (!item || typeof item !== "object") return "";
+        const path = Array.isArray(item.loc) ? item.loc.slice(1).join(".") : "";
+        const message = typeof item.msg === "string" ? t(item.msg) : "";
+        return [path, message].filter(Boolean).join(": ");
+      })
+      .filter(Boolean);
+    if (fields.length) return fields.join("\n");
+  }
+  return t(ja.communicationFailed);
+}
+
+function canRetry(method: string, options: ApiOptions): boolean {
+  const verb = method.toUpperCase();
+  return verb === "GET" || verb === "HEAD" || verb === "OPTIONS" || options.retryUnsafe === true;
+}
+
+function notifyUnauthorized(path: string, status?: number) {
+  if (status !== 401 || path.startsWith("/auth/login")) return;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("mix:unauthorized"));
   }
 }
 
@@ -107,6 +143,7 @@ export async function api<T = any>(
 
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
   const baseDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const retryable = canRetry(method, options);
 
   for (let attempt = 0; ; attempt++) {
     const controller = new AbortController();
@@ -125,6 +162,7 @@ export async function api<T = any>(
       });
       if (!response.ok) {
         if (
+          retryable &&
           attempt < maxRetries &&
           isRetryableStatus(response.status) &&
           !options.signal?.aborted
@@ -137,12 +175,9 @@ export async function api<T = any>(
         const error = await response
           .json()
           .catch(() => ({ detail: t(ja.communicationFailed) }));
-        const message =
-          typeof error.detail === "string"
-            ? t(error.detail)
-            : JSON.stringify(error.detail);
         cleanup();
-        throw new HttpError(message, response.status);
+        notifyUnauthorized(path, response.status);
+        throw new HttpError(errorMessage(error.detail), response.status);
       }
       cleanup();
       return await response.json();
@@ -155,9 +190,9 @@ export async function api<T = any>(
         throw new Error(t(ja.requestTimeout));
       }
       if (error instanceof HttpError) {
-        throw new Error(error.message);
+        throw error;
       }
-      if (attempt < maxRetries) {
+      if (retryable && attempt < maxRetries) {
         const delay = getRetryDelay(undefined, attempt, baseDelayMs);
         await sleep(delay, options.signal);
         continue;
@@ -175,6 +210,7 @@ export async function binary(
   const form = body instanceof FormData;
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
   const baseDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const retryable = options.retryUnsafe === true;
 
   for (let attempt = 0; ; attempt++) {
     const controller = new AbortController();
@@ -196,6 +232,7 @@ export async function binary(
       });
       if (!r.ok) {
         if (
+          retryable &&
           attempt < maxRetries &&
           isRetryableStatus(r.status) &&
           !options.signal?.aborted
@@ -205,26 +242,25 @@ export async function binary(
           await sleep(delay, options.signal);
           continue;
         }
-        const e = await r.json().catch(() => ({ detail: ja.operationFailed }));
-        const message =
-          typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail);
+        const e = await r.json().catch(() => ({ detail: t(ja.operationFailed) }));
         cleanup();
-        throw new HttpError(message, r.status);
+        notifyUnauthorized(path, r.status);
+        throw new HttpError(errorMessage(e.detail), r.status);
       }
       cleanup();
       return r;
     } catch (error) {
       cleanup();
       if (options.signal?.aborted) {
-        throw new Error(timedOut() ? ja.requestTimeout : ja.requestInterrupted);
+        throw new Error(t(timedOut() ? ja.requestTimeout : ja.requestInterrupted));
       }
       if (timedOut()) {
-        throw new Error(ja.requestTimeout);
+        throw new Error(t(ja.requestTimeout));
       }
       if (error instanceof HttpError) {
-        throw new Error(error.message);
+        throw error;
       }
-      if (attempt < maxRetries) {
+      if (retryable && attempt < maxRetries) {
         const delay = getRetryDelay(undefined, attempt, baseDelayMs);
         await sleep(delay, options.signal);
         continue;

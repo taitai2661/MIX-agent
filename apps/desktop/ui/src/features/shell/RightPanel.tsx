@@ -32,6 +32,9 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
   // never steals it — so there is no trap to manage.
   useEffect(() => {
     if (rightPanel === "none") return;
+    // A docked panel is part of the page, not a modal drawer: it must not trap
+    // Tab or steal focus when the user switches Activity ↔ Changes.
+    if (isDocked) return;
     // Remember where focus was so closing returns it there.
     returnFocusRef.current = document.activeElement;
     const aside = asideRef.current;
@@ -73,7 +76,7 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
       // Return focus to the opener on close.
       (returnFocusRef.current as HTMLElement | null)?.focus?.();
     };
-  }, [rightPanel, setRightPanel]);
+  }, [isDocked, rightPanel, setRightPanel]);
 
   if (rightPanel === "none") return null;
 

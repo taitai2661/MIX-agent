@@ -11,10 +11,16 @@ def test_domain_policy_requires_exact_match():
     assert not host_allowed("other.example.com", ["example.com"])
 
 
-def test_load_policy_returns_empty_for_absent_file(tmp_path):
+def test_load_policy_fails_closed_for_absent_required_file(tmp_path):
     from deploy.egress.proxy import load_policy
 
-    assert load_policy(tmp_path / "absent.json") == {}
+    assert load_policy(tmp_path / "absent.json") == {"unreadable": True}
+
+
+def test_load_policy_allows_absent_optional_file(tmp_path):
+    from deploy.egress.proxy import load_policy
+
+    assert load_policy(tmp_path / "absent-mcp.json", required=False) == {}
 
 
 def test_load_policy_fails_closed_on_corrupt_file(tmp_path):

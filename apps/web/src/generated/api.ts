@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live
+         * @description Liveness probe: the process is up even while a dependency is down.
+         */
+        get: operations["live_live_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/backups": {
         parameters: {
             query?: never;
@@ -492,7 +512,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Conversations */
+        /**
+         * List Conversations
+         * @description List conversations using SQL filters instead of loading every row.
+         *
+         *     The old implementation loaded every conversation (and, when searching,
+         *     every message for every conversation) into Python.  Filtering and paging
+         *     now happen in PostgreSQL; ``limit`` is optional for compatibility with the
+         *     existing sidebar, which still asks for the full active list.
+         */
         get: operations["list_conversations_api_v1_conversations_get"];
         put?: never;
         /** Create Conversations */
@@ -757,6 +785,26 @@ export interface paths {
         };
         /** Conversation Tool Calls */
         get: operations["conversation_tool_calls_api_v1_conversations__key__tool_calls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit Events
+         * @description Read-only audit trail.  Writes already existed; this exposes them.
+         */
+        get: operations["audit_events_api_v1_audit_events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3278,6 +3326,26 @@ export interface operations {
             };
         };
     };
+    live_live_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     create_api_v1_backups_post: {
         parameters: {
             query?: never;
@@ -4139,10 +4207,12 @@ export interface operations {
     list_conversations_api_v1_conversations_get: {
         parameters: {
             query?: {
-                state?: string;
+                state?: "active" | "archived" | "trash";
                 folder_id?: string | null;
                 project_id?: string | null;
                 q?: string;
+                limit?: number | null;
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -4156,7 +4226,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RecordView"][];
                 };
             };
             /** @description Validation Error */
@@ -4877,6 +4947,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolCallHistoryView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_events_api_v1_audit_events_get: {
+        parameters: {
+            query?: {
+                action?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordView"][];
                 };
             };
             /** @description Validation Error */

@@ -112,6 +112,74 @@ async fn recognises_ollama_and_prefers_its_richer_tag_list() {
 }
 
 #[tokio::test]
+async fn enriches_ollama_with_native_context_and_capabilities() {
+    let (port, _server) = serve(routes(&[
+        (
+            "/api/tags",
+            r#"{"models":[{"name":"llama3.1:8b","size":4930000000,"details":{"family":"llama","parameter_size":"8.0B","quantization_level":"Q4_K_M"}}]}"#.into(),
+        ),
+        ("/v1/models", r#"{"data":[{"id":"llama3.1:8b"}]}"#.into()),
+        (
+            "/api/ps",
+            r#"{"models":[{"name":"llama3.1:8b","context_length":8192}]}"#.into(),
+        ),
+        (
+            "/api/show",
+            r#"{"details":{"family":"llama","parameter_size":"8.0B","quantization_level":"Q4_K_M"},"model_info":{"llama.context_length":131072},"capabilities":["completion","tools","vision","thinking"]}"#.into(),
+        ),
+    ]))
+    .await;
+    let found = discovery::probe_base_url_detailed(&format!(
+        "http://127.0.0.1:{port}/v1"
+    ))
+    .await
+    .expect("probe");
+
+    assert_eq!(found.label, "Ollama");
+    let model = &found.models[0];
+    assert_eq!(model.context_window, 131072);
+    assert_eq!(model.size_bytes, Some(4_930_000_000));
+    assert_eq!(model.family.as_deref(), Some("llama"));
+    assert!(model.loaded);
+    let capabilities = model.capabilities.as_ref().expect("capabilities");
+    assert_eq!(capabilities.tools, Some(true));
+    assert_eq!(capabilities.vision, Some(true));
+    assert_eq!(capabilities.reasoning, Some(true));
+    assert_eq!(capabilities.chat, Some(true));
+}
+
+#[tokio::test]
+async fn enriches_lmstudio_from_its_native_model_list() {
+    let (port, _server) = serve(routes(&[
+        (
+            "/api/v0/models",
+            r#"{"data":[{"id":"qwen2.5-7b-instruct","object":"model","type":"vlm","arch":"qwen2","quantization":"Q4_K_M","state":"loaded","max_context_length":32768}]}"#.into(),
+        ),
+        (
+            "/v1/models",
+            r#"{"data":[{"id":"qwen2.5-7b-instruct"}]}"#.into(),
+        ),
+    ]))
+    .await;
+    let found = discovery::probe_base_url_detailed(&format!(
+        "http://127.0.0.1:{port}/v1"
+    ))
+    .await
+    .expect("probe");
+
+    assert_eq!(found.label, "LM Studio");
+    let model = &found.models[0];
+    assert_eq!(model.context_window, 32768);
+    assert_eq!(model.family.as_deref(), Some("qwen2"));
+    assert_eq!(model.quantization.as_deref(), Some("Q4_K_M"));
+    assert_eq!(model.model_type.as_deref(), Some("vlm"));
+    assert!(model.loaded);
+    let capabilities = model.capabilities.as_ref().expect("capabilities");
+    assert_eq!(capabilities.chat, Some(true));
+    assert_eq!(capabilities.vision, Some(true));
+}
+
+#[tokio::test]
 async fn recognises_vllm_by_its_version_endpoint() {
     let (port, _server) = serve(routes(&[
         ("/version", r#"{"version":"0.6.3.post1"}"#.into()),

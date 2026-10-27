@@ -321,16 +321,21 @@ function UserMessage({
   return (
     <div className="group/msg flex flex-col items-end gap-1">
       {(message.attachments ?? []).length > 0 && (
-        <div className="flex flex-wrap justify-end gap-1.5">
-          {(message.attachments ?? []).map((a, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center gap-1 rounded-md border border-line bg-inset px-1.5 py-0.5 text-xs text-muted"
-            >
-              <FileText size={12} />
-              {a.filename ?? a.mime_type}
-            </span>
-          ))}
+        <div className="flex max-w-full min-w-0 flex-wrap justify-end gap-1.5">
+          {(message.attachments ?? []).map((a, i) => {
+            const attachmentName = a.filename ?? a.mime_type;
+            return (
+              <span
+                key={i}
+                className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-line bg-inset px-1.5 py-0.5 text-xs text-muted"
+              >
+                <FileText size={12} className="shrink-0" />
+                <span className="truncate" title={attachmentName}>
+                  {attachmentName}
+                </span>
+              </span>
+            );
+          })}
         </div>
       )}
       {editing ? (
@@ -377,7 +382,7 @@ function UserMessage({
         </div>
       ) : (
         <>
-          <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md border border-brand/25 bg-brand-soft px-3.5 py-2.5 text-sm leading-6 text-fg shadow-xs">
+          <div className="min-w-0 max-w-[85%] rounded-2xl rounded-br-md border border-brand/25 bg-brand-soft px-3.5 py-2.5 text-sm leading-6 whitespace-pre-wrap break-words text-fg shadow-xs">
             {message.content}
           </div>
           <div className="flex items-center gap-1 px-1 text-xs text-faint">

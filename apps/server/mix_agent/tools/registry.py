@@ -413,9 +413,33 @@ def fingerprint(tool):
     return hashlib.sha256(json.dumps(versioned, sort_keys=True).encode()).hexdigest()
 
 
+def _scope_text(value, limit=600):
+    """Keep a scope readable without letting a huge argument bloat the rule JSON."""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
 def call_scope(tool, args):
+    """Return the scope a permission decision applies to.
+
+    Execution tools used to share one workspace-wide scope.  That meant a single
+    "always allow" click on a terminal command silently approved every later
+    command (including destructive ones).  Keep the workspace marker for a
+    settings-level tool-wide rule, but narrow approval-time rules to the command
+    or path that prompted them.
+    """
     if tool["executor_ref"] == "execution":
-        return {"workspace": "/workspace"}
+        scope = {"workspace": "/workspace"}
+        arguments = args or {}
+        command = arguments.get("command")
+        path = arguments.get("path")
+        if isinstance(command, str) and command.strip():
+            scope["command"] = _scope_text(command)
+        elif isinstance(path, str) and path.strip():
+            scope["path"] = _scope_text(path, limit=1024)
+        return scope
     if tool["source"] == "mcp":
         return {"connection_id": tool["source_ref"]}
     return {"tool": tool["id"]}
@@ -443,17 +467,22 @@ def permission(db, run, tool, args):
         if ".." in path.parts or (path.is_absolute() and path.parts[:2] != ("/", "workspace")):
             return "deny"
     rules = list(db.scalars(select(Permission).where(Permission.owner_id == run.owner_id)))
+    current_scope = call_scope(tool, args)
+    tool_scope = call_scope(tool, {})
     scoped = [
         r.data
         for r in rules
         if r.data.get("tool_id") == tool["id"]
         and r.data.get("agent_id", "") == snapshot.get("agent_id", "")
-        and rule_scope(tool, r.data.get("scope", {})) == call_scope(tool, args)
+        and rule_scope(tool, r.data.get("scope", {})) in (current_scope, tool_scope)
     ]
     matching = [rule for rule in scoped if rule.get("tool_version") == fingerprint(tool)]
     if any(x["permission"] == "deny" for x in matching):
         return "deny"
     if matching:
+        # A call-specific rule is the user's most recent, narrowest decision;
+        # it must win over a tool-wide settings rule.
+        matching.sort(key=lambda rule: 0 if rule_scope(tool, rule.get("scope", {})) == current_scope else 1)
         return matching[-1]["permission"]
     # The owner configured this tool before, but the stored rule was pinned to a
     # definition we no longer recognise. Falling back to the default would hand a

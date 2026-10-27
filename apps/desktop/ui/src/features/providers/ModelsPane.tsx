@@ -4,7 +4,7 @@ import { Info, Search, Sparkles, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
-import { formatContext, shortModelId } from "@/lib/format";
+import { formatBytes, formatContext, shortModelId } from "@/lib/format";
 import { Section, SectionLabel } from "@/components/layout";
 import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
 import { SearchEmptyState } from "@/components/common";
@@ -193,6 +193,37 @@ export function ModelsPane() {
                           >
                             {shortModelId(m.id)}
                           </div>
+                          {(m.family ||
+                            m.parameter_size ||
+                            m.quantization ||
+                            (m.size_bytes ?? 0) > 0 ||
+                            m.loaded ||
+                            m.capability_source === "native") && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              {m.loaded && (
+                                <Badge tone="success" size="sm">
+                                  {t("ロード中")}
+                                </Badge>
+                              )}
+                              {m.family && (
+                                <Badge size="sm">{m.family}</Badge>
+                              )}
+                              {m.parameter_size && (
+                                <Badge size="sm">{m.parameter_size}</Badge>
+                              )}
+                              {m.quantization && (
+                                <Badge size="sm">{m.quantization}</Badge>
+                              )}
+                              {(m.size_bytes ?? 0) > 0 && (
+                                <span className="text-2xs text-faint">
+                                  {formatBytes(m.size_bytes ?? 0)}
+                                </span>
+                              )}
+                              {m.capability_source === "native" && (
+                                <Badge size="sm">{t("ネイティブ")}</Badge>
+                              )}
+                            </div>
+                          )}
                         </div>
                         <CapabilityRow model={m} />
                         <div className="flex items-center gap-2 text-2xs text-muted">

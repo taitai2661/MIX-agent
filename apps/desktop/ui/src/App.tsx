@@ -14,13 +14,14 @@ import {
   PanelLeft,
   PanelRight,
   Search,
+  ShieldAlert,
 } from "lucide-react";
 import { api } from "./lib/api";
 import { useUi, type View } from "./lib/ui";
 import { t, tf } from "./lib/i18n";
 import { chord } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
-import { useConversations, useProjects } from "./lib/queries";
+import { useConversations, useProjects, usePendingApprovals } from "./lib/queries";
 import { SETTINGS_QUERY_KEY } from "./lib/settings";
 import { useUpdateCheck } from "./lib/updates";
 
@@ -64,12 +65,11 @@ import { Onboarding } from "./features/onboarding/Onboarding";
 import { useOnboardingGate } from "./features/onboarding/useOnboardingGate";
 import {
   useAppShortcuts,
-  useCreateThread,
+  useNewThread,
   useShellEvents,
 } from "./features/shell/useShellEvents";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/layout";
-import { ErrorBox } from "./components/shared";
 import { PaneErrorBoundary } from "./components/PaneErrorBoundary";
 import { Spinner } from "./components/ui/spinner";
 import { StatusDot } from "./components/ui/status";
@@ -157,6 +157,29 @@ function UpdateIndicator({ autoCheck }: { autoCheck: boolean }) {
   );
 }
 
+/** Header chip that makes a blocked run visible from any view. */
+function ApprovalIndicator() {
+  const openSettings = useUi((s) => s.openSettings);
+  const approvals = usePendingApprovals();
+  const count = approvals.data?.length ?? 0;
+  if (!count) return null;
+  const label = tf("承認待ちが{count}件あります", { count });
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => openSettings("approvals")}
+      title={label}
+      aria-label={label}
+      className="gap-1 border border-warning/40 bg-warning-soft text-warning hover:bg-warning/20"
+    >
+      <ShieldAlert size={14} aria-hidden="true" />
+      <span className="tabular-nums">{count}</span>
+      <span className="hidden sm:inline">{t("承認待ち")}</span>
+    </Button>
+  );
+}
+
 export function App() {
   const view = useUi((s) => s.view);
   const setView = useUi((s) => s.setView);
@@ -219,14 +242,14 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.data]);
 
-  const createThread = useCreateThread();
+  const startNewThread = useNewThread();
   // The sidebar and the file tree are fixed-width `shrink-0` panes; the right
   // panel is an overlay drawer, so opening it never takes width from the
   // centre column. `panelCap` only clamps the inline panes on narrow windows.
   const [shellRow, setShellRow] = useState<HTMLDivElement | null>(null);
   const panelCap = usePanelCap(shellRow);
   useShellEvents({
-    newThread: () => createThread.mutate(),
+    newThread: startNewThread,
     openView: (target) => setView(target),
     openSettingsTab: (tab) => openSettings(tab),
   });
@@ -345,6 +368,7 @@ export function App() {
           </button>
 
           <HealthIndicator />
+          <ApprovalIndicator />
           <UpdateIndicator
             autoCheck={settings.data?.auto_check_updates === true}
           />
@@ -399,18 +423,8 @@ export function App() {
           }
           className="flex min-w-0 flex-1 flex-col bg-bg outline-none"
         >
-          {/* The menu / shortcut path goes through `createThread` directly, so
-              a failure there never reached the sidebar's own error surface. */}
-          {createThread.isError && (
-            <div className="shrink-0 border-b border-line px-3 py-2">
-              <ErrorBox
-                error={
-                  createThread.error || t("スレッドを作成できませんでした")
-                }
-              />
-            </div>
-          )}
-
+          {/* The menu / shortcut path goes through `newThread` and creates the
+              conversation on first send, so there is no request to fail here. */}
           <div className="flex min-h-0 flex-1 flex-row">
             {view === "chat" && agentSurface && fileTreeOpen && (
               <Suspense fallback={<PaneFallback />}>

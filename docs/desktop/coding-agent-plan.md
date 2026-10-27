@@ -40,10 +40,10 @@
 
 ## 4. 非スコープ (今回やらない)
 
-- OS プロセス sandbox (macOS `sandbox-exec` / Windows Job / landlock)。`docs/architecture.md:122` の未実装宣言を維持し、敵対的コード実行には使わない前提を変えない
-- embedding 検索 / FTS5 は Knowledge 側のみ未実装 (Memory は hybrid 検索済み、`docs/architecture.md` の「今回も未実装のもの」を参照)
+- OS プロセス sandbox (macOS `sandbox-exec` / Windows Job / landlock)。[`docs/desktop/architecture.md`](architecture.md) のセキュリティ節の未実装宣言を維持し、敵対的コード実行には使わない前提を変えない
+- embedding 検索 / FTS5 は Knowledge 側のみ未実装 (Memory は hybrid 検索済み、[`docs/desktop/architecture.md`](architecture.md) の「今回も未実装のもの」を参照)
 - PTY 対話 terminal (stdin 送出)、`browser evaluate` の完全隔離
-- auto-update の鍵ペア一致、署名済み`latest.json`の公開、各OS実機での更新適用確認（設定・CI基盤は実装済み）
+- 各 OS 実機での更新適用確認（アプリ内更新・署名付き `latest.json` の配布基盤は v0.5.2 で実装済み。実機確認結果は [`docs/verification.md`](../verification.md) に記録）
 - Provider プリセット残2件 (`cloudflare` / `azure-ai-foundry`)、Responses API
 
 ## 5. 順序と検証

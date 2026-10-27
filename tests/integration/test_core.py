@@ -493,6 +493,29 @@ def test_stale_permission_fingerprint_re_asks_instead_of_defaulting_to_allow(sig
         assert permission(db, run, tool, {"path": "x.txt", "content": "x"}) == "ask"
 
 
+def test_approval_scope_is_limited_to_the_approved_command(signed):
+    """One "always allow" click must not approve every future terminal command."""
+    run_id, tool = make_run(tool_name="run_terminal", mode="chat")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        approved = {"command": "echo hi"}
+        db.add(
+            Permission(
+                owner_id=run.owner_id,
+                data={
+                    "agent_id": "",
+                    "tool_id": tool["id"],
+                    "tool_version": fingerprint(tool),
+                    "scope": call_scope(tool, approved),
+                    "permission": "allow",
+                },
+            )
+        )
+        db.commit()
+        assert permission(db, run, tool, approved) == "allow"
+        assert permission(db, run, tool, {"command": "rm -rf /workspace"}) == "ask"
+
+
 def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(signed):
     run_id, tool = make_run(tool_name="run_terminal", mode="chat")
     with SessionLocal() as db:
@@ -510,6 +533,21 @@ def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(
         legacy.data = {**legacy.data, "scope": {}}
         db.commit()
         assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
+
+
+def test_security_headers_include_request_id_and_permissions_policy(signed):
+    response = signed.get("/api/v1/auth/me", headers={"X-Request-ID": "test-request-id"})
+    assert response.headers["X-Request-ID"] == "test-request-id"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "camera=()" in response.headers["Permissions-Policy"]
+    assert response.headers["Cross-Origin-Resource-Policy"] == "same-origin"
+
+
+def test_audit_events_are_readable_and_filterable(signed):
+    created = signed.post("/api/v1/conversation-folders", json={"name": "audit folder"})
+    assert created.status_code == 200
+    rows = signed.get("/api/v1/audit-events?action=conversation-folder.create").json()
+    assert any(row["data"].get("target") == created.json()["id"] for row in rows)
 
 
 def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):

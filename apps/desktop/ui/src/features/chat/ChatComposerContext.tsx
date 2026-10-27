@@ -71,7 +71,6 @@ export function ChatComposerProvider({ children }: { children: ReactNode }) {
   const surface = useUi((s) => s.surface);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const setActiveProjectId = useUi((s) => s.setActiveProjectId);
-  const setConversationId = useUi((s) => s.setConversationId);
   const queryClient = useQueryClient();
   const models = useModels();
   const providers = useProviders();
@@ -96,15 +95,12 @@ export function ChatComposerProvider({ children }: { children: ReactNode }) {
       if (projectId === prev) return;
       setProjectError(null);
       setActiveProjectId(projectId);
+      const conversationId = useUi.getState().conversationId;
+      if (!conversationId) return;
+      // Re-scope the current thread. Creating a new conversation here meant a
+      // project change silently discarded the thread the user was reading.
       try {
-        const created = await api.createConversation({
-          mode: useUi.getState().mode,
-          model_id: useUi.getState().modelId || "auto",
-          title: null,
-          workspace_id: null,
-          project_id: projectId,
-        });
-        setConversationId(created.id);
+        await api.setConversationProject(conversationId, projectId);
         void queryClient.invalidateQueries({
           queryKey: CONVERSATIONS_QUERY_KEY,
         });
@@ -113,7 +109,7 @@ export function ChatComposerProvider({ children }: { children: ReactNode }) {
         setProjectError(errorMessage(error));
       }
     },
-    [queryClient, setActiveProjectId, setConversationId],
+    [queryClient, setActiveProjectId],
   );
 
   const createProject = useCallback(

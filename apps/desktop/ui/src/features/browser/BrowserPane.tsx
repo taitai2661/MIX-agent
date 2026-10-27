@@ -96,6 +96,48 @@ interface LogEntry {
 
 let nextId = 0;
 
+/** Lazy screenshot preview for one artifact id. */
+function ArtifactThumb({ id }: { id: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .browserArtifact(id)
+      .then((url) => {
+        if (!cancelled) setSrc(url);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  if (failed) {
+    return (
+      <Badge size="sm" tone="danger">
+        {t("プレビューを読み込めません")}
+      </Badge>
+    );
+  }
+  if (!src) return <Spinner size={12} label={t("読み込み中…")} />;
+  return (
+    <a
+      href={src}
+      download={`browser-${id.slice(0, 8)}.png`}
+      className="mt-1.5 block w-fit"
+      title={t("スクリーンショットを保存")}
+    >
+      <img
+        src={src}
+        alt={t("ブラウザのスクリーンショット")}
+        className="max-h-40 rounded-md border border-line object-contain"
+      />
+    </a>
+  );
+}
+
 export function BrowserPane() {
   const [status, setStatus] = useState<BrowserStatus | null>(null);
   const [profiles, setProfiles] = useState<BrowserProfileView[]>([]);
@@ -466,6 +508,7 @@ export function BrowserPane() {
                     </Badge>
                   )}
                 </Row>
+                {e.artifactId && <ArtifactThumb id={e.artifactId} />}
                 {e.detail && (
                   <details className="group">
                     <summary className="mt-1 flex cursor-pointer list-none items-center gap-1 text-xs text-muted transition-colors hover:text-fg">

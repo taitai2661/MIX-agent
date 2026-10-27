@@ -26,7 +26,7 @@ export function browserLanguage(
     if (value.toLowerCase().startsWith("ja")) return "ja";
     if (value.toLowerCase().startsWith("en")) return "en";
   }
-  return "ja";
+  return "en";
 }
 
 let language: Language = initialLanguage();

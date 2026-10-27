@@ -1,5 +1,6 @@
 import pytest
 from jsonschema.exceptions import ValidationError
+from mix_agent.context import retrievers as context_retrievers
 from mix_agent.db.models import Conversation, Run, User, uid
 from mix_agent.db.session import SessionLocal
 from mix_agent.knowledge import service as knowledge
@@ -88,6 +89,17 @@ def test_knowledge_add_search_delete_roundtrip(signed):
         db.commit()
         assert deleted == {"id": doc["id"], "deleted": True, "chunks": doc["chunks"]}
         assert knowledge.search(db, owner, "pg_trgm") == []
+
+
+def test_saved_knowledge_is_available_to_context_retrieval(signed):
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        doc = knowledge.add(db, owner, "Context injection uses the saved knowledge chunks.", title="Injection")
+        db.commit()
+        results = context_retrievers.search_knowledge(db, owner, "context injection")
+        assert results and results[0]["id"] == doc["id"]
+        knowledge.delete(db, owner, doc["id"])
+        db.commit()
 
 
 def test_knowledge_long_content_is_chunked_and_searchable(signed):

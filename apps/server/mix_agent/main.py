@@ -1,5 +1,8 @@
 import asyncio
+import logging
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -53,14 +56,21 @@ async def lifespan(app):
 
 
 app = FastAPI(title="MIX agent", version="0.5.2", lifespan=lifespan)
+LOGGER = logging.getLogger("mix_agent.http")
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     from mix_agent.storage import backup
 
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    started = time.perf_counter()
     if backup.ACTIVE and request.method not in ("GET", "HEAD", "OPTIONS"):
-        return JSONResponse({"detail": "バックアップ／復元処理中です"}, status_code=503)
+        return JSONResponse(
+            {"detail": "バックアップ／復元処理中です"},
+            status_code=503,
+            headers={"X-Request-ID": request_id},
+        )
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
         if origin and not config.allowed_origin(
@@ -72,17 +82,44 @@ async def security_headers(request: Request, call_next):
                 for header in ("forwarded", "x-forwarded-host", "x-forwarded-proto")
             ),
         ):
-            return JSONResponse({"detail": "Origin is not allowed"}, status_code=403)
+            return JSONResponse(
+                {"detail": "Origin is not allowed"},
+                status_code=403,
+                headers={"X-Request-ID": request_id},
+            )
         if request.headers.get("sec-fetch-site") == "cross-site":
-            return JSONResponse({"detail": "Cross-site request blocked"}, status_code=403)
+            return JSONResponse(
+                {"detail": "Cross-site request blocked"},
+                status_code=403,
+                headers={"X-Request-ID": request_id},
+            )
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["X-Request-ID"] = request_id
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+    )
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    if config.COOKIE_SECURE:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' 'sha256-i2aw5SfnpQW4OtZJAk0oWu5VOM5eHaP8Ut4joV2YKUk='; "
         "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
+    if request.url.path not in ("/health", "/live"):
+        LOGGER.info(
+            "request method=%s path=%s status=%s duration_ms=%.1f request_id=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            (time.perf_counter() - started) * 1000,
+            request_id,
+        )
     return response
 
 
@@ -94,13 +131,21 @@ async def validation_error(request, exc):
 
 
 @app.get("/health")
-async def health():
+def health():
+    # A plain ``def`` endpoint runs in FastAPI's threadpool; the SQLAlchemy
+    # engine is synchronous, so an ``async def`` here would block the event loop.
     from sqlalchemy import text
 
     from mix_agent.db.session import engine
 
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
+    return {"status": "ok"}
+
+
+@app.get("/live")
+def live():
+    """Liveness probe: the process is up even while a dependency is down."""
     return {"status": "ok"}
 
 
@@ -132,7 +177,7 @@ STATIC_MEDIA_TYPES = {
 
 @app.get("/{path:path}")
 async def frontend(path: str):
-    if path.startswith("api/") or not (web / "index.html").exists():
+    if path == "api" or path.startswith("api/") or not (web / "index.html").exists():
         return JSONResponse({"detail": "Not found"}, status_code=404)
     root = web.resolve()
     asset = (root / path).resolve()

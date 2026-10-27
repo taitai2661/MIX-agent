@@ -35,13 +35,11 @@ fn item<R: Runtime>(
 pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let new_chat = item(app, EVT_NEW_CHAT, "New Chat", Some("CmdOrCtrl+N"))?;
     let settings = item(app, EVT_OPEN_SETTINGS, "Settings…", Some("CmdOrCtrl+,"))?;
-    let backup = item(app, EVT_BACKUP, "Create Backup…", Some("CmdOrCtrl+B"))?;
-    let diagnostics = item(
-        app,
-        EVT_DIAGNOSTICS,
-        "Diagnostics",
-        Some("CmdOrCtrl+Shift+D"),
-    )?;
+    // Avoid chords owned by the WebView: ⌘B toggles the sidebar and ⇧⌘D
+    // switches surfaces. The menu used to win those, making the shortcut sheet
+    // lie and sometimes running an action twice.
+    let backup = item(app, EVT_BACKUP, "Create Backup…", Some("CmdOrCtrl+Shift+S"))?;
+    let diagnostics = item(app, EVT_DIAGNOSTICS, "Diagnostics", Some("CmdOrCtrl+Alt+D"))?;
     let quit = PredefinedMenuItem::quit(app, Some("Quit MIX-agent"))?;
     let sep = || PredefinedMenuItem::separator(app);
 

@@ -93,10 +93,17 @@ def search_skills(db, owner: str, query: str, ids: list | None):
 
 
 def search_knowledge(db, owner: str, query: str, top_k: int = 5) -> list[dict]:
-    """Phase 1: interface only. Auto-RAG injection lands in Phase 2.
+    """Retrieve saved knowledge chunks for the context head.
 
-    The retriever shape (retrieve -> threshold -> budget fit -> inject) is fixed
-    here so Phase 2 only fills the body.
+    The knowledge service already owns chunking, secret filtering and lexical
+    scoring; this wrapper only makes retrieval failure non-fatal to a Run.
     """
-    _ = (db, owner, query, top_k)
-    return []
+    if not (query or "").strip():
+        return []
+    from mix_agent.knowledge import service as knowledge_service
+
+    try:
+        return knowledge_service.search(db, owner, query, top_k=top_k) or []
+    except Exception:
+        LOGGER.exception("knowledge retrieval failed owner=%s", owner)
+        return []

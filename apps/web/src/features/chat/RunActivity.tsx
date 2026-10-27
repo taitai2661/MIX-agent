@@ -11,6 +11,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { ApprovalDecision, ToolCallHistory } from "./types";
+import { useState } from "react";
 import { ActivityIcon } from "./ToolActivity";
 
 export type { ToolCallHistory } from "./types";
@@ -58,7 +59,7 @@ function RunActivityCall({ call, onApproval }: { call: ToolCallHistory; onApprov
             <span className="run-step-approval-label"><ShieldCheck size={14} /> {t("承認が必要です")}</span>
             <span className="run-step-approval-actions">
               <button onClick={() => onApproval(call.approval!.id, "once")}>{t("今回のみ")}</button>
-              <button onClick={() => onApproval(call.approval!.id, "always")}>{t("常に許可")}</button>
+              <button onClick={() => onApproval(call.approval!.id, "always")}>{t("この操作を常に許可")}</button>
               <button onClick={() => onApproval(call.approval!.id, "denied")}>{t("拒否")}</button>
             </span>
           </div>
@@ -101,6 +102,8 @@ export function RunActivity({
   const waiting = calls.some((call) => call.status === "waiting_approval");
   const sources = calls.reduce((total, call) => total + sourceCount(call), 0);
   const open = running || waiting;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const detailsOpen = userOpen ?? open;
   const meta = [`${calls.length}${t("件のツール")}`, ...(sources ? [`${sources}${t("件のソース")}`] : [])].join(" · ");
   const head = running && active ? active.activity?.label || active.tool_name : meta;
   const HeaderIcon = running ? Loader2 : waiting ? Clock3 : failed ? AlertTriangle : CheckCircle2;
@@ -109,7 +112,7 @@ export function RunActivity({
       className={"run-activity" + (running ? " is-running" : "") + (failed ? " has-error" : "")}
       aria-label={t("ツール実行履歴")}
     >
-      <details className="run-activity-details" open={open}>
+      <details className="run-activity-details" open={detailsOpen} onToggle={(e) => setUserOpen(e.currentTarget.open)}>
         <summary className="run-activity-summary">
           <span className="run-activity-icon">
             <HeaderIcon className={running ? "spin" : undefined} size={15} />

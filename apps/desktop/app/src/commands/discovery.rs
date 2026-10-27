@@ -10,7 +10,9 @@
 //! owns the trust boundary and the database writes.
 
 use crate::AppState;
-use mixd_providers::discovery::{self, DetectedRuntime, DiscoveredModel, OccupiedPort};
+use mixd_providers::discovery::{
+    self, DetectedRuntime, DiscoveredModel, ModelCapabilities, OccupiedPort,
+};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -43,6 +45,11 @@ pub struct LocalModelView {
     pub context_window: u32,
     pub parameter_size: Option<String>,
     pub quantization: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub family: Option<String>,
+    pub loaded: bool,
+    pub model_type: Option<String>,
+    pub capabilities: Option<ModelCapabilities>,
 }
 
 #[derive(Serialize)]
@@ -101,6 +108,11 @@ impl From<DiscoveredModel> for LocalModelView {
             context_window: m.context_window,
             parameter_size: m.parameter_size,
             quantization: m.quantization,
+            size_bytes: m.size_bytes,
+            family: m.family,
+            loaded: m.loaded,
+            model_type: m.model_type,
+            capabilities: m.capabilities,
         }
     }
 }
@@ -112,7 +124,10 @@ impl From<DiscoveredModel> for LocalModelView {
 /// only case that surfaces as an error.
 #[tauri::command]
 pub async fn scan_local_runtimes() -> Result<LocalScanView, String> {
-    let report = discovery::scan_local_runtimes()
+    // The UI's detect button is the one place a user expects complete rows:
+    // context length and capability badges are what make the import decision.
+    // The fast sweep remains available to internal callers.
+    let report = discovery::scan_local_runtimes_detailed()
         .await
         .map_err(crate::error::cmd_err)?;
     let any_online = report.runtimes.iter().any(|r| r.online);
@@ -137,7 +152,7 @@ pub async fn scan_local_runtimes() -> Result<LocalScanView, String> {
 /// unusual port, or a runtime not in the sweep table.
 #[tauri::command]
 pub async fn probe_local_endpoint(base_url: String) -> Result<LocalRuntimeView, String> {
-    let runtime = discovery::probe_base_url(&base_url)
+    let runtime = discovery::probe_base_url_detailed(&base_url)
         .await
         .map_err(crate::error::cmd_err)?;
     Ok(LocalRuntimeView::from(runtime))
@@ -172,6 +187,13 @@ pub async fn import_local_runtime(
     if base_url.is_empty() {
         return Err("Base URL が空です".into());
     }
+    // The scan result is advisory: it may have been produced by an older
+    // client, or by the fast sweep before native details existed. Re-read the
+    // runtime's own metadata here so the rows written to the model table carry
+    // the context window and capability flags the Run Engine needs. A failure
+    // is not fatal — the import still works with whatever the scan supplied.
+    let mut models = input.models;
+    let _ = discovery::enrich_models_by_slug(&input.slug, &base_url, &mut models).await;
     // `insert_provider` writes the row *and* puts the adapter in the live
     // registry, which is what makes the models synced below usable on the very
     // next message instead of after a restart.
@@ -186,6 +208,6 @@ pub async fn import_local_runtime(
     )
     .await?;
 
-    let models = crate::commands::models::sync_models(&state, &provider.id, &input.models).await?;
+    let models = crate::commands::models::sync_models(&state, &provider.id, &models).await?;
     Ok(ImportView { provider, models })
 }

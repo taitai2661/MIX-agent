@@ -9,6 +9,7 @@ from datetime import UTC, timedelta
 from argon2 import PasswordHasher
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException, Request
+from sqlalchemy import delete
 
 from mix_agent import config
 from mix_agent.db.models import Secret, Session, now
@@ -38,20 +39,42 @@ def _timed_out(key, window_seconds, now):
     return values
 
 
+def _prune_empty(now):
+    """Drop buckets that have fully aged out.
+
+    Keys are derived from account ids and client IPs, so without this the
+    process keeps one empty deque per address for its lifetime.
+    """
+    longest = max(LOGIN_WINDOW_SECONDS, ACCOUNT_CHANGE_WINDOW_SECONDS)
+    for key in list(_failed_attempts):
+        if not _timed_out(key, longest, now):
+            _failed_attempts.pop(key, None)
+
+
 async def throttle_attempt(key, limit, window_seconds):
     """Raise 429 when the sliding failure window is exhausted for a key."""
+    now = _time.monotonic()
     async with _attempt_lock:
-        if len(_timed_out(key, window_seconds, _time.monotonic())) >= limit:
+        _prune_empty(now)
+        if len(_timed_out(key, window_seconds, now)) >= limit:
             raise HTTPException(429, "試行回数が多すぎます。しばらく待ってから再試行してください。")
 
 
 async def record_failed_attempt(key, window_seconds):
+    now = _time.monotonic()
     async with _attempt_lock:
-        _failed_attempts[key].append(_time.monotonic())
+        _prune_empty(now)
+        _failed_attempts[key].append(now)
 
 
 def clear_attempts(key):
     _failed_attempts.pop(key, None)
+
+
+def purge_expired_sessions(db) -> int:
+    """Delete expired login sessions; called from the scheduler tick."""
+    result = db.execute(delete(Session).where(Session.expires < now()))
+    return result.rowcount or 0
 
 
 def dummy_password_hash():

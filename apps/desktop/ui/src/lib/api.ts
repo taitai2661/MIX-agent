@@ -215,6 +215,8 @@ export const api = {
   browserProfiles: () => invoke<BrowserProfileView[]>("browser_profiles"),
   browserResetProfile: (workspaceId: string) =>
     invoke<void>("browser_reset_profile", { workspaceId }),
+  browserArtifact: (id: string) =>
+    invoke<string>("browser_artifact", { id }),
 
   listMemories: () => invoke<MemoryView[]>("list_memories"),
   createMemory: (input: {

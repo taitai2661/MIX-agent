@@ -127,6 +127,8 @@ Desktop コマンドはありません。同梱 Chromium は `scripts/fetch-chro
 | `DELETE /memories/{key}` | `memories::delete_memory()` | 5 |
 | `GET /memories/{key}/revisions` | `memories::list_memory_revisions()` | 5 |
 | `POST /memories/{key}/restore/{revision}` | `memories::restore_memory_revision()` | 5 |
+| `POST /memories/{key}/resolve` | `memories::resolve_conflict()` | 5 |
+| `GET /memories/{key}/associations` | `memories::memory_associations()` | 5 |
 | `GET /memories-debug/search` | `memories::search_memories()` | 5 |
 | `POST /memories-debug/actions` | `memories::verify_memory()` | 5 |
 
@@ -254,7 +256,6 @@ Desktop 版に意図的に対応が無いもの。`docs/openapi.json` に存在�
 | `/mcp/connections/{key}/{reinstall,uninstall,update}` | MCP パッケージのライフサイクル操作は未実装 |
 | `/runs/{key}/browser-manual`, `/browser-pause`, `/browser-return` | Browser の手動制御は未実装 |
 | `/settings/statistics`, `/settings/usage` | 未実装 |
-| `/memories/{key}/associations` | 未実装 |
 | `/skills/{key}/revisions`, `/skills/{key}/restore/{revision}`, `/skills/import/archive`, `/skills/import/directory` | Skill の revision 履歴と Server ディレクトリ取り込みは未実装（Memory には revision がある） |
 | `/messages/{key}/feedback` | 未実装 |
 | `/artifacts/*`, `/runs/{key}/browser-frames*` | Artifact / Browser frame の配信は未実装（Browser のフレームは Desktop 側で直接取得） |

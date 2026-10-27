@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Archive,
   BookOpen,
@@ -118,6 +118,20 @@ export function SettingsPane() {
   // Saving before `get_settings` resolves would replace the stored row with
   // the defaults rendered in the form.
   const canSave = loaded && !settings.isError && !update.isPending;
+  // Baseline the loaded form so "未保存" is not shown before the user edits.
+  useEffect(() => {
+    if (!loaded || savedSnapshot !== null) return;
+    setSavedSnapshot(JSON.stringify(data));
+  }, [data, loaded, savedSnapshot]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -173,10 +187,13 @@ export function SettingsPane() {
               {showSave && update.isSuccess && !update.isError && !dirty && (
                 <Badge tone="success">{t("保存しました")}</Badge>
               )}
+              {showSave && dirty && !update.isPending && (
+                <Badge tone="warning">{t("未保存の変更")}</Badge>
+              )}
               {showSave && (
                 <Button
                   variant="primary"
-                  disabled={!canSave}
+                  disabled={!canSave || !dirty}
                   onClick={() => update.mutate(data)}
                 >
                   <Save size={12} /> {t("保存")}
