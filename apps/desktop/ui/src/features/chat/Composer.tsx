@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { chord } from "@/lib/platform";
 import { getString, removeKey, setString } from "@/lib/storage";
 import { subscribePromptInsert } from "@/lib/promptInsert";
 import { loadPromptHistory, pushPromptHistory } from "@/lib/promptHistory";
@@ -938,7 +939,7 @@ export const Composer = memo(function Composer(props: {
                   }
                   title={
                     sendDisabledReason ??
-                    `${t("送信")} (${sendShortcut === "modifier" ? "⌘+Enter" : "Enter"})`
+                    `${t("送信")} (${sendShortcut === "modifier" ? chord("Mod", "Enter") : "Enter"})`
                   }
                   className="shrink-0 rounded-full shadow-md disabled:shadow-none"
                 >
@@ -958,7 +959,7 @@ export const Composer = memo(function Composer(props: {
               className="hidden items-center gap-1 sm:inline-flex"
               aria-hidden="true"
             >
-              <Kbd>⌘ Enter</Kbd>
+              <Kbd>{chord("Mod", "Enter")}</Kbd>
               <span>{t("送信")}</span>
               <span className="mx-1 text-line">·</span>
               <Kbd>Enter</Kbd>
@@ -972,7 +973,7 @@ export const Composer = memo(function Composer(props: {
               <Kbd>Enter</Kbd>
               <span>{t("送信")}</span>
               <span className="mx-1 text-line">·</span>
-              <Kbd>⇧ Enter</Kbd>
+              <Kbd>{chord("Shift", "Enter")}</Kbd>
               <span>{t("改行")}</span>
             </span>
           )}

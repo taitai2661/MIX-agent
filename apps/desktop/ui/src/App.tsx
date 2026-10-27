@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Download,
   Folder,
   FolderTree,
   PanelLeft,
@@ -16,10 +17,12 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api";
 import { useUi, type View } from "./lib/ui";
-import { t } from "./lib/i18n";
+import { t, tf } from "./lib/i18n";
+import { chord } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
 import { useConversations, useProjects } from "./lib/queries";
 import { SETTINGS_QUERY_KEY } from "./lib/settings";
+import { useUpdateCheck } from "./lib/updates";
 
 import { ChatPane } from "./features/chat/ChatPane";
 // Secondary panes are code-split: the chat path (the startup view) must not
@@ -125,6 +128,32 @@ function HealthIndicator() {
         className="px-1"
       />
     </span>
+  );
+}
+
+/**
+ * Header badge for an available update.
+ *
+ * The check lives here (not only in Settings) so the persisted "check on
+ * launch" setting actually does something on launch. It shares the
+ * `UPDATE_QUERY_KEY` cache with the Updates pane, so both render one result.
+ */
+function UpdateIndicator({ autoCheck }: { autoCheck: boolean }) {
+  const openSettings = useUi((s) => s.openSettings);
+  const check = useUpdateCheck(autoCheck);
+  const update = check.data;
+  if (!update) return null;
+  const label = tf("v{version} が利用可能です", { version: update.version });
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      onClick={() => openSettings("updates")}
+      title={label}
+      aria-label={label}
+    >
+      <Download size={16} />
+    </Button>
   );
 }
 
@@ -260,7 +289,7 @@ export function App() {
           variant="ghost"
           size="icon-sm"
           onClick={toggleSidebar}
-          title={`${t("サイドバーの表示切り替え")} · ⌘B`}
+          title={`${t("サイドバーの表示切り替え")} · ${chord("Mod", "B")}`}
           aria-label={t("サイドバーの表示切り替え")}
           aria-pressed={sidebarOpen}
         >
@@ -304,7 +333,7 @@ export function App() {
             onClick={() => setPaletteOpen(true)}
             aria-label={t("コマンドを検索…")}
             aria-keyshortcuts="meta+k ctrl+k"
-            title={`${t("コマンドパレット")} · ⌘K`}
+            title={`${t("コマンドパレット")} · ${chord("Mod", "K")}`}
             className={
               "hidden h-7 min-w-44 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 " +
               "text-xs text-faint shadow-xs transition-colors duration-100 hover:border-line-strong hover:text-muted md:flex"
@@ -312,10 +341,13 @@ export function App() {
           >
             <Search size={13} aria-hidden="true" />
             <span className="flex-1 text-start">{t("検索")}</span>
-            <Kbd>⌘K</Kbd>
+            <Kbd>{chord("Mod", "K")}</Kbd>
           </button>
 
           <HealthIndicator />
+          <UpdateIndicator
+            autoCheck={settings.data?.auto_check_updates === true}
+          />
 
           {view === "chat" && agentSurface && (
             <div className="flex items-center gap-1 border-s border-line ps-1.5">
@@ -323,7 +355,7 @@ export function App() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={toggleFileTree}
-                title={`${t("ファイルツリー")} · ⌘⇧E`}
+                title={`${t("ファイルツリー")} · ${chord("Mod", "Shift", "E")}`}
                 aria-label={t("ファイルツリー")}
                 aria-pressed={fileTreeOpen}
               >

@@ -103,8 +103,8 @@ export const en: Record<string, string> = {
   "設定を開く": "Open settings",
 
   // Transcript
-  "何でも質問してください。/ でコマンド、⌘K で検索。":
-    "Ask anything. / for commands, ⌘K to search.",
+  "何でも質問してください。/ でコマンド、{shortcut} で検索。":
+    "Ask anything. / for commands, {shortcut} to search.",
   "思考プロセス": "Reasoning",
   "思考プロセスをコピー": "Copy reasoning",
   "思考中…": "Thinking…",
@@ -173,6 +173,7 @@ export const en: Record<string, string> = {
   "編集": "Edit",
   "メッセージを編集": "Edit message",
   "⌘+Enter で保存": "⌘+Enter to save",
+  "Ctrl+Enter で保存": "Ctrl+Enter to save",
   "作成": "Create",
   "検索": "Search",
   "読み込み中…": "Loading…",
@@ -258,20 +259,35 @@ export const en: Record<string, string> = {
     "Configure the keyboard shortcut used to send messages in the chat composer.",
   "Enter で送信 (Shift+Enter で改行)":
     "Send with Enter (Shift+Enter for newline)",
-  "⌘ / Ctrl + Enter で送信 (Enter で改行)":
-    "Send with ⌘ / Ctrl + Enter (Enter for newline)",
+  "{shortcut}+Enter で送信 (Enter で改行)":
+    "Send with {shortcut}+Enter (Enter for newline)",
   "標準幅に戻す": "Reset panel width",
   "パネル幅を拡大": "Expand panel width",
   "ネットワーク": "Network",
   "アップデート": "Updates",
-  "手動アップデート": "Manual updates",
-  "v0.5.0では自動更新とアプリ内の更新確認を無効にしています。最新版はGitHub ReleasesからMac用DMGを手動でダウンロードしてください。":
-    "Automatic and in-app update checks are disabled in v0.5.0. Download the latest macOS DMG manually from GitHub Releases.",
+  "アプリのアップデート": "App updates",
+  "現在のバージョン: {version}": "Current version: {version}",
+  "現在のバージョンを取得できませんでした":
+    "Could not determine the current version",
+  "更新を確認": "Check for updates",
+  "ダウンロード中…": "Downloading…",
+  "ダウンロード中… {percent}%": "Downloading… {percent}%",
+  "再起動": "Restart",
+  "v{version} をインストールしました。再起動すると適用されます。":
+    "Installed v{version}. Restart to apply it.",
+  "v{version} が利用可能です": "v{version} is available",
+  "ダウンロードしてインストール": "Download and install",
+  "最新バージョンです。": "You are up to date.",
+  "起動時に更新を確認": "Check for updates on launch",
+  "起動時にGitHub Releasesのマニフェストを確認します。ダウンロードとインストールは署名を検証した上で、確認ダイアログから実行します。":
+    "Checks the GitHub Releases manifest on launch. Downloads and installs only after the signature is verified and you confirm.",
+  "Linuxのdebパッケージはアプリ内更新の対象外です。debで導入した場合はGitHub Releasesから手動で更新してください（AppImageは自動更新できます）。":
+    "The Linux .deb package cannot update in-app; if you installed the .deb, update manually from GitHub Releases (AppImage builds update in-app).",
+  "このビルドはアプリ内更新に対応していません。GitHub Releasesから手動で更新してください。":
+    "This build cannot update in-app. Update manually from GitHub Releases.",
   "GitHub Releasesを開く": "Open GitHub Releases",
-  "ダウンロードしたDMGのSHA256SUMSチェックサムを確認してください。":
-    "Verify the downloaded DMG against SHA256SUMS.",
-  "macOSアプリはAppleコード署名・公証なしです。Gatekeeperが警告または起動を制限する場合があります。":
-    "The macOS app is not Apple-code-signed or notarized. Gatekeeper may warn or block launch.",
+  "macOSアプリはApple Developer ID署名・公証なし（ad-hoc署名のみ）です。初回起動時にGatekeeperの確認が必要です。":
+    "The macOS app is not signed with an Apple Developer ID or notarized (ad-hoc signature only). Gatekeeper asks for confirmation on first launch.",
   "アプリの改善のため匿名の診断情報を共有します":
     "Share anonymous diagnostics to improve the app",
   "バックアップ": "Backup",

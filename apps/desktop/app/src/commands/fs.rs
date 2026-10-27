@@ -204,10 +204,15 @@ pub async fn open_external(url: String) -> Result<(), String> {
     let mut command = tokio::process::Command::new("open");
     #[cfg(target_os = "linux")]
     let mut command = tokio::process::Command::new("xdg-open");
+    // Do not route this through `cmd /C start`: Rust passes arguments using
+    // the MSVCRT quoting rules, not cmd's, so a URL containing `&` (common in
+    // query strings) would be split into a second command by cmd.exe.
+    // `rundll32` invokes the URL handler directly and receives the URL as one
+    // argument.
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut c = tokio::process::Command::new("cmd");
-        c.args(["/C", "start", ""]);
+        let mut c = tokio::process::Command::new("rundll32.exe");
+        c.arg("url.dll,FileProtocolHandler");
         c
     };
     command

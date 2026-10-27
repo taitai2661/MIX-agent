@@ -981,6 +981,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_http::init())
+        // Signed, verified updates. The WebView reaches this only through
+        // `commands::update`, so no `updater:*` capability is granted.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
             let app_handle = app.handle().clone();
@@ -1173,6 +1176,9 @@ pub fn run() {
             commands::diagnostics::collect_diagnostics,
             commands::diagnostics::get_recent_logs,
             commands::diagnostics::export_diagnostics,
+            commands::update::app_version,
+            commands::update::check_for_update,
+            commands::update::install_update,
         ])
         .run(tauri::generate_context!());
 
@@ -1206,6 +1212,25 @@ mod tests {
             identifier,
             mixd_storage::SERVICE,
             "Keychain SERVICE drifted from tauri.conf.json"
+        );
+    }
+
+    /// Apple Silicon refuses to launch a completely unsigned `.app` copied out
+    /// of a downloaded DMG and reports it as damaged. Keep the ad-hoc signing
+    /// identity in the config so a release build can never regress to unsigned
+    /// again; Developer ID signing/notarization remains opt-in.
+    #[test]
+    fn macos_bundle_keeps_the_ad_hoc_signing_identity() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+        let raw = std::fs::read_to_string(&path).expect("read tauri.conf.json");
+        let config: serde_json::Value = serde_json::from_str(&raw).expect("parse tauri.conf.json");
+        let identity = config
+            .pointer("/bundle/macOS/signingIdentity")
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            identity,
+            Some("-"),
+            "bundle.macOS.signingIdentity must stay \"-\" (ad-hoc) so macOS can launch the app"
         );
     }
 

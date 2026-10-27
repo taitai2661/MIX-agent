@@ -75,6 +75,12 @@ pub struct SettingsView {
     /// provider would otherwise re-arm the wizard for someone who already
     /// finished it.
     pub onboarding_completed: Option<bool>,
+    /// Check GitHub Releases for a newer build once per launch.
+    ///
+    /// Defaults to `true`: the updater verifies every payload against the
+    /// embedded public key, and the check is a single manifest request. The
+    /// user can still turn it off (and check manually) in Settings → Updates.
+    pub auto_check_updates: bool,
 }
 
 impl Default for SettingsView {
@@ -101,6 +107,7 @@ impl Default for SettingsView {
             // Codex parity: defaults to false (plain SQLite).
             database_encryption: false,
             onboarding_completed: None,
+            auto_check_updates: true,
         }
     }
 }

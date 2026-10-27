@@ -1,5 +1,6 @@
 import { Keyboard } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { modKey, shiftKey } from "@/lib/platform";
 import { useUi } from "@/lib/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, SectionLabel } from "@/components/layout";
@@ -28,13 +29,13 @@ const GROUPS: ShortcutGroup[] = [
   {
     title: "移動",
     items: [
-      { keys: ["⌘", "K"], label: "コマンドパレット" },
-      { keys: ["⌘", "N"], label: "新規スレッド" },
-      { keys: ["⌘", "B"], label: "サイドバー切り替え" },
-      { keys: ["⌘", ","], label: "設定を開く" },
-      { keys: ["⌘", "⇧", "E"], label: "ファイルツリー" },
-      { keys: ["⌘", "⇧", "C"], label: "チャットサーフェスへ" },
-      { keys: ["⌘", "⇧", "D"], label: "エージェントサーフェスへ" },
+      { keys: ["Mod", "K"], label: "コマンドパレット" },
+      { keys: ["Mod", "N"], label: "新規スレッド" },
+      { keys: ["Mod", "B"], label: "サイドバー切り替え" },
+      { keys: ["Mod", ","], label: "設定を開く" },
+      { keys: ["Mod", "Shift", "E"], label: "ファイルツリー" },
+      { keys: ["Mod", "Shift", "C"], label: "チャットサーフェスへ" },
+      { keys: ["Mod", "Shift", "D"], label: "エージェントサーフェスへ" },
       { keys: ["?"], label: "この一覧を表示" },
     ],
   },
@@ -42,7 +43,7 @@ const GROUPS: ShortcutGroup[] = [
     title: "入力",
     items: [
       { keys: ["Enter"], label: "送信" },
-      { keys: ["⇧", "Enter"], label: "改行" },
+      { keys: ["Shift", "Enter"], label: "改行" },
       { keys: ["Esc"], label: "ダイアログを閉じる" },
     ],
   },
@@ -74,9 +75,15 @@ export function ShortcutHelp() {
                       {t(item.label)}
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
-                      {item.keys.map((key) => (
-                        <Kbd key={key}>{key}</Kbd>
-                      ))}
+                      {item.keys.map((key) => {
+                        const cap =
+                          key === "Mod"
+                            ? modKey()
+                            : key === "Shift"
+                              ? shiftKey()
+                              : key;
+                        return <Kbd key={key}>{cap}</Kbd>;
+                      })}
                     </span>
                   </li>
                 ))}

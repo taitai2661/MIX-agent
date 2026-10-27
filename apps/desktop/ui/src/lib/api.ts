@@ -42,6 +42,7 @@ import type {
   SkillResourceView,
   SkillView,
   ToolView,
+  UpdateInfo,
 } from "./types";
 
 export const api = {
@@ -401,6 +402,13 @@ export const api = {
     invoke<number>("save_text_file", { path, content }),
   saveBase64File: (path: string, dataBase64: string) =>
     invoke<number>("save_base64_file", { path, dataBase64 }),
+
+  // In-app updates. `checkForUpdate` resolves `null` when the running build is
+  // already the newest; `installUpdate` re-checks, downloads, verifies the
+  // signature and installs (then the caller relaunches).
+  appVersion: () => invoke<string>("app_version"),
+  checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
+  installUpdate: () => invoke<UpdateInfo>("install_update"),
 };
 
 export interface RunEventPayload {

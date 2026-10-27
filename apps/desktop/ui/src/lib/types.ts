@@ -172,6 +172,27 @@ export interface SettingsView {
   /** Codex-compatible database encryption at rest. Defaults to false. */
   database_encryption: boolean;
   onboarding_completed: boolean | null;
+  /** Check GitHub Releases for a newer build once per launch. Ships enabled. */
+  auto_check_updates: boolean;
+}
+
+/** An update announced by the release manifest (`latest.json`). */
+export interface UpdateInfo {
+  /** Version currently running. */
+  current_version: string;
+  /** Version announced by the manifest. */
+  version: string;
+  notes: string | null;
+  date: string | null;
+  /** False for a Linux `.deb` install: the Release must be used instead. */
+  installable: boolean;
+}
+
+/** Payload of the `update://progress` event while downloading. */
+export interface UpdateProgress {
+  downloaded: number;
+  /** `null` when the server sends no `Content-Length`. */
+  total: number | null;
 }
 
 export interface ToolView {

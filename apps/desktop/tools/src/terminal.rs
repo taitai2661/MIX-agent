@@ -92,17 +92,25 @@ fn detect_shell_inner(mix_shell_override: Option<&str>) -> ShellLaunchConfig {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
             let path = std::path::PathBuf::from(trimmed);
-            let is_posix = !path
+            let file_name = path
                 .file_name()
-                .map(|f| {
-                    let s = f.to_string_lossy().to_ascii_lowercase();
-                    s.contains("powershell") || s.contains("pwsh") || s.contains("cmd")
-                })
-                .unwrap_or(false);
+                .map(|name| name.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            let is_powershell = file_name.contains("powershell") || file_name.contains("pwsh");
+            let is_cmd = file_name.contains("cmd");
+            // Keep a custom PowerShell override on the same startup path as
+            // the automatic fallback below. Without these flags a machine-wide
+            // profile can delay or block the first prompt, which looks like a
+            // marker timeout to the persistent-shell protocol.
+            let args = if is_powershell {
+                vec!["-NoLogo".into(), "-NoProfile".into()]
+            } else {
+                Vec::new()
+            };
             return ShellLaunchConfig {
                 program: path,
-                args: Vec::new(),
-                is_posix,
+                args,
+                is_posix: !(is_powershell || is_cmd),
             };
         }
     }
@@ -424,7 +432,7 @@ impl ShellSession {
         } else {
             // PowerShell in raw PTY mode handles CRLF reliably for interactive evaluation
             format!(
-                "Write-Output \"`n{start}\"\r\n{command}\r\n$__mixd_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\r\n[System.IO.File]::WriteAllText('{status}', \"$__mixd_rc\")\r\nWrite-Output \"`n{sentinel}\"\r\nWrite-Output \"{cwd_marker}$($ExecutionContext.SessionState.Path.CurrentLocation.Path)__\"\r\n",
+                "Write-Output \"`n{start}\"\r\n{command}\r\n$__mixd_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}\r\nif ($__mixd_rc -eq $null) {{ $__mixd_rc = 0 }}\r\n[System.IO.File]::WriteAllText('{status}', \"$__mixd_rc\", [System.Text.Encoding]::ASCII)\r\nWrite-Output \"`n{sentinel}\"\r\nWrite-Output \"{cwd_marker}$($ExecutionContext.SessionState.Path.CurrentLocation.Path)__\"\r\n",
                 start = start_marker,
                 status = status_str.replace('\'', "''"),
                 sentinel = sentinel,
@@ -450,16 +458,8 @@ impl ShellSession {
             let complete = {
                 let buffer = self.output.lock().await;
                 let text = String::from_utf8_lossy(&buffer);
-                let sentinel_at = find_line(text.as_ref(), &sentinel);
-                let cwd_seen = sentinel_at
-                    .map(|at| {
-                        text.lines()
-                            .skip(at + 1)
-                            .any(|line| cwd_marker_path(line, &cwd_marker).is_some())
-                    })
-                    .unwrap_or(false);
-                let sentinel_seen = sentinel_at.is_some();
-                sentinel_seen && cwd_seen
+                find_line(text.as_ref(), &sentinel).is_some()
+                    && cwd_from_transcript(text.as_ref(), &sentinel, &cwd_marker).is_some()
             };
             if complete {
                 break true;
@@ -470,9 +470,21 @@ impl ShellSession {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         };
         if !done {
-            // Drain whatever arrived so a timeout does not corrupt the next call.
-            self.output.lock().await.clear();
-            return Err(format!("timed out after {max_ms} ms"));
+            // Drain whatever arrived so a timeout does not corrupt the next
+            // call. Keep a short tail for the error: on Windows CI a marker
+            // timeout without the transcript is almost impossible to diagnose.
+            let tail = {
+                let mut guard = self.output.lock().await;
+                let text = String::from_utf8_lossy(&guard);
+                let tail = diagnostic_tail(text.as_ref(), 2_000);
+                guard.clear();
+                tail
+            };
+            return Err(if tail.is_empty() {
+                format!("timed out after {max_ms} ms")
+            } else {
+                format!("timed out after {max_ms} ms; last shell output: {tail:?}")
+            });
         }
 
         // Take the buffer and reset it in one lock: the reader thread keeps
@@ -483,15 +495,12 @@ impl ShellSession {
             std::mem::take(&mut *guard)
         };
         let text = String::from_utf8_lossy(&buffer).to_string();
-        let lines: Vec<&str> = text.lines().collect();
-        let marker_at = find_line(&text, &sentinel).unwrap_or(lines.len());
 
-        // Everything after the marker up to the cwd probe is protocol, not output.
-        let cwd = lines
-            .iter()
-            .skip(marker_at)
-            .find_map(|line| cwd_marker_path(line, &cwd_marker))
-            .unwrap_or(known_cwd);
+        // Everything after the marker up to the cwd probe is protocol, not
+        // output. Concatenate the tail before parsing: ConPTY can wrap a long
+        // PowerShell prompt/path across lines, which made the old line-based
+        // parser wait forever for a cwd marker that was present but split.
+        let cwd = cwd_from_transcript(&text, &sentinel, &cwd_marker).unwrap_or(known_cwd);
         *self.cwd.lock().await = cwd.clone();
 
         // Real output lives between the start and done markers. The PTY echo
@@ -502,20 +511,7 @@ impl ShellSession {
             out.pop();
         }
 
-        let exit_code = std::fs::read_to_string(&status_path).ok().and_then(|raw| {
-            // Strict validation: a few ASCII digits (plus an optional
-            // leading `-`), nothing else. A bloated or non-numeric file
-            // means something other than our `printf` wrote it.
-            let trimmed = raw.trim();
-            if trimmed.is_empty() || trimmed.len() > 11 {
-                return None;
-            }
-            let digits = trimmed.strip_prefix('-').unwrap_or(trimmed);
-            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-            trimmed.parse::<i32>().ok()
-        });
+        let exit_code = read_exit_code(&status_path);
         let _ = std::fs::remove_file(&status_path);
         Ok((truncate_output(&out), exit_code, cwd))
     }
@@ -610,6 +606,67 @@ fn truncate_output(text: &str) -> String {
         "{head}\n… [truncated: {cut} of {} bytes shown, {kept_lines} lines]",
         text.len()
     )
+}
+
+/// Read the shell's exit-status file.
+///
+/// The protocol pre-creates this file and the shell overwrites it with a few
+/// ASCII digits. PowerShell's `File.WriteAllText` has historically produced
+/// UTF-8 with a BOM (and `Write-Output`/`Set-Content` can produce UTF-16), so
+/// decoding accepts the common BOM variants instead of silently reporting
+/// `exit_code: null` on Windows.
+fn read_exit_code(path: &std::path::Path) -> Option<i32> {
+    let raw = std::fs::read(path).ok()?;
+    let text = decode_status_text(&raw);
+    // Strict validation: a few ASCII digits (plus an optional leading `-`),
+    // nothing else. A bloated or non-numeric file means something other than
+    // our shell wrapper wrote it.
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 11 {
+        return None;
+    }
+    let digits = trimmed.strip_prefix('-').unwrap_or(trimmed);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    trimmed.parse::<i32>().ok()
+}
+
+/// Decode UTF-8 / UTF-8-with-BOM / UTF-16 LE/BE status files.
+fn decode_status_text(raw: &[u8]) -> String {
+    if let Some(rest) = raw.strip_prefix(&[0xFF, 0xFE]) {
+        return decode_utf16(rest, u16::from_le_bytes);
+    }
+    if let Some(rest) = raw.strip_prefix(&[0xFE, 0xFF]) {
+        return decode_utf16(rest, u16::from_be_bytes);
+    }
+    // BOM-less UTF-16LE is easy to spot for a short digit string: every
+    // second byte is NUL.
+    if raw.len() >= 2 && raw.len() % 2 == 0 && raw.iter().skip(1).step_by(2).all(|byte| *byte == 0)
+    {
+        return decode_utf16(raw, u16::from_le_bytes);
+    }
+    let raw = raw.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(raw);
+    String::from_utf8_lossy(raw).into_owned()
+}
+
+fn decode_utf16(rest: &[u8], decode: fn([u8; 2]) -> u16) -> String {
+    let units: Vec<u16> = rest
+        .chunks_exact(2)
+        .map(|chunk| decode([chunk[0], chunk[1]]))
+        .collect();
+    String::from_utf16_lossy(&units)
+}
+
+/// Keep the end of a transcript for timeout diagnostics.
+///
+/// The start of a PTY transcript is startup noise and the marker lines that
+/// were already parsed; the useful part when a marker never arrives is the
+/// tail. Count in characters so a multi-byte UTF-8 prompt cannot panic.
+fn diagnostic_tail(text: &str, max_chars: usize) -> String {
+    let mut chars: Vec<char> = text.chars().rev().take(max_chars).collect();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 /// Cut `text` to at most `max_bytes` on a character boundary.
@@ -1021,6 +1078,29 @@ fn cwd_inside(cwd: &str, root: &std::path::Path) -> bool {
     cwd_path.starts_with(root)
 }
 
+/// Extract the cwd marker from the transcript tail.
+///
+/// The marker is emitted on its own line after the sentinel, but ConPTY may
+/// wrap a long path (and PowerShell may prefix it with prompt/ANSI text). Join
+/// the tail and strip escape sequences so a wrapped marker is still found.
+fn cwd_from_transcript(text: &str, sentinel: &str, marker: &str) -> Option<String> {
+    let sentinel_at = find_line(text, sentinel)?;
+    let tail: String = text.lines().skip(sentinel_at + 1).collect();
+    let tail = strip_terminal_escape_sequences(&tail);
+
+    // The echoed wrapper script may also contain the marker text. Scan every
+    // occurrence and accept the first one that parses as an absolute path.
+    let mut rest = tail.as_str();
+    while let Some(at) = rest.find(marker) {
+        let candidate = &rest[at..];
+        if let Some(path) = cwd_marker_path(candidate, marker) {
+            return Some(path);
+        }
+        rest = &rest[at + marker.len()..];
+    }
+    None
+}
+
 /// Extract a live absolute cwd from a PTY line. The echoed `printf` command
 /// also contains the marker text, so reject its non-path payload rather than
 /// mistaking it for the result line.
@@ -1043,6 +1123,22 @@ mod tests {
     // shells are launched concurrently by the Rust test harness. Serialize
     // only the integration tests that exercise a real persistent PTY.
     static PTY_INTEGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Restore `MIX_SHELL` when a Windows fallback test ends, including on
+    /// panic. The environment is process-global and the PTY tests are
+    /// serialized, so this is the only test that may mutate it.
+    #[cfg(windows)]
+    struct ShellEnvGuard(Option<std::ffi::OsString>);
+
+    #[cfg(windows)]
+    impl Drop for ShellEnvGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("MIX_SHELL", value),
+                None => std::env::remove_var("MIX_SHELL"),
+            }
+        }
+    }
 
     // Git Bash/ConPTY startup and teardown routinely take several seconds on
     // a loaded Windows runner. A 10 s budget made the exit-code and respawn
@@ -1103,6 +1199,22 @@ mod tests {
     #[test]
     fn short_output_is_untouched() {
         assert_eq!(truncate_output("hello\n"), "hello\n");
+    }
+
+    #[test]
+    fn diagnostic_tail_keeps_the_end_and_respects_char_boundaries() {
+        assert_eq!(diagnostic_tail("one\ntwo", 20), "one\ntwo");
+        assert_eq!(diagnostic_tail("あいうえお", 2), "えお");
+        assert_eq!(diagnostic_tail("", 10), "");
+    }
+
+    #[test]
+    fn exit_status_decoding_accepts_common_powershell_encodings() {
+        assert_eq!(decode_status_text(b"0"), "0");
+        assert_eq!(decode_status_text(b"\xEF\xBB\xBF7"), "7");
+        assert_eq!(decode_status_text(&[0xFF, 0xFE, 0x33, 0x00]), "3");
+        assert_eq!(decode_status_text(&[0xFE, 0xFF, 0x00, 0x34]), "4");
+        assert_eq!(decode_status_text(&[0x35, 0x00]), "5");
     }
 
     #[test]
@@ -1203,6 +1315,44 @@ mod tests {
         assert_eq!(
             shell_quote("a'; rm -rf /; echo '"),
             "'a'\\''; rm -rf /; echo '\\'''"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn cwd_marker_is_found_when_conpty_wraps_the_path() {
+        let done = "__MIXD_DONE_1__";
+        let marker = "__MIXD_CWD_1__";
+        let transcript =
+            "__MIXD_DONE_1__\n__MIXD_CWD_1__/Users/runner/AppData/Local/\nTemp/project__\n";
+        assert_eq!(
+            cwd_from_transcript(transcript, done, marker).as_deref(),
+            Some("/Users/runner/AppData/Local/Temp/project")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn cwd_marker_skips_the_echoed_powershell_expression() {
+        let done = "__MIXD_DONE_1__";
+        let marker = "__MIXD_CWD_1__";
+        let transcript = "__MIXD_DONE_1__\n__MIXD_CWD_1__$($ExecutionContext.SessionState.Path.CurrentLocation.Path)__\n__MIXD_CWD_1__/tmp/project__\n";
+        assert_eq!(
+            cwd_from_transcript(transcript, done, marker).as_deref(),
+            Some("/tmp/project")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cwd_marker_is_found_when_conpty_wraps_a_windows_path() {
+        let done = "__MIXD_DONE_1__";
+        let marker = "__MIXD_CWD_1__";
+        let transcript =
+            "__MIXD_DONE_1__\r\n__MIXD_CWD_1__C:\\Users\\runner\\AppData\\Local\\\r\nTemp\\project__\r\n";
+        assert_eq!(
+            cwd_from_transcript(transcript, done, marker).as_deref(),
+            Some("C:\\Users\\runner\\AppData\\Local\\Temp\\project")
         );
     }
 
@@ -1317,10 +1467,19 @@ mod tests {
         let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("exitcode");
+        // POSIX `(exit 3)` runs in a subshell, so the persistent shell survives
+        // and `$?` reports 3. PowerShell has no subshell syntax: `(exit 3)`
+        // kills the shell before the status file is written, which is exactly
+        // the false-negative this test used to hit on Windows. `cmd.exe /c`
+        // exits only the child and works from both PowerShell and Git Bash.
+        #[cfg(windows)]
+        let command = "cmd.exe /c exit 3";
+        #[cfg(not(windows))]
+        let command = "(exit 3)";
         let result = tool
             .invoke(
                 context,
-                serde_json::json!({ "command": "(exit 3)", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+                serde_json::json!({ "command": command, "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
             )
             .await
             .expect("invoke");
@@ -1366,6 +1525,62 @@ mod tests {
             "a dead shell must be replaced: {:?}",
             second.content
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Windows without Git for Windows must still get a working persistent
+    /// shell. Git Bash is preferred on CI, so the PowerShell branch would
+    /// otherwise never be exercised there.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn powershell_fallback_runs_commands_and_reports_exit_code() {
+        let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+        let _env = ShellEnvGuard(std::env::var_os("MIX_SHELL"));
+        std::env::set_var("MIX_SHELL", "powershell.exe");
+
+        let tool = TerminalTool::default();
+        let (context, dir) = ctx_for("powershell");
+
+        let output = tool
+            .invoke(
+                context.clone(),
+                serde_json::json!({
+                    "command": "Write-Output 'hello from powershell'",
+                    "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
+                }),
+            )
+            .await
+            .expect("powershell output call");
+        assert_eq!(output.content["persistent"].as_bool(), Some(true));
+        assert_eq!(
+            output.content["exit_code"].as_i64(),
+            Some(0),
+            "powershell output: {:?}",
+            output.content
+        );
+        assert!(output.content["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("hello from powershell"));
+
+        let failed = tool
+            .invoke(
+                context,
+                serde_json::json!({
+                    "command": "cmd.exe /c exit 7",
+                    "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
+                }),
+            )
+            .await
+            .expect("powershell exit call");
+        assert_eq!(failed.content["persistent"].as_bool(), Some(true));
+        assert_eq!(
+            failed.content["exit_code"].as_i64(),
+            Some(7),
+            "powershell output: {:?}",
+            failed.content
+        );
+
         std::fs::remove_dir_all(&dir).ok();
     }
 

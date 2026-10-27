@@ -91,7 +91,10 @@ function cftPlatform(platform) {
   }
   const arm = os.arch() === "arm64";
   if (platform === "mac") return arm ? "mac-arm64" : "mac-x64";
-  if (platform === "win") return arm ? "win-arm64" : "win32";
+  // CfT publishes a 32-bit `win32` and a 64-bit `win64`. The release bundle is
+  // x64, so defaulting to win32 would ship a 32-bit browser inside a 64-bit
+  // installer. Release CI also pins MIX_CHROMIUM_CFT=win64 explicitly.
+  if (platform === "win") return arm ? "win-arm64" : "win64";
   if (arm) {
     // CfT ships linux64 only for the bundled path; arm64-linux is deferred
     // (see desktop-release.yml matrix comments). Shipping the x64 binary on

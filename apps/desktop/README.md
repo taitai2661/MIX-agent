@@ -60,7 +60,7 @@ apps/desktop/
 
 ### OS 別の追加要件
 - **macOS**: Xcode Command Line Tools（macOS 12.0 以上推奨）
-- **Windows**: Visual Studio Build Tools 2022 (C++ workload) + WebView2
+- **Windows**: Visual Studio Build Tools 2022 (C++ workload) + WebView2。ターミナルで POSIX コマンドを使う場合は Git for Windows（Git Bash）を推奨。無い場合は PowerShell にフォールバックします。
 - **Linux**: `libwebkit2gtk-4.1-dev`, `libssl-dev`, `librsvg2-dev`, `libappindicator3-dev`, `libayatana-appindicator3-dev`, `libxdo-dev`, `libgtk-3-dev`, `patchelf`
 
 ---
@@ -84,7 +84,14 @@ pnpm desktop:ui:dev
 # UI 単体テストの実行
 pnpm desktop:ui:test
 
-# macOS 向け .dmg のビルド
+# 現在の OS 向けインストーラーのビルド
+# macOS: .dmg / Windows: NSIS + MSI
+pnpm desktop:build
+
+# Windows 向け NSIS + MSI のみをビルド
+pnpm desktop:build:windows
+
+# macOS 向け .dmg のみをビルド
 pnpm desktop:build:dmg
 ```
 
@@ -99,7 +106,7 @@ pnpm tauri dev
 
 # パッケージビルド
 pnpm tauri:build:dmg # macOS .dmg
-pnpm tauri:build     # 全ターゲット
+pnpm tauri:build     # 現在の OS の全ターゲット（Windows は NSIS + MSI）
 ```
 
 初回起動時は Tauri が Cargo workspace 全体をビルドするため数分かかります。2回目以降はキャッシュが効いて高速に起動します。

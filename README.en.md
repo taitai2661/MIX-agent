@@ -59,12 +59,23 @@ Directly connects to your local codebase and works like OpenCode without requiri
 Download the installer for your OS from [GitHub Releases](https://github.com/taitai2661/MIX-agent/releases):
 
 - **macOS**:
-  - Apple Silicon (M1/M2/M3/M4): `mix-agent-desktop_*_aarch64.dmg`
-  - Intel Mac: `mix-agent-desktop_*_x64.dmg`
+  - Apple Silicon (M1/M2/M3/M4): `MIX-agent-Desktop-Apple-Silicon.dmg`
+  - Intel Mac: `MIX-agent-Desktop-Intel.dmg`
   - *Installation*: Open the `.dmg` and drag `MIX-agent Desktop` into your `Applications` folder.
-  - *macOS Gatekeeper*: Pre-release builds are currently unsigned/unnotarized. If Gatekeeper blocks opening, right-click (or Control-click) the app icon and select "Open", or run `xattr -cr "/Applications/MIX-agent Desktop.app"` in Terminal.
-- **Windows**: `mix-agent-desktop_*_x64-setup.exe` or `*.msi` installer
-- **Linux**: `mix-agent-desktop_*_amd64.deb` or `*.AppImage` package
+  - *First launch (Gatekeeper)*: Builds are not signed with an Apple Developer ID or notarized; they only carry an ad-hoc signature so Apple Silicon can launch them. If macOS says it cannot verify the app, open **System Settings ▸ Privacy & Security** and click **Open Anyway**. On macOS 14 and earlier you can also Control-click the app icon and choose **Open**.
+  - *"App is damaged and can't be opened"*: This usually means the download is incomplete or does not match `SHA256SUMS`. Download it again and verify the checksum. If the checksum matches but the app still will not open, run `xattr -dr com.apple.quarantine "/Applications/MIX-agent Desktop.app"` in Terminal and try again.
+  - *Known issue in v0.5.0*: The v0.5.0 macOS build is missing the ad-hoc bundle signature and may show "App is damaged and can't be opened". This is fixed in v0.5.1. To use v0.5.0, run the `xattr` command above.
+- **Windows (x64)**:
+  - Windows x64 installers are available from v0.5.1. The v0.5.0 assets are macOS-only.
+  - Recommended: `MIX-agent-Desktop-Windows-x64-Setup.exe` (NSIS; English/Japanese UI, per-user install)
+  - `MIX-agent-Desktop-Windows-x64.msi` (English; for managed/organizational deployment)
+  - *Supported OS*: Windows 10 1809 or later / Windows 11
+  - *WebView2*: The installer bootstrapper tries to install the runtime. An internet connection is required when WebView2 is missing.
+  - *Windows SmartScreen*: The installer is unsigned, so Windows may show "Windows protected your PC". Choose "More info" → "Run anyway".
+  - *Terminal / Git*: [Git for Windows](https://gitforwindows.org/) (Git Bash) is recommended. Without it, MIX-agent falls back to PowerShell, where POSIX commands such as `ls` and `grep` and some Git integration are unavailable.
+- **Linux**: Not currently published on GitHub Releases. Build from source if needed.
+
+After downloading, verify the file against the `SHA256SUMS` asset attached to the Release.
 
 #### 2. Run / Build from Source
 
@@ -77,7 +88,11 @@ pnpm install
 # Launch in development mode
 pnpm desktop:dev
 
-# Build native macOS .dmg package locally
+# Build an installer for the current OS
+# macOS: .dmg / Windows: NSIS + MSI
+pnpm desktop:build
+
+# Build a macOS .dmg only
 pnpm desktop:build:dmg
 ```
 

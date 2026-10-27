@@ -95,25 +95,45 @@ jobs:
 
           echo "ready=true" >> "$GITHUB_OUTPUT"
 
+      - name: Stage store source for both store builders
+        if: steps.images.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Both upstream builders expect a top-level `Apps/` tree. Keep this
+          # inline so a manual re-publish can run against an older tag that does
+          # not yet contain scripts/stage-store-source.sh.
+          stage=out/store-source
+          rm -rf "$stage"
+          mkdir -p "$stage/Apps"
+          cp -R build "$stage/build"
+          cp -R apps/MIX-agent "$stage/Apps/MIX-agent"
+          for file in \
+            README.md \
+            category-list.json \
+            featured-apps.json \
+            recommend-list.json \
+            store-config.json \
+            supported-languages.json
+          do
+            cp "$file" "$stage/$file"
+          done
+
       - name: Build ZimaOS v2 community store
         if: steps.images.outputs.ready == 'true'
         uses: IceWhaleTech/build-appstore-action@c9bb47fad5b32d7928a07978fad68801f52e910f
         with:
-          source: .
+          source: out/store-source
           output: dist
           base-url: https://cdn.jsdelivr.net/gh/${{ github.repository }}@gh-pages
           cache-file: .cache/build_appstore/image-size-cache.json
           digest-cache-file: .cache/build_appstore/image-digest-cache.json
 
-      - name: Stage legacy ZimaOS/CasaOS v1 store source
-        if: steps.images.outputs.ready == 'true'
-        run: bash scripts/stage-legacy-store.sh out/legacy-store
-
       - name: Build legacy ZimaOS/CasaOS v1 store
         if: steps.images.outputs.ready == 'true'
         uses: IceWhaleTech/CasaOS-AppStore/.github/actions/build-store-v1@0909364b800950030e71ea82355a5969a1c08b39
         with:
-          source: out/legacy-store
+          source: out/store-source
           output-zip: dist/store/main.zip
           report-json: out/build-v1-report.json
           report-title: MIX-agent legacy ZimaOS store build

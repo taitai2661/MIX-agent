@@ -1,5 +1,6 @@
 import { Brain, Compass, Keyboard, Lock, Zap } from "lucide-react";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
+import { modKey } from "@/lib/platform";
 import { useUi } from "@/lib/ui";
 import { useOnboardingGate } from "@/features/onboarding/useOnboardingGate";
 import { Card, Field, Row, Section } from "@/components/layout";
@@ -18,6 +19,9 @@ export function GeneralSettings() {
   const providers = useProviders();
   const sendShortcut = useUi((s) => s.sendShortcut);
   const setSendShortcut = useUi((s) => s.setSendShortcut);
+  const modifierSendLabel = tf("{shortcut}+Enter で送信 (Enter で改行)", {
+    shortcut: modKey(),
+  });
 
   return (
     <Section>
@@ -81,11 +85,11 @@ export function GeneralSettings() {
             </SegmentedOption>
             <SegmentedOption
               value="modifier"
-              label={t("⌘ / Ctrl + Enter で送信 (Enter で改行)")}
+              label={modifierSendLabel}
               selected={sendShortcut === "modifier"}
               onSelect={() => setSendShortcut("modifier")}
             >
-              {t("⌘ / Ctrl + Enter で送信 (Enter で改行)")}
+              {modifierSendLabel}
             </SegmentedOption>
           </Segmented>
         </div>
