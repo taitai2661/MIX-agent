@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MIX-agent Desktop",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "identifier": "io.github.taitai2661.mix-agent-desktop",
   "build": {
     "beforeDevCommand": "node scripts/ensure-chromium-dir.mjs && pnpm --filter mix-agent-desktop-ui dev",
@@ -37,7 +37,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -126,6 +126,15 @@
         "schemes": [
           "mix-agent-desktop"
         ]
+      }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/taitai2661/MIX-agent/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNERDg4M0JBMDZBMDk1REMKUldUY2xhQUd1b1BZUFVpSCtvOGw1ZHBidTN5ZEJjMndkaDR1N1pjRC9wUStUeFdOaG5UR2hjdGEK",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

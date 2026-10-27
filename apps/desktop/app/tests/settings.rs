@@ -33,6 +33,7 @@ fn full_settings() -> SettingsView {
         memory_link_embedding_neighbors: true,
         database_encryption: true,
         onboarding_completed: Some(true),
+        auto_check_updates: false,
     }
 }
 

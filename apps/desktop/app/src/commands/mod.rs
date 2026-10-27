@@ -25,6 +25,7 @@ pub mod schedules;
 pub mod settings;
 pub mod skills;
 pub mod tools;
+pub mod update;
 pub mod workspace;
 pub mod zip_util;
 

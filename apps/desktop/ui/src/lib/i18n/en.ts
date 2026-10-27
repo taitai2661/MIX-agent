@@ -265,12 +265,27 @@ export const en: Record<string, string> = {
   "パネル幅を拡大": "Expand panel width",
   "ネットワーク": "Network",
   "アップデート": "Updates",
-  "手動アップデート": "Manual updates",
-  "このバージョンでは自動更新とアプリ内の更新確認を無効にしています。最新版はGitHub Releasesからお使いのOS用のインストーラーを手動でダウンロードしてください。":
-    "Automatic and in-app update checks are disabled in this version. Download the latest installer for your OS manually from GitHub Releases.",
+  "アプリのアップデート": "App updates",
+  "現在のバージョン: {version}": "Current version: {version}",
+  "現在のバージョンを取得できませんでした":
+    "Could not determine the current version",
+  "更新を確認": "Check for updates",
+  "ダウンロード中…": "Downloading…",
+  "ダウンロード中… {percent}%": "Downloading… {percent}%",
+  "再起動": "Restart",
+  "v{version} をインストールしました。再起動すると適用されます。":
+    "Installed v{version}. Restart to apply it.",
+  "v{version} が利用可能です": "v{version} is available",
+  "ダウンロードしてインストール": "Download and install",
+  "最新バージョンです。": "You are up to date.",
+  "起動時に更新を確認": "Check for updates on launch",
+  "起動時にGitHub Releasesのマニフェストを確認します。ダウンロードとインストールは署名を検証した上で、確認ダイアログから実行します。":
+    "Checks the GitHub Releases manifest on launch. Downloads and installs only after the signature is verified and you confirm.",
+  "Linuxのdebパッケージはアプリ内更新の対象外です。debで導入した場合はGitHub Releasesから手動で更新してください（AppImageは自動更新できます）。":
+    "The Linux .deb package cannot update in-app; if you installed the .deb, update manually from GitHub Releases (AppImage builds update in-app).",
+  "このビルドはアプリ内更新に対応していません。GitHub Releasesから手動で更新してください。":
+    "This build cannot update in-app. Update manually from GitHub Releases.",
   "GitHub Releasesを開く": "Open GitHub Releases",
-  "ダウンロードしたDMGのSHA256SUMSチェックサムを確認してください。":
-    "Verify the downloaded DMG against SHA256SUMS.",
   "macOSアプリはApple Developer ID署名・公証なし（ad-hoc署名のみ）です。初回起動時にGatekeeperの確認が必要です。":
     "The macOS app is not signed with an Apple Developer ID or notarized (ad-hoc signature only). Gatekeeper asks for confirmation on first launch.",
   "アプリの改善のため匿名の診断情報を共有します":

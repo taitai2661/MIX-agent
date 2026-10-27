@@ -169,14 +169,23 @@ MIX_CHROMIUM_VERSION=154.0.8037.57 node scripts/fetch-chromium.mjs  # 固定
 **Desktop版のmacOSアプリはApple Developer IDコード署名・公証を行いません。** ただし `tauri.conf.json` の `bundle.macOS.signingIdentity` に `-` を設定し、ad-hoc署名は必ず付与します。Apple Siliconでは署名のないアプリバンドルを起動できず、ダウンロードしたDMGからコピーしただけで「壊れているため開けません」と表示されるためです。ad-hoc署名でも公証チケットはないため、初回起動時にGatekeeperの「このまま開く」確認が必要です。Windowsインストーラーは未署名です。
 ビルドにApple証明書・AppleアカウントSecrets・Windows署名証明書を渡さず、macOS GatekeeperとWindows SmartScreenの警告や起動制限の可能性をRelease notesに明記します。リリースワークフローはmacOSバンドルに対して `codesign --verify --deep --strict` とCPUアーキテクチャ検査を実行し、署名欠落や誤アーキテクチャの同梱Chromiumを公開前にfail closedで止めます。
 
-## 更新方法（手動配布）
+## 更新方法（署名付き自動更新）
 
-Tauri updater plugin、起動時・アプリ内の更新確認、自動更新、Updater署名アーティファクトを無効にしています。
-アプリにはUpdater公開鍵や`latest.json`エンドポイントを設定せず、リリースワークフローも`latest.json`や`.sig`を生成しません。
-「設定 ▸ アップデート」からGitHub Releasesを開き、利用者がOSに合うApple Silicon／Intel用DMG、Windows x64用NSIS/MSIを手動でダウンロードしてインストールしてください。
-リリースには4種類のインストーラーの`SHA256SUMS`を添付します。macOSアプリ本体はDeveloper ID署名・公証なし（ad-hoc署名のみ）のため、インストール前に配布元とチェックサムを確認し、初回起動時のGatekeeper確認とWindows SmartScreenの警告を理解したうえで利用してください。
+Tauri updater plugin を有効にし、`bundle.createUpdaterArtifacts = true` でプラットフォームごとの署名済みアップデータを生成します。
 
-将来、自動更新を再導入する場合はTauri updater plugin、署名鍵と埋め込み公開鍵、`latest.json`生成・検証を明示的に復元し、対応する鍵ペアおよび各OSでの実機更新を検証してください。v0.5.0の配布にUpdater署名鍵は不要です。
+- macOS: `.app.tar.gz` + `.sig`
+- Windows: NSIS `-setup.exe` + `.sig`（v2 はインストーラー自体をアップデータとして再利用）
+- Linux: `AppImage` + `.sig`（`.deb` はアプリ内更新の対象外。手動更新）
+
+`scripts/build-latest-json.mjs` がステージ済みアセットと `.sig` から `latest.json` を生成し、Releaseへ添付します。アプリは `https://github.com/taitai2661/MIX-agent/releases/latest/download/latest.json` を参照します。
+
+署名秘密鍵は GitHub Actions の Repository Secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` にのみ置きます。公開鍵は `tauri.conf.json` の `plugins.updater.pubkey` に埋め込みます。秘密鍵を失うと既存インストールへ更新を配信できなくなるため、リポジトリ外にオフラインバックアップを保管してください。
+
+アプリ内の更新は Rust の `commands::update`（`app_version` / `check_for_update` / `install_update`）を経由します。WebView には `updater:*` 権限を渡しません。起動時チェックは設定 `auto_check_updates`（既定 `true`）で制御し、「設定 ▸ アップデート」から手動確認・ダウンロード・インストール・再起動ができます。更新の適用前にプラグインが公開鍵で署名を検証し、不一致のペイロードはインストールしません。
+
+macOS は引き続き Developer ID 署名・公証なし（ad-hoc 署名のみ）、Windows インストーラーは未署名です。これはアップデータ署名とは独立で、Gatekeeper / SmartScreen の警告は残ります。配布物の `SHA256SUMS` も従来どおり添付します。
+
+鍵の生成・Secrets 登録・ローテーション手順は [`update-signing.md`](update-signing.md) を参照してください。
 
 ## Backup / Restore
 
@@ -217,11 +226,11 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 | 3 | Agent 自律性 + context 圧縮 / retrieval | ✅ |
 | 4 | MCP host + Browser Operator | ✅ |
 | 5 | Memory / Knowledge / Skills / Projects / Schedules / Agents | ✅ |
-| 6 | tray / menu / notification / backup / manual DMG release CI（auto-updateはv0.5.0で無効） | ✅ |
+| 6 | tray / menu / notification / backup / 署名付き自動更新 + macOS・Windows・Linux リリースCI | ✅ |
 | 7 | macOS 完成 + Windows x64 + Linux α | ⏳ |
 
-Phase 6 の従来のUpdater基盤はv0.5.0では配布対象から外しました。`desktop-release.yml` はApple Silicon／Intel macOSのad-hoc署名済みDMG、Windows x64の未署名NSIS/MSI、`SHA256SUMS`をReleaseへ添付し、Updater鍵・`latest.json`・`.sig`を使いません。
-Phase 7はWindows x64のCI・パッケージング・実機確認を進行中で、Linux Desktopは未着手です。
+Phase 6 で Tauri updater を再有効化しました。`desktop-release.yml` は Apple Silicon／Intel macOS の ad-hoc 署名済み DMG、Windows x64 の未署名 NSIS/MSI、Linux x64 の AppImage/deb に加え、署名済みアップデータ（`.app.tar.gz` / `-setup.exe` / `.AppImage` と各 `.sig`）と `latest.json` を Release へ添付します。秘密鍵は GitHub Actions の Repository Secrets のみに置きます。
+Phase 7 は Windows x64 と Linux x64 の実機更新確認を進行中です。
 
 ## 空チャットの挨拶（2026-10-01 追記）
 

@@ -981,6 +981,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_http::init())
+        // Signed, verified updates. The WebView reaches this only through
+        // `commands::update`, so no `updater:*` capability is granted.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
             let app_handle = app.handle().clone();
@@ -1173,6 +1176,9 @@ pub fn run() {
             commands::diagnostics::collect_diagnostics,
             commands::diagnostics::get_recent_logs,
             commands::diagnostics::export_diagnostics,
+            commands::update::app_version,
+            commands::update::check_for_update,
+            commands::update::install_update,
         ])
         .run(tauri::generate_context!());
 

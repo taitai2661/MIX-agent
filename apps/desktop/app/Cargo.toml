@@ -64,3 +64,7 @@ tauri-plugin-window-state = "2.0"
 tauri-plugin-deep-link = "2.0"
 tauri-plugin-single-instance = { version = "2.0", features = ["deep-link"] }
 tauri-plugin-cli = "2.0"
+# In-app updates. The plugin is driven from `commands::update` only; the
+# WebView never calls its IPC surface (no `updater:*` capability grant). It
+# needs Rust 1.90+, which the pinned 1.91 toolchain already satisfies.
+tauri-plugin-updater = "2"

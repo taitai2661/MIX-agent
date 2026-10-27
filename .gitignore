@@ -32,3 +32,8 @@ playwright-report/
 # Desktop app local data (kept outside repo)
 apps/desktop/.data/
 apps/desktop/app/.data/
+
+# Tauri updater signing keys: private keys must never enter the repository
+# (they live in GitHub Actions Repository Secrets + an offline backup).
+*.key
+*.key.pub

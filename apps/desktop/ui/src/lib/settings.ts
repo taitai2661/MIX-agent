@@ -36,6 +36,9 @@ export const DEFAULT_SETTINGS: SettingsView = {
   // Codex parity: database encryption defaults to false.
   database_encryption: false,
   onboarding_completed: null,
+  // The backend defaults this to `true` too: auto-check is one manifest
+  // request and the payload is signature-verified before installation.
+  auto_check_updates: true,
 };
 
 /** Shared access to the settings draft: one query, one cache entry, and a
