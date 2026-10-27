@@ -1467,10 +1467,19 @@ mod tests {
         let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
         let tool = TerminalTool::default();
         let (context, dir) = ctx_for("exitcode");
+        // POSIX `(exit 3)` runs in a subshell, so the persistent shell survives
+        // and `$?` reports 3. PowerShell has no subshell syntax: `(exit 3)`
+        // kills the shell before the status file is written, which is exactly
+        // the false-negative this test used to hit on Windows. `cmd.exe /c`
+        // exits only the child and works from both PowerShell and Git Bash.
+        #[cfg(windows)]
+        let command = "cmd.exe /c exit 3";
+        #[cfg(not(windows))]
+        let command = "(exit 3)";
         let result = tool
             .invoke(
                 context,
-                serde_json::json!({ "command": "(exit 3)", "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+                serde_json::json!({ "command": command, "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
             )
             .await
             .expect("invoke");

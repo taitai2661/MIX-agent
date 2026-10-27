@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-desktop-workspace",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "license": "Apache-2.0",
   "description": "MIX-agent Desktop — Rust + Tauri 2 + React workspace root",

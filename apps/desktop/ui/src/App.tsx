@@ -17,6 +17,7 @@ import {
 import { api } from "./lib/api";
 import { useUi, type View } from "./lib/ui";
 import { t } from "./lib/i18n";
+import { chord } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
 import { useConversations, useProjects } from "./lib/queries";
 import { SETTINGS_QUERY_KEY } from "./lib/settings";
@@ -260,7 +261,7 @@ export function App() {
           variant="ghost"
           size="icon-sm"
           onClick={toggleSidebar}
-          title={`${t("サイドバーの表示切り替え")} · ⌘B`}
+          title={`${t("サイドバーの表示切り替え")} · ${chord("Mod", "B")}`}
           aria-label={t("サイドバーの表示切り替え")}
           aria-pressed={sidebarOpen}
         >
@@ -304,7 +305,7 @@ export function App() {
             onClick={() => setPaletteOpen(true)}
             aria-label={t("コマンドを検索…")}
             aria-keyshortcuts="meta+k ctrl+k"
-            title={`${t("コマンドパレット")} · ⌘K`}
+            title={`${t("コマンドパレット")} · ${chord("Mod", "K")}`}
             className={
               "hidden h-7 min-w-44 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 " +
               "text-xs text-faint shadow-xs transition-colors duration-100 hover:border-line-strong hover:text-muted md:flex"
@@ -312,7 +313,7 @@ export function App() {
           >
             <Search size={13} aria-hidden="true" />
             <span className="flex-1 text-start">{t("検索")}</span>
-            <Kbd>⌘K</Kbd>
+            <Kbd>{chord("Mod", "K")}</Kbd>
           </button>
 
           <HealthIndicator />
@@ -323,7 +324,7 @@ export function App() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={toggleFileTree}
-                title={`${t("ファイルツリー")} · ⌘⇧E`}
+                title={`${t("ファイルツリー")} · ${chord("Mod", "Shift", "E")}`}
                 aria-label={t("ファイルツリー")}
                 aria-pressed={fileTreeOpen}
               >

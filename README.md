@@ -62,9 +62,11 @@ Docker や複雑なサーバー設定なしで、OpenCode のようにローカ�
   - Apple Silicon (M1/M2/M3/M4): `MIX-agent-Desktop-Apple-Silicon.dmg`
   - Intel Mac: `MIX-agent-Desktop-Intel.dmg`
   - *インストール手順*: `.dmg` を開き、`MIX-agent Desktop` を `Applications` フォルダへドラッグ＆ドロップします。
-  - *macOS Gatekeeper の注意*: 開発版のため未署名・未公証です。初回起動時に警告が出た場合は、Control キーを押しながらアプリアイコンをクリックして「開く」を選択するか、ターミナルで `xattr -cr "/Applications/MIX-agent Desktop.app"` を実行してください。
+  - *初回起動（Gatekeeper）*: Apple Developer ID による署名・公証は行っていません（Apple Silicon で起動できるよう ad-hoc 署名のみ付与しています）。初回起動時に「Apple は“MIX-agent Desktop”を検証できませんでした」と表示された場合は、**システム設定 ▸ プライバシーとセキュリティ** を開き、「このまま開く」をクリックしてください。macOS 14 以前は、アプリアイコンを Control キーを押しながらクリックして「開く」でも起動できます。
+  - *「壊れているため開けません」と表示された場合*: ダウンロードが不完全か、`SHA256SUMS` と一致していない可能性があります。再ダウンロードとチェックサム照合を行ってください。チェックサムが一致しているのに起動できない場合は、ターミナルで `xattr -dr com.apple.quarantine "/Applications/MIX-agent Desktop.app"` を実行してから再度開いてください。
+  - *v0.5.0 の既知の問題*: v0.5.0 の macOS 版はアプリバンドルへの ad-hoc 署名が欠けており、「壊れているため開けません」と表示されることがあります。v0.5.1 で修正済みです。v0.5.0 を使う場合は上記の `xattr` コマンドを実行してください。
 - **Windows (x64)**:
-  - ※ Windowsインストーラーは次回リリース以降で配布します。v0.5.0時点ではmacOSのみです。
+  - v0.5.1からWindows x64インストーラーを配布します。v0.5.0の配布物はmacOSのみです。
   - 推奨: `MIX-agent-Desktop-Windows-x64-Setup.exe`（NSIS。日本語/英語、ユーザー単位インストール）
   - `MIX-agent-Desktop-Windows-x64.msi`（英語。組織配布向け）
   - *対応 OS*: Windows 10 1809 以降 / Windows 11

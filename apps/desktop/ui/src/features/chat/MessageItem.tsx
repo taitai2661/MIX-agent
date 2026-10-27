@@ -27,6 +27,7 @@ import { reduceRunEvents } from "@/lib/runEvents";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
 import { t } from "@/lib/i18n";
+import { isMacPlatform } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import {
   displayModelName,
@@ -298,6 +299,10 @@ function UserMessage({
     draft.trim().length > 0 &&
     draft.trim() !== message.content.trim() &&
     !saving;
+  const saveHint = isMacPlatform() ? "⌘+Enter" : "Ctrl+Enter";
+  const saveHintText = isMacPlatform()
+    ? t("⌘+Enter で保存")
+    : t("Ctrl+Enter で保存");
 
   const save = async () => {
     if (!canSave || !onEdit) return;
@@ -351,7 +356,7 @@ function UserMessage({
           />
           <div className="flex items-center gap-1.5 px-1">
             <span className="text-xs text-faint">
-              {hintWithKeys(t("⌘+Enter で保存"), ["⌘+Enter"])}
+              {hintWithKeys(saveHintText, [saveHint])}
             </span>
             <Button
               size="sm"

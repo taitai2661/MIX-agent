@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.5.0
+Run with: python scripts/render_zimaos_compose.py v0.5.1
 PyYAML is required for this maintainer-only script.
 """
 
@@ -41,6 +41,21 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
+    "v0.5.1": {
+        "update_at": "2026-10-27",
+        "notes": {
+            "en_US": (
+                "Fixes the macOS DMG so the app launches on Apple Silicon, adds "
+                "Windows x64 installers, and polishes the desktop terminal and "
+                "platform-specific shortcuts."
+            ),
+            "ja_JP": (
+                "Apple SiliconのmacOSで起動できるようDMGを修正し、"
+                "Windows x64インストーラーを追加。Desktopのターミナルと"
+                "プラットフォーム別ショートカットを修正。"
+            ),
+        },
+    },
     "v0.5.0": {
         "update_at": "2026-10-25",
         "notes": {
@@ -163,7 +178,7 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    rendered = render(sys.argv[1] if len(sys.argv) == 2 else "v0.5.0")
+    rendered = render(sys.argv[1] if len(sys.argv) == 2 else "v0.5.1")
     for output in OUTS:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered)

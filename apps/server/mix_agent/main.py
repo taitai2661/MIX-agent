@@ -52,7 +52,7 @@ async def lifespan(app):
     )
 
 
-app = FastAPI(title="MIX agent", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.5.1", lifespan=lifespan)
 
 
 @app.middleware("http")

@@ -6,7 +6,8 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
+import { chord } from "@/lib/platform";
 import { type RunTimeline } from "@/lib/runEvents";
 import {
   promptDetail,
@@ -292,8 +293,10 @@ function Welcome({
       ) : (
         <p className="mx-auto max-w-md text-sm text-muted">
           {hintWithKeys(
-            t("何でも質問してください。/ でコマンド、⌘K で検索。"),
-            ["/", "⌘K"],
+            tf("何でも質問してください。/ でコマンド、{shortcut} で検索。", {
+              shortcut: chord("Mod", "K"),
+            }),
+            ["/", chord("Mod", "K")],
           )}
         </p>
       )}

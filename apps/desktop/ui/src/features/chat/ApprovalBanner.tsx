@@ -9,6 +9,7 @@ import {
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
+import { chord } from "@/lib/platform";
 import type { PendingApproval } from "@/lib/runEvents";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/layout";
@@ -130,11 +131,11 @@ export const ApprovalBanner = memo(function ApprovalBanner({
           disabled={busy || !approval.approvalId}
           onClick={() => void decide(true)}
           className="h-6 gap-1 px-2 text-2xs shadow-xs"
-          title={`${t("今回のみ許可")} · ⌘Enter`}
+          title={`${t("今回のみ許可")} · ${chord("Mod", "Enter")}`}
         >
           <span>{t("今回のみ許可")}</span>
           <Kbd className="text-[9px] px-1 py-0 bg-white/20 text-white border-white/30">
-            ⌘↵
+            {chord("Mod", "↵")}
           </Kbd>
         </Button>
       </div>

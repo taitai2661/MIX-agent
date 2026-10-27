@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { chord } from "@/lib/platform";
 import { CONVERSATIONS_QUERY_KEY, MODELS_QUERY_KEY } from "@/lib/queries";
 import { useUi, type SettingsTab, type Surface, type View } from "@/lib/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -171,7 +172,7 @@ export function CommandPalette() {
       {
         id: "action:new-thread",
         label: t("新規スレッド"),
-        keys: "⌘N",
+        keys: chord("Mod", "N"),
         icon: <Plus size={15} />,
         kind: "action",
         run: () => {
@@ -182,7 +183,7 @@ export function CommandPalette() {
       {
         id: "action:toggle-sidebar",
         label: t("サイドバー切り替え"),
-        keys: "⌘B",
+        keys: chord("Mod", "B"),
         icon: <PanelLeft size={15} />,
         kind: "action",
         run: () => toggleSidebar(),
@@ -190,7 +191,7 @@ export function CommandPalette() {
       {
         id: "action:toggle-file-tree",
         label: t("ファイルツリー表示切替"),
-        keys: "⌘⇧E",
+        keys: chord("Mod", "Shift", "E"),
         icon: <FolderTree size={15} />,
         kind: "action",
         run: () => toggleFileTree(),
@@ -198,7 +199,7 @@ export function CommandPalette() {
       {
         id: "action:settings",
         label: t("設定を開く"),
-        keys: "⌘,",
+        keys: chord("Mod", ","),
         icon: <Settings2 size={15} />,
         kind: "action",
         run: () => openSettings(),

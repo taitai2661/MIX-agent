@@ -15,7 +15,7 @@ export function UpdateSettings() {
         <div className="flex flex-col gap-3 py-1">
           <p className="text-sm text-fg">
             {t(
-              "v0.5.0では自動更新とアプリ内の更新確認を無効にしています。最新版はGitHub ReleasesからMac用DMGを手動でダウンロードしてください。",
+              "このバージョンでは自動更新とアプリ内の更新確認を無効にしています。最新版はGitHub Releasesからお使いのOS用のインストーラーを手動でダウンロードしてください。",
             )}
           </p>
           <a
@@ -34,7 +34,7 @@ export function UpdateSettings() {
           </p>
           <p className="text-xs text-muted">
             {t(
-              "macOSアプリはAppleコード署名・公証なしです。Gatekeeperが警告または起動を制限する場合があります。",
+              "macOSアプリはApple Developer ID署名・公証なし（ad-hoc署名のみ）です。初回起動時にGatekeeperの確認が必要です。",
             )}
           </p>
           <div className="border-t border-line pt-3">

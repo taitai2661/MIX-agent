@@ -1209,6 +1209,25 @@ mod tests {
         );
     }
 
+    /// Apple Silicon refuses to launch a completely unsigned `.app` copied out
+    /// of a downloaded DMG and reports it as damaged. Keep the ad-hoc signing
+    /// identity in the config so a release build can never regress to unsigned
+    /// again; Developer ID signing/notarization remains opt-in.
+    #[test]
+    fn macos_bundle_keeps_the_ad_hoc_signing_identity() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+        let raw = std::fs::read_to_string(&path).expect("read tauri.conf.json");
+        let config: serde_json::Value = serde_json::from_str(&raw).expect("parse tauri.conf.json");
+        let identity = config
+            .pointer("/bundle/macOS/signingIdentity")
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            identity,
+            Some("-"),
+            "bundle.macOS.signingIdentity must stay \"-\" (ad-hoc) so macOS can launch the app"
+        );
+    }
+
     /// Extract `version = "x.y.z"` from exactly one TOML section.
     ///
     /// A naive scan for the first `version` line after `[workspace.package]`

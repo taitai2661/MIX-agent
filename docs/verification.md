@@ -6,7 +6,35 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [実装] macOSインストール不能（バンドル署名欠落）の修正（2026-10-27）
+
+- 公開済み`v0.5.0`の`MIX-agent-Desktop-Apple-Silicon.dmg`をダウンロードして調査した。`.app`内に`Contents/_CodeSignature/CodeResources`が無く、実行ファイルだけがlinkerによるad-hoc署名だった。`codesign --verify --deep --strict`は`code has no resources but signature indicates they must be present`で失敗し、`spctl --assess`もrejectした。Apple Siliconではこの状態のアプリをダウンロード後に起動できず、「壊れているため開けません」と表示される原因になる。
+- `apps/desktop/app/tauri.conf.json`の`bundle.macOS.signingIdentity`に`-`（ad-hoc）を設定した。Developer ID署名・公証は引き続き行わない。`apps/desktop/app/src/lib.rs`に設定が`-`のままであることを固定するunit testを追加した。
+- `.github/workflows/desktop-release.yml`に`Verify macOS signature and bundle architecture`を追加した。macOSの`.app`に対して`codesign --verify --deep --strict`と`Signature=adhoc`を確認し、アプリ本体と同梱Chromiumの`lipo -archs`がmatrixのtarget（arm64／x86_64）と一致しなければfail closedで停止する。
+- ローカルmacOS（macOS 27.2 / arm64）で`pnpm tauri build --bundles app,dmg --target aarch64-apple-darwin`を実行した。`Signing with identity "-"`が出て、生成した`.app`は`codesign --verify --deep --strict`成功、`Signature=adhoc`、`Sealed Resources version=2 files=335`、本体と同梱Chromiumの両方が`arm64`だった。DMGは255.67 MiBで生成された。
+- DMGをマウントして`.app`をコピーし、`com.apple.quarantine`を付与して`open`したところ、未承認のままでは起動しなかった（Gatekeeper確認が必要な想定どおりの挙動）。`xattr -dr com.apple.quarantine`後に再実行すると起動し、プロセスが常駐することを確認した。DMG内の`.app`も署名検証に成功した。
+- 同梱Chromiumは`--headless --remote-debugging-port`で起動し、`/json/version`が`Chrome/145.0.7632.14`を返すことを確認した。TauriのリソースコピーでmacOS frameworkのsymlinkが実体化され、`.app`は約569 MiB（展開後）になる。起動には影響しないが、配布サイズ削減は今後の課題。
+- 検証コマンド: `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、変更前の`cargo test --workspace`、追加test単体、Desktop UIの`pnpm lint`／`pnpm typecheck`／`pnpm test`（32ファイル252テスト）／`pnpm format:check`、`node scripts/check-version-consistency.mjs`、workflow YAMLと`tauri.conf.json`の構文検査がすべて成功した。
+- 未検証: 修正版のIntel（x86_64）DMG実機、GitHub Actions `desktop-release` dry-run、Gatekeeperの「このまま開く」をGUIでクリックする操作、Developer ID署名・公証（方針として未使用）、Windows実機。`v0.5.0`の公開済みDMGはこの修正前のため、再配布する場合はタグ／Releaseの作り直しが必要。
+- ユーザーの選択により、修正版は`v0.5.1`として準備する。`package.json`、`apps/web/package.json`、`apps/desktop/package.json`、`apps/desktop/ui/package.json`、`apps/desktop/app/tauri.conf.json`、`apps/desktop/Cargo.toml`／`Cargo.lock`、`apps/server/pyproject.toml`／`uv.lock`／`mix_agent/main.py`、`runners/mcp_manager/main.py`を`0.5.1`へ更新した。`docs/openapi.json`は`scripts/export-openapi.py`で再生成し、`scripts/render_zimaos_compose.py`の`v0.5.1`メタデータから`apps/MIX-agent/docker-compose.yml`を再生成した。`docs/release-notes-v0.5.1.md`も追加した。
+- `scripts/check-version-consistency.mjs`を拡張し、従来の5 manifestに加えて`apps/web/package.json`、`apps/server/pyproject.toml`、FastAPIの`version`、`docs/openapi.json`、2箇所のMCP `clientInfo`（`runners/mcp_manager/main.py`、`apps/server/mix_agent/mcp/protocol.py`）のバージョンも検査するようにした。`protocol.py`が`0.2.3`のまま残っていたため`0.5.1`へ修正した。`node scripts/check-version-consistency.mjs --tag v0.5.1`が成功し、11箇所とタグが一致した。`scripts/check-memory-parity.py`、`scripts/check-greeting-parity.py`、`docker compose -f apps/MIX-agent/docker-compose.yml config`、`uv run ruff check`、`uv run ruff format --check`も成功した。
+- 追加検証: Desktop UIの`pnpm lint`／`pnpm typecheck`／`pnpm test`（32ファイル252テスト）／`pnpm format:check`、Webの`pnpm test`（21ファイル158テスト）／`pnpm build`、`cargo fmt --all -- --check`／`cargo clippy --workspace --all-targets -- -D warnings`／`cargo test --workspace`（37 suite / 602 passed）が成功した。ZimaOS ComposeはPyYAML 6.0.2（CIと同じ）で再生成しても差分が出ないことを確認した。
+- 最終`v0.5.1`ビルド: `pnpm tauri build --bundles app,dmg --target aarch64-apple-darwin`が成功し、`MIX-agent Desktop_0.5.1_aarch64.dmg`（255.68 MiB）と`.app`（569.10 MiB）を生成した。`CFBundleShortVersionString`／`CFBundleVersion`は`0.5.1`、`codesign --verify --deep --strict`は成功、`Signature=adhoc`、`Sealed Resources files=335`、アプリ本体と同梱Chromiumはいずれも`arm64`だった。
+- 最終DMGをマウントして`.app`の署名検証に成功した。同梱Chromiumに`com.apple.quarantine`を付けて`--version`を実行しても起動した。`.app`にquarantineを付けた場合は未承認のままでは起動せず、`xattr -dr com.apple.quarantine`後に起動した（App Translocation経由）。Gatekeeperの「このまま開く」をGUIでクリックする操作自体は未実施。
+- 未実施: Docker daemonが起動していないため、PostgreSQLを使う`docker compose --profile test run --rm test`、8種類のrelease image build、`Validate release candidate`相当の実Docker検証はローカルで実行していない。Windows CI、Windows実機、Intel Mac実機、GitHub Actions `desktop-release` dry-runも未実施。
+- リスク: この作業ツリーの`main`（`85c5a7cb`）は公開済み`v0.5.0`タグのcommit（`80dceade`）の子孫ではなく、`v0.5.0`を含むリリース系ブランチと分岐している。v0.5.1を公開する前に、どちらの履歴を正としてタグを切るか、`upstream/main`との統合方針を決める必要がある。
+
+## [実装] Windows配布の仕上げ（2026-10-26）
+
+- Windowsでショートカット表記が`⌘`／`⇧`固定になっていたため、`apps/desktop/ui/src/lib/platform.ts`を追加し、`ShortcutHelp`、`CommandPalette`、`App`、`Composer`、`ApprovalBanner`、`MessageItem`、`Transcript`、`GeneralSettings`をプラットフォーム対応にした。macOSは`⌘`／`⇧`、それ以外は`Ctrl`／`Shift`を表示する。キー入力側は従来どおり`metaKey`と`ctrlKey`の両方を受け付ける。
+- `Transcript`と`GeneralSettings`の文言は`tf()`の`{shortcut}`プレースホルダーへ変更し、`en`辞書も更新した。`platform.test.ts`でmacOS／非macOSの表記と`chord()`の結合を固定した。
+- `reports_a_nonzero_exit_code`はWindowsのみ`cmd.exe /c exit 3`を使うようにした。POSIXの`(exit 3)`はサブシェルで完結するが、PowerShellフォールバックでは`exit 3`がシェル自体を終了させ、status fileが書かれず`exit_code`が`null`になっていたため。
+- `README.md`／`README.en.md`のWindows記述を「次回リリース（v0.5.1以降）で配布予定、v0.5.0はmacOSのみ」に明確化した。`docs/release-notes-v0.5.0.md`は公開済みの履歴として変更しない。
+- ローカルmacOSで`cargo fmt --all -- --check`、`cargo test -p mixd-tools terminal::tests::reports_a_nonzero_exit_code`、Desktop UIの`pnpm typecheck`、`pnpm lint`、`pnpm test`（32ファイル252テスト）が成功した。
+- 未検証: 修正後のWindows CI（`desktop-rust (windows-latest)`と`desktop-package-windows`）。実行時点のGitHub Actionsは全jobがステップなし・0秒でfailureしており、billing／spending limitの可能性があり、Windows CIの実結果を取得できていない。Windows 10/11実機のNSIS／MSIインストール、初回起動、WebView2、SmartScreen、Credential Manager、ターミナル（Git Bashあり／なし）、同梱Chromium、日本語ユーザー名のワークスペース、アンインストールも未確認。署名・公証は行わない方針のまま。
+- `v0.5.0`タグはWindows対応コミットより前を指すため、v0.5.0へWindows成果物を後付けするにはタグとReleaseの作り直しが必要。今回は次回リリース向けの準備として扱う。
 
 ## [実装] Windows Desktopリリース対応（2026-10-26）
 

@@ -166,15 +166,15 @@ MIX_CHROMIUM_VERSION=154.0.8037.57 node scripts/fetch-chromium.mjs  # 固定
 ```
 
 `pnpm tauri build` の `beforeBuildCommand` が UI ビルド後に Chromium を自動取得します。
-**Desktop版のmacOSアプリはApple Developer IDコード署名・公証を行いません。** Windowsインストーラーも未署名です。
-ビルドにApple証明書・AppleアカウントSecrets・Windows署名証明書を渡さず、macOS GatekeeperとWindows SmartScreenの警告や起動制限の可能性をRelease notesに明記します。
+**Desktop版のmacOSアプリはApple Developer IDコード署名・公証を行いません。** ただし `tauri.conf.json` の `bundle.macOS.signingIdentity` に `-` を設定し、ad-hoc署名は必ず付与します。Apple Siliconでは署名のないアプリバンドルを起動できず、ダウンロードしたDMGからコピーしただけで「壊れているため開けません」と表示されるためです。ad-hoc署名でも公証チケットはないため、初回起動時にGatekeeperの「このまま開く」確認が必要です。Windowsインストーラーは未署名です。
+ビルドにApple証明書・AppleアカウントSecrets・Windows署名証明書を渡さず、macOS GatekeeperとWindows SmartScreenの警告や起動制限の可能性をRelease notesに明記します。リリースワークフローはmacOSバンドルに対して `codesign --verify --deep --strict` とCPUアーキテクチャ検査を実行し、署名欠落や誤アーキテクチャの同梱Chromiumを公開前にfail closedで止めます。
 
 ## 更新方法（手動配布）
 
 Tauri updater plugin、起動時・アプリ内の更新確認、自動更新、Updater署名アーティファクトを無効にしています。
 アプリにはUpdater公開鍵や`latest.json`エンドポイントを設定せず、リリースワークフローも`latest.json`や`.sig`を生成しません。
 「設定 ▸ アップデート」からGitHub Releasesを開き、利用者がOSに合うApple Silicon／Intel用DMG、Windows x64用NSIS/MSIを手動でダウンロードしてインストールしてください。
-リリースには4種類のインストーラーの`SHA256SUMS`を添付します。アプリ本体は署名・公証なしのため、インストール前に配布元とチェックサムを確認し、macOS Gatekeeper／Windows SmartScreenの警告を理解したうえで利用してください。
+リリースには4種類のインストーラーの`SHA256SUMS`を添付します。macOSアプリ本体はDeveloper ID署名・公証なし（ad-hoc署名のみ）のため、インストール前に配布元とチェックサムを確認し、初回起動時のGatekeeper確認とWindows SmartScreenの警告を理解したうえで利用してください。
 
 将来、自動更新を再導入する場合はTauri updater plugin、署名鍵と埋め込み公開鍵、`latest.json`生成・検証を明示的に復元し、対応する鍵ペアおよび各OSでの実機更新を検証してください。v0.5.0の配布にUpdater署名鍵は不要です。
 
@@ -220,7 +220,7 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 | 6 | tray / menu / notification / backup / manual DMG release CI（auto-updateはv0.5.0で無効） | ✅ |
 | 7 | macOS 完成 + Windows x64 + Linux α | ⏳ |
 
-Phase 6 の従来のUpdater基盤はv0.5.0では配布対象から外しました。`desktop-release.yml` はApple Silicon／Intel macOSの未署名DMG、Windows x64の未署名NSIS/MSI、`SHA256SUMS`をReleaseへ添付し、Updater鍵・`latest.json`・`.sig`を使いません。
+Phase 6 の従来のUpdater基盤はv0.5.0では配布対象から外しました。`desktop-release.yml` はApple Silicon／Intel macOSのad-hoc署名済みDMG、Windows x64の未署名NSIS/MSI、`SHA256SUMS`をReleaseへ添付し、Updater鍵・`latest.json`・`.sig`を使いません。
 Phase 7はWindows x64のCI・パッケージング・実機確認を進行中で、Linux Desktopは未着手です。
 
 ## 空チャットの挨拶（2026-10-01 追記）

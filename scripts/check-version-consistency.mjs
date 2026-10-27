@@ -30,28 +30,67 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(join(root, relativePath), "utf8"));
 }
 
-function readCargoWorkspaceVersion(relativePath) {
+function readProjectVersion(relativePath, section = "[project]") {
   const text = readFileSync(join(root, relativePath), "utf8");
-  const sectionStart = text.indexOf("[workspace.package]");
+  const sectionStart = text.indexOf(section);
   if (sectionStart === -1) {
-    throw new Error(`${relativePath} has no [workspace.package] section`);
+    throw new Error(`${relativePath} has no ${section} section`);
   }
-  const section = text.slice(sectionStart);
-  const nextSection = section.indexOf("\n[", 1);
-  const body = nextSection === -1 ? section : section.slice(0, nextSection);
-  const match = body.match(/^version\s*=\s*"([^"]+)"/m);
+  const body = text.slice(sectionStart + section.length);
+  const nextSection = body.search(/\n\s*\[/);
+  const scope = nextSection === -1 ? body : body.slice(0, nextSection);
+  const match = scope.match(/^\s*version\s*=\s*"([^"]+)"/m);
   if (!match) {
-    throw new Error(`${relativePath} has no workspace.package version`);
+    throw new Error(`${relativePath} has no version in ${section}`);
+  }
+  return match[1];
+}
+
+function readRegexVersion(relativePath, pattern, label) {
+  const text = readFileSync(join(root, relativePath), "utf8");
+  const match = text.match(pattern);
+  if (!match) {
+    throw new Error(`${relativePath} has no ${label}`);
   }
   return match[1];
 }
 
 const versions = [
   ["package.json", readJson("package.json").version],
+  ["apps/web/package.json", readJson("apps/web/package.json").version],
   ["apps/desktop/package.json", readJson("apps/desktop/package.json").version],
   ["apps/desktop/ui/package.json", readJson("apps/desktop/ui/package.json").version],
   ["apps/desktop/app/tauri.conf.json", readJson("apps/desktop/app/tauri.conf.json").version],
-  ["apps/desktop/Cargo.toml", readCargoWorkspaceVersion("apps/desktop/Cargo.toml")],
+  [
+    "apps/desktop/Cargo.toml",
+    readProjectVersion("apps/desktop/Cargo.toml", "[workspace.package]"),
+  ],
+  ["apps/server/pyproject.toml", readProjectVersion("apps/server/pyproject.toml")],
+  [
+    "apps/server/mix_agent/main.py",
+    readRegexVersion(
+      "apps/server/mix_agent/main.py",
+      /FastAPI\([^)]*version="([^"]+)"/,
+      "FastAPI version",
+    ),
+  ],
+  ["docs/openapi.json", readJson("docs/openapi.json").info.version],
+  [
+    "runners/mcp_manager/main.py",
+    readRegexVersion(
+      "runners/mcp_manager/main.py",
+      /"io\.modelcontextprotocol\/clientInfo":\s*\{\s*"name":\s*"MIX agent",\s*"version":\s*"([^"]+)"/,
+      "MCP clientInfo version",
+    ),
+  ],
+  [
+    "apps/server/mix_agent/mcp/protocol.py",
+    readRegexVersion(
+      "apps/server/mix_agent/mcp/protocol.py",
+      /"io\.modelcontextprotocol\/clientInfo"\]?\s*=\s*\{\s*"name":\s*"MIX agent",\s*"version":\s*"([^"]+)"/,
+      "MCP clientInfo version",
+    ),
+  ],
 ];
 
 const expected = versions[0][1];

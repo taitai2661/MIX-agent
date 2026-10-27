@@ -23,12 +23,16 @@ name: desktop-release
 # and variables; when a target has none, the version assertion below is the
 # only gate.
 #
-# Desktop builds are intentionally not code-signed or notarized for this
-# release line: macOS Gatekeeper and Windows SmartScreen may warn or block
-# launch. Do not import Apple certificates or pass Windows signing secrets to
-# the build. Distribution is manual-download only: the Tauri updater plugin
-# and updater artifacts stay disabled, so Releases contain the installers and
-# SHA256SUMS but no latest.json or updater signatures.
+# Desktop builds are intentionally not Developer ID-signed or notarized for
+# this release line, but every macOS .app is ad-hoc signed (`signingIdentity:
+# "-"` in tauri.conf.json). That signature is mandatory on Apple Silicon: an
+# unsigned bundle copied out of a downloaded DMG is reported as damaged and
+# cannot be launched at all. Gatekeeper still requires a one-time "Open Anyway"
+# confirmation because there is no notarization ticket. Do not import Apple
+# certificates or pass Windows signing secrets to the build. Distribution is
+# manual-download only: the Tauri updater plugin and updater artifacts stay
+# disabled, so Releases contain the installers and SHA256SUMS but no
+# latest.json or updater signatures.
 
 on:
   push:
@@ -235,8 +239,10 @@ jobs:
           CFT_KEY: ${{ matrix.cft_key }}
           MIX_CHROMIUM_SHA256: ${{ secrets[format('MIX_CHROMIUM_SHA256_{0}', matrix.cft_key)] }}
 
-      # App code signing/notarization is intentionally disabled for this release
-      # line. No Apple certificate, signing identity, Apple account, Windows
+      # Developer ID signing/notarization is intentionally disabled for this
+      # release line. The macOS app still gets the ad-hoc signature configured
+      # in tauri.conf.json; without it Apple Silicon refuses to launch the app.
+      # No Apple certificate, signing identity, Apple account, Windows
       # certificate, or updater key secrets are passed; users install updates
       # manually from the Release.
       - name: Build and bundle
@@ -244,13 +250,49 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
-            echo "::warning::Apple app signing/notarization and automatic updates are disabled for this release; Gatekeeper may warn or block launch."
+            echo "::warning::Apple Developer ID signing/notarization and automatic updates are disabled; the app is ad-hoc signed, so Gatekeeper asks for a one-time Open Anyway confirmation."
           elif [ "${{ runner.os }}" = "Windows" ]; then
             echo "::warning::The Windows installer is unsigned; SmartScreen may warn or block launch."
           fi
           pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           MIX_REQUIRE_CHROMIUM: "1"
+
+      # Fail closed on the two macOS packaging defects that make a DMG
+      # uninstallable/unusable:
+      #   1. a missing or invalid bundle signature (Apple Silicon reports the
+      #      copied app as damaged), and
+      #   2. a bundled Chromium built for the wrong CPU architecture (the Intel
+      #      and Apple Silicon jobs share the same runner label).
+      - name: Verify macOS signature and bundle architecture
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="target/${{ matrix.target }}/release/bundle/macos/MIX-agent Desktop.app"
+          test -d "$app"
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          signature="$(codesign -dv --verbose=4 "$app" 2>&1)"
+          echo "$signature"
+          echo "$signature" | grep -q '^Signature=adhoc$'
+
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) want=arm64 ;;
+            x86_64-apple-darwin) want=x86_64 ;;
+            *) echo "::error::Unexpected macOS target ${{ matrix.target }}"; exit 1 ;;
+          esac
+
+          app_archs="$(lipo -archs "$app/Contents/MacOS/mix-agent-desktop")"
+          echo "app archs: $app_archs"
+          echo "$app_archs" | grep -qw "$want"
+
+          chromium="$app/Contents/Resources/chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+          test -x "$chromium"
+          chromium_archs="$(lipo -archs "$chromium")"
+          echo "chromium archs: $chromium_archs"
+          echo "$chromium_archs" | grep -qw "$want"
 
       - name: Stage manual-download artifacts
         working-directory: apps/desktop
