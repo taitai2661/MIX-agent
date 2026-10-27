@@ -2,8 +2,8 @@
   "apps": [
     {
       "id": "io.github.taitai2661.mix-agent",
-      "title": "MIX-agent",
-      "tagline": "家庭内ネットワークで使うAIワークスペース。"
+      "tagline": "家庭内ネットワークで使うAIワークスペース。",
+      "title": "MIX-agent"
     }
   ]
 }
