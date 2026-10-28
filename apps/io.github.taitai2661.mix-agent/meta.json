@@ -10,17 +10,17 @@
   "architectures": [
     "amd64"
   ],
-  "update_at": "2026-10-27",
+  "update_at": "2026-10-28",
   "title": "MIX-agent",
-  "release_note": "Desktop (beta) gains signed in-app updates and Linux x64 AppImage/deb builds. Docker/Web functionality is unchanged.",
+  "release_note": "Desktop (beta) installs Chromium on demand, manages local LLM runtimes, and adds a live browser view. Desktop/Web browser actions are expanded.",
   "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
   "id": "io.github.taitai2661.mix-agent",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "categories": [
     "ai"
   ],
   "min_memory": 0,
   "min_image_size": {
-    "amd64": 1344771761
+    "amd64": 1354263540
   }
 }
