@@ -12,6 +12,7 @@ import { ErrorBox } from "@/components/shared";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useConfirm } from "@/components/ui/dialog";
 
 export function BackupSettings() {
   const [password, setPassword] = useState("");
@@ -21,6 +22,31 @@ export function BackupSettings() {
   const [needsRestart, setNeedsRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
+
+  const requestRestore = async () => {
+    const ok = await confirm({
+      title: t("バックアップを復元しますか？"),
+      description: t(
+        "選択したバックアップを検証して復元の準備をします。再起動すると現在の会話・設定・記憶は復元時点の内容に置き換わります。復元後に作成したデータは元に戻せません。",
+      ),
+      confirmLabel: t("復元する"),
+      tone: "danger",
+    });
+    if (ok) void run("restore");
+  };
+
+  const requestRelaunch = async () => {
+    const ok = await confirm({
+      title: t("復元を適用して再起動しますか？"),
+      description: t(
+        "現在のデータはバックアップの内容に置き換わります。この操作は元に戻せません。",
+      ),
+      confirmLabel: t("再起動して適用"),
+      tone: "danger",
+    });
+    if (ok) void api.relaunchApp();
+  };
 
   const run = async (kind: "create" | "restore") => {
     setError(null);
@@ -124,7 +150,7 @@ export function BackupSettings() {
           </Button>
           <Button
             disabled={busy || !restorePath || !password}
-            onClick={() => void run("restore")}
+            onClick={() => void requestRestore()}
             title={t("バックアップを検証し、再起動時に復元")}
           >
             <Upload size={12} /> {t("復元")}
@@ -134,12 +160,13 @@ export function BackupSettings() {
         {error && <ErrorBox error={error} />}
         {needsRestart && (
           <Row>
-            <Button disabled={busy} onClick={() => void api.relaunchApp()}>
+            <Button disabled={busy} onClick={() => void requestRelaunch()}>
               <RefreshCw size={12} /> {t("今すぐ再起動")}
             </Button>
           </Row>
         )}
       </Card>
+      {dialog}
     </Section>
   );
 }

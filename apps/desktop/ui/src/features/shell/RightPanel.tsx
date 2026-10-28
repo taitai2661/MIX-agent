@@ -25,56 +25,41 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
   const isDocked = useUi((s) => s.rightPanelDocked);
   const toggleDocked = useUi((s) => s.toggleRightPanelDocked);
   const isWide = rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH;
+  const diffTarget = useUi((s) => s.diffTarget);
+  const filePreviewPath = useUi((s) => s.filePreviewPath);
   const asideRef = useRef<HTMLElement | null>(null);
-  const returnFocusRef = useRef<Element | null>(null);
 
-  // Overlay drawer: Escape closes it. Focus stays where it was — the drawer
-  // never steals it — so there is no trap to manage.
+  // `rightPanel` is persisted but its targets are session-only. After a
+  // restart with "diff"/"file" stored, the panel restored as a 380px blank
+  // column with no header and no close button — indistinguishable from a
+  // rendering bug. Drop the panel when its target no longer exists.
   useEffect(() => {
-    if (rightPanel === "none") return;
-    // A docked panel is part of the page, not a modal drawer: it must not trap
-    // Tab or steal focus when the user switches Activity ↔ Changes.
-    if (isDocked) return;
-    // Remember where focus was so closing returns it there.
-    returnFocusRef.current = document.activeElement;
-    const aside = asideRef.current;
-    // Move focus into the drawer on open for keyboard users.
-    const first = aside?.querySelector<HTMLElement>(
-      "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-    );
-    (first ?? aside)?.focus?.();
+    if (rightPanel === "diff" && !diffTarget) setRightPanel("none");
+    if (rightPanel === "file" && !filePreviewPath) setRightPanel("none");
+  }, [diffTarget, filePreviewPath, rightPanel, setRightPanel]);
+
+  // Overlay drawer: Escape or a click outside closes it. It is deliberately
+  // non-modal: opening it must not steal focus from the composer, and Tab is
+  // free to leave the panel. A docked panel is part of the page, so only
+  // Escape (in `useAppShortcuts`) applies there.
+  useEffect(() => {
+    if (rightPanel === "none" || isDocked) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // Do not steal Escape from an open modal dialog / menu above us.
-        if (document.querySelector("[role='dialog'][data-modal='true']"))
-          return;
-        e.preventDefault();
-        setRightPanel("none");
-      }
-      if (e.key === "Tab" && aside) {
-        // Minimal focus trap: keep Tab cycling inside the drawer.
-        const items = Array.from(
-          aside.querySelectorAll<HTMLElement>(
-            "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-          ),
-        ).filter((el) => el.offsetParent !== null);
-        if (items.length === 0) return;
-        const firstItem = items[0];
-        const lastItem = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === firstItem) {
-          e.preventDefault();
-          lastItem.focus();
-        } else if (!e.shiftKey && document.activeElement === lastItem) {
-          e.preventDefault();
-          firstItem.focus();
-        }
-      }
+      if (e.key !== "Escape") return;
+      // Do not steal Escape from an open modal dialog / menu above us.
+      if (document.querySelector("[role='dialog'][data-modal='true']")) return;
+      e.preventDefault();
+      setRightPanel("none");
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const aside = asideRef.current;
+      if (aside && !aside.contains(e.target as Node)) setRightPanel("none");
     };
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      // Return focus to the opener on close.
-      (returnFocusRef.current as HTMLElement | null)?.focus?.();
+      window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [isDocked, rightPanel, setRightPanel]);
 

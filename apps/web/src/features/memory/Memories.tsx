@@ -1,7 +1,10 @@
 import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
+import { CardSkeleton } from "@/components/loading";
+import { ConfirmButton } from "@/components/modal";
 import { ErrorBox, Field, Title } from "@/components/shared";
+import { useToast } from "@/components/toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, GitMerge, History, Link2, ListChecks, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -48,6 +51,7 @@ function short(id?: string | null): string {
 
 export function Memories() {
   const qc = useQueryClient();
+  const { addToast } = useToast();
   const [q, setQ] = useState("");
   const [probeQuery, setProbeQuery] = useState("");
   const [probe, setProbe] = useState<TraceProbe | null>(null);
@@ -82,14 +86,17 @@ export function Memories() {
 
   const removeOne = async (id: string) => {
     await api(`/memories/${id}`, "DELETE");
-    refresh();
+    await refresh();
   };
 
   return (
-    <main className="page memory-mind-view">
+    <section className="page memory-mind-view">
       <Title title="記憶" sub={t("ChatGPTのように、ユーザーについての短い事実を1件ずつ保存します。")} />
 
-      <ErrorBox error={list.error || settings.error} />
+      <ErrorBox
+        error={list.error || settings.error}
+        onRetry={() => { void list.refetch(); void settings.refetch(); }}
+      />
 
       {settings.data && (
         <form className="card memory-settings" onSubmit={async (e) => {
@@ -107,8 +114,13 @@ export function Memories() {
               serper_api_key: null,
             });
             await qc.invalidateQueries({ queryKey: ["/settings"] });
+            addToast({ type: "success", title: t("設定を保存しました") });
           } catch (reason) {
-            console.error(reason);
+            addToast({
+              type: "error",
+              title: t("設定を保存できませんでした"),
+              message: reason instanceof Error ? reason.message : String(reason),
+            });
           }
         }}>
           <h3>{t("自動記憶")}</h3>
@@ -156,8 +168,13 @@ export function Memories() {
         <header>
           <h3><Brain size={16} /> {t("保存された記憶")} <small>{list.data?.length ?? 0}</small></h3>
         </header>
-        {!list.data?.length ? (
-          <p>{t("まだ記憶がありません。「覚える」から追加するか、「○○を覚えて」と話しかけてください。")}</p>
+        {list.isLoading ? (
+          <div className="memory-grid" aria-busy="true">
+            <CardSkeleton />
+            <CardSkeleton />
+          </div>
+        ) : list.isError ? null : !list.data?.length ? (
+          settings.error ? null : <p>{t("まだ記憶がありません。「覚える」から追加するか、「○○を覚えて」と話しかけてください。")}</p>
         ) : (
           <ul className="memory-grid">
             {list.data.map((mem) => {
@@ -213,7 +230,26 @@ export function Memories() {
                       </Button>
                     )}
                     <Button variant="ghost" onClick={() => setEditing(mem)}>{t("編集")}</Button>
-                    <Button variant="ghost" onClick={() => removeOne(mem.id)}><Trash2 size={14} /> {t("忘れる")}</Button>
+                    <ConfirmButton
+                      variant="ghost"
+                      title={t("記憶を忘れる")}
+                      message={t("この記憶を削除しますか？ 元に戻せません。")}
+                      confirmLabel={t("忘れる")}
+                      onConfirm={async () => {
+                        try {
+                          await removeOne(mem.id);
+                          addToast({ type: "success", title: t("記憶を削除しました") });
+                        } catch (reason) {
+                          addToast({
+                            type: "error",
+                            title: t("記憶を削除できませんでした"),
+                            message: reason instanceof Error ? reason.message : String(reason),
+                          });
+                        }
+                      }}
+                    >
+                      <Trash2 size={14} /> {t("忘れる")}
+                    </ConfirmButton>
                   </div>
                   {open === "associations" && (
                     <AssociationsView memoryId={mem.id} onClose={() => setPanel(null)} />
@@ -265,7 +301,7 @@ export function Memories() {
         </form>
         {probe && <TraceView probe={probe} query={probeQuery} onClose={() => setProbe(null)} />}
       </section>
-    </main>
+    </section>
   );
 }
 

@@ -148,6 +148,7 @@ docker compose up -d --build
 ### 2. 52 種類の Provider 対応 & 自動能力判定
 - OpenAI、Anthropic、Gemini、OpenRouter、Groq、Mistral、DeepSeek、Cohere、Ollama、LM Studio などの主要 Provider プリセットを網羅。
 - **Capability Probe**: モデルの Tool Calling 対応状況を実行前に副作用のない安全なプローブで自動検証。
+- **ローカルランタイム管理（Desktop）**: Ollama / LM Studio を自動検出し、アプリから起動・停止・再起動、モデルの取得・削除・ロード/アンロードまで行えます。Ollama は `num_ctx`（既定 8K 上限）と `keep_alive` をネイティブ API で制御します。
 
 ### 3. Tool Registry と柔軟な権限管理
 - ファイル操作、コード編集、永続ターミナル、Web 検索、ブラウザ操作、メモリ、ナレッジ検索などの組み込みツール。

@@ -17,9 +17,13 @@ import {
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
-import { getString, removeKey, setString } from "@/lib/storage";
 import { subscribePromptInsert } from "@/lib/promptInsert";
 import { loadPromptHistory, pushPromptHistory } from "@/lib/promptHistory";
+import {
+  clearComposerDraft,
+  loadComposerDraft,
+  saveComposerDraft,
+} from "@/lib/drafts";
 import { useUi, type SendShortcut } from "@/lib/ui";
 import type { ModelView, ProjectView, ProviderView } from "@/lib/types";
 import { Alert } from "@/components/ui/alert";
@@ -36,6 +40,7 @@ import {
 import { Kbd } from "@/components/layout";
 import { Spinner } from "@/components/ui/spinner";
 import { ErrorBox } from "@/components/shared";
+import { LocalRuntimeStatusChip } from "./LocalRuntimeStatusChip";
 import { ModelPicker } from "./ModelPicker";
 import { ProjectMenu } from "./ProjectMenu";
 import { MentionPopover } from "./MentionPopover";
@@ -142,7 +147,7 @@ export const Composer = memo(function Composer(props: {
   const projectsPending =
     props.projectsPending ?? ctx?.projectsPending ?? false;
   const { busy, onSend, onStop, draftKey = null } = props;
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => loadComposerDraft(draftKey ?? null));
   const {
     attachments,
     attachError,
@@ -285,10 +290,11 @@ export const Composer = memo(function Composer(props: {
     [addImageFiles],
   );
 
-  // Draft persistence: one slot per conversation, via `lib/storage.ts`
-  // (best-effort). Switching threads used to either drop the draft or leak it
-  // into the next thread. The ref dance avoids persisting the freshly-restored
-  // text of the new thread back into the old thread's slot.
+  // Draft persistence: one slot per conversation, via `lib/drafts.ts`
+  // (best-effort, timestamped, expires after 30 days). Switching threads used
+  // to either drop the draft or leak it into the next thread. The ref dance
+  // avoids persisting the freshly-restored text of the new thread back into the
+  // old thread's slot.
   useEffect(() => {
     const key = draftKey ?? null;
     if (key !== draftKeyRef.current) {
@@ -297,21 +303,30 @@ export const Composer = memo(function Composer(props: {
       // Persist the old thread's text outside the state updater (updaters
       // must be pure; side-effects here double-fire under StrictMode).
       if (prev !== undefined) {
-        if (current) setString(`mix:composer-draft:${prev ?? "none"}`, current);
-        else removeKey(`mix:composer-draft:${prev ?? "none"}`);
+        if (current) saveComposerDraft(prev, current);
+        else clearComposerDraft(prev);
       }
       draftKeyRef.current = key;
-      setDraft(getString(`mix:composer-draft:${key ?? "none"}`) ?? "");
+      setDraft(loadComposerDraft(key));
+      // Attachments and the per-send switches are not part of the saved draft.
+      // Carrying them across a thread switch silently included one task's
+      // screenshot (or an armed temporary mode) in the next task's message.
+      clearAttachments();
+      setTemporaryMode(false);
+      setAllowTools(false);
     }
+    // Deliberately keyed on the draft slot only: the helpers are recreated per
+    // render, and re-running this effect would wipe the current draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
   useEffect(() => {
-    const key = draftKeyRef.current ?? "none";
+    const key = draftKeyRef.current;
     // Keystrokes fire per character; debounce the write so typing doesn't
     // hit storage (a synchronous disk read) on every frame.
     const timer = window.setTimeout(() => {
-      if (draft) setString(`mix:composer-draft:${key}`, draft);
-      else removeKey(`mix:composer-draft:${key}`);
+      if (draft) saveComposerDraft(key, draft);
+      else clearComposerDraft(key);
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draft]);
@@ -433,12 +448,15 @@ export const Composer = memo(function Composer(props: {
         return;
       }
     }
-    pushPromptHistory(trimmed);
+    // A temporary turn must not leave the prompt in the local ArrowUp history.
+    // The same promise ("この送信は保存されません") applies here, not only to
+    // the database transcript.
+    if (!temporaryMode) pushPromptHistory(trimmed);
     historyIndexRef.current = -1;
     historyDraftRef.current = "";
     setDraft("");
     clearAttachments();
-    removeKey(`mix:composer-draft:${draftKeyRef.current ?? "none"}`);
+    clearComposerDraft(draftKeyRef.current);
     // Temporary mode is per-send: leaving it on would silently discard the next
     // turn's transcript too.
     setTemporaryMode(false);
@@ -775,7 +793,7 @@ export const Composer = memo(function Composer(props: {
               size="icon"
               onClick={() => {
                 const el = textareaRef.current;
-                if (!el) return;
+                if (!el || !rootPath) return;
                 const pos = el.selectionStart;
                 const textBefore = el.value.slice(0, pos);
                 const textAfter = el.value.slice(pos);
@@ -791,8 +809,17 @@ export const Composer = memo(function Composer(props: {
                   el.setSelectionRange(nextPos, nextPos);
                 });
               }}
-              title={t("ファイルをメンション (@)")}
-              aria-label={t("ファイルをメンション (@)")}
+              disabled={!rootPath}
+              title={
+                rootPath
+                  ? t("ファイルをメンション (@)")
+                  : t("プロジェクトを選択するとファイルをメンションできます")
+              }
+              aria-label={
+                rootPath
+                  ? t("ファイルをメンション (@)")
+                  : t("プロジェクトを選択するとファイルをメンションできます")
+              }
               className="shrink-0 rounded-full"
             >
               <AtSign size={18} />
@@ -874,6 +901,13 @@ export const Composer = memo(function Composer(props: {
                 onTemporaryChange={setTemporaryMode}
                 allowTools={allowTools}
                 onAllowToolsChange={setAllowTools}
+                runtimeStatus={
+                  <LocalRuntimeStatusChip
+                    modelId={modelId}
+                    models={models}
+                    providers={providers}
+                  />
+                }
                 className="max-w-32 min-w-0 flex-1 rounded-full sm:max-w-44 sm:flex-none"
               />
 

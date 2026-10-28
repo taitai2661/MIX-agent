@@ -98,7 +98,7 @@ export function CodeBlock({
       </div>
       <pre
         className={cn(
-          "overflow-x-auto px-3.5 py-3",
+          "code-block-pre overflow-x-auto px-3.5 py-3",
           collapsed && "max-h-80 overflow-y-auto",
         )}
       >

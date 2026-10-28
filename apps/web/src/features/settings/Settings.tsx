@@ -120,7 +120,7 @@ export function Settings({
           </Fragment>
         ))}
       </nav>
-      <main className="settings-content">
+      <section className="settings-content">
         <Routes>
           <Route index element={<SettingsOverview />} />
           <Route path="providers" element={<Providers />} />
@@ -139,7 +139,7 @@ export function Settings({
           <Route path="statistics" element={<Statistics />} />
           <Route path="diagnostics" element={<Diagnostics />} />
         </Routes>
-      </main>
+      </section>
     </div>
   );
 }

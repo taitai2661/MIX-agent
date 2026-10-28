@@ -2,7 +2,8 @@ import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { ConfirmButton } from "@/components/modal";
-import { ErrorBox, Title } from "@/components/shared";
+import { CardSkeleton } from "@/components/loading";
+import { Empty, ErrorBox, Title } from "@/components/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -39,11 +40,17 @@ export function Projects() {
       await qc.invalidateQueries({ queryKey: ["/projects"] });
     } catch (cause) { setError(cause); }
   }
-  return <main className="page projects-page">
+  return <section className="page projects-page">
     <Title title={t("プロジェクト")} sub={t("会話、指示、資料テキストをまとめます。既存の会話はそのまま残ります。")} />
-    <ErrorBox error={error || projects.error || conversations.error} />
+    <ErrorBox error={error || projects.error || conversations.error} onRetry={() => { setError(null); void projects.refetch(); void conversations.refetch(); }} />
     <form onSubmit={create} className="folder-create"><input aria-label={t("プロジェクト名")} value={name} onChange={event => setName(event.target.value)} placeholder={t("新しいプロジェクト")} maxLength={100} /><Button type="submit">{t("作成")}</Button></form>
-    <div className="folder-chips">{projects.data?.map(item => <Link key={item.id} to={`/projects/${item.id}`}>{item.data.name}</Link>)}</div>
+    {projects.isLoading ? (
+      <CardSkeleton />
+    ) : projects.isError ? null : projects.data && projects.data.length > 0 ? (
+      <div className="folder-chips">{projects.data.map(item => <Link key={item.id} to={`/projects/${item.id}`}>{item.data.name}</Link>)}</div>
+    ) : error ? null : (
+      <Empty>{t("プロジェクトはまだありません。")}</Empty>
+    )}
     {project && <section className="project-detail">
       <h2>{project.data.name}</h2>
       <Link to={`/projects/${project.id}/chat`}>{t("このプロジェクトで新しいチャット")}</Link>
@@ -73,5 +80,5 @@ export function Projects() {
         }}
       >{t("プロジェクトを削除")}</ConfirmButton>
     </section>}
-  </main>;
+  </section>;
 }

@@ -60,6 +60,11 @@ pub struct RunView {
     pub model_id: String,
     pub step_count: u32,
     pub tool_call_count: u32,
+    /// Tool calls that ended with an error (including denied approvals).
+    /// Collapsed transcripts only showed the success count, so a failed edit or
+    /// a non-zero command was invisible unless the accordion was opened.
+    #[serde(default)]
+    pub failed_tool_count: u32,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub summary: String,

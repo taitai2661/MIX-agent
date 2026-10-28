@@ -88,6 +88,48 @@ UI 側の解釈は `ui/src/lib/runEvents.ts` の `applyRunEvent()` が持ちま�
 `default` 分岐で未知の `kind` は黙って無視されるので、Desktop 側で
 `kind` を増やすときは同じ switch にケースを追加してください。
 
+## Local runtime management
+
+`app/src/local_runtime.rs` が Ollama / LM Studio などの外部ランタイムの
+ライフサイクルを所有します。検出（`mixd_providers::discovery`）は「何が
+存在するか」だけを返し、状態・プロセス・ログ・ジョブはマネージャが保持します。
+
+- **所有権**: アプリが起動した子プロセスだけを停止対象にします。外部起動の
+  ランタイムは `managed = false` とし、停止ボタンを出しません。ポート番号から
+  PID を推測して kill することはありません。起動・停止・再起動は slug ごとの
+  ロックで直列化し、二重起動や「停止したのに子プロセスが残る」競合を防ぎます。
+- **起動**: `launch_spec()` が返す絶対パス + 引数配列で `tokio::process`
+  から起動します。シェルは経由しません。Ollama は `ollama serve`、LM Studio は
+  `lms server start --port …` です。ポートと `OLLAMA_HOST` はプロバイダーの
+  `baseUrl` に合わせて書き換えるため、カスタムポートでも二重起動しません。
+- **状態**: `unknown / not_installed / stopped / starting / online / degraded /
+  stopping / error / unsupported`。10 秒間隔のヘルスチェックで 2 回連続失敗
+  すると `online → degraded` になり、停止中でもインストール済みのランタイムは
+  30 秒ごとに再検出します。
+- **モデル操作**: Ollama は `/api/pull`・`/api/delete`・`/api/generate`
+  (`keep_alive`)、LM Studio は `lms get/load/unload`。進捗は `job_id` +
+  `local_job_event` で流します。ログはスナップショットに同梱せず、
+  `local_runtime_logs` をパネル表示中だけ取得します。
+- **チャット**: Ollama は `providers/src/ollama.rs` のネイティブ `/api/chat`
+  を使い、`options.num_ctx` と `keep_alive` を渡します。`num_ctx` はモデルの
+  公称最大値ではなく `local_context_window`（既定 8K）で上限を切ります。
+  thinking 非対応モデルでは `think` を落として 1 回だけ再試行します。
+  LM Studio は OpenAI 互換のままです。
+- **設定**: `local_scan_on_start` / `local_auto_start`（既定オフ）/
+  `local_stop_on_exit` / `local_keep_alive` / `local_context_window`。
+  プロバイダー単位の `data.local.autoStart` が優先されます。
+- **ローカルの二段階判定**: `is_local_base_url` は API キー免除・Auto の
+  コスト判定用で、ループバックに加えて LAN / mDNS / Tailscale も含みます。
+  一方、起動・停止・自動起動・`num_ctx` 上限は
+  `is_loopback_base_url`（`127.0.0.1` / `localhost` / `::1` のみ）で判定します。
+  LAN 上の Ollama はローカルではあるが、このアプリが所有するプロセスでは
+  ありません。両者を混ぜると LAN の GPU サーバためにローカルで二重起動し、
+  8K 上限を適用してしまいます。
+- **空ライブラリ**: ランタイムの指紋が一致したサーバは、モデルが 0 件でも
+  `online` として扱います。`online` は「モデルがある」ではなく「このアプリが
+  話せるランタイムである」の意味です。そうしないと、まっさらな Ollama を
+  起動 → 最初のモデルを pull する導線が成立しません。
+
 ## Browser Operator
 
 ```

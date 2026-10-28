@@ -32,7 +32,7 @@ pub struct ModelView {
 /// colon to find the provider, so a model name containing colons (Ollama tags
 /// like `llama3.1:8b`) stays intact.
 pub async fn sync_models(
-    state: &AppState,
+    pool: &sqlx::Pool<sqlx::Sqlite>,
     provider_id: &str,
     models: &[mixd_providers::discovery::DiscoveredModel],
 ) -> Result<Vec<ModelView>, String> {
@@ -109,10 +109,32 @@ pub async fn sync_models(
         .bind(data.to_string())
         .bind(&now)
         .bind(serde_json::Value::Object(discovered).to_string())
-        .execute(state.storage.pool())
+        .execute(pool)
         .await
         .map_err(crate::error::cmd_err)?;
-        written.push(fetch_model_view(state.storage.pool(), &model_id).await?);
+        written.push(fetch_model_view(pool, &model_id).await?);
+    }
+    // A re-sync is an authoritative list for this provider. Without this pass a
+    // model deleted from the runtime stayed in the DB forever, so the Composer
+    // kept offering a tag that answered 404. The UI's "delete" action only
+    // removes it from the runtime; the row is removed here.
+    let keep: std::collections::HashSet<&str> =
+        written.iter().map(|model| model.id.as_str()).collect();
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM models WHERE json_extract(data, '$.providerId') = ?")
+            .bind(provider_id)
+            .fetch_all(pool)
+            .await
+            .map_err(crate::error::cmd_err)?;
+    for id in existing {
+        if keep.contains(id.as_str()) {
+            continue;
+        }
+        sqlx::query("DELETE FROM models WHERE id = ?")
+            .bind(&id)
+            .execute(pool)
+            .await
+            .map_err(crate::error::cmd_err)?;
     }
     Ok(written)
 }
@@ -272,15 +294,18 @@ pub async fn verify_tools(
     model_id: String,
 ) -> Result<ModelView, String> {
     let pool = state.storage.pool();
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, COALESCE(json_extract(data, '$.providerId'), '') \
-         FROM models WHERE id = ?",
+    let row: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT m.id, COALESCE(json_extract(m.data, '$.providerId'), ''), \
+                json_extract(p.data, '$.kind'), json_extract(p.data, '$.baseUrl') \
+         FROM models m LEFT JOIN providers p \
+           ON p.id = json_extract(m.data, '$.providerId') \
+         WHERE m.id = ?",
     )
     .bind(&model_id)
     .fetch_optional(pool)
     .await
     .map_err(crate::error::cmd_err)?;
-    let (id, provider_id) = row.ok_or_else(|| "model not found".to_string())?;
+    let (id, provider_id, kind, base_url) = row.ok_or_else(|| "model not found".to_string())?;
     let provider: Arc<dyn Provider> = {
         let guard = state.engine.providers.inner.read().await;
         guard.get(&provider_id).cloned()
@@ -289,19 +314,35 @@ pub async fn verify_tools(
     // The stored id is `<provider_id>:<model>`; split on the first colon so an
     // Ollama tag (`llama3.1:8b`) keeps its tag.
     let model_name = id.split_once(':').map(|(_, name)| name).unwrap_or(&id);
-    let supported = mixd_providers::probe_tool_calling(provider.as_ref(), model_name)
-        .await
-        .map_err(crate::error::cmd_err)?;
+    // A real probe is only safe where the transport is a local runtime: a
+    // cloud endpoint that answers 401 or 429 must not be silently reclassified
+    // as "no tools". For remote providers the static transport capability is
+    // exactly the answer this command gave before.
+    let is_local = match base_url.as_deref().filter(|url| !url.trim().is_empty()) {
+        Some(url) => mixd_providers::discovery::is_local_base_url(url),
+        None => matches!(kind.as_deref(), Some("ollama") | Some("lmstudio")),
+    };
+    let (supported, source) = if is_local {
+        (
+            mixd_providers::probe_tool_calling(provider.as_ref(), model_name)
+                .await
+                .map_err(crate::error::cmd_err)?,
+            "probe",
+        )
+    } else {
+        (provider.capabilities().tool_calling, "transport")
+    };
     // Patch only the probed flag and its provenance. Vision/reasoning, the
     // context window and the Auto opt-in all survive a re-verification.
     sqlx::query(
         "UPDATE models SET data = json_set(data, \
           '$.toolCalling', ?, \
-          '$.capabilitySource', 'probe', \
+          '$.capabilitySource', ?, \
           '$.capabilitiesVerifiedAt', ?) \
          WHERE id = ?",
     )
     .bind(if supported { 1 } else { 0 })
+    .bind(source)
     .bind(chrono::Utc::now().to_rfc3339())
     .bind(&model_id)
     .execute(pool)

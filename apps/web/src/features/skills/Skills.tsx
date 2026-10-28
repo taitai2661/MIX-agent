@@ -64,7 +64,7 @@ export function Skills() {
     }
   };
 
-  return <main className="page">
+  return <section className="page">
     <Title title="Skills" sub={t("Agent Skills（SKILL.md）の取り込み・書き出しと、検証済み手順の再利用。")} />
     <ErrorBox error={error || rows.error} />
     {notice && <p className="success">{notice}</p>}
@@ -123,5 +123,5 @@ export function Skills() {
         </div>
       </div>;
     })}
-  </main>;
+  </section>;
 }

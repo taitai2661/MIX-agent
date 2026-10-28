@@ -19,17 +19,20 @@ import {
   ListChecks,
   MessageSquare,
   Pencil,
+  RefreshCw,
   Sparkles,
+  Square,
   Wrench,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { reduceRunEvents } from "@/lib/runEvents";
 import { Markdown } from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { isMacPlatform } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import {
+  absoluteTime,
   displayModelName,
   relativeTime,
   stripLeakedMarkup,
@@ -52,6 +55,8 @@ export const MessageItem = memo(function MessageItem({
   editDisabled = false,
   retryDisabled = false,
   showRunError = false,
+  tailCount = 0,
+  now,
 }: {
   message: MessageView;
   runs: Map<string, RunView>;
@@ -63,6 +68,12 @@ export const MessageItem = memo(function MessageItem({
   retryDisabled?: boolean;
   /** Render this Run's failure under this (its last assistant) message. */
   showRunError?: boolean;
+  /** Messages after this one. Editing this turn deletes all of them, so a
+   *  non-zero tail has to be confirmed before the save is sent. */
+  tailCount?: number;
+  /** Shared minute clock from `Transcript`; keeps relative labels fresh without
+   *  one interval per row. */
+  now: number;
 }) {
   const setActivityRunId = useUi((s) => s.setActivityRunId);
   const setRightPanel = useUi((s) => s.setRightPanel);
@@ -78,12 +89,14 @@ export const MessageItem = memo(function MessageItem({
         editDisabled={editDisabled}
         retryDisabled={retryDisabled}
         showRunError={showRunError}
+        tailCount={tailCount}
+        now={now}
       />
     );
   }
 
   return (
-    <div className="group/msg flex gap-3">
+    <div className="message-row group/msg flex gap-3">
       <span
         aria-hidden="true"
         className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg border border-line bg-gradient-to-b from-surface to-inset text-muted shadow-xs"
@@ -108,8 +121,12 @@ export const MessageItem = memo(function MessageItem({
             {displayModelName(message.model_id, models)}
           </span>
           <span aria-hidden="true">·</span>
-          <time className="shrink-0 tabular-nums">
-            {relativeTime(message.created_at)}
+          <time
+            className="shrink-0 tabular-nums"
+            dateTime={message.created_at}
+            title={absoluteTime(message.created_at)}
+          >
+            {relativeTime(message.created_at, new Date(now))}
           </time>
           {run && run.tool_call_count > 0 && (
             <Badge asChild tone="info" size="sm">
@@ -125,7 +142,37 @@ export const MessageItem = memo(function MessageItem({
               </button>
             </Badge>
           )}
+          {run && (run.failed_tool_count ?? 0) > 0 && (
+            <Badge asChild tone="danger" size="sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setActivityRunId(run.id);
+                  setRightPanel("activity");
+                }}
+              >
+                <Wrench size={10} />{" "}
+                {tf("{count}件失敗", { count: run.failed_tool_count ?? 0 })}
+              </button>
+            </Badge>
+          )}
           <span className="actions">
+            {showRunError &&
+              onRetry &&
+              run &&
+              run.status !== "cancelled" &&
+              run.status !== "failed" && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={retryDisabled}
+                  onClick={() => void onRetry()}
+                  title={t("この回答を破棄して再生成")}
+                  aria-label={t("回答を再生成")}
+                >
+                  <RefreshCw size={13} aria-hidden="true" />
+                </Button>
+              )}
             <CopyButton value={message.content} />
           </span>
         </div>
@@ -133,8 +180,33 @@ export const MessageItem = memo(function MessageItem({
         <div className="text-sm text-fg">
           <Markdown>{stripLeakedMarkup(message.content)}</Markdown>
         </div>
+        {run?.status === "cancelled" && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-1.5 text-xs text-muted"
+          >
+            <span className="inline-flex items-center gap-1 rounded-full border border-line bg-inset px-2 py-0.5">
+              <Square size={9} aria-hidden="true" />
+              {t("停止しました")}
+            </span>
+            {showRunError && onRetry && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={retryDisabled}
+                onClick={() => void onRetry()}
+              >
+                {t("再実行")}
+              </Button>
+            )}
+          </div>
+        )}
         {run && run.tool_call_count > 0 && (
-          <MessageToolsAccordion runId={run.id} count={run.tool_call_count} />
+          <MessageToolsAccordion
+            runId={run.id}
+            count={run.tool_call_count}
+            failedCount={run.failed_tool_count ?? 0}
+          />
         )}
         {showRunError && run?.error && (
           <RunErrorAlert
@@ -151,11 +223,15 @@ export const MessageItem = memo(function MessageItem({
 function MessageToolsAccordion({
   runId,
   count,
+  failedCount = 0,
 }: {
   runId: string;
   count: number;
+  failedCount?: number;
 }) {
-  const [open, setOpen] = useState(false);
+  // A run with a failed edit/command must not look like a clean success: open
+  // the details by default so the failure is on screen without a click.
+  const [open, setOpen] = useState(failedCount > 0);
   const events = useQuery({
     queryKey: ["run_events", runId],
     queryFn: () => api.listRunEvents(runId),
@@ -188,6 +264,11 @@ function MessageToolsAccordion({
           <Badge tone="neutral" size="sm">
             {count}
           </Badge>
+          {failedCount > 0 && (
+            <Badge tone="danger" size="sm">
+              {tf("{count}件失敗", { count: failedCount })}
+            </Badge>
+          )}
           {todos.length > 0 && (
             <Badge
               tone={completedCount === todos.length ? "success" : "brand"}
@@ -267,6 +348,8 @@ function UserMessage({
   editDisabled,
   retryDisabled = false,
   showRunError,
+  tailCount = 0,
+  now,
 }: {
   message: MessageView;
   run: RunView | undefined;
@@ -275,10 +358,13 @@ function UserMessage({
   editDisabled: boolean;
   retryDisabled?: boolean;
   showRunError: boolean;
+  tailCount?: number;
+  now: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Re-seed from the persisted text whenever the editor opens, and focus it so
@@ -306,10 +392,20 @@ function UserMessage({
 
   const save = async () => {
     if (!canSave || !onEdit) return;
+    // The backend truncates the conversation from this turn onward. That is
+    // the intent of an edit, but it is destructive and irreversible, and the
+    // editor previously looked like an ordinary save: one click on an old
+    // prompt silently erased every later message, tool call and file change.
+    // Confirm while a tail exists, and name what will be removed.
+    if (tailCount > 0 && !confirming) {
+      setConfirming(true);
+      return;
+    }
     setSaving(true);
     try {
       await onEdit(message.id, draft.trim());
       setEditing(false);
+      setConfirming(false);
     } catch {
       // The parent renders the failure; keeping the editor open preserves the
       // typed text instead of dropping it on a transient error.
@@ -319,7 +415,7 @@ function UserMessage({
   };
 
   return (
-    <div className="group/msg flex flex-col items-end gap-1">
+    <div className="message-row group/msg flex flex-col items-end gap-1">
       {(message.attachments ?? []).length > 0 && (
         <div className="flex max-w-full min-w-0 flex-wrap justify-end gap-1.5">
           {(message.attachments ?? []).map((a, i) => {
@@ -347,6 +443,7 @@ function UserMessage({
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 e.preventDefault();
+                setConfirming(false);
                 setEditing(false);
                 return;
               }
@@ -366,7 +463,10 @@ function UserMessage({
             <Button
               size="sm"
               disabled={saving}
-              onClick={() => setEditing(false)}
+              onClick={() => {
+                setConfirming(false);
+                setEditing(false);
+              }}
             >
               {t("キャンセル")}
             </Button>
@@ -379,6 +479,36 @@ function UserMessage({
               {saving ? <Spinner size={12} /> : t("保存")}
             </Button>
           </div>
+          {confirming && (
+            <div
+              role="alert"
+              className="flex w-full flex-col gap-2 rounded-xl border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-fg"
+            >
+              <p className="m-0">
+                {tf(
+                  "この後の{count}件のメッセージとツール実行履歴を削除して、この発言から再生成します。元に戻せません。",
+                  { count: tailCount },
+                )}
+              </p>
+              <div className="flex items-center justify-end gap-1.5">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirming(false)}
+                >
+                  {t("キャンセル")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={saving}
+                  onClick={() => void save()}
+                >
+                  {saving ? <Spinner size={12} /> : t("削除して保存")}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -386,8 +516,12 @@ function UserMessage({
             {message.content}
           </div>
           <div className="flex items-center gap-1 px-1 text-xs text-faint">
-            <time className="tabular-nums">
-              {relativeTime(message.created_at)}
+            <time
+              className="tabular-nums"
+              dateTime={message.created_at}
+              title={absoluteTime(message.created_at)}
+            >
+              {relativeTime(message.created_at, new Date(now))}
             </time>
             {onEdit && (
               <Button

@@ -250,6 +250,38 @@ pub async fn tick(state: &AppState) -> usize {
     started
 }
 
+/// Fire one job immediately ("Run now"), reusing the same dispatch path as the
+/// cron tick so a manual run creates/uses the same conversation and advances
+/// `lastRunAt` (otherwise the daemon would fire the same slot again seconds
+/// later).
+pub async fn run_now(state: &AppState, id: &str) -> Result<String, String> {
+    let jobs = load_jobs(state.storage.as_ref()).await;
+    let job = jobs
+        .into_iter()
+        .find(|job| job.id == id)
+        .ok_or_else(|| format!("job not found: {id}"))?;
+    if job.prompt.trim().is_empty() {
+        return Err("this job has no prompt".into());
+    }
+    let conversation_id = target_conversation(state, &job).await?;
+    let input = crate::commands::conversations::SendMessageInput {
+        conversation_id,
+        content: job.prompt.clone(),
+        model_id: job.model_id.clone(),
+        mode: job.mode.clone(),
+        workspace_id: None,
+        attachments: Vec::new(),
+        reasoning: None,
+        temperature: None,
+        max_tokens: None,
+        temporary_mode: false,
+        allow_tools: false,
+    };
+    let out = crate::commands::conversations::dispatch_run(state, input).await?;
+    mark_ran(state.storage.as_ref(), &job, Utc::now()).await;
+    Ok(out.run_id)
+}
+
 /// Start the daemon on Tauri's global async runtime.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();

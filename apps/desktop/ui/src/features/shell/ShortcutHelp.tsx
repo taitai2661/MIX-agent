@@ -34,14 +34,16 @@ const GROUPS: ShortcutGroup[] = [
       { keys: ["Mod", "B"], label: "サイドバー切り替え" },
       { keys: ["Mod", ","], label: "設定を開く" },
       { keys: ["Mod", "Shift", "E"], label: "ファイルツリー" },
-      { keys: ["Mod", "Shift", "C"], label: "チャットサーフェスへ" },
-      { keys: ["Mod", "Shift", "D"], label: "エージェントサーフェスへ" },
+      { keys: ["Mod", "Shift", "C"], label: "チャットに切り替え" },
+      { keys: ["Mod", "Shift", "D"], label: "エージェントに切り替え" },
       { keys: ["?"], label: "この一覧を表示" },
     ],
   },
   {
     title: "入力",
     items: [
+      // Replaced at render time with the user's send-key preference; keeping a
+      // static "Enter 送信" here contradicted Settings when Modifier mode was on.
       { keys: ["Enter"], label: "送信" },
       { keys: ["Shift", "Enter"], label: "改行" },
       { keys: ["Esc"], label: "ダイアログを閉じる" },
@@ -61,6 +63,21 @@ const GROUPS: ShortcutGroup[] = [
 export function ShortcutHelp() {
   const open = useUi((s) => s.shortcutsOpen);
   const setOpen = useUi((s) => s.setShortcutsOpen);
+  const sendShortcut = useUi((s) => s.sendShortcut);
+  const groups = GROUPS.map((group) => {
+    if (group.title !== "入力") return group;
+    return {
+      ...group,
+      items:
+        sendShortcut === "modifier"
+          ? [
+              { keys: ["Mod", "Enter"], label: "送信" },
+              { keys: ["Enter"], label: "改行" },
+              { keys: ["Esc"], label: "ダイアログを閉じる" },
+            ]
+          : group.items,
+    };
+  });
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -70,7 +87,7 @@ export function ShortcutHelp() {
           {t("キーボードショートカット")}
         </DialogTitle>
         <div className="mt-5 flex flex-col gap-5">
-          {GROUPS.map((group) => (
+          {groups.map((group) => (
             <section key={group.title} className="flex flex-col gap-2">
               <SectionLabel>{t(group.title)}</SectionLabel>
               <ul className="flex flex-col gap-1.5">

@@ -137,6 +137,15 @@ interface UiState {
   setLocale: (locale: Language) => void;
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  /** WebView zoom factor (0.8–1.5). Applied to `documentElement`. */
+  zoom: number;
+  setZoom: (zoom: number) => void;
+  /** Wrap long code lines instead of scrolling horizontally. */
+  codeWrap: boolean;
+  setCodeWrap: (value: boolean) => void;
+  /** User override for the OS reduced-motion preference. */
+  reduceMotion: boolean;
+  setReduceMotion: (value: boolean) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
   /** The keyboard-shortcut cheat sheet. Session-only (not persisted): it is a
@@ -167,6 +176,12 @@ const RIGHT_PANEL_WIDTH_KEY = "mix-agent-right-panel-width";
 const RIGHT_PANEL_DOCKED_KEY = "mix-agent-right-panel-docked";
 const CHAT_CONVERSATION_KEY = "mix-agent-chat-conversation-id";
 const AGENT_CONVERSATION_KEY = "mix-agent-agent-conversation-id";
+const ZOOM_KEY = "mix-agent-zoom";
+const CODE_WRAP_KEY = "mix-agent-code-wrap";
+const REDUCE_MOTION_KEY = "mix-agent-reduce-motion";
+
+export const MIN_ZOOM = 0.8;
+export const MAX_ZOOM = 1.5;
 
 export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
 export const WIDE_RIGHT_PANEL_WIDTH = 560;
@@ -263,6 +278,29 @@ function readSendShortcut(): SendShortcut {
   return "enter";
 }
 
+export function clampZoom(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(value * 10) / 10));
+}
+
+function readZoom(): number {
+  const stored = Number(getString(ZOOM_KEY));
+  return Number.isFinite(stored) && stored > 0 ? clampZoom(stored) : 1;
+}
+
+/** Push the display preferences onto the document root. */
+export function applyDisplayPrefs(prefs: {
+  zoom: number;
+  codeWrap: boolean;
+  reduceMotion: boolean;
+}): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  root.style.zoom = String(clampZoom(prefs.zoom));
+  root.dataset.codeWrap = prefs.codeWrap ? "wrap" : "scroll";
+  root.dataset.reduceMotion = prefs.reduceMotion ? "true" : "false";
+}
+
 function readStoredConversation(key: string): string | null {
   const stored = getString(key);
   return stored ? stored : null;
@@ -303,7 +341,7 @@ const initialAgentConv = readStoredConversation(AGENT_CONVERSATION_KEY);
 const initialConv =
   initialSurface === "desktop-agent" ? initialAgentConv : initialChatConv;
 
-export const useUi = create<UiState>((set) => ({
+export const useUi = create<UiState>((set, get) => ({
   view: "chat",
   setView: (view) => set({ view }),
   settingsTab: readSettingsTab(),
@@ -324,14 +362,27 @@ export const useUi = create<UiState>((set) => ({
   agentConversationId: initialAgentConv,
   setConversationId: (id) =>
     set((state) => {
+      // The Activity/Diff/File panels describe one thread. Leaving their
+      // targets in place while switching threads showed the previous task's
+      // tools and files beside the new one — and a "close" that acted on the
+      // wrong conversation.
+      const cleared = {
+        activityRunId: null,
+        diffTarget: null,
+        filePreviewPath: null,
+      };
       if (state.surface === "desktop-agent") {
         if (id) setString(AGENT_CONVERSATION_KEY, id);
         else removeKey(AGENT_CONVERSATION_KEY);
-        return { conversationId: id, agentConversationId: id };
+        return {
+          conversationId: id,
+          agentConversationId: id,
+          ...cleared,
+        };
       } else {
         if (id) setString(CHAT_CONVERSATION_KEY, id);
         else removeKey(CHAT_CONVERSATION_KEY);
-        return { conversationId: id, chatConversationId: id };
+        return { conversationId: id, chatConversationId: id, ...cleared };
       }
     }),
   setChatConversationId: (id) => {
@@ -381,7 +432,15 @@ export const useUi = create<UiState>((set) => ({
         surface === "desktop-agent"
           ? state.agentConversationId
           : state.chatConversationId;
-      return { surface, mode: nextMode, conversationId: targetConvId, view: "chat" };
+      return {
+        surface,
+        mode: nextMode,
+        conversationId: targetConvId,
+        view: "chat",
+        activityRunId: null,
+        diffTarget: null,
+        filePreviewPath: null,
+      };
     });
   },
   threadFilter: readThreadFilter(),
@@ -463,6 +522,25 @@ export const useUi = create<UiState>((set) => ({
     storeTheme(theme);
     set({ theme });
   },
+  zoom: readZoom(),
+  setZoom: (zoom) => {
+    const value = clampZoom(zoom);
+    setString(ZOOM_KEY, String(value));
+    set({ zoom: value });
+    applyDisplayPrefs({ ...get(), zoom: value });
+  },
+  codeWrap: readBoolean(CODE_WRAP_KEY, false),
+  setCodeWrap: (codeWrap) => {
+    setBoolean(CODE_WRAP_KEY, codeWrap);
+    set({ codeWrap });
+    applyDisplayPrefs({ ...get(), codeWrap });
+  },
+  reduceMotion: readBoolean(REDUCE_MOTION_KEY, false),
+  setReduceMotion: (reduceMotion) => {
+    setBoolean(REDUCE_MOTION_KEY, reduceMotion);
+    set({ reduceMotion });
+    applyDisplayPrefs({ ...get(), reduceMotion });
+  },
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   shortcutsOpen: false,
@@ -490,6 +568,9 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   RIGHT_PANEL_DOCKED_KEY,
   CHAT_CONVERSATION_KEY,
   AGENT_CONVERSATION_KEY,
+  ZOOM_KEY,
+  CODE_WRAP_KEY,
+  REDUCE_MOTION_KEY,
 ]);
 
 if (typeof window !== "undefined") {
@@ -561,6 +642,25 @@ if (typeof window !== "undefined") {
         if (next !== state.activeProjectId) state.setActiveProjectId(next);
         break;
       }
+      case ZOOM_KEY: {
+        const next = readZoom();
+        if (next !== state.zoom) state.setZoom(next);
+        break;
+      }
+      case CODE_WRAP_KEY: {
+        const next = readBoolean(CODE_WRAP_KEY, false);
+        if (next !== state.codeWrap) state.setCodeWrap(next);
+        break;
+      }
+      case REDUCE_MOTION_KEY: {
+        const next = readBoolean(REDUCE_MOTION_KEY, false);
+        if (next !== state.reduceMotion) state.setReduceMotion(next);
+        break;
+      }
     }
   });
 }
+
+// Apply once at boot, before the first interactive frame. `main.tsx` imports
+// the store through App, so this runs before the shell paints.
+applyDisplayPrefs(useUi.getState());

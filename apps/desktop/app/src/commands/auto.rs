@@ -22,23 +22,36 @@ pub struct ResolvedAuto {
     pub selection: AutoSelection,
 }
 
-type CandidateRow = (String, String, String, i64, i64, i64, i64);
+type CandidateRow = (
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// Every Auto candidate whose provider still exists, newest first.
 pub async fn fetch_auto_candidates(
     pool: &sqlx::Pool<sqlx::Sqlite>,
 ) -> Result<Vec<AutoCandidate>, String> {
     let rows: Vec<CandidateRow> = sqlx::query_as(
-        "SELECT id, COALESCE(json_extract(data, '$.providerId'), ''), \
-          COALESCE(json_extract(data, '$.label'), ''), \
-          COALESCE(json_extract(data, '$.contextWindow'), 0), \
-          COALESCE(json_extract(data, '$.vision'), 0), \
-          COALESCE(json_extract(data, '$.toolCalling'), 0), \
-          COALESCE(json_extract(data, '$.reasoning'), 0) \
-          FROM models \
-          WHERE COALESCE(json_extract(data, '$.auto'), 0) != 0 \
-          AND COALESCE(json_extract(data, '$.providerId'), '') IN (SELECT id FROM providers) \
-          ORDER BY created_at DESC",
+        "SELECT m.id, COALESCE(json_extract(m.data, '$.providerId'), ''), \
+          COALESCE(json_extract(m.data, '$.label'), ''), \
+          COALESCE(json_extract(m.data, '$.contextWindow'), 0), \
+          COALESCE(json_extract(m.data, '$.vision'), 0), \
+          COALESCE(json_extract(m.data, '$.toolCalling'), 0), \
+          COALESCE(json_extract(m.data, '$.reasoning'), 0), \
+          json_extract(p.data, '$.kind'), \
+          json_extract(p.data, '$.preset'), \
+          json_extract(p.data, '$.baseUrl') \
+          FROM models m JOIN providers p ON p.id = json_extract(m.data, '$.providerId') \
+          WHERE COALESCE(json_extract(m.data, '$.auto'), 0) != 0 \
+          ORDER BY m.created_at DESC",
     )
     .fetch_all(pool)
     .await
@@ -46,7 +59,18 @@ pub async fn fetch_auto_candidates(
     Ok(rows
         .into_iter()
         .map(
-            |(id, provider_id, label, context_window, vision, tool_calling, reasoning)| {
+            |(
+                id,
+                provider_id,
+                label,
+                context_window,
+                vision,
+                tool_calling,
+                reasoning,
+                kind,
+                preset,
+                base_url,
+            )| {
                 // The stored id is `<provider_id>:<model>`; the wire name is the
                 // part after the first colon (Ollama tags keep their own colon).
                 let model_name = id
@@ -63,6 +87,11 @@ pub async fn fetch_auto_candidates(
                     vision: vision != 0,
                     tool_calling: tool_calling != 0,
                     reasoning: reasoning != 0,
+                    is_local: crate::commands::providers::is_local_provider(
+                        kind.as_deref(),
+                        preset.as_deref(),
+                        base_url.as_deref(),
+                    ),
                 }
             },
         )
@@ -226,6 +255,10 @@ pub async fn resolve_auto_model(
             },
         );
     }
+    let prefer_local = crate::commands::settings::read_settings(pool)
+        .await
+        .map(|settings| settings.local_prefer)
+        .unwrap_or(false);
     let opts = AutoSelectOptions {
         content: content.to_string(),
         mode: mode.to_string(),
@@ -236,6 +269,7 @@ pub async fn resolve_auto_model(
         prefer_other_provider_than: None,
         priority: AutoPriority::Balanced,
         request_key: request_key.to_string(),
+        prefer_local,
     };
     let excluded: Vec<String> = Vec::new();
     let (selected, selection) =

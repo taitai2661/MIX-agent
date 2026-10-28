@@ -47,6 +47,8 @@ base64.workspace = true
 url = "2.5"
 reqwest.workspace = true
 ignore = "0.4.30"
+# GUI-only local runtimes (Jan, GPT4All) are opened through the OS handler.
+open = "5"
 
 tauri = { version = "2.1", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2.0"
@@ -68,3 +70,7 @@ tauri-plugin-cli = "2.0"
 # WebView never calls its IPC surface (no `updater:*` capability grant). It
 # needs Rust 1.90+, which the pinned 1.91 toolchain already satisfies.
 tauri-plugin-updater = "2"
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM for a runtime child process on Unix; Windows uses `start_kill`.
+libc = "0.2"

@@ -1,6 +1,6 @@
 # MIX-agent Desktop — ローカル LLM ネイティブ連携計画
 
-> 状態: 計画（2026-10-27）
+> 状態: L1〜L5 実装済み。Ollama ネイティブチャット（`num_ctx` / `keep_alive` / thinking フォールバック）、Auto のローカル優先、コンテキスト上限設定、プロセス所有権とジョブの競合対策まで実装済み。2026-10-28 に「モデル 0 件の識別済みランタイムを online として起動・pull 可能にする」「loopback と LAN の判定分離」「削除後の DB 同期」「承認カウントダウンの共有クロック」を追加。ハードウェア目安（RAM/VRAM からの推奨モデル表示）のみ未着手。実機は LM Studio で起動・停止・メタデータ取得を確認。Ollama は HTTP モックテストで確認済み（実機の pull / load / stop は未実施）。
 > 対象: Desktop 版のみ（Tauri 2 / Rust / React）
 > 方針: **外部ランタイム（Ollama / LM Studio / llama.cpp / vLLM 等）をアプリからネイティブに管理する**。推論エンジンやモデル重みの同梱は行わない。
 > 既存の Phase 番号とは独立した **Local Runtime Track（L0〜L5）** として進める。
@@ -182,18 +182,12 @@ NotInstalled ──install──▶ Stopped ──start──▶ Starting ──
 {
   "runtime": "ollama",
   "executable": "/opt/homebrew/bin/ollama",
-  "launch": "command",
-  "source": "managed",
-  "autoStart": true,
-  "preferredPort": 11434,
-  "keepAlive": "5m",
-  "lastSeenAt": "2026-10-27T12:00:00Z"
+  "autoStart": null
 }
 ```
 
-- `launch`: `command` / `open_app` / `none`。GUI アプリは `open_app`。
 - `executable`: 取り込み時に解決した絶対パス。見つからなくなったら再検出。
-- `source` は実行時の値なので保存しない（参考として最後の値を残す場合は可）。
+- `autoStart`: 省略時はグローバル設定（既定オフ）に従う。取り込み時には書き込まない。
 
 #### model `data`（既存フィールドへの追加）
 
@@ -225,7 +219,9 @@ pub struct SettingsView {
     // 既存...
     pub local_scan_on_start: bool,     // 既定 true
     pub local_stop_on_exit: bool,      // 既定 true（アプリが起動した子プロセスだけ止める）
-    pub local_auto_start: bool,        // 既定 true（provider 側の autoStart の既定）
+    pub local_auto_start: bool,        // 既定 false（provider 側の autoStart で上書き可能）
+    pub local_keep_alive: Option<String>,      // 既定 None（ロード時は 5m）
+    pub local_context_window: Option<u32>,     // 既定 None = 8K 上限
     pub local_prefer: bool,            // L5。ローカル優先ルーティング
 }
 ```

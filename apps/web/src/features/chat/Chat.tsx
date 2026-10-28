@@ -98,6 +98,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const qc = useQueryClient();
   const { addToast } = useToast();
   const models = useRows<ChatModel>("/models"),
+    providers = useRows<Row>("/providers"),
     projects = useRows<Row>("/projects"),
     agents = useRows<ChatAgent>("/agents"),
     tools = useQuery<Tool[]>({
@@ -124,6 +125,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       }
     }),
     [error, setError] = useState<unknown>(null),
+    [sendFailed, setSendFailed] = useState(false),
     [busy, setBusy] = useState(false),
     [attachments, setAttachments] = useState<Artifact[]>([]),
     [uploading, setUploading] = useState(false),
@@ -449,10 +451,22 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   }, [history.data?.runs, toolHistory.data]);
   const currentRunMessageId = history.data?.runs?.find((r) => r.id === runId)?.message_id;
   const latestUserMessageId = [...(history.data?.messages || [])].reverse().find((msg) => msg.data.role === "user")?.id;
+  const hasNoProviders =
+    !providers.isLoading && !providers.isError && (providers.data?.length ?? 0) === 0;
+  const hasNoModels =
+    !models.isLoading && !models.isError && (models.data?.length ?? 0) === 0;
+  const needsProviderSetup = hasNoProviders || hasNoModels;
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if ((!text.trim() && !attachments.length) || busy || active || uploading) return;
+    if (needsProviderSetup) {
+      setError(new Error(t(hasNoProviders
+        ? "先にAI Providerを接続してください。"
+        : "先にモデルを取得してください。")));
+      return;
+    }
     setError(null);
+    setSendFailed(false);
     setBusy(true);
     try {
       const body = {
@@ -496,6 +510,9 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
         qc.invalidateQueries({ queryKey: ["messages", id] });
       }
     } catch (e) {
+      // The error box gets a resend action: clearing an error without
+      // performing the retry made "再試行" look like it had sent the message.
+      setSendFailed(true);
       setError(e);
     } finally {
       setBusy(false);
@@ -612,6 +629,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     }
     void history.refetch();
     void models.refetch();
+    void providers.refetch();
     void tools.refetch();
     void permissionRules.refetch();
     void settings.refetch();
@@ -771,6 +789,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                 </article>
                 {m.data.role === "user" && <RunActivity
                   running={active && currentRunMessageId === m.id}
+                  approvals={run.data?.approvals}
                   calls={(() => {
                     const calls = callsByMessage.get(m.id) || [];
                     if (!active || currentRunMessageId !== m.id) return calls;
@@ -878,9 +897,23 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
             </div>
           )}
           <div className="composer-wrap">
+            {needsProviderSetup && (
+              <div className="notice chat-setup-cta" role="status">
+                <Bot size={17} />
+                <span>
+                  {t(hasNoProviders
+                    ? "AI Providerが接続されていません。チャットを始めるにはProviderを接続してください。"
+                    : "利用できるモデルがありません。Providerを接続してモデルを取得してください。")}
+                </span>
+                <Button variant="outline" onClick={() => navigate("/settings/providers")}>
+                  {t("Providerを接続")}
+                </Button>
+              </div>
+            )}
             <ErrorBox
-              error={error || history.error || models.error || tools.error || permissionRules.error || settings.error}
-              onRetry={retryRequest}
+              error={error || history.error || models.error || providers.error || tools.error || permissionRules.error || settings.error}
+              onRetry={sendFailed ? () => void send() : retryRequest}
+              retryLabel={sendFailed ? t("再送信") : undefined}
             />
             <form className="composer" onSubmit={send}>
               {temporaryMode && <p className="temporary-notice" role="status">{t("一時モード: Run終了後にMIX側の会話・回答・送信した添付を削除します。選択した添付は送信前にアップロードされます。Toolは")}{t(allowTools ? "許可中（外部への送信や副作用が残る場合があります）" : "無効")}。</p>}
@@ -1065,7 +1098,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
                       className="send"
                       aria-label={t("送信")}
                       disabled={
-                        busy || uploading || (!text.trim() && !attachments.length)
+                        busy || uploading || needsProviderSetup || (!text.trim() && !attachments.length)
                       }
                     >
                       <ArrowUp size={19} />

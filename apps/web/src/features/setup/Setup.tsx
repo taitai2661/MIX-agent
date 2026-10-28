@@ -125,7 +125,7 @@ export function Setup() {
       desc: t("利用するAIプロバイダを選択し、APIキーを入力してください。"),
       content: (
         <div className="card form-grid" style={{ marginTop: 20 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+          <div className="setup-provider-grid">
              <Button variant={selectedProvider === "openai" ? "default" : "outline"} onClick={() => setSelectedProvider("openai")}>OpenAI</Button>
              <Button variant={selectedProvider === "anthropic" ? "default" : "outline"} onClick={() => setSelectedProvider("anthropic")}>Anthropic</Button>
              <Button variant={selectedProvider === "gemini" ? "default" : "outline"} onClick={() => setSelectedProvider("gemini")}>Gemini</Button>
@@ -175,8 +175,8 @@ export function Setup() {
   ];
 
   return (
-    <main className="setup-page" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="setup-shell" style={{ width: "100%", maxWidth: 800, display: "flex", flexDirection: "column", minHeight: "auto", borderRadius: 24, padding: 40, border: "1px solid var(--line)", background: "var(--surface)", boxShadow: "var(--shadow)" }}>
+    <section className="setup-page">
+      <div className="setup-shell">
 
         <header className="setup-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 30 }}>
           <div>
@@ -196,7 +196,13 @@ export function Setup() {
 
         <ErrorBox error={error} />
 
-        <div className="setup-footer" style={{ display: "flex", justifyContent: "space-between", marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--line)" }}>
+        {step === 0 && (
+          <p className="setup-defer-note">
+            {t("「あとで設定する」を選ぶとセットアップは未完了のままです。ホームに案内が表示され、いつでもここへ戻れます。")}
+          </p>
+        )}
+
+        <div className="setup-footer">
           <Button variant="ghost" onClick={() => step === 0 ? navigate("/") : setStep(step - 1)}>
             {step === 0 ? t("あとで設定する") : <><ChevronLeft size={15} />{t("戻る")}</>}
           </Button>
@@ -211,6 +217,6 @@ export function Setup() {
         </div>
 
       </div>
-    </main>
+    </section>
   );
 }

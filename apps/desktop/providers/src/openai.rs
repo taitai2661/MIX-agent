@@ -168,9 +168,7 @@ impl Provider for OpenAiProvider {
         // send Authorization when one was actually configured.
         let requires_key = !is_local_endpoint(&base_url);
         if requires_key && self.api_key.is_none() {
-            return Err(anyhow::anyhow!(
-                "OpenAI provider requires an API key (or a local endpoint such as http://localhost:11434)"
-            ));
+            return Err(anyhow::anyhow!(missing_key_message(&base_url)));
         }
 
         let messages = build_messages(&req);
@@ -365,9 +363,7 @@ impl Provider for OpenAiProvider {
         // Same key rule as `stream`: a loopback runtime legitimately runs with
         // no key, a cloud endpoint does not.
         if !is_local_endpoint(base_url) && self.api_key.is_none() {
-            return Err(anyhow::anyhow!(
-                "OpenAI provider requires an API key (or a local endpoint such as http://localhost:11434)"
-            ));
+            return Err(anyhow::anyhow!(missing_key_message(base_url)));
         }
 
         let body = EmbeddingsRequest {
@@ -427,15 +423,31 @@ struct EmbeddingsEntry {
     embedding: Vec<f64>,
 }
 
-/// True for loopback / private-network endpoints, where an API key is usually
-/// not configured (Ollama, LM Studio, vLLM, a LAN inference box).
+/// True for endpoints where an API key is usually not configured: loopback,
+/// private-network, mDNS, container-alias and Tailscale hosts (Ollama, LM
+/// Studio, vLLM, a LAN inference box).
 ///
-/// Single source of truth lives in [`crate::discovery`]: `host_of` parses the
-/// URL and `is_loopback_host` decides, so the key gate and the scanner can
-/// never disagree about what "local" means (an IPv6-loopback Ollama once
-/// demanded a key because a copy of this logic split `[::1]` on `':'`).
+/// Single source of truth lives in [`crate::discovery`] so the key gate, the
+/// model capability probe and the scanner can never disagree about what
+/// "local" means.
 fn is_local_endpoint(base_url: &str) -> bool {
-    crate::discovery::is_loopback_host(crate::discovery::host_of(base_url))
+    crate::discovery::is_local_base_url(base_url)
+}
+
+/// The error for a provider that will not be accepted without a key.
+///
+/// Names the URL that was actually tried: the old text only said "OpenAI
+/// provider", which sent people looking for a key when the real problem was an
+/// empty base URL (a row saved before its URL was filled in) or a local server
+/// reached under a hostname the key gate did not recognise.
+fn missing_key_message(base_url: &str) -> String {
+    if base_url.trim().is_empty() {
+        return "provider has no base URL: set one in Settings → プロバイダー".to_string();
+    }
+    format!(
+        "provider at {base_url} requires an API key \
+         (a local runtime such as http://localhost:11434 needs none)"
+    )
 }
 
 fn build_messages(req: &ProviderRequest) -> Vec<OpenAiMessage<'_>> {
@@ -487,9 +499,30 @@ mod tests {
             "http://192.168.1.20:11434/v1",
             "http://172.16.4.4:8000/v1",
             "http://172.31.255.1/v1",
+            // Hostnames a local runtime is commonly reached under, even though
+            // none of them is an IP literal.
+            "http://host.docker.internal:11434/v1",
+            "http://mac-mini.local:1234/v1",
+            "http://100.101.102.103:11434/v1",
+            "http://[fd7a:115c:a1e0::1]:11434/v1",
+            "http://[fe80::1]:11434/v1",
         ] {
             assert!(is_local_endpoint(url), "{url} should be local");
         }
+    }
+
+    #[test]
+    fn a_missing_base_url_names_the_real_problem() {
+        let message = super::missing_key_message("  ");
+        assert!(
+            message.contains("no base URL"),
+            "empty URL must not read as a missing key: {message}"
+        );
+        let cloud = super::missing_key_message("https://api.openai.com/v1");
+        assert!(
+            cloud.contains("https://api.openai.com/v1"),
+            "the message must name the endpoint: {cloud}"
+        );
     }
 
     #[test]
@@ -502,6 +535,14 @@ mod tests {
             "https://172.32.0.1/v1",
             "https://11.0.0.1/v1",
             "https://192.169.1.1/v1",
+            // The new hostname rules must not swallow ordinary domains that
+            // merely contain the same words.
+            "https://notlocalhost.example.com/v1",
+            "https://api.localhost.example.com/v1",
+            "https://mylocal.com/v1",
+            // Just outside Tailscale's 100.64.0.0/10 range.
+            "https://100.63.0.1/v1",
+            "https://100.128.0.1/v1",
         ] {
             assert!(!is_local_endpoint(url), "{url} should not be local");
         }
@@ -518,6 +559,8 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             stream: true,
+            context_window: None,
+            keep_alive: None,
         }
     }
 

@@ -38,6 +38,58 @@ describe("RunActivity", () => {
     expect(html).toContain('class="run-activity-details" open');
   });
 
+  it("renders the pending approval payload and remembered scope", () => {
+    const html = renderToStaticMarkup(<RunActivity
+      onApproval={() => {}}
+      approvals={[{
+        id: "approval-1",
+        status: "pending",
+        created_at: "2026-08-31T10:00:00+00:00",
+        data: {
+          tool: "run_terminal",
+          arguments: { command: "rm -rf build", background: false },
+          scope: { workspace: "/workspace", command: "rm -rf build" },
+        },
+      }]}
+      calls={[{
+        id: "call-2", run_id: "run-1", status: "waiting_approval", tool_name: "run_terminal",
+        created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "" },
+        approval: { id: "approval-1", status: "pending" },
+      }]}
+    />);
+    expect(html).toContain("rm -rf build");
+    expect(html).toContain("run_terminal");
+    expect(html).toContain("常に許可の範囲");
+    expect(html).toContain("/workspace");
+    expect(html).toContain("background");
+  });
+
+  it("renders a before/after block for file edits", () => {
+    const html = renderToStaticMarkup(<RunActivity
+      onApproval={() => {}}
+      approvals={[{
+        id: "approval-2",
+        status: "pending",
+        created_at: "2026-08-31T10:00:00+00:00",
+        data: {
+          tool: "edit_file",
+          arguments: { path: "src/app.ts", old: "const a = 1;", new: "const a = 2;" },
+          scope: { workspace: "/workspace", path: "src/app.ts" },
+        },
+      }]}
+      calls={[{
+        id: "call-3", run_id: "run-1", status: "waiting_approval", tool_name: "edit_file",
+        created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "" },
+        approval: { id: "approval-2", status: "pending" },
+      }]}
+    />);
+    expect(html).toContain("src/app.ts");
+    expect(html).toContain("変更前");
+    expect(html).toContain("const a = 1;");
+    expect(html).toContain("変更後");
+    expect(html).toContain("const a = 2;");
+  });
+
   it("collapses the whole run into one summary with a flat row per call", () => {
     const html = renderToStaticMarkup(<RunActivity onApproval={() => {}} calls={[
       { id: "call-1", run_id: "run-1", status: "completed", tool_name: "search", created_at: "2026-08-31T10:00:00+00:00", retry: { available: false, label: "再依頼してください。" } },

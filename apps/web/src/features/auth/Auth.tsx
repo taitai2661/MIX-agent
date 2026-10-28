@@ -1,6 +1,6 @@
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
-import { ChevronRight, ShieldCheck } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { ErrorBox, Field, Logo } from "@/components/shared";
@@ -16,17 +16,25 @@ export function Auth({
   onDone: (v: any) => void;
 }) {
   const [error, setError] = useState<unknown>(null),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [password, setPassword] = useState(""),
+    [confirmPassword, setConfirmPassword] = useState(""),
+    [showPassword, setShowPassword] = useState(false);
   useLanguage();
+  const passwordMismatch = setup && confirmPassword.length > 0 && confirmPassword !== password;
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (setup && password !== confirmPassword) {
+      setError(new Error(t("パスワードが一致しません")));
+      return;
+    }
     const form = new FormData(e.currentTarget);
     setBusy(true);
     setError(null);
     try {
       const result = await api(setup ? "/setup/admin" : "/auth/login", "POST", {
           username: form.get("username"),
-          password: form.get("password"),
+          password: setup ? password : form.get("password"),
         });
       onDone(result);
     } catch (e) {
@@ -62,17 +70,50 @@ export function Auth({
             label={t("パスワード")}
             hint={t("12文字以上。API Keyとは別のパスワードです。")}
           >
-            <input
-              name="password"
-              type="password"
-              required
-              minLength={12}
-              maxLength={256}
-              autoComplete={setup ? "new-password" : "current-password"}
-            />
+            <div className={setup ? "password-input" : undefined}>
+              <input
+                name="password"
+                type={setup && showPassword ? "text" : "password"}
+                required
+                minLength={12}
+                maxLength={256}
+                autoComplete={setup ? "new-password" : "current-password"}
+                value={setup ? password : undefined}
+                onChange={setup ? (event) => { setPassword(event.target.value); setError(null); } : undefined}
+              />
+              {setup && (
+                <button
+                  type="button"
+                  className="password-toggle"
+                  aria-label={t(showPassword ? "パスワードを隠す" : "パスワードを表示")}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((value) => !value)}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              )}
+            </div>
           </Field>
+          {setup && (
+            <Field label={t("パスワード（確認）")}>
+              <input
+                name="confirm_password"
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={12}
+                maxLength={256}
+                autoComplete="new-password"
+                value={confirmPassword}
+                aria-invalid={passwordMismatch}
+                onChange={(event) => { setConfirmPassword(event.target.value); setError(null); }}
+              />
+              {passwordMismatch && (
+                <small className="field-error">{t("パスワードが一致しません")}</small>
+              )}
+            </Field>
+          )}
           <ErrorBox error={error} />
-          <Button disabled={busy}>
+          <Button disabled={busy || passwordMismatch}>
             {t(busy ? "処理中…" : setup ? "ワークスペースを作成" : "ログイン")}
             <ChevronRight size={16} />
           </Button>

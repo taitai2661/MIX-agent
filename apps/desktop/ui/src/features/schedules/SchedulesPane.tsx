@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock3, Pause, Play } from "lucide-react";
+import { Clock3, Pause, Pencil, Play, X, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
@@ -17,7 +17,8 @@ import { Button } from "@/components/ui/button";
 import { YesNo } from "@/components/ui/status";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { useModels } from "@/lib/queries";
+import { Alert } from "@/components/ui/alert";
+import { CONVERSATIONS_QUERY_KEY, useModels } from "@/lib/queries";
 import type { ScheduleJobView } from "@/lib/types";
 
 /** Labels are translated at render, not at module scope: a module-level `t()`
@@ -45,6 +46,17 @@ export function SchedulesPane() {
   const [draftMode, setDraftMode] = useState<Mode>("chat");
   const [preview, setPreview] = useState<string[] | null>(null);
   const [cronError, setCronError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [started, setStarted] = useState<string | null>(null);
+
+  const resetDraft = () => {
+    setEditingId(null);
+    setDraftName("");
+    setDraftCron("0 9 * * *");
+    setDraftPrompt("");
+    setDraftModel("");
+    setDraftMode("chat");
+  };
 
   // Live preview of the expression as the user types. The AbortController
   // drops a slower earlier response so it cannot overwrite the newest preview.
@@ -94,6 +106,37 @@ export function SchedulesPane() {
     },
   });
 
+  const update = useMutation({
+    mutationFn: () =>
+      api.updateScheduleJob({
+        id: editingId!,
+        name: draftName,
+        cron: draftCron,
+        prompt: draftPrompt,
+        // The form has no conversation picker; keep the thread the job has
+        // been posting into instead of silently detaching it on every edit.
+        conversation_id:
+          (jobs.data ?? []).find((job) => job.id === editingId)
+            ?.conversation_id ?? null,
+        model_id: draftModel || null,
+        mode: draftMode,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] });
+      resetDraft();
+    },
+  });
+
+  const runNow = useMutation({
+    mutationFn: (id: string) => api.runScheduleJobNow(id),
+    onSuccess: (_runId, id) => {
+      const name = (jobs.data ?? []).find((job) => job.id === id)?.name ?? "";
+      setStarted(name);
+      queryClient.invalidateQueries({ queryKey: ["schedule_jobs"] });
+      queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+    },
+  });
+
   const toggle = useMutation({
     mutationFn: (args: { id: string; enabled: boolean }) =>
       api.setScheduleJobEnabled(args.id, args.enabled),
@@ -120,7 +163,10 @@ export function SchedulesPane() {
         "Cron で定期実行。アプリ起動中 (および次回起動時に 1 回) 自動実行されます。",
       )}
     >
-      <Card title={t("定期ジョブを追加")} icon={<Clock3 size={13} />}>
+      <Card
+        title={editingId ? t("ジョブを編集") : t("定期ジョブを追加")}
+        icon={<Clock3 size={13} />}
+      >
         <div className="grid gap-2 sm:grid-cols-2">
           <Input
             placeholder={t("Job 名")}
@@ -197,17 +243,33 @@ export function SchedulesPane() {
         <Row>
           <Button
             variant="primary"
-            disabled={disabled || create.isPending}
-            onClick={() => create.mutate()}
+            disabled={disabled || create.isPending || update.isPending}
+            onClick={() => (editingId ? update.mutate() : create.mutate())}
           >
-            {create.isPending ? <Spinner size={12} /> : <Clock3 size={12} />}{" "}
-            {t("登録")}
+            {create.isPending || update.isPending ? (
+              <Spinner size={12} />
+            ) : (
+              <Clock3 size={12} />
+            )}{" "}
+            {editingId ? t("保存") : t("登録")}
           </Button>
+          {editingId && (
+            <Button size="sm" onClick={resetDraft}>
+              <X size={12} /> {t("キャンセル")}
+            </Button>
+          )}
           {create.isError && <ErrorBadge error={create.error} />}
+          {update.isError && <ErrorBadge error={update.error} />}
         </Row>
       </Card>
 
       <SectionHeading>{t("登録済みジョブ")}</SectionHeading>
+      {runNow.isError && <ErrorBox error={runNow.error} />}
+      {started && !runNow.isPending && (
+        <Alert tone="success">
+          {tf("{name} を今すぐ実行しました。", { name: started })}
+        </Alert>
+      )}
       {jobs.isPending ? (
         <TableSkeleton />
       ) : jobs.isError ? (
@@ -225,7 +287,24 @@ export function SchedulesPane() {
         >
           {(j) => (
             <>
-              <td className={tdStrong}>{j.name}</td>
+              <td className={tdStrong}>
+                <span className="block">{j.name}</span>
+                <span
+                  className="block max-w-72 truncate text-2xs font-normal text-faint"
+                  title={j.prompt}
+                >
+                  <span className="me-1 rounded bg-inset px-1 py-0.5 font-mono">
+                    {t(
+                      j.mode === "agent"
+                        ? "エージェント"
+                        : j.mode === "thinking"
+                          ? "思考"
+                          : "チャット",
+                    )}
+                  </span>
+                  {j.prompt}
+                </span>
+              </td>
               <td className={`${td} font-mono`}>{j.cron}</td>
               <td className={td}>
                 <YesNo
@@ -249,8 +328,41 @@ export function SchedulesPane() {
                   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
                 })()}
               </td>
-              <td className={`${td} w-20`}>
+              <td className={`${td} w-24`}>
                 <Row align="end" className="flex-nowrap gap-0.5">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t("今すぐ実行")}
+                    aria-label={tf("{name} を今すぐ実行", { name: j.name })}
+                    disabled={runNow.isPending || !j.prompt.trim()}
+                    onClick={() => {
+                      setStarted(null);
+                      runNow.mutate(j.id);
+                    }}
+                  >
+                    <Zap size={13} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t("編集")}
+                    aria-label={tf("{name} を編集", { name: j.name })}
+                    onClick={() => {
+                      setEditingId(j.id);
+                      setDraftName(j.name);
+                      setDraftCron(j.cron);
+                      setDraftPrompt(j.prompt);
+                      setDraftModel(j.model_id ?? "");
+                      setDraftMode(
+                        (j.mode === "agent" || j.mode === "thinking"
+                          ? j.mode
+                          : "chat") as Mode,
+                      );
+                    }}
+                  >
+                    <Pencil size={13} />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"

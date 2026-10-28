@@ -946,6 +946,7 @@ async fn run_request(
         temperature: None,
         reasoning: None,
         max_tokens: None,
+        keep_alive: None,
         temporary,
         tools: Arc::new(engine.tool_specs().await),
         history: Vec::new(),

@@ -1,6 +1,7 @@
 import { Radar } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { Card } from "@/components/layout";
+import { LocalRuntimePanel } from "./LocalRuntimePanel";
 import { LocalRuntimeScan } from "./LocalRuntimeScan";
 
 /** Settings → Providers: the local-runtime sweep plus the manual Base URL
@@ -24,4 +25,11 @@ export function LocalDiscoveryCard() {
       />
     </Card>
   );
+}
+
+/** Settings → Providers: lifecycle and model management for already detected
+ * runtimes. Kept separate from the sweep so the import table stays focused on
+ * "which runtime should become a provider". */
+export function LocalRuntimeManagementCard() {
+  return <LocalRuntimePanel />;
 }

@@ -11,6 +11,7 @@ import {
   Download,
   Folder,
   FolderTree,
+  GitCompareArrows,
   PanelLeft,
   PanelRight,
   Search,
@@ -21,7 +22,13 @@ import { useUi, type View } from "./lib/ui";
 import { t, tf } from "./lib/i18n";
 import { chord } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
-import { useConversations, useProjects, usePendingApprovals } from "./lib/queries";
+import {
+  useConversations,
+  useGitStatus,
+  useProjects,
+  usePendingApprovals,
+} from "./lib/queries";
+import { useHealth } from "./lib/health";
 import { SETTINGS_QUERY_KEY } from "./lib/settings";
 import { useUpdateCheck } from "./lib/updates";
 
@@ -57,6 +64,7 @@ const FileTreePane = lazy(() =>
 import { Sidebar } from "./features/shell/Sidebar";
 import { RightPanel } from "./features/shell/RightPanel";
 import { CommandPalette } from "./features/shell/CommandPalette";
+import { HealthBanner } from "./features/shell/HealthBanner";
 import { ShortcutHelp } from "./features/shell/ShortcutHelp";
 import { SurfaceSwitcher } from "./features/shell/SurfaceSwitcher";
 import { WindowControls } from "./features/shell/WindowControls";
@@ -69,6 +77,14 @@ import {
   useShellEvents,
 } from "./features/shell/useShellEvents";
 import { Button } from "./components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
 import { Kbd } from "./components/layout";
 import { PaneErrorBoundary } from "./components/PaneErrorBoundary";
 import { Spinner } from "./components/ui/spinner";
@@ -89,24 +105,17 @@ function PaneFallback() {
 
 const VIEW_TITLES: Record<View, string> = {
   chat: "チャット",
-  agents: "エージェント",
+  agents: "エージェントプロファイル",
   projects: "プロジェクト",
   schedules: "スケジュール",
   settings: "設定",
 };
 
-/** How often the shell asks the backend whether it is still alive. */
-const HEALTH_POLL_MS = 15_000;
-
-function HealthIndicator() {
-  // The poll lives here, not in `App`. Holding it in the shell meant every
-  // 15s tick re-rendered the sidebar, the transcript and the right panel to
-  // repaint one two-pixel dot.
-  const health = useQuery({
-    queryKey: ["health"],
-    queryFn: api.health,
-    refetchInterval: HEALTH_POLL_MS,
-  });
+function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
+  const openSettings = useUi((s) => s.openSettings);
+  const health = useHealth();
+  const check = useUpdateCheck(autoCheck);
+  const update = check.data;
   const state = health.isError
     ? "error"
     : health.data?.status === "ok"
@@ -118,42 +127,74 @@ function HealthIndicator() {
       : state === "error"
         ? t("接続エラー")
         : t("確認中");
-  return (
-    <span className="inline-flex items-center">
-      <StatusDot
-        tone={
-          state === "ok" ? "success" : state === "error" ? "danger" : "warning"
-        }
-        label={`${t("ヘルス")}: ${label}`}
-        className="px-1"
-      />
-    </span>
-  );
-}
+  const updateLabel = update
+    ? tf("v{version} が利用可能です", { version: update.version })
+    : "";
+  const summary = updateLabel
+    ? `${t("ヘルス")}: ${label} · ${updateLabel}`
+    : `${t("ヘルス")}: ${label}`;
 
-/**
- * Header badge for an available update.
- *
- * The check lives here (not only in Settings) so the persisted "check on
- * launch" setting actually does something on launch. It shares the
- * `UPDATE_QUERY_KEY` cache with the Updates pane, so both render one result.
- */
-function UpdateIndicator({ autoCheck }: { autoCheck: boolean }) {
-  const openSettings = useUi((s) => s.openSettings);
-  const check = useUpdateCheck(autoCheck);
-  const update = check.data;
-  if (!update) return null;
-  const label = tf("v{version} が利用可能です", { version: update.version });
   return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      onClick={() => openSettings("updates")}
-      title={label}
-      aria-label={label}
-    >
-      <Download size={16} />
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="relative"
+          title={summary}
+          aria-label={summary}
+        >
+          <StatusDot
+            tone={
+              state === "ok"
+                ? "success"
+                : state === "error"
+                  ? "danger"
+                  : "warning"
+            }
+            label={`${t("ヘルス")}: ${label}`}
+            className="px-1"
+          />
+          {update && (
+            <span
+              aria-hidden="true"
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-brand"
+            />
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-56">
+        <DropdownMenuLabel>{t("ステータス")}</DropdownMenuLabel>
+        <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-fg">
+          <StatusDot
+            tone={
+              state === "ok"
+                ? "success"
+                : state === "error"
+                  ? "danger"
+                  : "warning"
+            }
+            label=""
+          />
+          <span className="flex-1">
+            {t("ヘルス")}: {label}
+          </span>
+        </div>
+        <DropdownMenuItem onSelect={() => openSettings("diagnostics")}>
+          <ShieldAlert size={13} className="text-muted" aria-hidden="true" />
+          <span className="flex-1">{t("診断を開く")}</span>
+        </DropdownMenuItem>
+        {update && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => openSettings("updates")}>
+              <Download size={13} className="text-brand" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{updateLabel}</span>
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -261,6 +302,11 @@ export function App() {
   const onboarding = useOnboardingGate();
   const activeProject =
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
+  const git = useGitStatus(
+    surface === "desktop-agent" ? (activeProject?.rootPath ?? null) : null,
+  );
+  const changedFiles =
+    git.data?.available === true ? git.data.entries.length : 0;
   const threadTitle = useMemo(
     () => conversations.data?.find((c) => c.id === conversationId)?.title,
     [conversations.data, conversationId],
@@ -354,7 +400,7 @@ export function App() {
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            aria-label={t("コマンドを検索…")}
+            aria-label={t("コマンド・スレッドを検索…")}
             aria-keyshortcuts="meta+k ctrl+k"
             title={`${t("コマンドパレット")} · ${chord("Mod", "K")}`}
             className={
@@ -367,11 +413,8 @@ export function App() {
             <Kbd>{chord("Mod", "K")}</Kbd>
           </button>
 
-          <HealthIndicator />
+          <StatusMenu autoCheck={settings.data?.auto_check_updates === true} />
           <ApprovalIndicator />
-          <UpdateIndicator
-            autoCheck={settings.data?.auto_check_updates === true}
-          />
 
           {view === "chat" && agentSurface && (
             <div className="flex items-center gap-1 border-s border-line ps-1.5">
@@ -384,6 +427,35 @@ export function App() {
                 aria-pressed={fileTreeOpen}
               >
                 <FolderTree size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  setRightPanel(rightPanel === "changes" ? "none" : "changes")
+                }
+                title={
+                  changedFiles > 0
+                    ? tf("変更を確認 ({count})", { count: changedFiles })
+                    : t("変更を確認")
+                }
+                aria-label={
+                  changedFiles > 0
+                    ? tf("変更を確認 ({count}件)", { count: changedFiles })
+                    : t("変更を確認")
+                }
+                aria-pressed={rightPanel === "changes"}
+                className="relative"
+              >
+                <GitCompareArrows size={16} />
+                {changedFiles > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-0.5 -right-0.5 grid min-w-3.5 place-items-center rounded-full bg-brand px-0.5 font-mono text-[9px] leading-3.5 text-on-solid"
+                  >
+                    {changedFiles > 99 ? "99+" : changedFiles}
+                  </span>
+                )}
               </Button>
               <Button
                 variant="ghost"
@@ -410,6 +482,8 @@ export function App() {
           <WindowControls />
         </div>
       </header>
+
+      <HealthBanner />
 
       <div ref={setShellRow} className="relative flex min-h-0 min-w-0 flex-1">
         <Sidebar cap={panelCap} />

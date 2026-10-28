@@ -6,6 +6,7 @@ pub mod diff;
 pub mod embedding;
 pub mod error;
 pub mod http;
+pub mod local_runtime;
 pub mod menu;
 pub mod push;
 pub mod run_events;
@@ -435,6 +436,7 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             temperature: None,
             reasoning: None,
             max_tokens: None,
+            keep_alive: None,
             temporary: false,
             tools: Arc::new(permitted),
             history: Vec::new(),
@@ -494,6 +496,10 @@ pub struct AppState {
     /// the same provider, and so a provider/settings change can invalidate the
     /// one cached answer through [`embedding::EmbeddingResolver::invalidate`].
     pub embeddings: Arc<embedding::EmbeddingResolver>,
+    /// Lifecycle, health and model jobs for local runtimes. One instance for
+    /// the whole process so the WebView, the health loop and shutdown all see
+    /// the same process ownership.
+    pub local_runtime: Arc<local_runtime::LocalRuntimeManager>,
 }
 
 /// Assemble the Tool Registry from the live parts.
@@ -542,6 +548,7 @@ pub(crate) fn build_registry(
 }
 
 pub async fn build_app_state(
+    app_handle: tauri::AppHandle,
     storage: Arc<Storage>,
     secrets: Arc<SecretStore>,
     app_data: &std::path::Path,
@@ -636,6 +643,7 @@ pub async fn build_app_state(
             }
         });
     }
+    let local_runtime = local_runtime::LocalRuntimeManager::new(app_handle, storage.clone());
     Ok(AppState {
         storage,
         secrets,
@@ -644,6 +652,7 @@ pub async fn build_app_state(
         mcp,
         agent_runner,
         embeddings,
+        local_runtime,
     })
 }
 
@@ -1048,6 +1057,7 @@ pub fn run() {
                 Some(manifest_resources.as_path()),
             );
             let state = match tauri::async_runtime::block_on(build_app_state(
+                app_handle.clone(),
                 storage,
                 secrets,
                 &data_dir,
@@ -1068,6 +1078,12 @@ pub fn run() {
             // Forward Run Engine broadcast events into the WebView.
             let managed = app.state::<AppState>();
             run_events::spawn(app_handle.clone(), managed.engine.clone());
+            // Local runtimes start in the background: a scan or an auto-start
+            // must never delay the first paint of the shell.
+            let local_runtime = managed.local_runtime.clone();
+            tauri::async_runtime::spawn(async move {
+                local_runtime.startup().await;
+            });
             deep_link::install(&app_handle);
             scheduler::install(&app_handle);
             menu::install(&app_handle)?;
@@ -1096,6 +1112,19 @@ pub fn run() {
             commands::discovery::scan_local_runtimes,
             commands::discovery::probe_local_endpoint,
             commands::discovery::import_local_runtime,
+            commands::local_runtime::local_runtime_snapshot,
+            commands::local_runtime::local_runtime_refresh,
+            commands::local_runtime::local_runtime_start,
+            commands::local_runtime::local_runtime_stop,
+            commands::local_runtime::local_runtime_restart,
+            commands::local_runtime::local_runtime_logs,
+            commands::local_runtime::local_runtime_open_app,
+            commands::local_runtime::local_model_pull,
+            commands::local_runtime::local_model_delete,
+            commands::local_runtime::local_model_load,
+            commands::local_runtime::local_model_unload,
+            commands::local_runtime::local_job_list,
+            commands::local_runtime::local_job_cancel,
             commands::models::list_models,
             commands::models::verify_tools,
             commands::models::set_model_auto,
@@ -1176,6 +1205,8 @@ pub fn run() {
             commands::schedules::set_job_enabled,
             commands::schedules::preview_cron,
             commands::schedules::delete_job,
+            commands::schedules::update_job,
+            commands::schedules::run_job_now,
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::agents::list_agents,
@@ -1202,6 +1233,19 @@ pub fn run() {
         }
     };
     app.run(|app_handle, event| {
+        // Give the runtime manager a chance to stop only the processes it
+        // started. `local_stop_on_exit` can keep them alive for a persistent
+        // local server; anything launched externally is never touched.
+        if matches!(&event, tauri::RunEvent::Exit) {
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                // One overall deadline: quitting must not block for 5 s per
+                // runtime when a child ignores SIGTERM.
+                let shutdown = state.local_runtime.shutdown();
+                let _ = tauri::async_runtime::block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_secs(8), shutdown).await
+                });
+            }
+        }
         // Dock icon / activation on macOS must bring the hidden window back.
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen {

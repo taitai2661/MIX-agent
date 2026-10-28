@@ -63,6 +63,29 @@ export function removeKey(key: string, store?: Storage | null): void {
   }
 }
 
+/** Every stored key, optionally narrowed to a prefix. Best-effort. */
+export function listKeys(prefix = "", store?: Storage | null): string[] {
+  const s = resolveStore(store);
+  if (!s) return [];
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < s.length; i += 1) {
+      const key = s.key(i);
+      if (key !== null && key.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
+/** Remove every key under a prefix. Returns the number removed. */
+export function removeKeys(prefix: string, store?: Storage | null): number {
+  const keys = listKeys(prefix, store);
+  for (const key of keys) removeKey(key, store);
+  return keys.length;
+}
+
 /** Read a `"1"` / `"0"` boolean. Returns `fallback` when missing/unreadable. */
 export function getBoolean(
   key: string,

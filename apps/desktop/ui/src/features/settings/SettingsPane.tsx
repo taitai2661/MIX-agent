@@ -10,6 +10,7 @@ import {
   Palette,
   RefreshCw,
   Save,
+  Search,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -27,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorAlert } from "@/components/shared";
 import { NavRow, SectionLabel } from "@/components/layout";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/input";
+import { SearchField, Select } from "@/components/ui/input";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { NetworkSettings } from "./NetworkSettings";
@@ -113,6 +114,28 @@ export function SettingsPane() {
   // "保存しました" badge stayed lit forever: editing afterwards still showed a
   // saved state the moment before the user changed the value.
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  // Immediate-save controls announce their write so the badge does not claim
+  // unsaved work that the backend already has.
+  useEffect(() => {
+    const onSaved = (event: Event) => {
+      const detail = (event as CustomEvent<SettingsView>).detail;
+      if (detail) setSavedSnapshot(JSON.stringify(detail));
+    };
+    window.addEventListener("mix:settings-saved", onSaved);
+    return () => window.removeEventListener("mix:settings-saved", onSaved);
+  }, []);
+  const query = filter.trim().toLowerCase();
+  const visibleSections = SETTINGS_NAV.map((section) => ({
+    ...section,
+    tabs: section.tabs.filter(
+      (tab) =>
+        !query ||
+        t(tab.label).toLowerCase().includes(query) ||
+        tab.label.toLowerCase().includes(query),
+    ),
+  })).filter((section) => section.tabs.length > 0);
+  const visibleTabs = visibleSections.flatMap((section) => section.tabs);
   const dirty =
     savedSnapshot !== null && JSON.stringify(data) !== savedSnapshot;
   // Saving before `get_settings` resolves would replace the stored row with
@@ -143,7 +166,22 @@ export function SettingsPane() {
           <Settings2 size={16} className="text-faint" />
           {t("設定")}
         </div>
-        {SETTINGS_NAV.map((section) => (
+        <SearchField
+          icon={<Search size={13} />}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t("設定を検索")}
+          aria-label={t("設定を検索")}
+          {...(filter
+            ? { onClear: () => setFilter(""), clearLabel: t("クリア") }
+            : {})}
+        />
+        {visibleSections.length === 0 && (
+          <p className="px-1.5 py-2 text-xs text-faint">
+            {t("一致する設定がありません")}
+          </p>
+        )}
+        {visibleSections.map((section) => (
           <nav key={section.title} className="flex flex-col gap-0.5">
             <SectionLabel>{t(section.title)}</SectionLabel>
             {section.tabs.map((tab) => (
@@ -210,7 +248,7 @@ export function SettingsPane() {
               value={activeTab}
               onChange={(e) => setSettingsTab(e.target.value as SettingsTab)}
             >
-              {ALL_TABS.map((tab) => (
+              {(visibleTabs.length > 0 ? visibleTabs : ALL_TABS).map((tab) => (
                 <option key={tab.id} value={tab.id}>
                   {t(tab.label)}
                 </option>

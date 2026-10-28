@@ -81,7 +81,60 @@ export interface LocalRuntimeView {
   installed: boolean;
   install_hint: string | null;
   launcher: string | null;
+  can_open_app: boolean;
+  can_start: boolean;
+  can_pull: boolean;
+  can_delete: boolean;
+  can_load: boolean;
+  can_unload: boolean;
   models: DiscoveredModelView[];
+  error: string | null;
+}
+
+export interface LocalRuntimeSnapshotView {
+  slug: string;
+  label: string;
+  kind: string;
+  state:
+    | "unknown"
+    | "not_installed"
+    | "stopped"
+    | "starting"
+    | "online"
+    | "degraded"
+    | "stopping"
+    | "error";
+  online: boolean;
+  installed: boolean;
+  managed: boolean;
+  endpoint: string;
+  version: string | null;
+  executable: string | null;
+  install_hint: string | null;
+  launcher: string | null;
+  error: string | null;
+  models: DiscoveredModelView[];
+  can_start: boolean;
+  can_stop: boolean;
+  can_open_app: boolean;
+  can_pull: boolean;
+  can_delete: boolean;
+  can_load: boolean;
+  can_unload: boolean;
+  /** Set after the user explicitly stopped this runtime; send-time auto-start
+   *  must not undo it until an explicit Start. */
+  auto_start_suppressed: boolean;
+}
+
+export interface LocalJobView {
+  id: string;
+  runtime: string;
+  kind: string;
+  model: string;
+  status: "running" | "success" | "error" | "cancelling" | string;
+  completed: number;
+  total: number;
+  message: string;
   error: string | null;
 }
 
@@ -195,6 +248,21 @@ export interface SettingsView {
   onboarding_completed: boolean | null;
   /** Check GitHub Releases for a newer build once per launch. Ships enabled. */
   auto_check_updates: boolean;
+  /** Sweep loopback for local runtimes after launch. Ships enabled. */
+  local_scan_on_start: boolean;
+  /** Stop only app-started runtime processes on exit. Ships enabled. */
+  local_stop_on_exit: boolean;
+  /** Auto-start imported local providers after launch. Ships disabled. */
+  local_auto_start: boolean;
+  /** `keep_alive` sent when the app loads an Ollama model. `null` → 5m. */
+  local_keep_alive: string | null;
+  /**
+   * Ceiling for `num_ctx` on local models. `null` uses the built-in 8K default;
+   * the model's advertised maximum is never sent as-is.
+   */
+  local_context_window: number | null;
+  /** Give locally hosted models a bonus in Auto routing. Ships disabled. */
+  local_prefer: boolean;
 }
 
 /** An update announced by the release manifest (`latest.json`). */
@@ -331,6 +399,10 @@ export interface ScheduleJobView {
   enabled: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
+  prompt: string;
+  mode: string;
+  model_id: string | null;
+  conversation_id: string | null;
 }
 
 export interface AgentView {
@@ -391,6 +463,8 @@ export interface PendingApprovalView {
   arguments: unknown;
   created_at: string;
   expires_at: string;
+  conversation_id: string | null;
+  conversation_title: string | null;
 }
 
 export interface RunView {
@@ -401,6 +475,7 @@ export interface RunView {
   model_id: string;
   step_count: number;
   tool_call_count: number;
+  failed_tool_count?: number;
   started_at: string;
   updated_at: string;
   summary: string;

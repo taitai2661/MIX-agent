@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { loadPromptHistory, pushPromptHistory } from "./promptHistory";
+import {
+  clearPromptHistory,
+  loadPromptHistory,
+  promptHistoryCount,
+  pushPromptHistory,
+} from "./promptHistory";
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -51,5 +56,14 @@ describe("promptHistory", () => {
     pushPromptHistory("second", store);
     pushPromptHistory("first", store);
     expect(loadPromptHistory(store)).toEqual(["first", "second"]);
+  });
+
+  it("clears and counts history", () => {
+    pushPromptHistory("first", store);
+    pushPromptHistory("second", store);
+    expect(promptHistoryCount(store)).toBe(2);
+    clearPromptHistory(store);
+    expect(loadPromptHistory(store)).toEqual([]);
+    expect(promptHistoryCount(store)).toBe(0);
   });
 });

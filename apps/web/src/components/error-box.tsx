@@ -4,10 +4,17 @@ import { AlertTriangle, ChevronDown, RefreshCw } from "lucide-react";
 interface ErrorBoxProps {
   error: unknown;
   onRetry?: () => void;
+  /** "再試行" is wrong for a failed send: the action resends the message. */
+  retryLabel?: string;
   showDetails?: boolean;
 }
 
-export function ErrorBox({ error, onRetry, showDetails = true }: ErrorBoxProps) {
+export function ErrorBox({
+  error,
+  onRetry,
+  retryLabel,
+  showDetails = true,
+}: ErrorBoxProps) {
   const [expanded, setExpanded] = useState(false);
   if (!error) return null;
 
@@ -22,7 +29,7 @@ export function ErrorBox({ error, onRetry, showDetails = true }: ErrorBoxProps) 
         {onRetry && (
           <button type="button" className="error-retry" onClick={onRetry}>
             <RefreshCw size={12} />
-            再試行
+            {retryLabel ?? "再試行"}
           </button>
         )}
         {showDetails && details && (

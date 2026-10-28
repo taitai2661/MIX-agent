@@ -90,7 +90,7 @@ export function Conversations() {
   };
 
   return (
-    <main className="page conversation-manager">
+    <section className="page conversation-manager">
       <Title title={t(states[current][0])} sub={t(states[current][1])} />
       {current === "active" && (
         <>
@@ -198,7 +198,7 @@ export function Conversations() {
                 )}
                 {current === "trash" && (
                   <>
-                    <button className="icon" aria-label={`${row.data.title}を復元`} onClick={async () => { await api(`/conversations/${row.id}/restore`, "POST"); await refresh(); }}><RotateCcw size={16} /></button>
+                    <button className="icon" aria-label={`${row.data.title}を復元`} onClick={async () => { try { setError(null); await api(`/conversations/${row.id}/restore`, "POST"); await refresh(); } catch (cause) { setError(cause); } }}><RotateCcw size={16} /></button>
                     <button className="icon danger" aria-label={`${row.data.title}を完全削除`} onClick={() => remove(row.id, true)}><Trash2 size={16} /></button>
                   </>
                 )}
@@ -206,7 +206,7 @@ export function Conversations() {
               </div>
             </article>
           ))}
-          {!conversations.data?.length && <Empty>{t("該当する会話はありません。")}</Empty>}
+          {!conversations.isError && !error && !conversations.data?.length && <Empty>{t("該当する会話はありません。")}</Empty>}
         </div>
       )}
       <nav className="conversation-links">
@@ -228,6 +228,6 @@ export function Conversations() {
           onCancel={() => setPending(null)}
         />
       )}
-    </main>
+    </section>
   );
 }

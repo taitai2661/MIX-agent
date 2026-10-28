@@ -321,11 +321,18 @@
 }
 
 :root[data-platform="macos"] .app-titlebar {
-  padding-left: 88px;
-  /* Keep in sync with `trafficLightPosition` in app/tauri.conf.json:
-     y = (titlebar - 14) / 2 = 13 so the traffic lights (14px diameter on macOS)
-     stay vertically centered in the 40px bar. x = 18 with 3 buttons (54px wide)
-     leaves a 16px gap before this 88px padding for symmetric margins. */
+  padding-left: 94px;
+  /* Keep in sync with `trafficLightPosition` in app/tauri.conf.json.
+     wry does not place the buttons at `y`; it sets the native title-bar
+     container height to `button height + y` and leaves AppKit's own button
+     origin (`~9px` on macOS 26/27, `~5px` on older releases) alone. The
+     button top therefore lands at `y - native origin`. With 14px buttons in
+     this 40px bar the centred top is 13px, so `y = 13 + 9 = 22`.
+     (The old `y = 13` assumed `y` itself was the top inset and pushed the
+     lights against the top edge — they looked crushed.)
+     `x = 18`: the three buttons are 60px wide on macOS 26/27 (14px each with
+     9px gaps), ending at 78px, so this 94px padding keeps a 16px gap before
+     the first titlebar control. */
   background: color-mix(in srgb, var(--color-bg) 86%, transparent);
   backdrop-filter: blur(20px) saturate(1.4);
 }
@@ -404,6 +411,36 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* In-app override for users whose OS preference cannot be changed (or who
+   want the app quiet while the rest of the system animates). */
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Long transcripts: skip layout/paint for rows far outside the viewport.
+   `contain-intrinsic-size` keeps the scrollbar from jumping before a row has
+   been rendered for the first time. */
+.message-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+:root[data-code-wrap="wrap"] .markdown-body pre,
+:root[data-code-wrap="wrap"] .code-block-pre {
+  overflow-x: hidden;
+}
+
+:root[data-code-wrap="wrap"] .markdown-body pre code,
+:root[data-code-wrap="wrap"] .code-block-pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* --------------------------------------------------------------- markdown */

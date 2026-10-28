@@ -296,6 +296,51 @@ async fn an_orphaned_model_is_not_listed() {
     assert_eq!(listed[0].provider_id, live);
 }
 
+/// The native local-runtime metadata is stored in the model JSON and must
+/// survive the projection the UI reads. A missing field is "unknown", not a
+/// query failure.
+#[tokio::test]
+async fn native_local_metadata_is_projected_back_to_the_ui() {
+    let storage = temp_storage("native-meta").await;
+    let id = Uuid::new_v4().to_string();
+    insert_provider_row(&storage, &id, true).await;
+    let model_id = format!("{id}:llama3.1:8b");
+    sqlx::query("INSERT INTO models (id, owner_id, data) VALUES (?, ?, ?)")
+        .bind(&model_id)
+        .bind(SINGLE_USER_ID)
+        .bind(
+            serde_json::json!({
+                "providerId": id,
+                "label": "llama3.1:8b",
+                "contextWindow": 131072,
+                "vision": true,
+                "toolCalling": true,
+                "reasoning": true,
+                "auto": true,
+                "sizeBytes": 4_930_000_000_i64,
+                "parameterSize": "8.0B",
+                "quantization": "Q4_K_M",
+                "family": "llama",
+                "loaded": true,
+                "capabilitySource": "native",
+            })
+            .to_string(),
+        )
+        .execute(storage.pool())
+        .await
+        .expect("insert native model");
+
+    let listed = fetch_models(storage.pool()).await.expect("list models");
+    let model = &listed[0];
+    assert_eq!(model.context_window, 131072);
+    assert_eq!(model.size_bytes, Some(4_930_000_000));
+    assert_eq!(model.parameter_size.as_deref(), Some("8.0B"));
+    assert_eq!(model.quantization.as_deref(), Some("Q4_K_M"));
+    assert_eq!(model.family.as_deref(), Some("llama"));
+    assert!(model.loaded);
+    assert_eq!(model.capability_source.as_deref(), Some("native"));
+}
+
 /// A row that never got a `providerId` — only reachable from a hand-edited or
 /// partially restored database — used to make `query_as` fail on the NULL and
 /// blank the whole list. One bad row must cost one row.

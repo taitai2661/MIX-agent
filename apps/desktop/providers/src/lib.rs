@@ -17,6 +17,8 @@ pub mod discovery;
 pub mod dsml;
 pub mod gemini;
 pub mod lmstudio;
+pub mod local_error;
+pub mod local_ops;
 pub mod ollama;
 pub mod openai;
 pub mod openai_compat;
@@ -48,6 +50,15 @@ pub struct ProviderRequest {
     pub reasoning: Option<ReasoningControl>,
     #[serde(default)]
     pub stream: bool,
+    /// Context window the engine wants this turn to use. Only the native
+    /// Ollama transport can honour it per request (`options.num_ctx`); other
+    /// adapters ignore it.
+    #[serde(default)]
+    pub context_window: Option<u32>,
+    /// How long a local runtime should keep the model resident after this
+    /// request. Only the native Ollama transport sends it.
+    #[serde(default)]
+    pub keep_alive: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,10 +323,7 @@ pub type StreamBox = std::pin::Pin<Box<dyn Stream<Item = StreamEvent> + Send>>;
 /// normal finish as "unsupported". A provider error after the stream starts is
 /// also "unsupported": sending tools to it would fail the same way, and the
 /// user asked for a capability answer, not for a retry.
-pub async fn probe_tool_calling(
-    provider: &dyn Provider,
-    model: &str,
-) -> anyhow::Result<bool> {
+pub async fn probe_tool_calling(provider: &dyn Provider, model: &str) -> anyhow::Result<bool> {
     const PROBE_NAME: &str = "mix_tool_probe";
     let tools = Arc::new(vec![ToolSpec {
         name: PROBE_NAME.to_string(),
@@ -339,6 +347,8 @@ pub async fn probe_tool_calling(
         max_tokens: Some(64),
         reasoning: None,
         stream: true,
+        context_window: None,
+        keep_alive: None,
     };
     let mut stream = provider.stream(request).await?;
     let supported = tokio::time::timeout(std::time::Duration::from_secs(20), async {
@@ -363,4 +373,77 @@ pub async fn probe_tool_calling(
     .await
     .map_err(|_| anyhow::anyhow!("tool capability probe timed out"))?;
     Ok(supported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct StubProvider {
+        id: String,
+        events: Vec<StreamEvent>,
+    }
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn label(&self) -> &str {
+            "stub"
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                vision: false,
+                tool_calling: true,
+                reasoning: false,
+                streaming: true,
+            }
+        }
+
+        async fn stream(&self, _req: ProviderRequest) -> anyhow::Result<StreamBox> {
+            Ok(Box::pin(futures_util::stream::iter(self.events.clone())))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_proves_support() {
+        let provider = StubProvider {
+            id: "stub".to_string(),
+            events: vec![
+                StreamEvent::ToolCallStart {
+                    id: "call_1".into(),
+                    name: "mix_tool_probe".into(),
+                },
+                StreamEvent::ToolCallFinish {
+                    id: "call_1".into(),
+                    name: "mix_tool_probe".into(),
+                    arguments: "{}".into(),
+                },
+                StreamEvent::Finished {
+                    finish_reason: "tool_calls".into(),
+                    usage: None,
+                },
+            ],
+        };
+        assert!(probe_tool_calling(&provider, "test-model")
+            .await
+            .expect("probe"));
+    }
+
+    #[tokio::test]
+    async fn a_plain_finish_proves_absence() {
+        let provider = StubProvider {
+            id: "stub".to_string(),
+            events: vec![StreamEvent::Finished {
+                finish_reason: "stop".into(),
+                usage: None,
+            }],
+        };
+        assert!(!probe_tool_calling(&provider, "test-model")
+            .await
+            .expect("probe"));
+    }
 }

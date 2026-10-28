@@ -3,6 +3,7 @@ import { Check, Folder, MessageSquare } from "lucide-react";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useActiveProject, useModels, useProviders } from "@/lib/queries";
+import { useUi } from "@/lib/ui";
 import { useCreateThread } from "@/features/shell/useShellEvents";
 import { Row } from "@/components/layout";
 import { ErrorBadge } from "@/components/shared";
@@ -29,6 +30,7 @@ export function StepStart({
   const models = useModels();
   const activeProject = useActiveProject();
   const createThread = useCreateThread();
+  const setSurface = useUi((s) => s.setSurface);
 
   const modelCount = models.data?.length ?? 0;
   const providerLabels = (providers.data ?? []).map((p) => p.label).join(", ");
@@ -38,8 +40,15 @@ export function StepStart({
   const folderName = projectName ?? activeProject?.name ?? null;
   const [error, setError] = useState<string | null>(null);
 
-  const start = () => {
+  const start = (surface: "chat" | "desktop-agent") => {
     setError(null);
+    // On a fresh install the default surface is `chat`, whose threads carry no
+    // project. Picking a folder in step 2 therefore had no effect on the first
+    // thread at all: the file tree stayed empty and the folder only mattered
+    // after the user discovered the agent surface. Switching here makes the
+    // hand-off match the summary the user just confirmed. `useCreateThread`
+    // reads the store at mutation time, so the surface must be set first.
+    setSurface(surface);
     // Finish onboarding only once the thread exists. Marking it done first
     // dismissed the wizard even when thread creation failed, dropping the user
     // into the shell with no thread and no explanation.
@@ -81,11 +90,11 @@ export function StepStart({
         />
       </ul>
 
-      <Row>
+      <Row className="flex-wrap">
         <Button
           variant="primary"
           size="lg"
-          onClick={start}
+          onClick={() => start(folderName ? "desktop-agent" : "chat")}
           disabled={createThread.isPending}
         >
           {createThread.isPending ? (
@@ -93,8 +102,20 @@ export function StepStart({
           ) : (
             <MessageSquare size={13} />
           )}
-          {t("チャットを始める")}
+          {folderName
+            ? t("このフォルダでエージェントを始める")
+            : t("チャットを始める")}
         </Button>
+        {folderName && (
+          <Button
+            variant="ghost"
+            size="lg"
+            onClick={() => start("chat")}
+            disabled={createThread.isPending}
+          >
+            {t("チャットを始める")}
+          </Button>
+        )}
         <span className="flex items-center gap-1 text-xs text-faint">
           <Folder size={10} aria-hidden="true" />
           {t("設定はここで変えられます")}

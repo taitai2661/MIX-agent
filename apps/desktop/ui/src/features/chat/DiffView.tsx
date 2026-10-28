@@ -151,9 +151,13 @@ export function buildSplitRows(lines: DiffLine[]): SplitDiffRow[] {
 export const DiffLines = memo(function DiffLines({
   lines,
   split = false,
+  showLineNumbers = true,
 }: {
   lines: DiffLine[];
   split?: boolean;
+  /** Approval previews show a before/after excerpt whose absolute line
+   *  numbers are unknown; rendering 1,2,3 there looked like a real location. */
+  showLineNumbers?: boolean;
 }) {
   const splitRows = useMemo(
     () => (split ? buildSplitRows(lines) : []),
@@ -221,26 +225,35 @@ export const DiffLines = memo(function DiffLines({
   return (
     <div className="overflow-x-auto rounded-lg border border-line">
       <div className="min-w-max font-mono text-xs leading-5">
-        {lines.map((line, i) => (
-          <div
-            key={i}
-            className={cn(
-              "grid grid-cols-[2.5rem_2.5rem_1fr]",
-              LINE_TONE[line.kind],
-              line.kind === "hunk" && "border-y border-line",
-            )}
-          >
-            <span className="select-none border-e border-line px-1.5 text-end text-faint">
-              {line.oldNo ?? ""}
-            </span>
-            <span className="select-none border-e border-line px-1.5 text-end text-faint">
-              {line.newNo ?? ""}
-            </span>
-            <span className="whitespace-pre-wrap break-all px-2">
-              {line.text}
-            </span>
-          </div>
-        ))}
+        {lines.map((line, i) =>
+          line.kind === "hunk" && !showLineNumbers ? null : (
+            <div
+              key={i}
+              className={cn(
+                "grid",
+                showLineNumbers
+                  ? "grid-cols-[2.5rem_2.5rem_1fr]"
+                  : "grid-cols-[1fr]",
+                LINE_TONE[line.kind],
+                line.kind === "hunk" && "border-y border-line",
+              )}
+            >
+              {showLineNumbers && (
+                <>
+                  <span className="select-none border-e border-line px-1.5 text-end text-faint">
+                    {line.oldNo ?? ""}
+                  </span>
+                  <span className="select-none border-e border-line px-1.5 text-end text-faint">
+                    {line.newNo ?? ""}
+                  </span>
+                </>
+              )}
+              <span className="whitespace-pre-wrap break-all px-2">
+                {line.text}
+              </span>
+            </div>
+          ),
+        )}
       </div>
     </div>
   );
@@ -356,7 +369,7 @@ export function DiffPanel() {
       <PanelHeader
         icon={<FileDiff size={14} />}
         title={diffTarget.label}
-        onClose={() => setRightPanel("activity")}
+        onClose={() => setRightPanel("none")}
       />
       <div className={PANEL_BODY}>
         <DiffView

@@ -669,6 +669,8 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             stream: true,
+            context_window: None,
+            keep_alive: None,
         }
     }
 

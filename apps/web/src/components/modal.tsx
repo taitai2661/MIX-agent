@@ -5,7 +5,7 @@ import { t } from "@/app/i18n";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
+export function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
   const focusable = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
   if (!focusable.length) return;
   const first = focusable[0],
@@ -19,20 +19,24 @@ function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
   }
 }
 
-function useModalDialog(panelRef: RefObject<HTMLDivElement | null>, onCancel: () => void) {
+export function useModalDialog<T extends HTMLElement>(panelRef: RefObject<T | null>, onCancel: () => void) {
+  // Keep the latest handler without re-running the focus effect on every
+  // parent render (typing in a controlled field used to steal focus).
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
   useEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const preferred = panelRef.current?.querySelector<HTMLElement>("[data-autofocus]");
     (preferred ?? panelRef.current?.querySelector<HTMLElement>(FOCUSABLE))?.focus();
     const keydown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
+      if (event.key === "Escape") cancelRef.current();
     };
     document.addEventListener("keydown", keydown);
     return () => {
       document.removeEventListener("keydown", keydown);
       previouslyFocused?.focus();
     };
-  }, [onCancel, panelRef]);
+  }, [panelRef]);
 }
 
 function ModalFrame({ panelRef, title, onMouseDown, onKeyDown, children }: {

@@ -4,6 +4,7 @@ import {
   Bot,
   CornerDownLeft,
   FolderTree,
+  GitCompareArrows,
   Keyboard,
   MessageSquare,
   PanelLeft,
@@ -16,7 +17,13 @@ import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
 import { CONVERSATIONS_QUERY_KEY, MODELS_QUERY_KEY } from "@/lib/queries";
-import { useUi, type SettingsTab, type Surface, type View } from "@/lib/ui";
+import {
+  surfaceForMode,
+  useUi,
+  type SettingsTab,
+  type Surface,
+  type View,
+} from "@/lib/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ListRow, Kbd } from "@/components/layout";
 import { ListboxSkeleton } from "@/components/common";
@@ -35,7 +42,7 @@ interface PaletteItem {
 
 const KIND_LABEL: Record<PaletteItem["kind"], string> = {
   action: "アクション",
-  surface: "サーフェス",
+  surface: "ワークスペース",
   view: "表示",
   settings: "設定",
   model: "モデル",
@@ -52,9 +59,12 @@ function fuzzyMatch(haystack: string, needle: string): boolean {
   return j === needle.length;
 }
 
+// `chat` is deliberately absent: the palette already has a "チャット"
+// workspace row, so listing it as a view too produced two identical rows that
+// did different things. "エージェント" is reserved for the run mode / workspace;
+// the management page is a profile list.
 const VIEW_LABELS: Partial<Record<View, string>> = {
-  chat: "チャット",
-  agents: "エージェント",
+  agents: "エージェントプロファイル",
   projects: "プロジェクト",
   schedules: "スケジュール",
   settings: "設定",
@@ -62,6 +72,11 @@ const VIEW_LABELS: Partial<Record<View, string>> = {
 
 /** Jump commands that open the Settings pane on a specific tab. */
 const SETTINGS_TARGETS: { tab: SettingsTab; label: string }[] = [
+  { tab: "appearance", label: "外観" },
+  { tab: "general", label: "一般" },
+  { tab: "network", label: "ネットワーク" },
+  { tab: "updates", label: "アップデート" },
+  { tab: "backup", label: "バックアップ" },
   { tab: "providers", label: "プロバイダー" },
   { tab: "models", label: "モデル" },
   { tab: "tools", label: "ツール" },
@@ -83,6 +98,7 @@ export function CommandPalette() {
   const openSettings = useUi((s) => s.openSettings);
   const setSurface = useUi((s) => s.setSurface);
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
+  const setRightPanel = useUi((s) => s.setRightPanel);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const locale = useUi((s) => s.locale);
@@ -132,25 +148,34 @@ export function CommandPalette() {
         run: () => openSettings(tab),
       }),
     );
-    const threads: PaletteItem[] = (conversations.data ?? [])
-      .slice(0, 30)
-      .map((c) => ({
-        id: `thread:${c.id}`,
-        label: c.title,
-        hint: t("チャット"),
-        icon: <MessageSquare size={15} />,
-        kind: "thread",
-        run: () => {
-          setConversationId(c.id);
-          setView("chat");
-        },
-      }));
+    // The palette is the advertised search surface, so it searches every
+    // thread, not the 30 most recent. Selecting one from the other workspace
+    // switches first — otherwise the chat pane immediately replaced it with a
+    // thread from the current surface and the chosen row appeared to do nothing.
+    const threads: PaletteItem[] = (conversations.data ?? []).map((c) => ({
+      id: `thread:${c.id}`,
+      label: c.title,
+      hint: t(
+        c.mode === "agent"
+          ? "エージェント"
+          : c.mode === "thinking"
+            ? "思考"
+            : "チャット",
+      ),
+      icon: <MessageSquare size={15} />,
+      kind: "thread",
+      run: () => {
+        setSurface(surfaceForMode(c.mode));
+        setConversationId(c.id);
+        setView("chat");
+      },
+    }));
     const surfaces: PaletteItem[] = (
       ["chat", "desktop-agent"] as Surface[]
     ).map((id) => ({
       id: `surface:${id}`,
-      label: id === "chat" ? t("チャット") : t("エージェント"),
-      hint: t("サーフェスを切り替え"),
+      label: id === "chat" ? t("チャット") : t("コーディング"),
+      hint: t("ワークスペースを切り替え"),
       icon: id === "chat" ? <MessageSquare size={15} /> : <Bot size={15} />,
       kind: "surface",
       run: () => setSurface(id),
@@ -197,6 +222,17 @@ export function CommandPalette() {
         run: () => toggleFileTree(),
       },
       {
+        id: "action:review-changes",
+        label: t("変更を確認"),
+        icon: <GitCompareArrows size={15} />,
+        kind: "action",
+        run: () => {
+          // The right panel only exists on the agent workspace.
+          setSurface("desktop-agent");
+          setRightPanel("changes");
+        },
+      },
+      {
         id: "action:settings",
         label: t("設定を開く"),
         keys: chord("Mod", ","),
@@ -212,11 +248,14 @@ export function CommandPalette() {
         kind: "action",
         run: () => setShortcutsOpen(true),
       },
+      // Recent threads directly after the primary actions: opening ⌘K used to
+      // show five commands and two workspace switches while the history — the
+      // thing users actually search for — sat below the fold.
+      ...threads,
       ...surfaces,
       ...views,
       ...settingsTabs,
       ...modelItems,
-      ...threads,
     ];
   }, [
     conversations.data,
@@ -227,6 +266,7 @@ export function CommandPalette() {
     setView,
     setSurface,
     setShortcutsOpen,
+    setRightPanel,
     toggleSidebar,
     toggleFileTree,
     locale,
@@ -320,8 +360,8 @@ export function CommandPalette() {
             aria-controls="palette-listbox"
             aria-activedescendant={filtered.length > 0 ? activeId : undefined}
             aria-autocomplete="list"
-            aria-label={t("コマンドを検索…")}
-            placeholder={t("コマンドを検索…")}
+            aria-label={t("コマンド・スレッドを検索…")}
+            placeholder={t("コマンド・スレッドを検索…")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKey}
@@ -367,7 +407,7 @@ export function CommandPalette() {
                       {item.hint}
                     </span>
                   ) : (
-                    <span className="ms-auto shrink-0 text-2xs text-faint/70">
+                    <span className="ms-auto shrink-0 text-2xs text-faint">
                       {t(KIND_LABEL[item.kind])}
                     </span>
                   )}

@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { api, listenRunEvents } from "@/lib/api";
-import { useRunEvents } from "@/lib/runStore";
+import { conversationForRun, useRunEvents } from "@/lib/runStore";
+import { isTerminal } from "@/lib/runEvents";
 import {
   CONVERSATIONS_QUERY_KEY,
   PENDING_APPROVALS_QUERY_KEY,
@@ -11,26 +12,8 @@ import {
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
 import { t } from "@/lib/i18n";
 
-const ZOOM_KEY = "mix-agent-zoom";
-function applyZoom(next: number) {
-  const value = Math.min(1.5, Math.max(0.8, Math.round(next * 10) / 10));
-  try {
-    localStorage.setItem(ZOOM_KEY, String(value));
-  } catch {
-    // Storage can be unavailable in a preview; zoom still applies for the session.
-  }
-  document.documentElement.style.zoom = String(value);
-}
-function currentZoom() {
-  try {
-    const stored = Number(localStorage.getItem(ZOOM_KEY));
-    return Number.isFinite(stored) && stored > 0 ? stored : 1;
-  } catch {
-    return 1;
-  }
-}
-
-/** Open a blank chat without creating an empty conversation row.
+/**
+ * Open a blank chat without creating an empty conversation row.
  *
  * The backend conversation is created on first send by `ChatPane`, so clicking
  * 新規チャット three times no longer leaves three untitled rows behind.
@@ -124,6 +107,30 @@ export function useShellEvents(handlers: {
             queryKey: PENDING_APPROVALS_QUERY_KEY,
           });
         }
+        // A run can finish while the user is reading another thread. The chat
+        // pane only watches the active conversation, so without this its
+        // sidebar marker stayed "running" forever and its transcript stayed
+        // stale until the thread was opened again.
+        if (evt.kind === "status") {
+          const status = (evt.data as { status?: unknown })?.status;
+          if (typeof status === "string" && isTerminal(status)) {
+            const conversationId = conversationForRun(evt.run_id);
+            if (conversationId) {
+              void queryClient.invalidateQueries({
+                queryKey: ["messages", conversationId],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["runs", conversationId],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: CONVERSATIONS_QUERY_KEY,
+              });
+            }
+            window.setTimeout(() => {
+              useRunEvents.getState().clearRun(evt.run_id);
+            }, 1500);
+          }
+        }
       }),
     );
 
@@ -156,7 +163,9 @@ export function useShellEvents(handlers: {
         try {
           sendNotification({
             title: "MIX-agent",
-            body: t("実行はバックグラウンドで継続しています。トレイから再表示できます。"),
+            body: t(
+              "実行はバックグラウンドで継続しています。トレイから再表示できます。",
+            ),
           });
         } catch {
           // Notification permission may be denied; the tray icon is still there.
@@ -221,10 +230,6 @@ export function useAppShortcuts() {
   });
 
   useEffect(() => {
-    applyZoom(currentZoom());
-  }, []);
-
-  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const {
         setPaletteOpen: palette,
@@ -241,17 +246,19 @@ export function useAppShortcuts() {
       // is not exposed by the platform menu, so keep the standard chords here.
       if (isMod && !e.altKey && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
-        applyZoom(currentZoom() + 0.1);
+        const state = useUi.getState();
+        state.setZoom(state.zoom + 0.1);
         return;
       }
       if (isMod && !e.altKey && e.key === "-") {
         e.preventDefault();
-        applyZoom(currentZoom() - 0.1);
+        const state = useUi.getState();
+        state.setZoom(state.zoom - 0.1);
         return;
       }
       if (isMod && !e.altKey && e.key === "0") {
         e.preventDefault();
-        applyZoom(1);
+        useUi.getState().setZoom(1);
         return;
       }
 

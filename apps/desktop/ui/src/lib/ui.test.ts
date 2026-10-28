@@ -24,6 +24,9 @@ function resetStore() {
     threadFilter: "all",
     paletteOpen: false,
     shortcutsOpen: false,
+    zoom: 1,
+    codeWrap: false,
+    reduceMotion: false,
   });
 }
 
@@ -177,5 +180,24 @@ describe("useUi surface state", () => {
 
     useUi.getState().setSurface("desktop-agent");
     expect(useUi.getState().conversationId).toBe("agent-1");
+  });
+
+  it("persists display preferences and clamps zoom", () => {
+    useUi.getState().setZoom(2);
+    expect(useUi.getState().zoom).toBe(1.5);
+    expect(localStorage.getItem("mix-agent-zoom")).toBe("1.5");
+    expect(document.documentElement.style.zoom).toBe("1.5");
+
+    useUi.getState().setZoom(0.1);
+    expect(useUi.getState().zoom).toBe(0.8);
+    expect(document.documentElement.style.zoom).toBe("0.8");
+
+    useUi.getState().setCodeWrap(true);
+    expect(localStorage.getItem("mix-agent-code-wrap")).toBe("1");
+    expect(document.documentElement.dataset.codeWrap).toBe("wrap");
+
+    useUi.getState().setReduceMotion(true);
+    expect(localStorage.getItem("mix-agent-reduce-motion")).toBe("1");
+    expect(document.documentElement.dataset.reduceMotion).toBe("true");
   });
 });

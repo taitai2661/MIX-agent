@@ -147,6 +147,7 @@ Both editions share a unified agent engine with enterprise-grade capabilities:
 ### 2. 52 Provider Presets & Capability Probing
 - Built-in presets for OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral, DeepSeek, Cohere, Ollama, LM Studio, and more.
 - **Capability Probe**: Automatically checks model tool-calling readiness using zero-side-effect probes before runs.
+- **Local runtime management (Desktop)**: detects Ollama / LM Studio, then starts, stops, restarts, pulls, deletes, loads and unloads from the app. Ollama uses its native API for `num_ctx` (8K ceiling by default) and `keep_alive`.
 
 ### 3. Tool Registry & Fine-Grained Permissions
 - Rich tools for file editing, persistent terminal execution, web search, web browsing, memory, and knowledge retrieval.

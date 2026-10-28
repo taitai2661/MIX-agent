@@ -264,8 +264,12 @@ function safeJson(value: unknown): string {
 export function ActivityPanel({
   embedded = false,
 }: { embedded?: boolean } = {}) {
-  const liveRunId = useRunEvents((s) => s.liveRunId);
-  const liveTimeline = useRunEvents((s) => s.timeline);
+  const conversationId = useUi((s) => s.conversationId);
+  const liveEntry = useRunEvents((s) =>
+    conversationId ? s.byConversation[conversationId] : undefined,
+  );
+  const liveRunId = liveEntry?.runId ?? null;
+  const liveTimeline = liveEntry?.timeline ?? null;
   const activityRunId = useUi((s) => s.activityRunId);
   const setRightPanel = useUi((s) => s.setRightPanel);
   const setActivityRunId = useUi((s) => s.setActivityRunId);
@@ -273,7 +277,7 @@ export function ActivityPanel({
   const runId = activityRunId ?? liveRunId;
   const isLive = runId != null && runId === liveRunId;
   const startRun = useRunEvents((s) => s.startRun);
-  const activeConversationId = useRunEvents((s) => s.conversationId);
+  const activeConversationId = conversationId;
   const queryClient = useQueryClient();
 
   const history = useQuery({

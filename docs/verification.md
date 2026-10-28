@@ -6,7 +6,18 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [実装] ローカルランタイムの初回導線と判定の修正（2026-10-28）
+
+- `DetectedRuntime.online` を「モデルが 1 件以上ある」から「識別済みのランタイムが応答している」へ変更した。Ollama は空ライブラリでも `/api/version` の指紋で識別できるようにし、モデル 0 件の新規インストールを起動 → `pull` まで進められるようにした。空ライブラリはエラー表示しない。未識別の空応答（AirPlay など）は従来どおり `online = false`。
+- `is_managed_provider` / `is_loopback_base_url` を追加し、API キー免除用の「ローカル（LAN / mDNS / Tailscale を含む）」と、プロセス起動・停止・`num_ctx` 上限用の「loopback のみ」を分離した。LAN の Ollama を自動起動したり 8K に制限したりしない。
+- `sync_models` を当該 provider の authoritative list に変更し、runtime から消えたモデル行を削除するようにした。ローカルランタイムの削除後は `default_model_id` が存在しないモデルを指していれば `null` に戻す。
+- ローカルランタイムパネルの「再検出」を `local_runtime_snapshot` の再取得から `local_runtime_refresh` の実スキャンへ修正した。承認カウントダウンは全カードで 1 本の `setInterval` を共有し、最後の購読解除で停止する。`pull` のキャンセルは `Notify` で待機中のストリームを直ちに起こす。`clearRun` は同じ会話で開始済みの次 Run を消さない。
+- 送信時自動起動は `local_auto_start` が有効な場合のみ行い、ユーザーが明示的に停止したランタイム（`auto_start_suppressed`）は次の送信でも起動しない。起動失敗は Composer のチップに表示し、再試行できる。
+- ローカルモデル操作の能力フラグをバックエンドの `model_operations` に集約し、UI のベンダー名分岐（`ollama || lmstudio`）を削除した。
+- 検証: `cargo fmt --all -- --check`、`cargo clippy -p mixd-providers -p mix-agent-desktop --all-targets -- -D warnings`、`cargo test -p mixd-providers`、`cargo test -p mix-agent-desktop`、Desktop UI の `pnpm lint` / `pnpm typecheck` / `pnpm test`（36ファイル279テスト）/ Prettier が成功。追加テストは空ライブラリの Ollama、loopback と LAN の分離、モデル行の prune、共有カウントダウン、`clearRun` の競合、`CancelToken` の即時起床を含む。
+- 未実施: 実機の Ollama での `start` → 空ライブラリ表示 → `pull` → `load` → `stop`、実機 LM Studio での削除・再検出、macOS / Windows / Linux のプロセス停止差、ハードウェア目安（RAM / VRAM からの推奨モデル）。HTTP モックと単体テストのみで確認した項目を「実機確認済み」とは扱わない。
 
 ## [実装] macOSインストール不能（バンドル署名欠落）の修正（2026-10-27）
 

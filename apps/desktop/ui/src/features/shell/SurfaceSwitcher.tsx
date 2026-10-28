@@ -27,8 +27,8 @@ const SURFACES: SurfaceMeta[] = [
   },
   {
     id: "desktop-agent",
-    label: "エージェント",
-    hint: "ビルド、デバッグ、リリース",
+    label: "コーディング",
+    hint: "ファイル編集とターミナルを使うワークスペース",
     Icon: Bot,
   },
 ];
@@ -45,8 +45,8 @@ export function SurfaceSwitcher() {
           variant="ghost"
           size="sm"
           className="gap-1.5 px-2 font-semibold"
-          aria-label={t("サーフェスを切り替え")}
-          title={t("サーフェスを切り替え")}
+          aria-label={t("ワークスペースを切り替え")}
+          title={t("ワークスペースを切り替え")}
           data-testid="surface-switcher-trigger"
         >
           <active.Icon size={15} className="text-faint" />
@@ -55,7 +55,7 @@ export function SurfaceSwitcher() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={6} className="min-w-56">
-        <DropdownMenuLabel>{t("サーフェスを切り替え")}</DropdownMenuLabel>
+        <DropdownMenuLabel>{t("ワークスペースを切り替え")}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {SURFACES.map((s) => {
           const selected = s.id === surface;

@@ -129,11 +129,9 @@ async fn enriches_ollama_with_native_context_and_capabilities() {
         ),
     ]))
     .await;
-    let found = discovery::probe_base_url_detailed(&format!(
-        "http://127.0.0.1:{port}/v1"
-    ))
-    .await
-    .expect("probe");
+    let found = discovery::probe_base_url_detailed(&format!("http://127.0.0.1:{port}/v1"))
+        .await
+        .expect("probe");
 
     assert_eq!(found.label, "Ollama");
     let model = &found.models[0];
@@ -153,7 +151,7 @@ async fn enriches_lmstudio_from_its_native_model_list() {
     let (port, _server) = serve(routes(&[
         (
             "/api/v0/models",
-            r#"{"data":[{"id":"qwen2.5-7b-instruct","object":"model","type":"vlm","arch":"qwen2","quantization":"Q4_K_M","state":"loaded","max_context_length":32768}]}"#.into(),
+            r#"{"data":[{"id":"qwen2.5-7b-instruct","object":"model","type":"vlm","arch":"qwen2","quantization":"Q4_K_M","state":"loaded","max_context_length":32768,"capabilities":["tool_use"]}]}"#.into(),
         ),
         (
             "/v1/models",
@@ -161,11 +159,9 @@ async fn enriches_lmstudio_from_its_native_model_list() {
         ),
     ]))
     .await;
-    let found = discovery::probe_base_url_detailed(&format!(
-        "http://127.0.0.1:{port}/v1"
-    ))
-    .await
-    .expect("probe");
+    let found = discovery::probe_base_url_detailed(&format!("http://127.0.0.1:{port}/v1"))
+        .await
+        .expect("probe");
 
     assert_eq!(found.label, "LM Studio");
     let model = &found.models[0];
@@ -177,6 +173,7 @@ async fn enriches_lmstudio_from_its_native_model_list() {
     let capabilities = model.capabilities.as_ref().expect("capabilities");
     assert_eq!(capabilities.chat, Some(true));
     assert_eq!(capabilities.vision, Some(true));
+    assert_eq!(capabilities.tools, Some(true));
 }
 
 #[tokio::test]
@@ -262,6 +259,27 @@ async fn a_server_with_no_models_loaded_reports_why_rather_than_failing() {
         found.error.is_some(),
         "an empty model list needs an explanation"
     );
+}
+
+#[tokio::test]
+async fn an_identified_ollama_with_no_models_is_online_so_the_first_pull_can_start() {
+    // A fresh Ollama install has no tags yet. It is a healthy server, and the
+    // app must be able to start it, show it online, and pull the first model.
+    let (port, _server) = serve(routes(&[
+        ("/api/tags", r#"{"models":[]}"#.into()),
+        ("/api/version", r#"{"version":"0.12.0"}"#.into()),
+        ("/v1/models", r#"{"data":[]}"#.into()),
+    ]))
+    .await;
+    let found = discovery::probe_base_url(&format!("http://127.0.0.1:{port}/v1"))
+        .await
+        .expect("probe");
+
+    assert!(found.listening);
+    assert!(found.online, "an identified empty library is still usable");
+    assert!(found.models.is_empty());
+    assert!(found.error.is_none(), "no error for an empty library");
+    assert_eq!(found.slug, "ollama");
 }
 
 #[tokio::test]

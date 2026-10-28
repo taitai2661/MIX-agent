@@ -205,9 +205,7 @@ export function ModelsPane() {
                                   {t("ロード中")}
                                 </Badge>
                               )}
-                              {m.family && (
-                                <Badge size="sm">{m.family}</Badge>
-                              )}
+                              {m.family && <Badge size="sm">{m.family}</Badge>}
                               {m.parameter_size && (
                                 <Badge size="sm">{m.parameter_size}</Badge>
                               )}

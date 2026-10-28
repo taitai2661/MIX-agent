@@ -18,8 +18,6 @@ export const en: Record<string, string> = {
   "新規スレッド": "New thread",
   "新規チャット": "New chat",
   "新規タスク": "New task",
-  "チャットを検索": "Search chats",
-  "タスクを検索": "Search tasks",
   "チャット履歴がありません": "No chat history yet",
   "タスクがありません": "No tasks yet",
   "一致するチャットがありません": "No chats match your search",
@@ -59,14 +57,12 @@ export const en: Record<string, string> = {
   "ダーク": "Dark",
   "システムに従う": "Follow system",
   "コマンドパレット": "Command palette",
-  "コマンドを検索…": "Search commands…",
 
   // Chat composer
   "MIX-agent に話しかける…": "Message MIX-agent…",
   "深く考えてほしいことを入力…": "Ask for a deep, careful answer…",
   "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)":
     "Instruct the agent… (terminal execution & file edits allowed)",
-  "エージェントワークスペース": "Agent Workspace",
   "デスクトップエージェント": "Desktop Agent",
   "プロジェクトを選択": "Select a project",
   "送信": "Send",
@@ -194,7 +190,6 @@ export const en: Record<string, string> = {
   "プロバイダーとして追加してモデルを登録":
     "Register as a provider and add its models",
   "モデルが 1 つもロードされていません": "No models are loaded",
-  "起動してください": "Start the server",
   "未起動": "Not running",
   "未設定": "Not set",
   "保存しました": "Saved",
@@ -292,10 +287,9 @@ export const en: Record<string, string> = {
   "バックアップ": "Backup",
   "設定セクションを選択": "Select a settings section",
 
-  // Surfaces (top-level switcher)
+  // Workspaces (top-level switcher)
   "作成、学習、探索": "Create, learn, explore",
-  "ビルド、デバッグ、リリース": "Build, debug, release",
-  "サーフェスを切り替え": "Switch surface",
+  "ワークスペースを切り替え": "Switch workspace",
 
   // Keys referenced from files owned elsewhere (App.tsx, LocalDiscoveryCard,
   // ProvidersPane, McpPane, …) — registered here so English never falls back
@@ -408,7 +402,8 @@ export const en: Record<string, string> = {
 
   // Approvals pane
   "承認待ち": "Approval required",
-  "実行はバックグラウンドで継続しています。トレイから再表示できます。": "The run continues in the background. Reopen it from the tray.",
+  "実行はバックグラウンドで継続しています。トレイから再表示できます。":
+    "The run continues in the background. Reopen it from the tray.",
   "プレビューを読み込めません": "Could not load the preview",
   "スクリーンショットを保存": "Save screenshot",
   "ブラウザのスクリーンショット": "Browser screenshot",
@@ -419,8 +414,6 @@ export const en: Record<string, string> = {
     "You can also approve inline from the chat.",
 
   // Agents pane
-  "ツールを絞った専用エージェントを定義します。":
-    "Define dedicated agents restricted to a subset of tools.",
   "Agent 名": "Agent name",
   "System instructions…": "System instructions…",
 
@@ -489,7 +482,6 @@ export const en: Record<string, string> = {
   "別のキーワードで検索してください": "Try a different keyword",
   "開く": "Open",
   "アクション": "Actions",
-  "サーフェス": "Surfaces",
   "表示": "Views",
   "拡大": "Zoom in",
   "縮小": "Zoom out",
@@ -501,8 +493,8 @@ export const en: Record<string, string> = {
   "ショートカット一覧": "Show keyboard shortcuts",
   "移動": "Navigate",
   "入力": "Compose",
-  "チャットサーフェスへ": "Go to the chat surface",
-  "エージェントサーフェスへ": "Go to the agent surface",
+  "チャットに切り替え": "Switch to Chat",
+  "エージェントに切り替え": "Switch to Agent",
   "この一覧を表示": "Show this list",
   "ダイアログを閉じる": "Close the dialog",
 
@@ -687,6 +679,104 @@ export const en: Record<string, string> = {
   "検出中…": "Scanning…",
   "ランタイム": "Runtime",
   "オンライン": "Online",
+  "オフライン": "Offline",
+  "不安定": "Degraded",
+  "起動中…": "Starting…",
+  "停止中…": "Stopping…",
+  "未インストール": "Not installed",
+  "不明": "Unknown",
+  "ローカルランタイム": "Local runtime",
+  "ローカルランタイム管理": "Local runtime management",
+  "ローカルランタイムを起動": "Start local runtime",
+  "起動時にローカルランタイムを検出": "Detect local runtimes on launch",
+  "アプリ起動後にループバックを走査し、設定済みの Ollama / LM Studio を見つけます。":
+    "Sweep loopback after launch and find configured Ollama / LM Studio.",
+  "起動時にローカルランタイムを自動起動": "Auto-start local runtimes on launch",
+  "設定済みのローカルプロバイダーが停止していれば、アプリから起動します。プロバイダー単位で無効化できます。":
+    "Start a configured local provider when it is stopped. This can be disabled per provider.",
+  "終了時にアプリ起動のランタイムを停止": "Stop app-started runtimes on exit",
+  "外部で起動したランタイムは停止しません。バックグラウンドで維持したい場合はオフにしてください。":
+    "Runtimes you started yourself are never stopped. Turn this off to keep app-started runtimes alive in the background.",
+  "Auto でローカルモデルを優先": "Prefer local models in Auto",
+  "能力・コンテキスト条件を満たすローカルモデルにスコア上の小さなボーナスを与えます。":
+    "Give local models that already meet capability and context requirements a small score bonus.",
+  "Ollama の keep_alive": "Ollama keep_alive",
+  "Ollama に送る keep_alive（例: 5m, 30m, -1）。ロード時とローカルチャットの両方に使います。":
+    "keep_alive sent to Ollama (e.g. 5m, 30m, -1). Used for explicit loads and local chat turns.",
+  "検出済みのランタイムをアプリから起動・停止し、モデルの取得・ロード・削除を行えます。":
+    "Start and stop detected runtimes, and pull, load or delete models from here.",
+  "再検出": "Rescan",
+  "アプリ起動": "App-managed",
+  "起動": "Start",
+  "アプリを開く": "Open app",
+  "ログ": "Logs",
+  "モデル名（例: qwen3:8b）": "Model name (e.g. qwen3:8b)",
+  "取得": "Pull",
+  "ロード": "Load",
+  "アンロード": "Unload",
+  "モデルがありません。上の入力欄から取得できます。":
+    "No models. Pull one with the field above.",
+  "直近のログ": "Recent logs",
+  "ログはまだありません": "No log lines yet",
+  "「{model}」を削除しますか？": 'Delete "{model}"?',
+  "インストールしてください": "Install it first",
+  "起動方法が不明です": "No in-app start method",
+  "キャンセル中": "Cancelling",
+  "キャンセル済み": "Cancelled",
+  "このジョブはすでに終了しています": "This job has already finished",
+  "ローカルモデルのコンテキスト上限": "Local model context ceiling",
+  "ローカルモデルに渡す num_ctx の上限です。モデルの公称最大値（128K など）はそのまま使いません。":
+    "Upper bound for the num_ctx sent to local models. The model's advertised maximum (often 128K) is not used as-is.",
+  "自動（8K）": "Automatic (8K)",
+  // Local-runtime backend errors (`ui/src/lib/localErrors.ts`).
+  "「{slug}」はアプリから起動できるローカルランタイムではありません。":
+    '"{slug}" is not a local runtime the app can start.',
+  "{label} の起動コマンドが見つかりません。インストールと PATH を確認してください。":
+    "No start command was found for {label}. Check the installation and PATH.",
+  "{program} を起動できませんでした: {detail}":
+    "Could not start {program}: {detail}",
+  "{label} は起動しましたが応答しません: {detail}":
+    "{label} started but did not respond: {detail}",
+  "このランタイムはアプリの外で起動されています。ターミナルなど起動した側で停止してください。":
+    "This runtime was started outside the app. Stop it from where you started it.",
+  "{program} を実行できませんでした: {detail}":
+    "Could not run {program}: {detail}",
+  "{program} が失敗しました: {detail}": "{program} failed: {detail}",
+  "このランタイムはモデルの取得に対応していません: {slug}":
+    "This runtime does not support pulling models: {slug}",
+  "このランタイムはモデルの削除に対応していません: {slug}":
+    "This runtime does not support deleting models: {slug}",
+  "このランタイムはモデルのロードに対応していません: {slug}":
+    "This runtime does not support loading models: {slug}",
+  "このランタイムはモデルのアンロードに対応していません: {slug}":
+    "This runtime does not support unloading models: {slug}",
+  "ローカルランタイムが見つかりません: {slug}":
+    "Local runtime not found: {slug}",
+  "モデル名が空です。": "The model name is empty.",
+  "モデル名が長すぎます。": "The model name is too long.",
+  "モデル名に使用できない文字が含まれています。":
+    "The model name contains characters that are not allowed.",
+  "アプリのパスが見つかりません: {path}": "App path not found: {path}",
+  "アプリとして開けないパスです: {path}":
+    "This path cannot be opened as an app: {path}",
+  "ローカルランタイムへのリクエストに失敗しました: {url} ({detail})":
+    "The request to the local runtime failed: {url} ({detail})",
+  "ローカルランタイムがエラーを返しました: {status} {detail}":
+    "The local runtime returned an error: {status} {detail}",
+  "ローカルランタイムから不正な JSON を受信しました: {url} ({detail})":
+    "The local runtime returned invalid JSON: {url} ({detail})",
+  "モデルの取得に失敗しました: {detail}": "Model download failed: {detail}",
+  "モデルの取得をキャンセルしました。": "The model download was cancelled.",
+  "LM Studio の CLI (`lms`) が見つかりません。LM Studio を起動し、`~/.lmstudio/bin/lms` の存在を確認してください。":
+    "The LM Studio CLI (`lms`) was not found. Start LM Studio and check that `~/.lmstudio/bin/lms` exists.",
+  "`lms` を実行できませんでした: {program} ({detail})":
+    "Could not run `lms`: {program} ({detail})",
+  "`lms {command}` が失敗しました: {detail}":
+    "`lms {command}` failed: {detail}",
+  "ランタイムの状態を取得できませんでした: {endpoint} ({detail})":
+    "Could not read the runtime state: {endpoint} ({detail})",
+  "ランタイムのヘルスチェックに失敗しました。":
+    "The runtime health check failed.",
   "ロード中": "Loaded",
   "ネイティブ": "Native",
   "{hosts} を {ms}ms で走査 — {found}": "Swept {hosts} in {ms}ms — {found}",
@@ -834,7 +924,8 @@ export const en: Record<string, string> = {
   "ステージ解除": "Unstage",
   "ステージに追加": "Stage",
   "変更を元に戻す": "Discard changes",
-  "の未コミット変更を破棄します。元に戻せません。": "will lose its uncommitted changes. This cannot be undone.",
+  "の未コミット変更を破棄します。元に戻せません。":
+    "will lose its uncommitted changes. This cannot be undone.",
   "元に戻す": "Discard",
   "変更を破棄": "Discard changes",
   "「{path}」の変更を元に戻しますか？": 'Discard changes in "{path}"?',
@@ -864,4 +955,117 @@ export const en: Record<string, string> = {
   "最新のメッセージへスクロール": "Scroll to latest message",
   "生成中… 最新へ": "Generating… Jump to latest",
   "ファイルをドロップして添付": "Drop files to attach",
+
+  // Run lifecycle and approvals
+  "停止しました": "Stopped",
+  "再実行": "Run again",
+  "回答を再生成": "Regenerate answer",
+  "この回答を破棄して再生成": "Discard this answer and regenerate",
+  "再送信": "Send again",
+  "期限切れ（拒否されます）": "Expired (will be denied)",
+  "残り {time}": "{time} left",
+  "この時刻を過ぎると自動的に拒否されます。":
+    "The request is denied automatically after this time.",
+  "承認が期限切れになったため、この操作は拒否されました。":
+    "This approval expired, so the action was denied.",
+  "期限が切れたため、この操作は拒否されました。再実行すると新しい承認リクエストが出ます。":
+    "This approval expired and the action was denied. Run it again to get a new request.",
+  "期限切れのため拒否されました。同じ操作が必要なら、スレッドで再実行してください。":
+    "This approval expired and was denied. Run the action again in its thread if you still need it.",
+  "先頭{shown}文字のみ表示（残り{rest}文字）":
+    "Showing the first {shown} characters ({rest} remaining)",
+  "先頭4,000文字のみ表示": "Showing the first 4,000 characters",
+  "全文を表示": "Show all",
+  "不明なスレッド": "Unknown thread",
+  "Run {id}": "Run {id}",
+  "スレッドを開く": "Open thread",
+  "この後の{count}件のメッセージとツール実行履歴を削除して、この発言から再生成します。元に戻せません。":
+    "This deletes the {count} later messages and their tool history, then regenerates from this message. This cannot be undone.",
+  "削除して保存": "Delete and save",
+
+  // Confirmation dialogs
+  "このフォルダでエージェントを始める": "Start the agent in this folder",
+  "使用中": "In use",
+  "バックアップを復元しますか？": "Restore this backup?",
+  "選択したバックアップを検証して復元の準備をします。再起動すると現在の会話・設定・記憶は復元時点の内容に置き換わります。復元後に作成したデータは元に戻せません。":
+    "The selected backup will be verified and prepared for restore. After restarting, current conversations, settings and memories are replaced by the backup; anything created after it cannot be recovered.",
+  "復元を適用して再起動しますか？": "Restart and apply the restore?",
+  "現在のデータはバックアップの内容に置き換わります。この操作は元に戻せません。":
+    "Current data will be replaced by the backup. This cannot be undone.",
+  "再起動して適用": "Restart and apply",
+  "v{version} をインストールしますか？": "Install v{version}?",
+  "ダウンロードとインストールを開始します。インストール後はアプリの再起動が必要です。作業中の実行は完了してからにしてください。":
+    "The download and installation will start. The app must restart afterwards, so wait for any running task to finish first.",
+
+  // Naming: agent profile vs. agent workspace / run mode
+  "エージェントプロファイル": "Agent profiles",
+  "変更を確認": "Review changes",
+  "変更を確認 ({count})": "Review changes ({count})",
+  "変更を確認 ({count}件)": "Review changes ({count})",
+  "{count}件失敗": "{count} failed",
+  "設定を検索": "Search settings",
+  "一致する設定がありません": "No matching settings",
+  "ファイル": "Files",
+  "ファイルを検索": "Search files",
+  "検索結果": "Search results",
+  "{name} を編集": "Edit {name}",
+  "ジョブを編集": "Edit job",
+  "今すぐ実行": "Run now",
+  "{name} を今すぐ実行": "Run {name} now",
+  "{name} を今すぐ実行しました。": "Started {name}.",
+  "「常に許可」は、このプロジェクト内でこのツールの同種の操作を記憶します。":
+    '"Always allow" remembers similar calls to this tool inside this project.',
+  "ツールを絞った専用エージェントを定義します。エージェントモードの実行から呼び出されます。":
+    "Define focused agents with a restricted tool set. Agent-mode runs invoke them.",
+  "起動失敗・再試行": "Start failed — retry",
+  "ランタイムがまだ検出されていません。「再検出」を実行してください。":
+    "No runtime has been detected yet. Run “Detect again”.",
+
+  // Workspace / mode naming
+  "コーディング": "Coding",
+  "ファイル編集とターミナルを使うワークスペース":
+    "A workspace for file edits and terminal work",
+  "コマンド・スレッドを検索…": "Search commands and threads…",
+  "タスクのタイトル・プレビューを検索": "Search task titles and previews",
+  "チャットのタイトル・プレビューを検索": "Search chat titles and previews",
+
+  // Sidebar thread actions
+  "スレッド操作": "Thread actions",
+  "削除中…": "Deleting…",
+
+  // Display preferences
+  "表示設定": "Display settings",
+  "表示倍率": "Zoom",
+  "アプリ全体を拡大・縮小します。キーボードショートカットでも変更できます（? で一覧）。":
+    "Zoom the whole app. Keyboard shortcuts also work (press ? for the list).",
+  "コードを折り返す": "Wrap code",
+  "長いコードブロックを横スクロールせず、画面幅で折り返して表示します。":
+    "Wrap long code blocks instead of scrolling horizontally.",
+  "アニメーションを減らす": "Reduce motion",
+  "画面遷移や点滅を抑えます。OSの「視差効果を減らす」設定に加えて適用されます。":
+    "Reduce transitions and pulsing. Applies in addition to the OS reduced-motion setting.",
+
+  // Local data / privacy
+  "ローカルデータ": "Local data",
+  "入力履歴と下書きは端末の localStorage に保存されます。下書きは30日で期限切れになり、一時モードの送信は履歴に残りません。":
+    "Prompt history and drafts are stored in localStorage on this device. Drafts expire after 30 days, and temporary-mode sends are not added to history.",
+  "プロンプト履歴を消去 ({count})": "Clear prompt history ({count})",
+  "下書きを消去 ({count})": "Clear drafts ({count})",
+  "プロンプト履歴を消去しますか？": "Clear prompt history?",
+  "入力欄で矢印キーを押したときに出る、過去の入力履歴を削除します。会話そのものは削除されません。":
+    "Removes the past prompts shown with the arrow keys in the composer. Conversations themselves are not deleted.",
+  "下書きを消去しますか？": "Clear drafts?",
+  "まだ送信していない入力内容を、すべてのスレッドから削除します。元に戻せません。":
+    "Removes unsent text from every thread. This cannot be undone.",
+  "消去": "Clear",
+
+  // Health
+  "バックエンドに接続できません": "Cannot reach the backend",
+  "ステータス": "Status",
+  "診断を開く": "Open diagnostics",
+
+  // Composer / Markdown
+  "プロジェクトを選択するとファイルをメンションできます":
+    "Select a project to mention files",
+  "外部リンクのみ開けます": "Only external links can be opened",
 };

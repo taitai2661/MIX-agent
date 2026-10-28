@@ -29,6 +29,7 @@ import {
   ErrorBox,
   ListSkeleton,
 } from "@/components/shared";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
@@ -45,6 +46,7 @@ export function ProjectsPane() {
   const setConversationId = useUi((s) => s.setConversationId);
   const setView = useUi((s) => s.setView);
   const setActiveProjectId = useUi((s) => s.setActiveProjectId);
+  const activeProjectId = useUi((s) => s.activeProjectId);
   const mode = useUi((s) => s.mode);
   const modelId = useUi((s) => s.modelId);
   const { confirm, dialog } = useConfirm();
@@ -111,7 +113,8 @@ export function ProjectsPane() {
     onSuccess: (_data, id) => {
       invalidate();
       if (selectedId === id) setSelectedId(null);
-      setActiveProjectId(null);
+      // Deleting project B must not clear the workspace of project A.
+      if (activeProjectId === id) setActiveProjectId(null);
     },
   });
 
@@ -150,10 +153,12 @@ export function ProjectsPane() {
   };
 
   const openDetail = (project: ProjectView) => {
+    // Opening a project to read its instructions is not a workspace switch:
+    // the old code rebound the agent's folder here, so simply browsing the
+    // list could start the next task in the wrong directory.
     setSelectedId(project.id);
     setNameDraft(project.name);
     setInstructionsDraft(project.instructions);
-    setActiveProjectId(project.id);
     setSourceDraft("");
   };
 
@@ -163,9 +168,28 @@ export function ProjectsPane() {
         title={selected.name}
         sub={selected.rootPath}
         actions={
-          <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
-            <ChevronLeft size={12} /> {t("戻る")}
-          </Button>
+          <Row className="flex-nowrap gap-1.5">
+            {activeProjectId === selected.id ? (
+              <Badge tone="brand" size="sm">
+                {t("使用中")}
+              </Badge>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setActiveProjectId(selected.id)}
+              >
+                {t("このプロジェクトを使う")}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedId(null)}
+            >
+              <ChevronLeft size={12} /> {t("戻る")}
+            </Button>
+          </Row>
         }
       >
         <Card title={t("名前")} icon={<Folder size={13} />}>
@@ -414,6 +438,11 @@ export function ProjectsPane() {
                   className="flex min-w-0 flex-1 items-baseline gap-2 text-start text-sm font-medium text-fg"
                 >
                   <span className="truncate">{p.name}</span>
+                  {activeProjectId === p.id && (
+                    <Badge tone="brand" size="sm">
+                      {t("使用中")}
+                    </Badge>
+                  )}
                   {p.rootPath && (
                     <span className="truncate text-xs font-normal text-faint">
                       {p.rootPath}

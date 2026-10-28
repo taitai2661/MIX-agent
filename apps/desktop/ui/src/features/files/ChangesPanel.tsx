@@ -213,7 +213,9 @@ export function ChangesPanel({
     staleTime: 5_000,
   });
 
-  const close = () => setRightPanel("activity");
+  // Closing a preview/panel closes it. Swapping to Activity made the X look
+  // like it had opened something else, and left the panel occupying width.
+  const close = () => setRightPanel("none");
 
   if (!root) {
     return (
@@ -357,7 +359,9 @@ export function FilePreviewPanel() {
     staleTime: 10_000,
   });
 
-  const close = () => setRightPanel("activity");
+  // Closing a preview/panel closes it. Swapping to Activity made the X look
+  // like it had opened something else, and left the panel occupying width.
+  const close = () => setRightPanel("none");
   const header = (
     <PanelHeader
       icon={<FileText size={14} />}

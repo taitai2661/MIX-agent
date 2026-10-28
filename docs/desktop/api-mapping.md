@@ -40,6 +40,30 @@ macOS 完成 + Windows α + Linux α の未着手です。
 `connect_provider()` は Docker 版 `{action}` のうち「モデル取得」だけを担います。
 接続テストに相当する操作はプロバイダの作成・更新時に行われます。
 
+## Local runtime
+
+Docker 版に対応する REST はありません。Desktop 版がローカル推論ランタイムの
+プロセスとモデルを直接管理します。
+
+| Docker 版 | Desktop 版 | Phase |
+| --- | --- | --- |
+| — | `local_runtime::local_runtime_snapshot()` | L2 |
+| — | `local_runtime::local_runtime_refresh()` | L2 |
+| — | `local_runtime::local_runtime_start()` | L2 |
+| — | `local_runtime::local_runtime_stop()` | L2 |
+| — | `local_runtime::local_runtime_restart()` | L2 |
+| — | `local_runtime::local_runtime_logs()` | L2 |
+| — | `local_runtime::local_runtime_open_app()` | L2 |
+| — | `local_runtime::local_model_pull()` | L3 |
+| — | `local_runtime::local_model_delete()` | L3 |
+| — | `local_runtime::local_model_load()` | L3 |
+| — | `local_runtime::local_model_unload()` | L3 |
+| — | `local_runtime::local_job_list()` | L3 |
+| — | `local_runtime::local_job_cancel()` | L3 |
+
+進捗は `local_runtime_event`（状態遷移）と `local_job_event`（pull 等）で
+WebView に流れます。`local_runtime_snapshot()` は画面再表示時の補完用です。
+
 ## Models
 
 | Docker 版 | Desktop 版 | Phase |

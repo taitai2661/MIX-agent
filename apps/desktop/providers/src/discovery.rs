@@ -100,9 +100,17 @@ impl RuntimeId {
     ///
     /// The catalogue already uses these slugs as provider preset ids, so a
     /// provider imported before this module existed can still be enriched
-    /// without a second scan. `custom` is deliberately not resolved: it names
-    /// two different entries and carries no reliable runtime information.
+    /// without a second scan. The generic `custom` preset is deliberately not
+    /// resolved: it names no specific runtime and carries no reliable
+    /// information about how to start or stop it. GPT4All shares that slug
+    /// (it is GUI-only, so there is nothing to manage), which is why the
+    /// exclusion has to be explicit rather than left to the catalogue.
     pub fn from_slug(slug: &str) -> Option<Self> {
+        // Explicit rather than relying on the catalogue: `custom` must stay
+        // unresolved even if a future RuntimeId is given that slug.
+        if slug == "custom" {
+            return None;
+        }
         Self::DETECTABLE
             .iter()
             .copied()
@@ -153,21 +161,26 @@ impl RuntimeId {
     /// Installed directories relative to a per-OS root, tried in order. These
     /// catch a GUI app that ships no launcher binary on `PATH` (LM Studio's
     /// `lms` CLI is optional) and a runtime installed outside `PATH`.
+    ///
+    /// Each entry is joined against every root in [`install_roots`], so a
+    /// leading OS directory would be doubled (`/Applications/Applications/…`,
+    /// `C:\Program Files\Program Files\…`). The app-bundle names are therefore
+    /// bare, and the Windows-local trees stay relative to the user's home.
     pub fn install_dirs(self) -> &'static [&'static str] {
         match self {
-            RuntimeId::LmStudio => &["Applications/LM Studio.app", "Program Files/LM Studio"],
-            RuntimeId::Ollama => &[
-                "Applications/Ollama.app",
-                ".ollama",
-                "AppData/Local/Programs/Ollama",
+            RuntimeId::LmStudio => &[
+                "LM Studio.app",
+                "LM Studio",
+                "AppData/Local/Programs/LM Studio",
             ],
+            RuntimeId::Ollama => &["Ollama.app", ".ollama", "AppData/Local/Programs/Ollama"],
             RuntimeId::Vllm => &[],
             RuntimeId::LlamaCpp => &[],
-            RuntimeId::LocalAi => &["Program Files/LocalAI"],
-            RuntimeId::Jan => &["Applications/Jan.app", "AppData/Local/Programs/Jan"],
+            RuntimeId::LocalAi => &["LocalAI"],
+            RuntimeId::Jan => &["Jan.app", "AppData/Local/Programs/Jan"],
             RuntimeId::KoboldCpp => &[],
             RuntimeId::TextGenerationWebui => &[],
-            RuntimeId::Gpt4All => &["Applications/GPT4All.app", "AppData/Local/Programs/GPT4All"],
+            RuntimeId::Gpt4All => &["GPT4All.app", "GPT4All"],
             RuntimeId::OpenAiCompat => &[],
         }
     }
@@ -196,6 +209,28 @@ impl RuntimeId {
     pub fn has_launcher(self) -> bool {
         !self.executables().is_empty()
     }
+}
+
+/// How the app can stop a runtime it started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeStop {
+    /// The runtime is a direct child process; send SIGTERM (or TerminateProcess
+    /// on Windows) and wait for it to exit.
+    Child,
+    /// The runtime is a daemon controlled by its own CLI, e.g. LM Studio's
+    /// `lms server stop`.
+    Cli { program: PathBuf, args: Vec<String> },
+    /// The runtime cannot be stopped by this app (GUI-only or unsupported).
+    Unsupported,
+}
+
+/// Everything needed to start one runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeLaunchSpec {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub stop: RuntimeStop,
 }
 
 /// A loopback port worth probing, and the runtime it most commonly belongs to.
@@ -273,6 +308,14 @@ const FINGERPRINTS: &[Fingerprint] = &[
         path: "/api/tags",
         marker: "models.0.details.family",
     },
+    // Ollama with an empty library has no tag details for the marker above, so
+    // a fresh install could not be identified at all. `/api/version` is stable
+    // across versions and distinct from vLLM's `/version`.
+    Fingerprint {
+        runtime: RuntimeId::Ollama,
+        path: "/api/version",
+        marker: "version",
+    },
     // vLLM's engine version, and the single most reliable positive in the set.
     Fingerprint {
         runtime: RuntimeId::Vllm,
@@ -329,20 +372,20 @@ pub struct DiscoveredModel {
     pub parameter_size: Option<String>,
     pub quantization: Option<String>,
     /// On-disk size, when the runtime publishes it (`/api/tags` or LM Studio).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub size_bytes: Option<u64>,
     /// Model family / architecture (`llama`, `qwen3`, `qwen2`, …).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub family: Option<String>,
     /// `true` for a model currently resident in the runtime.
     #[serde(default)]
     pub loaded: bool,
     /// `llm`, `vlm`, `embedding`, … when the runtime classifies models.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub model_type: Option<String>,
     /// Native capability answer. `None` means "not published"; callers must
     /// not read that as "unsupported".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub capabilities: Option<ModelCapabilities>,
 }
 
@@ -353,15 +396,15 @@ pub struct DiscoveredModel {
 /// stores booleans, so a `None` must not overwrite a previously probed value.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapabilities {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub chat: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub tools: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub vision: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub reasoning: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub embedding: Option<bool>,
 }
 
@@ -415,7 +458,38 @@ impl ModelDetails {
             model.loaded = true;
         }
         if self.capabilities.any() {
-            model.capabilities = Some(self.capabilities);
+            // Field-wise merge, not replacement: the LM Studio REST payload
+            // and the `lms ls --json` payload each know a different subset of
+            // capabilities, and the second pass must not erase what the first
+            // learned.
+            match &mut model.capabilities {
+                Some(existing) => existing.merge(self.capabilities),
+                None => model.capabilities = Some(self.capabilities),
+            }
+        }
+    }
+}
+
+impl ModelCapabilities {
+    /// Overwrite only the flags the other side actually answered.
+    ///
+    /// `None` means "not published"; treating it as `false` would turn an
+    /// incomplete second source into a capability regression.
+    pub fn merge(&mut self, other: Self) {
+        if other.chat.is_some() {
+            self.chat = other.chat;
+        }
+        if other.tools.is_some() {
+            self.tools = other.tools;
+        }
+        if other.vision.is_some() {
+            self.vision = other.vision;
+        }
+        if other.reasoning.is_some() {
+            self.reasoning = other.reasoning;
+        }
+        if other.embedding.is_some() {
+            self.embedding = other.embedding;
         }
     }
 }
@@ -435,8 +509,9 @@ pub struct DetectedRuntime {
     /// AirPlay Receiver to `5000` out of the box, which is one of this module's
     /// probe targets.
     pub listening: bool,
-    /// The port serves an OpenAI-compatible model list, i.e. this is a runtime
-    /// the app can actually talk to.
+    /// The runtime answered and is identified (or serves a model list), so the
+    /// app can talk to it. An identified runtime with an empty library is
+    /// online: model presence is not a health signal.
     pub online: bool,
     pub latency_ms: Option<u64>,
     /// Version string when the runtime publishes one on a probe path.
@@ -566,6 +641,84 @@ pub fn host_of(base_url: &str) -> &str {
     }
 }
 
+/// True when a base URL points at hardware the user controls.
+///
+/// [`is_loopback_host`] only understands IP literals and `localhost`, but a
+/// local inference server is routinely reached under another name: an mDNS
+/// host (`mac-mini.local`), a container alias (`host.docker.internal`, the
+/// default in the Docker edition), or a Tailscale address (`100.64.0.0/10`).
+/// All of those are the user's own machine, so demanding an API key from them
+/// turned a working local model into "OpenAI provider requires an API key".
+///
+/// This is deliberately the *only* place that decides "local" for the key
+/// gate, so the scan, the tool probe and the transport cannot disagree.
+pub fn is_local_base_url(base_url: &str) -> bool {
+    if base_url.trim().is_empty() {
+        return false;
+    }
+    let host = host_of(base_url.trim());
+    if is_loopback_host(host) {
+        return true;
+    }
+    let host = host
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
+    // Container runtimes hand the host a well-known alias; it never leaves the
+    // machine even though it is not an IP literal.
+    if matches!(
+        host.as_str(),
+        "host.docker.internal" | "host.containers.internal" | "gateway.docker.internal"
+    ) || host.ends_with(".local")
+        || host.ends_with(".localhost")
+    {
+        return true;
+    }
+    // Tailscale / CGNAT addresses (100.64.0.0/10) are a private overlay
+    // network: the server is on the user's own tailnet, not a cloud endpoint.
+    if let Some(second) = host
+        .split('.')
+        .nth(1)
+        .and_then(|octet| octet.parse::<u8>().ok())
+    {
+        if host.starts_with("100.") && (64..=127).contains(&second) {
+            return true;
+        }
+    }
+    // IPv6 unique-local (`fc00::/7`) and link-local (`fe80::/10`). Only look at
+    // hosts that actually contain a colon, so a hostname is never misread as a
+    // hexadecimal address.
+    if host.contains(':') {
+        if let Some(first) = host.split(':').next() {
+            if let Ok(value) = u16::from_str_radix(first, 16) {
+                if (0xfc00..=0xfdff).contains(&value) || (0xfe80..=0xfebf).contains(&value) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// True only when the URL points at this machine's loopback interface.
+///
+/// [`is_local_base_url`] deliberately includes the LAN, mDNS and overlay
+/// networks for the API-key gate: all of those are "local" in the sense that
+/// they do not need a cloud credential. Process lifecycle is a different
+/// question. Spawning `ollama serve` because a provider points at a GPU box on
+/// `192.168.1.20` would start a *second* server on this machine, and sending it
+/// the loopback context cap would throttle hardware that may have 24 GB of
+/// VRAM. Only a loopback URL can be managed this way.
+pub fn is_loopback_base_url(base_url: &str) -> bool {
+    let trimmed = base_url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let host = host_of(trimmed)
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
+    host == "localhost" || host == "::1" || host == "0.0.0.0" || host.starts_with("127.")
+}
+
 /// Scheme + authority of a base URL, without the API path.
 ///
 /// Local runtimes disagree about whether their base URL ends in `/v1` (the
@@ -580,10 +733,7 @@ pub fn origin_of(base_url: &str) -> String {
         .filter(|scheme| *scheme == "http" || *scheme == "https")
         .unwrap_or("http");
     let after_scheme = trimmed.split("://").nth(1).unwrap_or(trimmed);
-    let authority = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("");
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
     format!("{scheme}://{authority}")
 }
 
@@ -595,6 +745,7 @@ fn context_of(value: &serde_json::Value) -> Option<u32> {
         "context_window",
         "contextLength",
         "max_context_length",
+        "maxContextLength",
         "loaded_context_length",
         "max_model_len",
         "max_model_length",
@@ -715,10 +866,22 @@ fn context_from_model_info(body: &serde_json::Value) -> Option<u32> {
 
 /// Turn Ollama's `capabilities` array into tri-state flags.
 fn ollama_capabilities(body: &serde_json::Value) -> ModelCapabilities {
-    let Some(values) = body.get("capabilities").and_then(serde_json::Value::as_array) else {
+    let Some(values) = body
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
+    else {
         return ModelCapabilities::default();
     };
-    let mut capabilities = ModelCapabilities::default();
+    // Ollama publishes the complete list for the model, so absence is a real
+    // "no". Starting from `false` lets a re-sync clear a stale `true` from an
+    // older probe instead of only ever adding capabilities.
+    let mut capabilities = ModelCapabilities {
+        chat: Some(false),
+        tools: Some(false),
+        vision: Some(false),
+        reasoning: Some(false),
+        embedding: Some(false),
+    };
     for value in values.iter().filter_map(serde_json::Value::as_str) {
         match value {
             "completion" => capabilities.chat = Some(true),
@@ -729,18 +892,12 @@ fn ollama_capabilities(body: &serde_json::Value) -> ModelCapabilities {
             _ => {}
         }
     }
-    if capabilities.embedding == Some(true) && capabilities.chat.is_none() {
-        capabilities.chat = Some(false);
-    }
     capabilities
 }
 
 /// Parse `POST /api/show`. Ollama publishes context, family, quantisation and
 /// (on newer versions) the capability list for exactly the model asked about.
-fn ollama_details_from_show(
-    body: &serde_json::Value,
-    size_bytes: Option<u64>,
-) -> ModelDetails {
+fn ollama_details_from_show(body: &serde_json::Value, size_bytes: Option<u64>) -> ModelDetails {
     let details = body.get("details");
     let capabilities = ollama_capabilities(body);
     let model_type = if capabilities.embedding == Some(true) {
@@ -778,10 +935,7 @@ fn ollama_details_from_show(
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string)
             }),
-        size_bytes: size_bytes.or_else(|| {
-            body.get("size")
-                .and_then(serde_json::Value::as_u64)
-        }),
+        size_bytes: size_bytes.or_else(|| body.get("size").and_then(serde_json::Value::as_u64)),
         loaded: false,
         model_type,
         capabilities,
@@ -807,6 +961,24 @@ fn lmstudio_details(entry: &serde_json::Value) -> ModelDetails {
         }
         _ => {}
     }
+    // LM Studio's native list carries a capability array on models that
+    // support it (`tool_use`, `vision`, …). When the array is present it is
+    // authoritative for tools: absence means no tool support, not unknown.
+    if let Some(values) = entry
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
+    {
+        capabilities.tools = Some(false);
+        for value in values.iter().filter_map(serde_json::Value::as_str) {
+            match value {
+                "tool_use" | "tools" => capabilities.tools = Some(true),
+                "vision" => capabilities.vision = Some(true),
+                "reasoning" | "thinking" => capabilities.reasoning = Some(true),
+                "embedding" => capabilities.embedding = Some(true),
+                _ => {}
+            }
+        }
+    }
     ModelDetails {
         context_window: context_of(entry),
         parameter_size: None,
@@ -829,6 +1001,121 @@ fn lmstudio_details(entry: &serde_json::Value) -> ModelDetails {
             .is_some_and(|state| state.eq_ignore_ascii_case("loaded")),
         model_type,
         capabilities,
+    }
+}
+
+/// Parse one entry from `lms ls --json`.
+///
+/// The REST list carries the live `state`, but the CLI is the only source for
+/// on-disk size, parameter count and the trained-for-tool-use flag. Neither
+/// alone is enough, so the detailed pass merges both.
+fn lmstudio_cli_details(entry: &serde_json::Value) -> ModelDetails {
+    let model_type = entry
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let is_embedding = model_type.as_deref() == Some("embedding");
+    let mut capabilities = ModelCapabilities {
+        chat: Some(!is_embedding),
+        embedding: is_embedding.then_some(true),
+        ..ModelCapabilities::default()
+    };
+    if let Some(vision) = entry.get("vision").and_then(serde_json::Value::as_bool) {
+        capabilities.vision = Some(vision);
+    }
+    if let Some(tools) = entry
+        .get("trainedForToolUse")
+        .and_then(serde_json::Value::as_bool)
+    {
+        capabilities.tools = Some(tools);
+    }
+    ModelDetails {
+        context_window: context_of(entry),
+        parameter_size: entry
+            .get("paramsString")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        quantization: entry
+            .get("quantization")
+            .and_then(|value| {
+                value
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| value.as_str())
+            })
+            .map(str::to_string),
+        family: entry
+            .get("architecture")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        size_bytes: entry.get("sizeBytes").and_then(serde_json::Value::as_u64),
+        loaded: false,
+        model_type,
+        capabilities,
+    }
+}
+
+/// `lms ls --json`, when the CLI is installed. A missing or broken CLI is not
+/// an error: the REST list already produced a usable model set.
+async fn fetch_lmstudio_cli_models() -> Vec<serde_json::Value> {
+    // A detailed scan runs on every refresh and on every model operation. The
+    // CLI takes hundreds of milliseconds to start a Node process, so a short
+    // cache keeps the sweep cheap without hiding a model the user just pulled.
+    const TTL: Duration = Duration::from_secs(15);
+    let cache = lmstudio_cli_cache();
+    if let Ok(cache) = cache.lock() {
+        if let Some((at, models)) = cache.as_ref() {
+            if at.elapsed() < TTL {
+                return models.clone();
+            }
+        }
+    }
+
+    let models = match find_on_path("lms") {
+        Some(program) => {
+            let output = tokio::time::timeout(
+                Duration::from_secs(3),
+                tokio::process::Command::new(program)
+                    .args(["ls", "--json"])
+                    .output(),
+            )
+            .await;
+            match output {
+                Ok(Ok(output)) if output.status.success() => {
+                    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                        .ok()
+                        .and_then(|body| {
+                            body.as_array().cloned().or_else(|| {
+                                body.get("data")
+                                    .and_then(serde_json::Value::as_array)
+                                    .cloned()
+                            })
+                        })
+                        .unwrap_or_default()
+                }
+                _ => Vec::new(),
+            }
+        }
+        None => Vec::new(),
+    };
+    if let Ok(mut cache) = cache.lock() {
+        *cache = Some((Instant::now(), models.clone()));
+    }
+    models
+}
+
+type LmsModelCache = std::sync::Mutex<Option<(Instant, Vec<serde_json::Value>)>>;
+
+fn lmstudio_cli_cache() -> &'static LmsModelCache {
+    static CACHE: std::sync::OnceLock<LmsModelCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Drop the `lms ls` cache after a pull/delete so the next scan sees the new
+/// model without waiting for the TTL.
+pub fn invalidate_lmstudio_cli_cache() {
+    if let Ok(mut cache) = lmstudio_cli_cache().lock() {
+        *cache = None;
     }
 }
 
@@ -872,17 +1159,9 @@ async fn fetch_ollama_show(
 }
 
 /// `name -> loaded context length` for models currently resident in Ollama.
-async fn fetch_ollama_ps(
-    client: &reqwest::Client,
-    origin: &str,
-) -> HashMap<String, u32> {
+async fn fetch_ollama_ps(client: &reqwest::Client, origin: &str) -> HashMap<String, u32> {
     let mut loaded = HashMap::new();
-    let Some(response) = client
-        .get(format!("{origin}/api/ps"))
-        .send()
-        .await
-        .ok()
-    else {
+    let Some(response) = client.get(format!("{origin}/api/ps")).send().await.ok() else {
         return loaded;
     };
     if !response.status().is_success() {
@@ -914,11 +1193,7 @@ async fn fetch_ollama_ps(
     loaded
 }
 
-async fn enrich_ollama(
-    client: &reqwest::Client,
-    origin: &str,
-    models: &mut [DiscoveredModel],
-) {
+async fn enrich_ollama(client: &reqwest::Client, origin: &str, models: &mut [DiscoveredModel]) {
     let loaded = fetch_ollama_ps(client, origin).await;
     let targets: Vec<(usize, String, Option<u64>)> = models
         .iter()
@@ -929,21 +1204,22 @@ async fn enrich_ollama(
     // A loaded Ollama can hold dozens of tags. Four concurrent `/api/show`
     // calls keep a 20-model library inside a couple of seconds without
     // hammering the server, which is often busy serving a model.
-    let details = futures_util::stream::iter(targets.into_iter().map(
-        |(index, id, size_bytes)| {
-            let client = client.clone();
-            let origin = origin.to_string();
-            async move {
-                let detail = fetch_ollama_show(&client, &origin, &id).await;
-                (index, detail.map(|mut detail| {
+    let details = futures_util::stream::iter(targets.into_iter().map(|(index, id, size_bytes)| {
+        let client = client.clone();
+        let origin = origin.to_string();
+        async move {
+            let detail = fetch_ollama_show(&client, &origin, &id).await;
+            (
+                index,
+                detail.map(|mut detail| {
                     if detail.size_bytes.is_none() {
                         detail.size_bytes = size_bytes;
                     }
                     detail
-                }))
-            }
-        },
-    ))
+                }),
+            )
+        }
+    }))
     .buffer_unordered(4)
     .collect::<Vec<_>>()
     .await;
@@ -963,49 +1239,38 @@ async fn enrich_ollama(
     }
 }
 
-async fn enrich_lmstudio(
-    client: &reqwest::Client,
-    origin: &str,
-    models: &mut [DiscoveredModel],
-) {
-    let Some(response) = client
-        .get(format!("{origin}/api/v0/models"))
-        .send()
-        .await
-        .ok()
-    else {
-        return;
+async fn enrich_lmstudio(client: &reqwest::Client, origin: &str, models: &mut [DiscoveredModel]) {
+    let api_entries = match client.get(format!("{origin}/api/v0/models")).send().await {
+        Ok(response) if response.status().is_success() => {
+            match response.json::<serde_json::Value>().await {
+                Ok(body) => body
+                    .get("data")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
     };
-    if !response.status().is_success() {
-        return;
-    }
-    let Ok(body) = response.json::<serde_json::Value>().await else {
-        return;
-    };
-    let Some(entries) = body.get("data").and_then(serde_json::Value::as_array) else {
-        return;
-    };
+    let cli_entries = fetch_lmstudio_cli_models().await;
+
     for model in models.iter_mut() {
-        let Some(entry) = entries.iter().find(|entry| {
+        if let Some(entry) = api_entries.iter().find(|entry| {
             entry.get("id").and_then(serde_json::Value::as_str) == Some(model.id.as_str())
-        }) else {
-            continue;
-        };
-        lmstudio_details(entry).merge_into(model);
+        }) {
+            lmstudio_details(entry).merge_into(model);
+        }
+        if let Some(entry) = cli_entries.iter().find(|entry| {
+            entry.get("modelKey").and_then(serde_json::Value::as_str) == Some(model.id.as_str())
+        }) {
+            lmstudio_cli_details(entry).merge_into(model);
+        }
     }
 }
 
-async fn enrich_llamacpp(
-    client: &reqwest::Client,
-    origin: &str,
-    models: &mut [DiscoveredModel],
-) {
-    let Some(response) = client
-        .get(format!("{origin}/props"))
-        .send()
-        .await
-        .ok()
-    else {
+async fn enrich_llamacpp(client: &reqwest::Client, origin: &str, models: &mut [DiscoveredModel]) {
+    let Some(response) = client.get(format!("{origin}/props")).send().await.ok() else {
         return;
     };
     if !response.status().is_success() {
@@ -1172,7 +1437,12 @@ async fn probe_port(
     // runtime the port most commonly belongs to — the install evidence and the
     // label have to come from the same one, so a row never claims to be
     // LM Studio while reporting some other program's install path.
-    let id = identified.runtime.unwrap_or(fallback);
+    //
+    // Keep whether the fingerprint actually matched: an identified runtime with
+    // an empty model library is a healthy server waiting for its first `pull`,
+    // not a port held by an unrelated process.
+    let identified_id = identified.runtime;
+    let id = identified_id.unwrap_or(fallback);
     runtime.slug = id.slug().to_string();
     runtime.label = id.label().to_string();
     runtime.kind = id.kind().as_str().to_string();
@@ -1191,15 +1461,21 @@ async fn probe_port(
     if runtime.models.is_empty() {
         match models {
             Some(list) if !list.is_empty() => runtime.models = list,
+            // An identified runtime with an empty library is healthy: the user
+            // has not pulled anything yet. Reporting an error here made a fresh
+            // Ollama look like a broken port and blocked the first pull.
+            Some(_) if identified_id.is_some() => {}
             Some(_) => runtime.error = Some("モデルが 1 つもロードされていません".into()),
+            None if identified_id.is_some() => {}
             None => runtime.error = Some("OpenAI 互換のモデル一覧を取得できませんでした".into()),
         }
     }
-    // A fingerprint without a model list is not a usable provider. A port that
-    // answered something else — AirPlay Receiver on macOS's `5000`, a stray dev
-    // server — leaves the row out of the report entirely rather than showing up
-    // as a runtime with nothing to import.
-    runtime.online = !runtime.models.is_empty();
+    // `online` means "a runtime this app can talk to", not "has at least one
+    // model". A port that answered something else — AirPlay Receiver on macOS's
+    // `5000`, a stray dev server — has no fingerprint and stays out of the
+    // report; an identified runtime with zero models must stay in it so the
+    // start/pull flow can bootstrap the library.
+    runtime.online = runtime.listening && (identified_id.is_some() || !runtime.models.is_empty());
     // The detailed pass is opt-in: the plain sweep is what the "detect" button
     // calls, and it must stay a single round trip per open port. Imports and
     // refreshes ask for `detailed`, which adds the per-model native metadata.
@@ -1237,7 +1513,7 @@ fn installed_only(id: RuntimeId) -> DetectedRuntime {
     }
 }
 
-fn default_port(id: RuntimeId) -> u16 {
+pub fn default_port(id: RuntimeId) -> u16 {
     PORT_HINTS
         .iter()
         .find(|h| h.fallback == id)
@@ -1245,7 +1521,7 @@ fn default_port(id: RuntimeId) -> u16 {
         .unwrap_or(1234)
 }
 
-fn default_base_url(id: RuntimeId) -> String {
+pub fn default_base_url(id: RuntimeId) -> String {
     // Prefer the catalogue's URL so an imported provider matches the preset
     // exactly, including any future change to it.
     if let Some(preset) = crate::preset::by_slug(id.slug()) {
@@ -1254,6 +1530,63 @@ fn default_base_url(id: RuntimeId) -> String {
         }
     }
     format!("http://127.0.0.1:{}/v1", default_port(id))
+}
+
+/// How to start a runtime from the app, or `None` when it has no supported
+/// launcher. The command is always an absolute program plus an argument array;
+/// no shell is involved.
+pub fn launch_spec(id: RuntimeId) -> Option<RuntimeLaunchSpec> {
+    match id {
+        RuntimeId::Ollama => {
+            let program = find_on_path("ollama")?;
+            let port = default_port(RuntimeId::Ollama);
+            Some(RuntimeLaunchSpec {
+                program,
+                args: vec!["serve".to_string()],
+                env: vec![("OLLAMA_HOST".to_string(), format!("127.0.0.1:{port}"))],
+                stop: RuntimeStop::Child,
+            })
+        }
+        RuntimeId::LmStudio => {
+            let program = find_on_path("lms")?;
+            let port = default_port(RuntimeId::LmStudio);
+            Some(RuntimeLaunchSpec {
+                stop: RuntimeStop::Cli {
+                    program: program.clone(),
+                    args: vec!["server".to_string(), "stop".to_string()],
+                },
+                program,
+                args: vec![
+                    "server".to_string(),
+                    "start".to_string(),
+                    "--port".to_string(),
+                    port.to_string(),
+                ],
+                env: Vec::new(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The GUI app bundle to open for runtimes with no CLI launcher.
+pub fn open_app_target(id: RuntimeId) -> Option<PathBuf> {
+    let roots = install_roots();
+    for relative in id.install_dirs() {
+        let candidate = PathBuf::from(relative);
+        let full = if candidate.is_absolute() {
+            candidate
+        } else {
+            match first_existing(roots.iter().map(|root| root.join(&candidate)).collect()) {
+                Some(path) => path,
+                None => continue,
+            }
+        };
+        if full.exists() {
+            return Some(full);
+        }
+    }
+    None
 }
 
 /// `true` when a file or directory exists, treated as "installed".
@@ -1483,10 +1816,7 @@ pub async fn probe_base_url_detailed(base_url: &str) -> anyhow::Result<DetectedR
     probe_base_url_impl(base_url, true).await
 }
 
-async fn probe_base_url_impl(
-    base_url: &str,
-    detailed: bool,
-) -> anyhow::Result<DetectedRuntime> {
+async fn probe_base_url_impl(base_url: &str, detailed: bool) -> anyhow::Result<DetectedRuntime> {
     let base_url = base_url.trim();
     if base_url.is_empty() {
         return Err(anyhow::anyhow!("Base URL が空です"));
@@ -1543,7 +1873,8 @@ async fn probe_base_url_impl(
     let (models, identified) = tokio::join!(models_fut, fingerprint(&client, &origin));
     // An unrecognised server is still a usable provider — the OpenAI-compatible
     // client talks to it fine — it just gets a generic label.
-    let runtime_id = identified.runtime.unwrap_or(RuntimeId::OpenAiCompat);
+    let identified_id = identified.runtime;
+    let runtime_id = identified_id.unwrap_or(RuntimeId::OpenAiCompat);
     let mut runtime = installed_only(runtime_id);
     runtime.base_url = with_scheme.trim_end_matches('/').to_string();
     let tcp_host = host.trim_matches(|c| c == '[' || c == ']').to_string();
@@ -1567,8 +1898,10 @@ async fn probe_base_url_impl(
     // A service that answers TCP but serves no model list is still reachable
     // (and still not a provider); a refused connection is not listening.
     runtime.listening = tcp_open(&tcp_host, port).await;
-    runtime.online = runtime.listening && !runtime.models.is_empty();
-    if runtime.models.is_empty() && runtime.error.is_none() {
+    // An identified runtime with an empty library is reachable and usable for
+    // `pull`; only an unidentified empty answer is a port we cannot import.
+    runtime.online = runtime.listening && (identified_id.is_some() || !runtime.models.is_empty());
+    if runtime.models.is_empty() && identified_id.is_none() && runtime.error.is_none() {
         runtime.error = Some("OpenAI 互換のモデル一覧を取得できませんでした".into());
     }
     // The install fields describe *this* machine, which is irrelevant to a URL
@@ -1647,6 +1980,29 @@ mod tests {
     }
 
     #[test]
+    fn lmstudio_cli_details_fill_size_and_parameter_metadata() {
+        let entry = serde_json::json!({
+            "type": "llm",
+            "modelKey": "qwen/qwen3-8b",
+            "sizeBytes": 4_623_961_222u64,
+            "paramsString": "8B",
+            "quantization": {"name": "4bit", "bits": 4},
+            "architecture": "qwen3",
+            "vision": false,
+            "trainedForToolUse": true,
+            "maxContextLength": 40960,
+        });
+        let detail = lmstudio_cli_details(&entry);
+        assert_eq!(detail.context_window, Some(40960));
+        assert_eq!(detail.parameter_size.as_deref(), Some("8B"));
+        assert_eq!(detail.quantization.as_deref(), Some("4bit"));
+        assert_eq!(detail.family.as_deref(), Some("qwen3"));
+        assert_eq!(detail.size_bytes, Some(4_623_961_222));
+        assert_eq!(detail.capabilities.tools, Some(true));
+        assert_eq!(detail.capabilities.vision, Some(false));
+    }
+
+    #[test]
     fn lmstudio_details_treat_embedding_models_as_non_chat() {
         let entry = serde_json::json!({
             "id": "nomic-embed",
@@ -1689,6 +2045,55 @@ mod tests {
             "https://172.32.0.1/v1",
         ] {
             assert!(!is_loopback_host(host_of(url)), "{url} should not be local");
+        }
+    }
+
+    #[test]
+    fn loopback_is_a_subset_of_local() {
+        for url in [
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:1234/v1",
+            "http://[::1]:8000/v1",
+        ] {
+            assert!(is_loopback_base_url(url), "{url} should be loopback");
+            assert!(is_local_base_url(url), "{url} should also be local");
+        }
+        for url in [
+            "http://192.168.1.20:11434/v1",
+            "http://10.0.0.5:11434/v1",
+            "http://mac-mini.local:11434/v1",
+            "http://100.100.0.1:11434/v1",
+            "https://api.openai.com/v1",
+        ] {
+            assert!(!is_loopback_base_url(url), "{url} must not be managed");
+            // The key gate is intentionally broader than process management.
+            if !url.contains("openai.com") {
+                assert!(is_local_base_url(url), "{url} should still be local");
+            }
+        }
+    }
+
+    #[test]
+    fn local_base_urls_cover_aliases_and_private_overlays() {
+        for url in [
+            "http://127.0.0.1:1234/v1",
+            "http://host.docker.internal:11434/v1",
+            "http://host.containers.internal:11434/v1",
+            "http://studio.local:1234/v1",
+            "http://100.101.102.103:11434/v1",
+            "http://[fd7a:115c:a1e0::1]:11434/v1",
+            "http://[fe80::1]:11434/v1",
+        ] {
+            assert!(is_local_base_url(url), "{url} should be local");
+        }
+        for url in [
+            "",
+            "https://api.openai.com/v1",
+            "https://api.groq.com/openai/v1",
+            "https://example.local.com/v1",
+            "https://100.63.0.1/v1",
+        ] {
+            assert!(!is_local_base_url(url), "{url} should not be local");
         }
     }
 
@@ -1782,5 +2187,52 @@ mod tests {
             default_base_url(RuntimeId::LmStudio),
             "http://127.0.0.1:1234/v1"
         );
+    }
+
+    #[test]
+    fn custom_slug_does_not_resolve_to_a_specific_runtime() {
+        // Both GPT4All and the generic OpenAI-compatible row use `custom`, so
+        // resolving it would make every hand-written provider GPT4All.
+        assert_eq!(RuntimeId::from_slug("custom"), None);
+        assert_eq!(RuntimeId::from_slug("ollama"), Some(RuntimeId::Ollama));
+        assert_eq!(RuntimeId::from_slug("lmstudio"), Some(RuntimeId::LmStudio));
+    }
+
+    #[test]
+    fn capability_merge_keeps_flags_only_one_source_knows() {
+        let mut caps = ModelCapabilities {
+            chat: Some(true),
+            tools: Some(true),
+            reasoning: Some(true),
+            vision: None,
+            embedding: None,
+        };
+        caps.merge(ModelCapabilities {
+            chat: Some(true),
+            tools: Some(false),
+            reasoning: None,
+            vision: Some(true),
+            embedding: None,
+        });
+        assert_eq!(caps.chat, Some(true));
+        assert_eq!(caps.tools, Some(false), "an explicit false must win");
+        assert_eq!(caps.reasoning, Some(true), "None must not erase");
+        assert_eq!(caps.vision, Some(true));
+    }
+
+    #[test]
+    fn install_dirs_are_relative_to_an_install_root() {
+        for id in RuntimeId::DETECTABLE {
+            for dir in id.install_dirs() {
+                assert!(
+                    !dir.starts_with('/') && !dir.starts_with("Applications/"),
+                    "{id:?} install dir must not repeat a root: {dir}"
+                );
+                assert!(
+                    !dir.starts_with("Program Files/"),
+                    "{id:?} install dir must not repeat Program Files: {dir}"
+                );
+            }
+        }
     }
 }

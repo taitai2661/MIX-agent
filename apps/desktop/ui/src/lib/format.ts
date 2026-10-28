@@ -22,6 +22,39 @@ export function relativeTime(iso: string, now: Date = new Date()): string {
   return then.toLocaleDateString(locale, { month: "short", day: "numeric" });
 }
 
+/** Full localized timestamp for a tooltip / accessible label. */
+export function absoluteTime(iso: string): string {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  const locale = getLanguage() === "en" ? "en-US" : "ja-JP";
+  return then.toLocaleString(locale, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Calendar-day label used by the transcript's date separators. */
+export function dayLabel(iso: string): string {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  const locale = getLanguage() === "en" ? "en-US" : "ja-JP";
+  return then.toLocaleDateString(locale, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+/** Stable YYYY-MM-DD key for grouping messages by local calendar day. */
+export function dayKey(iso: string): string {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  return `${then.getFullYear()}-${then.getMonth()}-${then.getDate()}`;
+}
+
 /** Sidebar grouping bucket for a timestamp. */
 export type ThreadGroup = "today" | "yesterday" | "week" | "older";
 

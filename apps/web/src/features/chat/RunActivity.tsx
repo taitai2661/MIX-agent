@@ -10,8 +10,8 @@ import {
   RotateCcw,
   ShieldCheck,
 } from "lucide-react";
-import type { ApprovalDecision, ToolCallHistory } from "./types";
-import { useState } from "react";
+import type { Approval, ApprovalDecision, ToolCallHistory } from "./types";
+import { useRef, useState } from "react";
 import { ActivityIcon } from "./ToolActivity";
 
 export type { ToolCallHistory } from "./types";
@@ -33,8 +33,128 @@ function iconOf(activity: ToolCallHistory["activity"]): string | undefined {
   return typeof icon === "string" ? icon : undefined;
 }
 
-function RunActivityCall({ call, onApproval }: { call: ToolCallHistory; onApproval: (id: string, decision: ApprovalDecision) => void }) {
+function textValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function ApprovalPayload({ data }: { data: Approval["data"] }) {
+  const args = data.arguments || {};
+  const command = textValue(args.command);
+  const path = textValue(args.path);
+  // The edit tool names its halves `old_string` / `new_string`; a preview that
+  // only looked for `old` / `new` showed a bare path for every edit approval.
+  const before = stringValue(args.old ?? args.old_string);
+  const after = stringValue(args.new ?? args.new_string);
+  const content = stringValue(args.content);
+  const url = textValue(args.url);
+  const dedicated = new Set([
+    "command",
+    "path",
+    "old",
+    "new",
+    "old_string",
+    "new_string",
+    "content",
+    "url",
+  ]);
+  const remaining = Object.entries(args).filter(
+    ([key, value]) => !dedicated.has(key) && value !== null && value !== undefined,
+  );
+  const scope = Object.entries(data.scope || {}).filter(
+    ([, value]) => value !== null && value !== undefined && value !== "",
+  );
+  if (!data.tool && before === undefined && after === undefined && content === undefined && !command && !path && !url && !remaining.length && !scope.length) {
+    return null;
+  }
+  return (
+    <div className="run-step-approval-payload">
+      {data.tool && (
+        <p className="run-step-approval-tool">
+          <span>{t("ツール")}</span>
+          <code>{data.tool}</code>
+          {data.risk && <em className="run-step-approval-risk">{data.risk}</em>}
+        </p>
+      )}
+      {path && (
+        <p className="run-step-approval-field">
+          <span>{t("パス")}</span>
+          <code>{path}</code>
+        </p>
+      )}
+      {command && <pre className="run-step-approval-code">{command}</pre>}
+      {url && (
+        <p className="run-step-approval-field">
+          <span>URL</span>
+          <code>{url}</code>
+        </p>
+      )}
+      {(before !== undefined || after !== undefined) && (
+        <div className="run-step-approval-diff">
+          {before !== undefined && (
+            <div>
+              <b>{t("変更前")}</b>
+              <pre>{before}</pre>
+            </div>
+          )}
+          {after !== undefined && (
+            <div>
+              <b>{t("変更後")}</b>
+              <pre>{after}</pre>
+            </div>
+          )}
+        </div>
+      )}
+      {content !== undefined && (
+        <div className="run-step-approval-diff">
+          <div>
+            <b>{t("内容")}</b>
+            <pre>{content}</pre>
+          </div>
+        </div>
+      )}
+      {remaining.map(([key, value]) => (
+        <p className="run-step-approval-field" key={key}>
+          <span>{key}</span>
+          <code>{typeof value === "string" ? value : JSON.stringify(value)}</code>
+        </p>
+      ))}
+      {scope.length > 0 && (
+        <div className="run-step-approval-scope">
+          <b>{t("常に許可の範囲")}</b>
+          <dl>
+            {scope.map(([key, value]) => (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunActivityCall({ call, approvals, onApproval }: { call: ToolCallHistory; approvals?: Approval[]; onApproval: (id: string, decision: ApprovalDecision) => void | Promise<void> }) {
   const state = presentation[call.status];
+  const [pendingDecision, setPendingDecision] = useState<ApprovalDecision | null>(null);
+  const submitting = useRef(false);
+  const approval = approvals?.find((item) => item.id === call.approval?.id);
+  async function decide(decision: ApprovalDecision) {
+    if (!call.approval || submitting.current) return;
+    submitting.current = true;
+    setPendingDecision(decision);
+    try {
+      await onApproval(call.approval.id, decision);
+    } finally {
+      submitting.current = false;
+      setPendingDecision(null);
+    }
+  }
   const StateIcon = state.Icon;
   const sources = call.result_activity?.sources || [];
   const hasResult = call.result !== undefined && call.result !== null;
@@ -55,12 +175,13 @@ function RunActivityCall({ call, onApproval }: { call: ToolCallHistory; onApprov
         {call.failure && <p className="run-step-failure"><AlertTriangle size={13} /> {call.failure}</p>}
         {retryable && <p className="run-step-retry"><RotateCcw size={12} /> {call.retry.label}</p>}
         {call.approval && call.status === "waiting_approval" && (
-          <div className="run-step-approval">
+          <div className="run-step-approval" aria-busy={pendingDecision !== null}>
             <span className="run-step-approval-label"><ShieldCheck size={14} /> {t("承認が必要です")}</span>
+            {approval && <ApprovalPayload data={approval.data} />}
             <span className="run-step-approval-actions">
-              <button onClick={() => onApproval(call.approval!.id, "once")}>{t("今回のみ")}</button>
-              <button onClick={() => onApproval(call.approval!.id, "always")}>{t("この操作を常に許可")}</button>
-              <button onClick={() => onApproval(call.approval!.id, "denied")}>{t("拒否")}</button>
+              <button disabled={pendingDecision !== null} onClick={() => void decide("once")}>{t("今回のみ")}</button>
+              <button disabled={pendingDecision !== null} onClick={() => void decide("always")}>{t("この操作を常に許可")}</button>
+              <button disabled={pendingDecision !== null} onClick={() => void decide("denied")}>{t("拒否")}</button>
             </span>
           </div>
         )}
@@ -89,12 +210,14 @@ function RunActivityCall({ call, onApproval }: { call: ToolCallHistory; onApprov
 
 export function RunActivity({
   calls,
+  approvals,
   running = false,
   onApproval,
 }: {
   calls: ToolCallHistory[];
+  approvals?: Approval[];
   running?: boolean;
-  onApproval: (id: string, decision: ApprovalDecision) => void;
+  onApproval: (id: string, decision: ApprovalDecision) => void | Promise<void>;
 }) {
   if (!calls.length) return null;
   const active = calls.find((call) => call.status === "running" || call.status === "waiting_approval");
@@ -125,7 +248,7 @@ export function RunActivity({
           <ChevronDown className="run-activity-chevron" size={15} />
         </summary>
         <ol className="run-timeline">
-          {calls.map((call) => <RunActivityCall key={call.id} call={call} onApproval={onApproval} />)}
+          {calls.map((call) => <RunActivityCall key={call.id} call={call} approvals={approvals} onApproval={onApproval} />)}
         </ol>
       </details>
     </section>

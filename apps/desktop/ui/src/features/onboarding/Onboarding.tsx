@@ -50,8 +50,16 @@ export function Onboarding({
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-bg">
-      <header data-tauri-drag-region className="app-titlebar flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-bg/85 px-3 backdrop-blur-md">
-        <span data-tauri-drag-region className="truncate text-sm font-medium text-fg">MIX-agent</span>
+      <header
+        data-tauri-drag-region
+        className="app-titlebar flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-bg/85 px-3 backdrop-blur-md"
+      >
+        <span
+          data-tauri-drag-region
+          className="truncate text-sm font-medium text-fg"
+        >
+          MIX-agent
+        </span>
         {step > WELCOME && (
           <StepRail
             steps={STEPS}

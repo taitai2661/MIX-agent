@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   Brain,
@@ -129,6 +130,7 @@ export function ModelPicker({
   onTemporaryChange,
   allowTools,
   onAllowToolsChange,
+  runtimeStatus,
 }: {
   models: ModelView[];
   value: string;
@@ -144,6 +146,9 @@ export function ModelPicker({
   onTemporaryChange?: (value: boolean) => void;
   allowTools?: boolean;
   onAllowToolsChange?: (value: boolean) => void;
+  /** Local runtime state for the selected model. Rendered inside the picker so
+   *  the composer toolbar does not need a separate status chip. */
+  runtimeStatus?: ReactNode;
 }) {
   const openSettings = useUi((s) => s.openSettings);
   const [open, setOpen] = useState(false);
@@ -605,6 +610,12 @@ export function ModelPicker({
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {runtimeStatus && (
+          <div className="flex shrink-0 items-center gap-2 border-t border-line px-2.5 py-1.5">
+            {runtimeStatus}
           </div>
         )}
 

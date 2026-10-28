@@ -2,6 +2,11 @@ use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+/// Context ceiling used for locally hosted models when the user has not
+/// chosen one. Chosen to fit an 8 GB GPU with a 7–8B Q4 model; the model's
+/// advertised maximum (often 128k) is a capability, not a sensible default.
+pub const DEFAULT_LOCAL_CONTEXT_WINDOW: u32 = 8192;
+
 /// The single settings document.
 ///
 /// `#[serde(default)]` sits on the container rather than on individual fields
@@ -81,6 +86,32 @@ pub struct SettingsView {
     /// embedded public key, and the check is a single manifest request. The
     /// user can still turn it off (and check manually) in Settings → Updates.
     pub auto_check_updates: bool,
+    /// Sweep loopback for local runtimes once after launch so the Providers
+    /// pane and auto-start do not begin from an empty table.
+    pub local_scan_on_start: bool,
+    /// Stop only the processes this app started when it exits. Runtimes the
+    /// user launched themselves are never touched.
+    pub local_stop_on_exit: bool,
+    /// Start an imported local provider automatically when the app launches.
+    /// A provider row can override this with `data.local.autoStart`.
+    ///
+    /// Defaults to `false`: spawning `ollama serve` for someone who manages
+    /// Ollama through Homebrew/systemd is a surprise, and the Providers pane
+    /// has an explicit Start button for the users who want it.
+    pub local_auto_start: bool,
+    /// Keep-alive sent to Ollama. Used both for explicit load requests and for
+    /// each chat turn of a locally hosted Ollama provider.
+    pub local_keep_alive: Option<String>,
+    /// Ceiling for `num_ctx` on locally hosted models.
+    ///
+    /// Discovery records the model's *maximum* context (often 128k+), and
+    /// sending that as `num_ctx` makes Ollama reserve a KV cache large enough
+    /// to fail or crawl on consumer GPUs. `None` uses
+    /// [`DEFAULT_LOCAL_CONTEXT_WINDOW`]; a run never asks a local model for
+    /// more than this.
+    pub local_context_window: Option<u32>,
+    /// Give locally hosted models a modest bonus in Auto routing.
+    pub local_prefer: bool,
 }
 
 impl Default for SettingsView {
@@ -108,6 +139,12 @@ impl Default for SettingsView {
             database_encryption: false,
             onboarding_completed: None,
             auto_check_updates: true,
+            local_scan_on_start: true,
+            local_stop_on_exit: true,
+            local_auto_start: false,
+            local_keep_alive: None,
+            local_context_window: None,
+            local_prefer: false,
         }
     }
 }
@@ -200,7 +237,34 @@ fn validate_settings(input: &SettingsView) -> Result<(), String> {
             return Err("command too long (max 2000 chars)".to_string());
         }
     }
+    if let Some(cap) = input.local_context_window {
+        if !(512..=1_048_576).contains(&cap) {
+            return Err("local_context_window must be between 512 and 1048576".to_string());
+        }
+    }
+    if let Some(keep_alive) = &input.local_keep_alive {
+        if !valid_keep_alive(keep_alive) {
+            return Err(
+                "local_keep_alive must be -1 or a duration such as 5m, 30m, 2h".to_string(),
+            );
+        }
+    }
     Ok(())
+}
+
+/// Ollama accepts `-1` (never unload) or a duration string (`5m`, `30s`, `2h`).
+/// Keep the stored value to that vocabulary instead of forwarding an arbitrary
+/// string as `OLLAMA_KEEP_ALIVE` and as a request option.
+fn valid_keep_alive(value: &str) -> bool {
+    let value = value.trim();
+    if value == "-1" {
+        return true;
+    }
+    if value.is_empty() || value.len() > 32 {
+        return false;
+    }
+    let numeric = value.strip_suffix(['s', 'm', 'h']).unwrap_or(value);
+    !numeric.is_empty() && numeric.chars().all(|ch| ch.is_ascii_digit())
 }
 
 /// Read the single settings row, falling back to the defaults.
@@ -270,4 +334,27 @@ pub async fn write_settings(
     .await
     .map_err(crate::error::cmd_err)?;
     Ok(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{valid_keep_alive, SettingsView, DEFAULT_LOCAL_CONTEXT_WINDOW};
+
+    #[test]
+    fn keep_alive_accepts_only_ollama_durations() {
+        for value in ["-1", "0", "5s", "30m", "2h"] {
+            assert!(valid_keep_alive(value), "{value}");
+        }
+        for value in ["", " ", "5d", "-2", "5m30s", "infinity", "5 m"] {
+            assert!(!valid_keep_alive(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn auto_start_is_opt_in() {
+        let settings = SettingsView::default();
+        assert!(!settings.local_auto_start);
+        assert_eq!(settings.local_context_window, None);
+        assert_eq!(DEFAULT_LOCAL_CONTEXT_WINDOW, 8192);
+    }
 }

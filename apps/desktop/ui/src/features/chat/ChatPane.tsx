@@ -7,11 +7,14 @@ import { isBusy, isTerminal } from "@/lib/runEvents";
 import {
   CONVERSATIONS_QUERY_KEY,
   useConversations,
+  useLocalRuntimes,
   useModels,
   useProjects,
+  useProviders,
 } from "@/lib/queries";
 import { useUi, surfaceForMode } from "@/lib/ui";
 import { getLastModelForSurface } from "@/lib/modelPrefs";
+import { SETTINGS_QUERY_KEY } from "@/lib/settings";
 import type { ModelView, RunView } from "@/lib/types";
 import { nextVisit, type Welcome } from "./greeting";
 import {
@@ -19,6 +22,7 @@ import {
   useChatComposerContext,
 } from "./ChatComposerContext";
 import { Composer, type DraftAttachment } from "./Composer";
+import { localRuntimeForModel } from "@/lib/localRuntime";
 import { Transcript } from "./Transcript";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { ErrorBox } from "@/components/shared";
@@ -49,15 +53,18 @@ function ChatPaneBody() {
   const surface = useUi((s) => s.surface);
   const projectError = useChatComposerContext()?.projectError ?? null;
   const queryClient = useQueryClient();
-  const liveRunId = useRunEvents((s) => s.liveRunId);
-  const liveConversationId = useRunEvents((s) => s.conversationId);
-  const liveTimeline = useRunEvents((s) => s.timeline);
   const startRun = useRunEvents((s) => s.startRun);
-  const clearLive = useRunEvents((s) => s.clear);
+  const clearLive = useRunEvents((s) => s.clearRun);
 
   const conversations = useConversations();
   const models = useModels();
   const projects = useProjects();
+  const providers = useProviders();
+  const localRuntimes = useLocalRuntimes();
+  const settings = useQuery({
+    queryKey: SETTINGS_QUERY_KEY,
+    queryFn: api.getSettings,
+  });
   const messages = useQuery({
     queryKey: ["messages", conversationId],
     queryFn: () => api.listMessages(conversationId!),
@@ -72,6 +79,10 @@ function ChatPaneBody() {
   // A temporary send that created its own conversation: once the run ends the
   // backend deletes that thread, so the composer has to let go of it too.
   const temporaryNewRef = useRef<string | null>(null);
+  // A failed first send deletes the thread it just created. Retrying through
+  // `activeConversationId` would then fall back to the newest *existing*
+  // thread and deliver the message into the wrong conversation.
+  const retryNeedsNewConversation = useRef(false);
 
   const surfaceConversations = useMemo(
     () =>
@@ -84,6 +95,14 @@ function ChatPaneBody() {
   const activeModelId = modelId || "auto";
   const activeConversationId =
     conversationId ?? surfaceConversations[0]?.id ?? null;
+  // Read this thread's own timeline. A run started in another thread stays
+  // tracked (and keeps streaming) instead of being wiped by the next send.
+  const liveEntry = useRunEvents((s) =>
+    activeConversationId ? s.byConversation[activeConversationId] : undefined,
+  );
+  const liveRunId = liveEntry?.runId ?? null;
+  const liveTimeline = liveEntry?.timeline ?? null;
+  const liveConversationId = liveEntry ? activeConversationId : null;
 
   useEffect(() => {
     // `auto` is the default pick and is valid without any model in the list.
@@ -149,13 +168,43 @@ function ChatPaneBody() {
       attachments,
       temporaryMode,
       allowTools,
+      retryNewConversation = false,
     }: {
       content: string;
       attachments: DraftAttachment[];
       temporaryMode: boolean;
       allowTools: boolean;
+      /** Retry of a first send whose thread was rolled back: create a new one
+       *  instead of falling back to another existing thread. */
+      retryNewConversation?: boolean;
     }) => {
-      let target = activeConversationId;
+      // A stopped local runtime is the most common first-send failure. Starting
+      // it *before* the conversation exists means a failed start cannot leave
+      // an empty thread behind or discard a just-created id.
+      const localSlug = localRuntimeForModel(
+        activeModelId,
+        models.data ?? [],
+        providers.data ?? [],
+      );
+      if (localSlug) {
+        const runtime = localRuntimes.data?.find(
+          (entry) => entry.slug === localSlug,
+        );
+        // Auto-start only when the user opted in, and never after they
+        // explicitly stopped the runtime (the Stop button would otherwise be
+        // undone by the next message).
+        const autoStart = settings.data?.local_auto_start === true;
+        if (
+          runtime &&
+          !runtime.online &&
+          runtime.can_start &&
+          autoStart &&
+          !runtime.auto_start_suppressed
+        ) {
+          await api.localRuntimeStart(localSlug);
+        }
+      }
+      let target = retryNewConversation ? null : activeConversationId;
       let createdId: string | null = null;
       // Whether this send created its conversation: a temporary turn in a brand
       // new thread takes the whole thread with it when it is purged.
@@ -199,15 +248,19 @@ function ChatPaneBody() {
         // A failed first send used to leave an empty thread behind (and the
         // composer empty). Drop the just-created thread so the draft can be
         // retried without cluttering history.
+        retryNeedsNewConversation.current = createdId !== null;
         if (createdId) {
           await api.deleteConversation(createdId).catch(() => undefined);
           setConversationId(null);
-          void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+          void queryClient.invalidateQueries({
+            queryKey: CONVERSATIONS_QUERY_KEY,
+          });
         }
         throw err;
       }
     },
     onSuccess: ({ runId, conversationId, purged }) => {
+      retryNeedsNewConversation.current = false;
       if (purged) temporaryNewRef.current = conversationId;
       startRun(runId, conversationId);
       void queryClient.invalidateQueries({
@@ -264,7 +317,7 @@ function ChatPaneBody() {
     void queryClient.invalidateQueries({ queryKey: ["runs", target] });
     void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
     void queryClient.invalidateQueries({ queryKey: ["diagnostics"] });
-    const timer = window.setTimeout(() => clearLive(), 1500);
+    const timer = window.setTimeout(() => clearLive(liveRunId), 1500);
     return () => window.clearTimeout(timer);
   }, [
     status,
@@ -390,35 +443,8 @@ function ChatPaneBody() {
     );
   }, [activeProjectId, conversations.data, projects.data, surface]);
 
-  const activeProject =
-    projects.data?.find((p) => p.id === activeProjectId) ?? null;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {surface === "desktop-agent" && activeProject && (
-        <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface/40 px-4 py-1.5 text-xs text-muted backdrop-blur-xs sm:px-6">
-          <div className="flex min-w-0 items-center gap-2">
-            <span
-              className="flex size-2 shrink-0 rounded-full bg-brand"
-              aria-hidden="true"
-            />
-            <span className="truncate font-medium text-fg">
-              {activeProject.name}
-            </span>
-            {activeProject.rootPath && (
-              <span
-                className="hidden truncate font-mono text-2xs text-faint sm:inline"
-                title={activeProject.rootPath}
-              >
-                {activeProject.rootPath}
-              </span>
-            )}
-          </div>
-          <span className="shrink-0 text-2xs font-semibold uppercase tracking-wider text-faint">
-            {t("エージェントワークスペース")}
-          </span>
-        </div>
-      )}
       {liveForThisConversation?.approval && (
         <ApprovalBanner approval={liveForThisConversation.approval} />
       )}
@@ -434,6 +460,7 @@ function ChatPaneBody() {
           welcome={welcome}
           onEditMessage={onEditMessage}
           onRetry={onRetry}
+          onReload={() => void messages.refetch()}
           editDisabled={busy}
           retryDisabled={busy || editMessage.isPending}
         />
@@ -451,19 +478,31 @@ function ChatPaneBody() {
               projectError
             }
             action={
-              sendMessage.isError || editMessage.isError
-                ? t("再試行")
-                : undefined
+              sendMessage.isError && sendMessage.variables
+                ? t("再送信")
+                : editMessage.isError && editMessage.variables
+                  ? t("再実行")
+                  : undefined
             }
             onAction={
-              sendMessage.isError || editMessage.isError
+              sendMessage.isError && sendMessage.variables
                 ? () => {
-                    // Same guard as the old disabled attribute: a retry must not
-                    // race a run that is already streaming or a pending re-edit.
-                    if (busy || editMessage.isPending) return;
-                    void onRetry();
+                    // Replay the exact payload that failed. Rescanning the
+                    // transcript for "the last user turn" re-ran an older turn
+                    // (deleting its answer) when the failed send never reached
+                    // the database, and did nothing at all on a brand-new thread.
+                    if (busy || sendMessage.isPending) return;
+                    sendMessage.mutate({
+                      ...sendMessage.variables,
+                      retryNewConversation: retryNeedsNewConversation.current,
+                    });
                   }
-                : undefined
+                : editMessage.isError && editMessage.variables
+                  ? () => {
+                      if (busy || editMessage.isPending) return;
+                      editMessage.mutate(editMessage.variables);
+                    }
+                  : undefined
             }
           />
         </div>

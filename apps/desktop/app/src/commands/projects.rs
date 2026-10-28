@@ -389,6 +389,47 @@ pub async fn context_window_for(pool: &sqlx::SqlitePool, model_id: &str) -> u32 
     .unwrap_or(0)
 }
 
+/// Context window a run should actually use.
+///
+/// The stored value is the model's *maximum*: discovery reports what the file
+/// supports, not what this machine can afford. For a local runtime that maximum
+/// becomes `num_ctx`, so an 8 GB GPU asked for a 128k window fails to load or
+/// crawls. Cap local models at the user's ceiling (default
+/// [`crate::commands::settings::DEFAULT_LOCAL_CONTEXT_WINDOW`]); cloud models
+/// keep their advertised window.
+pub fn effective_context_window(model_window: u32, is_local: bool, cap: Option<u32>) -> u32 {
+    if !is_local {
+        return model_window;
+    }
+    let cap = cap.unwrap_or(crate::commands::settings::DEFAULT_LOCAL_CONTEXT_WINDOW);
+    if model_window == 0 {
+        cap
+    } else {
+        model_window.min(cap)
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::effective_context_window;
+
+    #[test]
+    fn cloud_models_keep_their_advertised_window() {
+        assert_eq!(
+            effective_context_window(200_000, false, Some(8192)),
+            200_000
+        );
+    }
+
+    #[test]
+    fn local_models_are_capped_but_unknown_uses_the_cap() {
+        assert_eq!(effective_context_window(131_072, true, None), 8192);
+        assert_eq!(effective_context_window(4096, true, Some(8192)), 4096);
+        assert_eq!(effective_context_window(0, true, Some(16384)), 16384);
+        assert_eq!(effective_context_window(131_072, true, Some(32768)), 32768);
+    }
+}
+
 /// Everything a Run needs from the conversation's project.
 pub struct ProjectRuntime {
     /// Absolute folder of the project. `None` only when the conversation is

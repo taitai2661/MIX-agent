@@ -39,6 +39,14 @@ export const DEFAULT_SETTINGS: SettingsView = {
   // The backend defaults this to `true` too: auto-check is one manifest
   // request and the payload is signature-verified before installation.
   auto_check_updates: true,
+  local_scan_on_start: true,
+  local_stop_on_exit: true,
+  // Spawning `ollama serve` for a user who manages it as a service was a
+  // surprise; the Providers pane has an explicit Start button.
+  local_auto_start: false,
+  local_keep_alive: null,
+  local_context_window: null,
+  local_prefer: false,
 };
 
 /** Shared access to the settings draft: one query, one cache entry, and a
@@ -80,6 +88,13 @@ export function useApplySettings() {
       const next: SettingsView = { ...base, ...patch };
       queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, next);
       await api.updateSettings(next);
+      // The Settings pane snapshots the form to decide between "保存しました"
+      // and "未保存の変更". An immediate-save control (theme, language) lives
+      // outside that snapshot, so without this event flipping the theme showed
+      // a pending-changes badge for a value that had already been written.
+      window.dispatchEvent(
+        new CustomEvent<SettingsView>("mix:settings-saved", { detail: next }),
+      );
     } catch (err) {
       // The optimistic value must not survive a failed write: drop it and let
       // the query refetch the truth.

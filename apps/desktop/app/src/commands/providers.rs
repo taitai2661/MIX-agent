@@ -17,6 +17,85 @@ pub struct ProviderView {
 /// `(id, kind, label, base_url, enabled, preset)`
 type ProviderRow = (String, String, String, Option<String>, i64, Option<String>);
 
+/// Whether a provider row targets a runtime on this machine.
+///
+/// The preset catalogue says what kind of runtime the row represents; the base
+/// URL says where it actually runs. Both are needed: an `ollama` preset pointed
+/// at a GPU server on the LAN is not a local runtime, and a hand-written
+/// OpenAI-compatible row pointed at `127.0.0.1:8080` is.
+pub fn is_local_provider(kind: Option<&str>, preset: Option<&str>, base_url: Option<&str>) -> bool {
+    // The base URL decides when there is one: an `ollama` preset pointed at a
+    // cloud gateway is not local. Only rows that predate the URL column (or are
+    // still being validated) fall back to the preset/kind.
+    if let Some(url) = base_url.map(str::trim).filter(|url| !url.is_empty()) {
+        return mixd_providers::discovery::is_local_base_url(url);
+    }
+    matches!(kind, Some("ollama") | Some("lmstudio"))
+        || preset.is_some_and(preset_catalog::is_local_slug)
+}
+
+/// Whether the provider points at a runtime this app may start, stop and
+/// manage.
+///
+/// This is strictly narrower than [`is_local_provider`]. A model server on the
+/// LAN is "local" for the API-key gate and for Auto's cost model, but spawning
+/// `ollama serve` for it would start a second server on this machine and
+/// applying the loopback context cap would throttle a remote GPU. Lifecycle
+/// belongs to loopback only.
+pub fn is_managed_provider(
+    kind: Option<&str>,
+    preset: Option<&str>,
+    base_url: Option<&str>,
+) -> bool {
+    if let Some(url) = base_url.map(str::trim).filter(|url| !url.is_empty()) {
+        return mixd_providers::discovery::is_loopback_base_url(url);
+    }
+    matches!(kind, Some("ollama") | Some("lmstudio"))
+        || preset.is_some_and(preset_catalog::is_local_slug)
+}
+
+/// Local-run settings that depend on where the selected provider lives.
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderLocality {
+    /// Network-local (loopback, LAN, mDNS, Tailscale): no API key needed.
+    pub is_local: bool,
+    /// Loopback only: the app may own the process and cap `num_ctx`.
+    pub is_managed: bool,
+    pub is_ollama: bool,
+}
+
+pub async fn provider_locality(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    provider_id: &str,
+) -> ProviderLocality {
+    let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT json_extract(data, '$.kind'), json_extract(data, '$.preset'), \
+                json_extract(data, '$.baseUrl') \
+         FROM providers WHERE id = ?",
+    )
+    .bind(provider_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((kind, preset, base_url)) = row else {
+        return ProviderLocality {
+            is_local: false,
+            is_managed: false,
+            is_ollama: false,
+        };
+    };
+    ProviderLocality {
+        is_local: is_local_provider(kind.as_deref(), preset.as_deref(), base_url.as_deref()),
+        is_managed: is_managed_provider(kind.as_deref(), preset.as_deref(), base_url.as_deref()),
+        is_ollama: kind.as_deref() == Some("ollama"),
+    }
+}
+
+pub async fn provider_is_local(pool: &sqlx::Pool<sqlx::Sqlite>, provider_id: &str) -> bool {
+    provider_locality(pool, provider_id).await.is_local
+}
+
 #[tauri::command]
 pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<ProviderView>, String> {
     let pool = state.storage.pool();
@@ -106,6 +185,33 @@ pub async fn insert_provider(
     let id = uuid::Uuid::new_v4().to_string();
     let base_url = base_url.trim().trim_end_matches('/');
     let enabled = enabled.unwrap_or(true);
+    // A local provider carries the runtime identity even before the first scan
+    // sees it again, so the Start button works without re-discovering. No
+    // `autoStart` is written: the global setting is the default, and writing
+    // `true` here would opt every import into spawning a server at launch.
+    let local_runtime = if is_managed_provider(Some(kind), preset_slug.as_deref(), Some(base_url)) {
+        preset_slug
+            .as_deref()
+            .or(Some(kind))
+            .and_then(mixd_providers::discovery::RuntimeId::from_slug)
+            .filter(|runtime| {
+                matches!(
+                    runtime,
+                    mixd_providers::discovery::RuntimeId::Ollama
+                        | mixd_providers::discovery::RuntimeId::LmStudio
+                )
+            })
+    } else {
+        None
+    };
+    let local = local_runtime.map(|runtime| {
+        let executable = mixd_providers::discovery::launch_spec(runtime)
+            .map(|spec| spec.program.display().to_string());
+        serde_json::json!({
+            "runtime": runtime.slug(),
+            "executable": executable,
+        })
+    });
     let data = serde_json::json!({
         "kind": kind,
         "label": label,
@@ -113,6 +219,7 @@ pub async fn insert_provider(
         "enabled": enabled,
         "preset": preset_slug,
         "extra": {},
+        "local": local,
     });
     sqlx::query("INSERT INTO providers (id, owner_id, data) VALUES (?, ?, ?)")
         .bind(&id)
@@ -534,7 +641,7 @@ pub async fn connect_provider(
             .execute(state.storage.pool())
             .await;
     let _ = input.discover;
-    let written = super::models::sync_models(&state, &input.id, &discovered).await?;
+    let written = super::models::sync_models(state.storage.pool(), &input.id, &discovered).await?;
     // Fetching a model list is the moment the user decides this provider is
     // ready, and it is also the first point at which the base URL is known to
     // be reachable. Registering here means the models just written are usable
@@ -549,4 +656,70 @@ pub async fn connect_provider(
     )
     .await;
     Ok(written.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_local_provider, is_managed_provider};
+
+    #[test]
+    fn only_loopback_runtimes_are_managed() {
+        // Network-local, but not ours to start: a LAN GPU box.
+        assert!(is_local_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("http://192.168.1.20:11434/v1"),
+        ));
+        assert!(!is_managed_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("http://192.168.1.20:11434/v1"),
+        ));
+        assert!(!is_managed_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("http://mac-mini.local:11434/v1"),
+        ));
+        assert!(is_managed_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("http://127.0.0.1:11434/v1"),
+        ));
+        assert!(is_managed_provider(Some("ollama"), None, None));
+    }
+
+    #[test]
+    fn a_remote_ollama_is_not_a_local_runtime() {
+        assert!(!is_local_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("http://192.0.2.10:11434/v1"),
+        ));
+        assert!(!is_local_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("https://gpu.example.com/v1"),
+        ));
+    }
+
+    #[test]
+    fn loopback_wins_regardless_of_preset() {
+        assert!(is_local_provider(
+            Some("compatible"),
+            Some("custom"),
+            Some("http://127.0.0.1:8080/v1"),
+        ));
+        assert!(is_local_provider(
+            Some("ollama"),
+            Some("ollama"),
+            Some("http://localhost:11434/v1"),
+        ));
+    }
+
+    #[test]
+    fn a_row_without_a_url_falls_back_to_its_preset() {
+        assert!(is_local_provider(Some("ollama"), None, None));
+        assert!(is_local_provider(None, Some("lmstudio"), Some("")));
+        assert!(!is_local_provider(Some("openai"), Some("openai"), None));
+    }
 }

@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod fs;
 pub mod health;
 pub mod knowledge;
+pub mod local_runtime;
 pub mod mcp;
 pub mod memories;
 pub mod models;

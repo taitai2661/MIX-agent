@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot } from "lucide-react";
+import { Bot, Pencil, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { t, tf } from "@/lib/i18n";
@@ -25,6 +25,28 @@ export function AgentsPane() {
   const [draftName, setDraftName] = useState("");
   const [draftInstructions, setDraftInstructions] = useState("");
   const [draftTools, setDraftTools] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const resetDraft = () => {
+    setEditingId(null);
+    setDraftName("");
+    setDraftInstructions("");
+    setDraftTools([]);
+  };
+
+  const update = useMutation({
+    mutationFn: () =>
+      api.updateAgent({
+        id: editingId!,
+        name: draftName,
+        instructions: draftInstructions,
+        tool_ids: draftTools,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      resetDraft();
+    },
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -54,11 +76,13 @@ export function AgentsPane() {
 
   return (
     <Page
-      title={t("エージェント")}
-      sub={t("ツールを絞った専用エージェントを定義します。")}
+      title={t("エージェントプロファイル")}
+      sub={t(
+        "ツールを絞った専用エージェントを定義します。エージェントモードの実行から呼び出されます。",
+      )}
     >
       <Card
-        title={`${t("エージェント")} — ${t("作成")}`}
+        title={`${t("エージェントプロファイル")} — ${editingId ? t("編集") : t("作成")}`}
         icon={<Bot size={13} />}
       >
         <Field label={t("名前")}>
@@ -108,12 +132,18 @@ export function AgentsPane() {
         <Row>
           <Button
             variant="primary"
-            disabled={!draftName || create.isPending}
-            onClick={() => create.mutate()}
+            disabled={!draftName || create.isPending || update.isPending}
+            onClick={() => (editingId ? update.mutate() : create.mutate())}
           >
-            <Bot size={12} /> {t("作成")}
+            <Bot size={12} /> {editingId ? t("保存") : t("作成")}
           </Button>
+          {editingId && (
+            <Button size="sm" onClick={resetDraft}>
+              <X size={12} /> {t("キャンセル")}
+            </Button>
+          )}
           {create.isError && <ErrorBadge error={create.error} />}
+          {update.isError && <ErrorBadge error={update.error} />}
         </Row>
       </Card>
 
@@ -124,7 +154,7 @@ export function AgentsPane() {
       ) : list.length === 0 ? (
         <EmptyState
           icon={<Bot size={22} />}
-          title={t("エージェント")}
+          title={t("エージェントプロファイル")}
           sub={t("まだ登録されていません。")}
         />
       ) : (
@@ -138,6 +168,20 @@ export function AgentsPane() {
                   <span className="text-xs text-faint">
                     {relativeTime(a.updated_at)}
                   </span>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t("編集")}
+                    aria-label={tf("{name} を編集", { name: a.name })}
+                    onClick={() => {
+                      setEditingId(a.id);
+                      setDraftName(a.name);
+                      setDraftInstructions(a.instructions);
+                      setDraftTools(a.tool_ids);
+                    }}
+                  >
+                    <Pencil size={13} />
+                  </Button>
                   <DeleteIconButton
                     title={t("このエージェントを削除しますか？")}
                     description={tf("{name} は元に戻せません。", {

@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDown,
   Bot,
@@ -8,6 +15,9 @@ import {
 } from "lucide-react";
 import { t, tf } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
+import { useNow } from "@/lib/clock";
+import { dayKey, dayLabel } from "@/lib/format";
+import { prefersReducedMotion } from "@/lib/motion";
 import { type RunTimeline } from "@/lib/runEvents";
 import {
   promptDetail,
@@ -35,6 +45,7 @@ export function Transcript({
   welcome = null,
   onEditMessage,
   onRetry,
+  onReload,
   editDisabled = false,
   retryDisabled = false,
   models = [],
@@ -55,6 +66,9 @@ export function Transcript({
   /** Regenerate from the last user turn after a failure. Shown in the run-error
    *  alert so a failed run is one tap away from a retry instead of a dead end. */
   onRetry?: () => Promise<void> | void;
+  /** Retry the failed history fetch. Without it a load error was a dead end:
+   *  the only recovery was switching threads or restarting the app. */
+  onReload?: () => void;
   /** A Run is in flight: editing would race the transcript the engine appends. */
   editDisabled?: boolean;
   retryDisabled?: boolean;
@@ -63,6 +77,7 @@ export function Transcript({
   models?: ModelView[];
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const now = useNow();
   const [stuck, setStuck] = useState(true);
   const prevCountRef = useRef(messages.length);
   const rafRef = useRef(0);
@@ -149,7 +164,19 @@ export function Transcript({
     );
   }, [runs, messages, liveRunId]);
 
-  const isEmpty = messages.length === 0 && !showLive;
+  // While the history is in flight the transcript is *unknown*, not empty.
+  // Rendering the greeting first made every existing thread flash "何でも
+  // 質問してください" before its messages arrived — which reads as data loss.
+  const isEmpty = !loading && messages.length === 0 && !showLive;
+  // The completion announcement used to say "応答が完了しました" even when the
+  // user had just pressed Stop. Announce what actually happened.
+  const lastAssistantRun = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant" && m.run_id)?.run_id;
+  const completionLabel =
+    lastAssistantRun && runs.get(lastAssistantRun)?.status === "cancelled"
+      ? t("停止しました")
+      : t("応答が完了しました");
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -168,34 +195,60 @@ export function Transcript({
           aria-live={showLive ? "off" : "polite"}
           aria-relevant="additions"
         >
-          {error != null && <ErrorBox error={error} />}
+          {error != null && (
+            <ErrorBox
+              error={error}
+              action={onReload ? t("再読み込み") : undefined}
+              onAction={onReload}
+            />
+          )}
           {isEmpty && !error && (
             <Welcome welcome={welcome} hasModels={models.length > 0} />
           )}
-          {!isEmpty && loading && messages.length === 0 && !showLive && (
-            <ListSkeleton rows={1} />
+          {loading && messages.length === 0 && !showLive && (
+            <ListSkeleton rows={2} />
           )}
-          {messages.map((message) => (
-            <MessageItem
-              key={message.id}
-              message={message}
-              runs={runs}
-              models={models}
-              onEdit={onEditMessage}
-              onRetry={onRetry}
-              editDisabled={editDisabled}
-              retryDisabled={retryDisabled || editDisabled}
-              showRunError={
-                message.role === "assistant"
-                  ? lastAssistantByRun.get(message.run_id ?? "") === message.id
-                  : orphanRunIds.has(message.run_id ?? "")
-              }
-            />
-          ))}
+          {messages.map((message, index) => {
+            const day = dayKey(message.created_at);
+            const prevDay =
+              index > 0 ? dayKey(messages[index - 1]!.created_at) : null;
+            return (
+              <Fragment key={message.id}>
+                {day && day !== prevDay && (
+                  <div
+                    role="separator"
+                    aria-label={dayLabel(message.created_at)}
+                    className="flex items-center gap-3 pt-2 text-2xs text-faint"
+                  >
+                    <span className="h-px flex-1 bg-line" aria-hidden="true" />
+                    <span>{dayLabel(message.created_at)}</span>
+                    <span className="h-px flex-1 bg-line" aria-hidden="true" />
+                  </div>
+                )}
+                <MessageItem
+                  message={message}
+                  runs={runs}
+                  models={models}
+                  onEdit={onEditMessage}
+                  onRetry={onRetry}
+                  editDisabled={editDisabled}
+                  retryDisabled={retryDisabled || editDisabled}
+                  tailCount={messages.length - index - 1}
+                  showRunError={
+                    message.role === "assistant"
+                      ? lastAssistantByRun.get(message.run_id ?? "") ===
+                        message.id
+                      : orphanRunIds.has(message.run_id ?? "")
+                  }
+                  now={now}
+                />
+              </Fragment>
+            );
+          })}
           {showLive && live && <LiveBlock live={live} />}
           {!showLive && (
             <span className="sr-only" role="status" aria-live="polite">
-              {messages.length > 0 ? t("応答が完了しました") : ""}
+              {messages.length > 0 ? completionLabel : ""}
             </span>
           )}
         </div>
@@ -206,7 +259,11 @@ export function Transcript({
           size="sm"
           onClick={() => {
             const el = scrollRef.current;
-            if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+            if (el)
+              el.scrollTo({
+                top: el.scrollHeight,
+                behavior: prefersReducedMotion() ? "auto" : "smooth",
+              });
             setStuck(true);
           }}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border-line-strong bg-surface/90 px-3.5 py-1.5 shadow-pop backdrop-blur-md transition-all hover:scale-105 active:scale-95"

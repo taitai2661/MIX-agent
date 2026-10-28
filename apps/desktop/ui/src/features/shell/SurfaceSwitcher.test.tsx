@@ -30,7 +30,7 @@ describe("SurfaceSwitcher", () => {
     });
     render(<SurfaceSwitcher />);
     expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent(
-      "エージェント",
+      "コーディング",
     );
   });
 
