@@ -18,6 +18,7 @@ fn full_settings() -> SettingsView {
         default_model_id: Some("prov:model-a".into()),
         default_mode: Some("agent".into()),
         egress_allowlist: vec!["https://api.example.com".into()],
+        browser_allow_local: true,
         telemetry_consent: true,
         language: Some("ja".into()),
         theme: Some("dark".into()),

@@ -407,6 +407,32 @@ export const en: Record<string, string> = {
   "プレビューを読み込めません": "Could not load the preview",
   "スクリーンショットを保存": "Save screenshot",
   "ブラウザのスクリーンショット": "Browser screenshot",
+  "ライブ画面": "Live view",
+  "画面を更新": "Refresh frame",
+  "ライブ表示": "Start live view",
+  "ブラウザのライブ画面": "Live browser view",
+  "ブラウザのライブ画面をクリックして操作":
+    "Click the live browser view to act",
+  "ブラウザ画面": "Browser view",
+  "Releases を開く": "Open Releases",
+  "ブラウザ画面を開く": "Open the browser view",
+  "画面を取得しています…": "Capturing frame…",
+  "画面をクリックするとその位置を操作します。入力欄をクリックしてから下の欄に入力してください。":
+    "Click the frame to act at that point. Click an input first, then type below.",
+  "ブラウザへの入力": "Browser input",
+  "フォーカス中の欄に入力": "Type into the focused field",
+  "入力する": "Type",
+  "ライブ表示を開始すると、ブラウザ画面をここで確認できます。":
+    "Start live view to watch and control the browser from here.",
+  "スナップショットの ref（例: r12）": "Snapshot ref (e.g. r12)",
+  "スナップショットの ref（任意・selectorより優先）":
+    "Snapshot ref (optional; takes precedence over selector)",
+  "入力前にフィールドを空にする": "Clear the field before typing",
+  "送信するキー": "Key to press",
+  "選択する値": "Value to select",
+  "option の value": "option value",
+  "チェックする": "Checked",
+  "本文に含まれるまで待機…": "Wait until the body contains…",
   "承認待ちが{count}件あります": "{count} approval(s) waiting",
   "詳細を確認": "Check details",
   "承認待ちのアクションはありません": "No actions are waiting for approval",
@@ -468,8 +494,34 @@ export const en: Record<string, string> = {
 
   // Browser pane (English-canonical keys live alongside Japanese ones here;
   // both spellings stay registered while call sites migrate)
-  "Chromiumが見つかりません。システムのChromiumを入れるか、バンドル版を用意してください。":
-    "No Chromium binary resolved. Install a system Chromium or bundle one to enable the Browser.",
+  "Chromiumが見つかりません。上の「インストール」から導入するか、システムのChromiumを用意してください。":
+    "No Chromium binary resolved. Use Install above, or prepare a system Chromium.",
+  "Chromium": "Chromium",
+  "インストール済み": "Installed",
+  "インストール中": "Installing",
+  "インストール": "Install",
+  "更新する": "Update",
+  "更新あり": "Update available",
+  "インストールに失敗しました": "The installation failed",
+  "Chromiumを削除しますか？": "Remove Chromium?",
+  "管理対象のChromiumだけを削除します。システムのブラウザは残ります。":
+    "Only the managed Chromium is removed. A system browser stays available.",
+  "Chrome for Testingをアプリ管理下にインストールしています。更新は次回のアプリ更新時に確認できます。":
+    "Chrome for Testing is installed under the app's management. Updates are offered with the next app update.",
+  "ブラウザ機能を使うにはChromiumをインストールしてください。約200MBをダウンロードします。":
+    "Install Chromium to use the browser features. This downloads about 200 MB.",
+  "preparing": "Preparing…",
+  "downloading": "Downloading…",
+  "verifying": "Verifying…",
+  "extracting": "Extracting…",
+  "launching": "Launching…",
+  "done": "Ready",
+  "バージョン不明": "Version unknown",
+  "installed": "Managed",
+  "bundled": "Bundled",
+  "system": "System",
+  "override": "Override",
+  "none": "None",
 
   // Health indicator
   "正常": "OK",
@@ -499,6 +551,11 @@ export const en: Record<string, string> = {
   "ダイアログを閉じる": "Close the dialog",
 
   // Settings: quick prompts, network, updates, mode select
+  "ブラウザのローカルアクセス": "Browser local access",
+  "ローカルアクセス許可": "Local access allowed",
+  "ローカル開発サーバーへのアクセスを許可": "Allow access to local dev servers",
+  "localhost や社内 LAN の開発サーバーをブラウザ Tool で開けるようにします。クラウドメタデータ（169.254.169.254）は許可しても遮断されます。":
+    "Lets the browser tool open localhost or LAN development servers. Cloud metadata (169.254.169.254) stays blocked even when this is on.",
   "Egress 許可リスト": "Egress allowlist",
   "未設定時は Tool がすべての公開ドメインへ到達可能。ワイルドカード (*) と完全一致ドメインを混在可。":
     "With no list, tools can reach any public domain. Wildcard (*) and exact hosts can be mixed.",

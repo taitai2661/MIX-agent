@@ -145,6 +145,38 @@ BUILTINS = [
     definition(
         "browser_type", "Fill a Playwright locator", {"selector": S, "text": S}, ["selector", "text"], "ask"
     ),
+    definition(
+        "browser_hover",
+        "Move the mouse over a Playwright locator",
+        {"selector": S},
+        ["selector"],
+        "ask",
+    ),
+    definition(
+        "browser_press",
+        "Press a keyboard key in the current browser page",
+        {"key": S},
+        ["key"],
+        "ask",
+    ),
+    definition(
+        "browser_select",
+        "Choose an option in a native select element",
+        {"selector": S, "value": S},
+        ["selector", "value"],
+        "ask",
+    ),
+    definition(
+        "browser_check",
+        "Set a checkbox or radio button state",
+        {"selector": S, "checked": {"type": "boolean"}},
+        ["selector", "checked"],
+        "ask",
+    ),
+    definition("browser_reload", "Reload the current browser page"),
+    definition("browser_back", "Go back in the current browser page history"),
+    definition("browser_forward", "Go forward in the current browser page history"),
+    definition("browser_close", "Close the current browser page and its context"),
     definition("browser_read", "Read the current browser page"),
     definition("browser_screenshot", "Capture the current browser page"),
     definition(

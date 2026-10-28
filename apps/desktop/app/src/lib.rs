@@ -487,6 +487,9 @@ pub struct AppState {
     pub secrets: Arc<SecretStore>,
     pub engine: Arc<RunEngine>,
     pub browser: Arc<mixd_browser::BrowserOperator>,
+    /// On-demand Chromium download state. Kept beside the operator because the
+    /// installer writes the tree the operator resolves.
+    pub chromium_installer: Arc<mixd_browser::ChromiumInstaller>,
     pub mcp: Arc<McpHost>,
     /// The same runner instance the engine's registry was built with, so a
     /// rebuild after an MCP change keeps the `agent` tool working.
@@ -496,10 +499,49 @@ pub struct AppState {
     /// the same provider, and so a provider/settings change can invalidate the
     /// one cached answer through [`embedding::EmbeddingResolver::invalidate`].
     pub embeddings: Arc<embedding::EmbeddingResolver>,
+    /// The same allowlist the Tool Registry uses. The manual browser pane
+    /// bypassed it because it called the operator directly; keeping the policy
+    /// here lets the command apply the same gate. Behind a lock so saving the
+    /// settings form takes effect immediately instead of at the next launch.
+    pub egress: Arc<tokio::sync::RwLock<mixd_tools::EgressPolicy>>,
     /// Lifecycle, health and model jobs for local runtimes. One instance for
     /// the whole process so the WebView, the health loop and shutdown all see
     /// the same process ownership.
     pub local_runtime: Arc<local_runtime::LocalRuntimeManager>,
+}
+
+/// Rebuild the engine's Tool Registry from the live parts.
+///
+/// MCP connect/disconnect and Chromium install/remove all change what the
+/// model should be told exists. This used to live in the MCP command module;
+/// sharing it keeps a browser install from requiring an app relaunch before
+/// the `browser` tool appears.
+pub(crate) async fn refresh_registry(state: &AppState) {
+    let egress = load_egress_policy(state.storage.as_ref()).await;
+    // The manual browser pane reads this copy, so it has to move with the
+    // registry. Saving the egress allowlist used to require a relaunch for the
+    // pane while the agent got the new policy on its next registry rebuild.
+    *state.egress.write().await = egress.clone();
+    let mut tools = build_registry(
+        &state.storage,
+        &state.browser,
+        &state.mcp,
+        &state.agent_runner,
+        &state.embeddings,
+        egress,
+    );
+    tools.set_mcp_specs(
+        mixd_mcp::collect_tool_specs(&state.mcp)
+            .await
+            .into_iter()
+            .map(|spec| mixd_tools::ToolSpec {
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+            })
+            .collect(),
+    );
+    state.engine.replace_tools(tools).await;
 }
 
 /// Assemble the Tool Registry from the live parts.
@@ -519,8 +561,7 @@ pub(crate) fn build_registry(
     embeddings: &Arc<embedding::EmbeddingResolver>,
     egress: mixd_tools::EgressPolicy,
 ) -> mixd_tools::ToolRegistry {
-    mixd_tools::ToolRegistry::new(egress)
-        .with_browser(browser.clone())
+    let mut registry = mixd_tools::ToolRegistry::new(egress)
         .with_mcp(Arc::new(McpBridge { host: mcp.clone() }))
         // Project skills first: a procedure a repository carries itself is
         // more specific than a stored one with the same name.
@@ -544,7 +585,17 @@ pub(crate) fn build_registry(
         }))
         .with_knowledge(Arc::new(CoreKnowledgeDispatch {
             storage: storage.clone(),
-        }))
+        }));
+    // Do not advertise a tool that cannot launch. The browser pane still
+    // reports `disabled` and the UI can point at installation instructions;
+    // the model simply never sees a dead tool.
+    if !matches!(
+        browser.resolve_executable().0,
+        mixd_browser::BrowserBackend::Disabled
+    ) {
+        registry = registry.with_browser(browser.clone());
+    }
+    registry
 }
 
 pub async fn build_app_state(
@@ -562,6 +613,14 @@ pub async fn build_app_state(
         resource_dir,
         headless,
     ));
+    let chromium_installer = Arc::new(mixd_browser::ChromiumInstaller::new(app_data));
+    chromium_installer.cleanup_stale().await;
+    // Apply the persisted browser opt-in before the first run can call the
+    // tool. A corrupt/missing settings row simply leaves the safe default off.
+    match crate::commands::settings::read_settings(storage.pool()).await {
+        Ok(settings) => browser.set_allow_local(settings.browser_allow_local).await,
+        Err(err) => tracing::warn!(%err, "could not read browser settings; local access stays off"),
+    }
 
     // Load persisted MCP connections before the Tool Registry is built so the
     // first Run already sees the connected servers.
@@ -589,7 +648,15 @@ pub async fn build_app_state(
         storage.clone(),
         secrets.clone(),
     ));
-    let mut tools = build_registry(&storage, &browser, &mcp, &agent_runner, &embeddings, egress);
+    let mut tools = build_registry(
+        &storage,
+        &browser,
+        &mcp,
+        &agent_runner,
+        &embeddings,
+        egress.clone(),
+    );
+    let egress = Arc::new(tokio::sync::RwLock::new(egress));
     tools.set_mcp_specs(
         mcp_specs
             .into_iter()
@@ -649,9 +716,11 @@ pub async fn build_app_state(
         secrets,
         engine,
         browser,
+        chromium_installer,
         mcp,
         agent_runner,
         embeddings,
+        egress,
         local_runtime,
     })
 }
@@ -1043,8 +1112,9 @@ pub fn run() {
                     }
                 };
             let secrets = std::sync::Arc::new(mixd_storage::SecretStore::open(&data_dir));
-            // Tauri's resolved resource dir is where the bundled Chromium was
-            // unpacked; guessing it from app_data breaks on installed builds.
+            // Tauri's resolved resource dir is where the legacy bundled
+            // Chromium lived; guessing it from app_data breaks on installed
+            // builds. New installs use <app-data>/chromium instead.
             // Under cargo/tauri dev that dir is `target/debug`, whose Chromium
             // mirror has lost the macOS framework symlinks, so debug builds read
             // the pristine payload next to this crate instead. `env!` is
@@ -1163,10 +1233,14 @@ pub fn run() {
             commands::mcp::connect,
             commands::mcp::handle_oauth_callback,
             commands::browser::browser_status,
+            commands::browser::browser_install,
+            commands::browser::browser_install_cancel,
+            commands::browser::browser_uninstall,
             commands::browser::browser_invoke,
             commands::browser::browser_profiles,
             commands::browser::browser_reset_profile,
             commands::browser::browser_artifact,
+            commands::browser::browser_frame,
             commands::memories::list_memories,
             commands::memories::create_memory,
             commands::memories::update_memory,

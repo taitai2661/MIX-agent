@@ -20,7 +20,8 @@ yarn.lock
 # Tauri generated
 app/gen/
 
-# Bundled Chromium: fetched by scripts/fetch-chromium.mjs at build time.
+# Legacy bundled Chromium. New builds install Chrome for Testing under the
+# app-data directory at runtime (see scripts/pin-chromium.mjs).
 # ~370 MB per platform, so it must never be committed.
 app/resources/chromium/
 app/resources/chromium.*

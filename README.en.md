@@ -43,7 +43,7 @@ Choose the edition that best fits your environment and workflow:
 | **Process Architecture** | Single binary + tokio in-proc (+ Chromium child process) | Docker Compose (app, web, db, runner, proxy containers) |
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM Encryption (Docker volumes) |
 | **Terminal & Files** | Direct host file editing, **persistent PTY shell** | Operations isolated inside mounted `/project` or runner |
-| **Browser Operator** | Bundled Chromium / direct system browser automation | Playwright inside dedicated `execution-runner` |
+| **Browser Operator** | On-demand Chromium install / direct system browser automation | Playwright inside dedicated `execution-runner` |
 | **Security & Sandbox** | OS user permissions + **per-action scoped approval rules** | Container sandbox (non-root runner, egress-proxy rules) |
 
 ---
@@ -211,7 +211,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 | [Memory Specification](docs/memory-spec.md) | Memory contract shared by both editions |
 | [Desktop README](apps/desktop/README.md) | Desktop edition internals, tool specifications, and packaging |
 | [Architecture Overview](docs/architecture.md) | High-level monorepo architecture and design philosophy |
-| [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) design and API mapping |
+| [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) internals, security, and updates |
 | [Operations Guide](docs/operations.md) | Docker edition administration, backups, and restores |
 | [Verification Matrix](docs/verification.md) | Real-world provider and platform verification status |
 | [ZimaOS Guide](docs/zimaos.md) | Deployment via ZimaOS / CasaOS Community Store |

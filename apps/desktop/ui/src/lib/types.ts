@@ -220,6 +220,8 @@ export interface SettingsView {
   default_model_id: string | null;
   default_mode: string | null;
   egress_allowlist: string[];
+  /** Browser-only opt-in for loopback / private-network navigation. */
+  browser_allow_local: boolean;
   telemetry_consent: boolean;
   language: string | null;
   theme: string | null;
@@ -483,12 +485,44 @@ export interface RunView {
   error: string | null;
 }
 
+export interface BrowserFrameView {
+  data: string;
+  width: number;
+  height: number;
+}
+
+export type BrowserInstallStatus =
+  | "not_installed"
+  | "downloading"
+  | "verifying"
+  | "extracting"
+  | "ready"
+  | "failed"
+  | "cancelled";
+
+export interface BrowserInstallState {
+  status: BrowserInstallStatus;
+  progress: number | null;
+  stage: string | null;
+  failure: string | null;
+  failure_code: string | null;
+  bytes_done: number | null;
+  bytes_total: number | null;
+  version: string | null;
+}
+
 export interface BrowserStatus {
   backend: string;
+  source: "installed" | "bundled" | "system" | "override" | "none";
   headless: boolean;
   executable: string | null;
+  installed_version: string | null;
+  pinned_version: string;
+  update_available: boolean;
+  install: BrowserInstallState;
   profiles: number;
   artifacts: number;
+  allow_local: boolean;
 }
 
 export interface BrowserProfileView {

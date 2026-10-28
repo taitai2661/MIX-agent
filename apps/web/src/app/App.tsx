@@ -1,4 +1,5 @@
 import { api, setCSRF, type Row } from "@/app/api";
+import { BrowserInstallNotifier } from "@/app/browser-install-notifier";
 import { ja } from "@/app/strings";
 import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 import { Button } from "@/components/button";
@@ -557,6 +558,7 @@ export function App() {
   }
   return (
     <ToastProvider>
+      <BrowserInstallNotifier />
       <div
         className={
           "shell " +

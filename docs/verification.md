@@ -6,7 +6,56 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [修正] ブラウザ操作の境界とライブ表示の改善（2026-10-28）
+
+- `navigate` / `new_tab` の許可スキームを `http` / `https` / `about:blank` に限定した。従来は `reject_private_navigate_url_with` が http(s) 以外を素通しし、`new_tab` はさらに http(s) のときだけ検査していたため、`file:`（ローカルファイルを `dom` / `screenshot` で読む）と `data:`（`evaluate` のスクリプトゲートを迂回）が到達可能だった。Registry と手動パネルの両方に `NewTab` の egress ゲートを追加した。
+- `allow_private` 時の IPv4-mapped IPv6 判定を修正した。`http://[::ffff:169.254.169.254]/` は `to_ipv4_mapped()` で v4 の禁止範囲に落とす。従来は v6 の link-local/multicast しか見ておらず、ローカル許可 ON で metadata に到達できた。
+- 私有 IP 判定を `mixd-browser` に一本化し、`mixd-tools::egress` はそれを呼ぶようにした。`egress` の許可リストは、ローカル許可 ON のとき loopback / private 宛先だけを免除し、公開ホストには引き続き必要とした。DNS が private のみを返すホスト名も免除対象にした。
+- `update_settings` が `refresh_registry` を呼び、`AppState.egress` を `RwLock` 経由で更新するようにした。egress 許可リストの変更が再起動なしでエージェントと手動パネルへ反映される。
+- `click` / `hover` の前に timeout 付き `scrollIntoView` を実行するようにした。`Element::click()` の IntersectionObserver を避けつつ、画面外要素の座標ズレを防ぐ。非アクティブタブを閉じたときに active を付け替えないよう `close_tab` も修正した。
+- スクリーンショットのインデックス上限で退避した PNG を実ファイルごと削除し、起動時に実体の無い行を落とすようにした。ライブ表示は JPEG（品質 70）/ `try_lock` / 非表示時停止に変更し、`browser_frame` は workspace が操作中なら `null` を返す。UI は前回フレームを維持する。
+- UI を `useBrowserStatus` / `useLiveFrame` / `ChromiumCard` / `LiveViewCard` / `BrowserActionForm` に分割した。インストールは `browser://install` イベントと 1 秒ポーリングの両方で受ける。未使用だった `browser_check_update` コマンドと `browserCheckUpdate` API を削除した。ライブ画面のクリックは `object-contain` の letterbox を考慮した `framePoint` でページ座標へ変換する。
+- `browser.json` に `desktop.manual_only` を追加し、`click_at` / `type_active` をモデル向け tool spec から除外した。`check-browser-parity.py` は `manual_only` の妥当性と contract limits と Rust 定数の一致も検査する。
+- 検証: `cargo fmt --all -- --check`、`cargo clippy -p mixd-browser -p mixd-tools --all-targets -- -D warnings`、`cargo test -p mixd-browser --lib`（24 passed / 2 ignored）、`cargo test -p mixd-tools --lib`（119 passed）、Desktop UI の `pnpm typecheck` / `pnpm lint` / `pnpm test`（39ファイル298テスト）、`python3 scripts/check-browser-parity.py` が成功。
+- 実ブラウザ: `MIX_BROWSER_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" cargo test -p mixd-browser --test integration` が 3 passed。`new_tab` の `file:` / `data:` / `javascript:` 拒否、ローカル許可、click/type/tabs を実 Chromium で確認した。ローカルの `app/resources/chromium`（145.0.7632.14）では screenshot が CDP timeout したが、システム Chrome では同じテストが通過した。旧バンドルはバージョン固定と異なる場合に integration test を skip するようにし、固定版 156 の CI を stale な 145 で赤くしないようにした。
+- 未実施: 固定版 156 での `file:` / `data:` / mapped IPv6 拒否とライブ表示の目視、Windows / Linux 実機でのクリック座標・成果物削除。mapped IPv6 は単体テストのみ。
+
+## [実装] Desktop Chromium のオンデマンドインストール化（2026-10-28）
+
+- Desktop版のChromiumをアプリバンドルから外し、初回利用時にアプリ内から導入する方式へ変更した。配布物にはブラウザを含めない。
+- `mixd_browser::installer`を追加した。`browser/src/chromium-manifest.json`に固定したChrome for Testing 156.0.8078.73を、HTTPSでストリーム受信し、SHA-256・サイズを検証してから`<app-data>/chromium`へ展開する。zipは`chromium.staging-*`に展開し、検証後に旧ツリーとアトミックにswapする。パストラバーサルと危険なsymlinkは拒否し、空き容量不足・通信断・チェックサム不一致を個別のコードで返す。
+- インストール後に`--version`を30秒以内に実行し、誤アーキテクチャやライブラリ不足を`launch_failed`として検出する。Chrome for Testingの`.app`はad-hoc / linker-signedで上流zipでも`codesign --verify --deep --strict`が成功しないため、署名検証を必須にせずSHA-256を供給網のアンカーにした。`.app`内の実行ファイル名は変更しない。
+- 解決順を`MIX_CHROMIUM_HOME` → `<app-data>/chromium` → 旧バンドル → システムChromium → disabledに変更し、`BrowserStatus.source`で管理元を返す。インストール完了時は`refresh_registry`で`browser`ツールを再広告し、再起動なしで使えるようにした。
+- Tauriコマンド`browser_install` / `browser_install_cancel` / `browser_uninstall` / `browser_check_update`と、進捗イベント`browser://install`を追加した。設定 ▸ ブラウザにインストール・更新・削除・再試行・進捗表示を追加し、未インストール時はシステムChromiumへのフォールバックを案内する。
+- `tauri.conf.json`から`resources/chromium`と取得ステップを削除し、`fetch-chromium.mjs` / `ensure-chromium-dir.mjs`を廃止した。`scripts/pin-chromium.mjs`（`--verify`付き）と`pnpm chromium:pin`を追加し、リリースCIではバンドルせずに固定アーカイブのURL・サイズ・SHA-256だけを検証する。
+- 検証: `cargo test -p mixd-browser installer::tests::installs_the_pinned_archive -- --ignored`が成功（156.0.8078.73を実ダウンロードし、インストール・メタデータ・削除まで確認）。`MIX_CFT_ARCHIVE=<mac-arm64 zip> cargo test -p mixd-browser installer::tests::extracts_a_real_archive -- --ignored`も成功。`MIX_BROWSER_EXECUTABLE=<CfT 156> MIX_REQUIRE_BROWSER_TEST=1 cargo test --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、Desktop UIの`pnpm typecheck` / `pnpm lint` / `pnpm test`（38ファイル293テスト）が成功。`pnpm tauri build --no-bundle`が成功し、`pnpm tauri build --bundles app`で`.app`が35.58 MiB（アップデータ用`.app.tar.gz`は12.72 MiB）になり、旧569 MiBからChromium分が消えたことを確認した。ローカルでは`TAURI_SIGNING_PRIVATE_KEY`未設定のためアップデータ署名で停止したが、アプリバンドル自体は生成された。
+- 未実施: Windows / Linux実機での初回インストール、プロキシ環境、回転・切断・ディスク不足・キャンセル・アプリ強制終了の実機確認、GUIでのインストールカード目視、旧同梱版からアップデートした場合の再ダウンロード導線。macOSはarm64のみ、CfT 156.0.8078.73のみで確認した。
+
+
+## [実装] Web版 Chromium インストールのポップアップ通知（2026-10-28）
+
+- Web版でChromiumのバックグラウンド導入が始まったとき・完了したとき・失敗したときに、画面右上のトーストで通知する`BrowserInstallNotifier`を追加した。設定画面を離れていても通知できるよう、導入中だけ`/settings`を3秒間隔で再取得する。
+- セットアップ完了時にも`/settings`をinvalidateし、セットアップ画面を閉じた直後から開始通知が出るようにした。日本語・英語の文言を追加した。
+- 検証: `pnpm --filter mix-agent-web test`（22ファイル165テスト）、`pnpm --filter mix-agent-web build`が成功。
+- 未実施: 実Docker環境でChromiumを導入し、開始・完了・失敗の各トーストを目視確認すること。別タブやAPIから直接導入を開始した場合は、この画面のポーリングが始まるまで通知が遅れる。
+
+## [実装] Desktop Browser Operator の実ブラウザ検証と操作基盤（2026-10-28）
+
+- 最大の原因は、`Browser::launch` が返す CDP `Handler` を spawn せずフィールドに保持していたことだった。コマンドは送られるが応答が読まれず、`pages()` を含む全操作が永久に待機していた。`tokio::spawn` で `Handler` ストリームを駆動するよう修正した。
+- `navigate` が毎回 `new_page` し、以降の操作が `Browser::pages()` の `HashMap` 順で先頭ページに当たっていた問題を修正した。アクティブタブを保持し、`navigate` は現在のページを再利用する。`tabs` / `new_tab` / `switch_tab` / `close_tab` を追加した。
+- 操作をワークスペース単位の `Mutex` で直列化した。エージェントと設定画面の手動操作が同じプロファイルを同時に触っても、ナビゲーションとクリックが交錯しない。
+- `click` は `Element::click()` の `IntersectionObserver` 待ちでハングすることがあったため、要素の content quad 中心への CDP マウスクリックに変更した。`type` は JS の `value=` 代入ではなく、フォーカス後の実キー入力に変更した。`hover` / `press` / `select` / `check` / `clear` / `type_active` / `click_at` を追加した。
+- `snapshot` を追加し、`role` / `name` / `ref` を持つ要素ツリーを最大 300 件で返す。`click` / `type` / `hover` / `select` / `check` は `ref` を受け付け、`r<n>` 形式を検証してから `[data-mix-ref]` に解決する。`extract` / `dom` / `wait_for(text|load)` / `reload` / `back` / `forward` も追加した。
+- スクリーンショットは `Page.captureScreenshot` を直接使い、full page は clip で撮る。macOS headless では `--headless=new` と `--run-all-compositor-stages-before-draw` / `--disable-new-content-rendering-timeout` が必要で、これらがないと `Page.captureScreenshot` が CDP タイムアウトした。
+- `packages/tool_contracts/browser.json` を追加し、Desktop の action enum と Docker の `browser_*` の対応を単一の語彙にした。`scripts/check-browser-parity.py` を追加し、`ci.yml` の parity job に組み込んだ。Desktop は `browser` 1 ツール、Docker は 15 ツールをこの contract にマップし、未対応 10 action を明示している。Docker 側は hover / press / select / check / reload / back / forward / close を追加した。
+- 設定に `browser_allow_local`（既定 OFF）を追加した。ON のときだけ loopback / RFC1918 / ULA を許可し、169.254.0.0/16（cloud metadata）・link-local・multicast は許可後も拒否する。エージェントの egress 判定と手動操作の両方に適用する。
+- Chromium が見つからない場合は `browser` ツールをモデルへ広告しないようにした。設定画面には backend / 実行ファイル / プロファイル / 成果物数 / ローカル許可状態を表示する。
+- プロファイル一覧を起動時にディスクから復元するようにした。リセット後も同じ workspace に留まり、ランダム UUID へ切り替わらない。成果物インデックスは `artifacts/index.json` に永続化し、再起動後も UI から開ける。
+- 設定画面にライブ画面を追加した。1.5 秒間隔で非永続フレームを取得し、クリック座標をページ座標へ変換して `click_at`、`type_active`、`press` を送れる。ポーリングは成果物を作らない。
+- 検証: `cargo test -p mixd-browser`（16 unit + 4 contract + 3 integration + 5 scope）、`cargo test -p mixd-tools`（118 + 13）、`cargo test -p mix-agent-desktop`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all`、`python3 scripts/check-browser-parity.py`、Desktop UI の `pnpm typecheck` / `pnpm lint` / `pnpm test`（38ファイル291テスト）が成功。実 Chromium 統合テストは同梱 Chromium 145.0.7632.14 を macOS arm64 で起動し、2 回の navigate、click、type、snapshot、wait_for(text)、screenshot、tabs、close を確認した。localhost は opt-in 前は拒否、opt-in 後は到達できることも確認した。
+- 未実施: Windows / Linux 実機の同梱 Chromium、Docker Playwright runner の新 action 実装（contract 上は unsupported）、CDP リクエストインターセプトによる完全な egress 強制、Run の停止を伴う「一時停止 → 手動操作 → 再開」の実行制御、実サイトのログイン・CAPTCHA・ダウンロード・アップロード・iframe / shadow DOM。スクリーンショットの見た目検証は自動テストの成功とは別である。
 
 ## [実装] ローカルランタイムの初回導線と判定の修正（2026-10-28）
 

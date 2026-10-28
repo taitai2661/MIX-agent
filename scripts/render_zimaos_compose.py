@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.5.2
+Run with: python scripts/render_zimaos_compose.py v0.5.4
 PyYAML is required for this maintainer-only script.
 """
 
@@ -41,6 +41,21 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
+    "v0.5.4": {
+        "update_at": "2026-10-28",
+        "notes": {
+            "en_US": (
+                "Desktop (beta) installs Chromium on demand, manages local LLM "
+                "runtimes, and adds a live browser view. Desktop/Web browser "
+                "actions are expanded."
+            ),
+            "ja_JP": (
+                "Desktop版（ベータ）にChromiumの初回インストール、"
+                "ローカルLLMランタイム管理、ブラウザのライブ表示を追加。"
+                "Desktop/Web版のブラウザ操作を拡張。"
+            ),
+        },
+    },
     "v0.5.2": {
         "update_at": "2026-10-27",
         "notes": {
@@ -116,7 +131,10 @@ def render(tag: str) -> str:
     source.pop("x-restricted", None)
     source.pop("secrets", None)
     for name in list(source["services"]):
-        if name == "db":
+        # `db` and the Docker socket proxy are infrastructure services, not
+        # release images: keep them verbatim (the proxy image is pinned by
+        # digest in compose.yaml and must not be rewritten to a GHCR tag).
+        if name in ("db", "docker-socket-proxy"):
             continue
         if name not in TARGETS:
             del source["services"][name]

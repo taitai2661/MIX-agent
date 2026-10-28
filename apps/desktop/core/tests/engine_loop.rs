@@ -1585,6 +1585,56 @@ async fn plan_mode_still_allows_the_reads_it_needs_to_plan() {
 }
 
 #[tokio::test]
+async fn plan_mode_allows_the_tools_the_plan_prompt_asks_for() {
+    // The plan prompt tells the model to propose with `user_plan`, and the UI
+    // renders the checklist from `todo`. Both used to be classified as
+    // mutations, so plan mode refused the two tools it exists for; `symbols`
+    // was refused too because the classifier only knew the stale `outline`.
+    let harness = Harness::new(vec![
+        tool_turn("c1", "symbols", r#"{"action":"outline","path":"a.rs"}"#),
+        tool_turn(
+            "c2",
+            "todo",
+            r#"{"todos":[{"content":"inspect the code","status":"in_progress"}]}"#,
+        ),
+        tool_turn(
+            "c3",
+            "user_plan",
+            r#"{"title":"Fix it","steps":["read","edit"]}"#,
+        ),
+        text_turn("here is the plan"),
+    ])
+    .await;
+    std::fs::write(harness.workspace.join("a.rs"), "fn main() {}\n").unwrap();
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.mode = Mode::Plan;
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(
+        tool_names(&outcome.tool_calls),
+        vec!["symbols", "todo", "user_plan"]
+    );
+    for call in &outcome.tool_calls {
+        assert!(
+            call.error.is_none(),
+            "plan mode must run `{}`; got {:?}",
+            call.name,
+            call.error
+        );
+    }
+    let outline = outcome.tool_calls[0]
+        .result
+        .as_ref()
+        .expect("symbols must return a result");
+    assert_eq!(
+        outline["symbols"][0]["name"], "main",
+        "the outline must describe the file it read; got {outline}"
+    );
+}
+
+#[tokio::test]
 async fn an_agent_run_carries_the_built_in_procedure_in_its_system_prompt() {
     let harness = Harness::new(vec![text_turn("done")]).await;
     let _drain = spawn_event_drain(&harness.engine);

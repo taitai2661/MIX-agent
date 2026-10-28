@@ -185,12 +185,22 @@ pub fn is_mutating(name: &str, args: &serde_json::Value) -> bool {
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "write" | "delete" | "create" | "append"
         ),
-        "edit" | "terminal" | "todo" | "user_plan" | "agent" => true,
+        "edit" | "terminal" | "agent" => true,
+        // `todo` and `user_plan` only change per-run state: the checklist and
+        // the proposal shown to the user. They write nothing to the workspace,
+        // so plan mode must be able to use them — the plan prompt asks for
+        // `user_plan`, and the UI renders its checklist from `todo`. Treating
+        // them as mutations made plan mode refuse the two tools it exists for.
+        "todo" | "user_plan" => false,
         // `git` is read-only for the inspection actions and mutating for the
-        // rest, so the action decides rather than the tool name.
+        // rest, so the action decides rather than the tool name. Only the
+        // actions this tool actually exposes are listed; a future write action
+        // falls through to the safe default (mutating).
         "git" => !matches!(
-            args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
-            "status" | "diff" | "log" | "show" | "branch"
+            args.get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("status"),
+            "status" | "diff"
         ),
         // `memory` reads with `recall`/`search` and writes with
         // `remember`/`forget`. `knowledge` reads with `search` only.
@@ -203,9 +213,12 @@ pub fn is_mutating(name: &str, args: &serde_json::Value) -> bool {
             "search"
         ),
         // A tool we have never heard of may well be mutating; assuming it is not
-        // would let an unfamiliar tool's loop read as healthy work.
-        "glob" | "grep" | "outline" | "repo_map" | "skill" | "web_fetch" | "web_fetch_pdf"
-        | "web_search" | "network" | "image_vision" | "browser" | "workspace_check" => false,
+        // would let an unfamiliar tool's loop read as healthy work. Named tools
+        // must match the registry ids: `outline` / `repo_map` were stale names
+        // that no tool answers to, so a read through `symbols` fell through to
+        // this default and plan mode refused it.
+        "glob" | "grep" | "symbols" | "skill" | "web_fetch" | "web_fetch_pdf" | "web_search"
+        | "network" | "image_vision" | "browser" | "workspace_check" => false,
         _ => true,
     }
 }
@@ -221,7 +234,16 @@ pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
             args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
             "search"
         ),
-        "glob" | "grep" | "outline" | "repo_map" | "web_fetch" | "web_fetch_pdf" | "web_search"
+        // `git status` / `git diff` inspect without changing anything. A run
+        // that polls the same diff every turn is a loop worth flagging, so they
+        // belong on the read-only side rather than merely the non-mutating one.
+        "git" => matches!(
+            args.get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("status"),
+            "status" | "diff"
+        ),
+        "glob" | "grep" | "symbols" | "web_fetch" | "web_fetch_pdf" | "web_search"
         | "image_vision" | "network" | "workspace_check" => true,
         _ => false,
     }
@@ -250,6 +272,41 @@ pub fn read_key(name: &str, args: &serde_json::Value) -> String {
             "grep:{}:{}",
             args.get("pattern").and_then(|v| v.as_str()).unwrap_or(""),
             args.get("path").and_then(|v| v.as_str()).unwrap_or("")
+        ),
+        // A structural read is identified by the file (outline) or by the
+        // symbol being looked up (references). Without this arm every outline
+        // collapsed to `symbols:` and two different files looked like a repeat.
+        "symbols" => {
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("outline");
+            let symbol = args
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            format!("symbols:{action}:{path}:{symbol}")
+        }
+        // `git status` and `git diff --staged` are different reads of the same
+        // empty `path`; keying only on the path merged them.
+        "git" => {
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("status");
+            let scope = args
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            format!("git:{action}:{scope}:{path}")
+        }
+        // The kind (`git_status` / `python_syntax` / …) is the identity of a
+        // workspace check; every call has no path, so without it they all
+        // compared equal.
+        "workspace_check" => format!(
+            "workspace_check:{}:{}",
+            args.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+            path
         ),
         other => {
             // Web tools key on their URL / query; without this every search
@@ -370,6 +427,90 @@ mod tests {
         let f1 = call("web_fetch", serde_json::json!({"url": "https://a.example"}));
         let f2 = call("web_fetch", serde_json::json!({"url": "https://b.example"}));
         assert_ne!(key(&f1), key(&f2));
+    }
+
+    #[test]
+    fn planning_tools_are_allowed_in_plan_mode() {
+        // Plan mode refuses `is_mutating` calls before the permission gate. The
+        // plan prompt asks the model to use `user_plan`, and the UI renders the
+        // checklist from `todo`, so neither may be classified as a mutation.
+        for name in ["todo", "user_plan"] {
+            let c = call(name, serde_json::json!({}));
+            assert!(
+                !mutating(&c),
+                "{name} writes no workspace state and must survive plan mode"
+            );
+            assert!(
+                !read_only(&c),
+                "{name} is state, not a repeatable read of the workspace"
+            );
+        }
+    }
+
+    #[test]
+    fn structural_reads_use_the_registry_name() {
+        // The classifier used to know `outline` / `repo_map`, which are not
+        // tools. `symbols` therefore fell through to "unknown means mutating"
+        // and plan mode refused the one tool for inspecting code structure.
+        let outline = call(
+            "symbols",
+            serde_json::json!({"action": "outline", "path": "a.rs"}),
+        );
+        assert!(!mutating(&outline));
+        assert!(read_only(&outline));
+
+        let git = call("git", serde_json::json!({"action": "status"}));
+        assert!(!mutating(&git));
+        assert!(read_only(&git));
+        assert!(
+            !mutating(&call("git", serde_json::json!({}))),
+            "a missing action means `status`, matching the tool's default"
+        );
+        assert!(
+            mutating(&call("git", serde_json::json!({"action": "commit"}))),
+            "only the inspection actions of git are read-only"
+        );
+    }
+
+    #[test]
+    fn structural_reads_get_distinct_keys() {
+        let a = call(
+            "symbols",
+            serde_json::json!({"action": "outline", "path": "a.rs"}),
+        );
+        let b = call(
+            "symbols",
+            serde_json::json!({"action": "outline", "path": "b.rs"}),
+        );
+        let c = call(
+            "symbols",
+            serde_json::json!({"action": "references", "symbol": "main"}),
+        );
+        let d = call(
+            "symbols",
+            serde_json::json!({"action": "references", "symbol": "run"}),
+        );
+        assert_ne!(key(&a), key(&b), "different files are different reads");
+        assert_ne!(key(&c), key(&d), "different symbols are different reads");
+
+        assert_ne!(
+            key(&call("git", serde_json::json!({"action": "status"}))),
+            key(&call(
+                "git",
+                serde_json::json!({"action": "diff", "scope": "staged"})
+            )),
+            "status and a staged diff are not the same read"
+        );
+        assert_ne!(
+            key(&call(
+                "workspace_check",
+                serde_json::json!({"kind": "git_status"})
+            )),
+            key(&call(
+                "workspace_check",
+                serde_json::json!({"kind": "git_diff_check"})
+            )),
+        );
     }
 
     #[test]

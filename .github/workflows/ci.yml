@@ -100,6 +100,12 @@ jobs:
       # back to Japanese.
       - name: Greeting parity check
         run: python3 scripts/check-greeting-parity.py
+      # The browser action vocabulary is shared by the Rust Desktop backend and
+      # the Python/Playwright Docker runner. This fails when an action exists in
+      # the contract but one edition forgot to implement or explicitly mark it
+      # unsupported.
+      - name: Browser contract parity check
+        run: python3 scripts/check-browser-parity.py
 
   desktop-fmt:
     # Lightweight single-OS fmt gate: rustfmt is platform-independent, so the
@@ -134,9 +140,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Create Chromium resource placeholder
-        working-directory: apps/desktop
-        run: node scripts/ensure-chromium-dir.mjs
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.91.0"
@@ -223,9 +226,6 @@ jobs:
         working-directory: apps/desktop/ui
         run: pnpm format:check
 
-      - name: Create Chromium resource placeholder
-        working-directory: apps/desktop
-        run: node scripts/ensure-chromium-dir.mjs
 
       # The bundling assets (icons, resource mapping) are only exercised by an
       # actual `tauri build`, and a missing icon or wrong resource key is
@@ -233,20 +233,15 @@ jobs:
       - name: Bundle smoke test
         working-directory: apps/desktop
         run: pnpm tauri build --no-bundle
-        env:
-          MIX_SKIP_CHROMIUM: "1"
 
-      - name: Chromium fetch scripts are valid
+      - name: Chromium pin script is valid
         working-directory: apps/desktop
-        run: |
-          node --check scripts/fetch-chromium.mjs
-          node --check scripts/ensure-chromium-dir.mjs
+        run: node --check scripts/pin-chromium.mjs
 
   # Packaging is not covered by `tauri build --no-bundle` on Linux: NSIS/MSI
   # configuration, Windows resource paths and the WiX language settings only
-  # fail on an actual Windows bundle. This job uses the Chromium placeholder
-  # (MIX_SKIP_CHROMIUM=1) so it catches packaging regressions without paying
-  # for the ~370 MB browser download on every pull request.
+  # fail on an actual Windows bundle. Chromium is no longer bundled, so this
+  # job does not download a browser on every pull request.
   desktop-package-windows:
     runs-on: windows-latest
     steps:
@@ -269,15 +264,10 @@ jobs:
         run: pnpm install --frozen-lockfile
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
-      - name: Create Chromium resource placeholder
-        working-directory: apps/desktop
-        run: node scripts/ensure-chromium-dir.mjs
       - name: Build Windows installers
         working-directory: apps/desktop
         shell: bash
         run: pnpm tauri build --bundles nsis,msi
-        env:
-          MIX_SKIP_CHROMIUM: "1"
       - name: Verify installers were produced
         working-directory: apps/desktop
         shell: bash

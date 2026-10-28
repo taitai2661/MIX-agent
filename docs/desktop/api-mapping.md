@@ -14,8 +14,8 @@ Docker 版にない Desktop 固有のコマンドは「—」として示しま�
 
 `Phase` 列は「そのコマンドが属する機能領域が Desktop 版のどのフェーズで
 導入されたか」を [`architecture.md`](architecture.md) のフェーズ表から割り当てた
-ものです（Feature 表そのものではありません）。フェーズ 0〜6 は完了、7 は
-macOS 完成 + Windows α + Linux α の未着手です。
+ものです（Feature 表そのものではありません）。フェーズ 0〜8 は完了、9 は未着手、
+10 は 10.0 完了・10.1 以降が計画です。
 
 ## Health
 
@@ -133,13 +133,20 @@ Desktop 版は SSE ではなく `app::RunEvent` を `emit` で配信します。
 | Docker 版 | Desktop 版 | Phase |
 | --- | --- | --- |
 | `GET /browser/status` | `browser::browser_status()` | 4 |
+| `GET /browser/status`（導入状態） | `browser::browser_status()`（`installed_version` / `pinned_version` / `update_available` を含む） | 6 |
+| `POST /browser/install` | `browser::browser_install()` | 6 |
+| `POST /browser/install`（キャンセル） | `browser::browser_install_cancel()` | 6 |
+| `POST /browser/update` | `browser::browser_install(force=true)` | 6 |
+| `POST /browser/remove`（Desktop独自） | `browser::browser_uninstall()` | 6 |
 | `GET /browser/profiles` | `browser::browser_profiles()` | 4 |
 | `POST /browser/profiles/{key}/reset` | `browser::browser_reset_profile()` | 4 |
 | `POST /runs/{key}/browser/{action}` | `browser::browser_invoke()` | 4 |
+| `GET /runs/{key}/browser-frames/{artifact_id}` | `browser::browser_frame()`（workspace_id 指定のライブ表示用・非永続 PNG） | 4 |
 
-`GET /browser/install` / `POST /browser/enable` / `POST /browser/update` に対応する
-Desktop コマンドはありません。同梱 Chromium は `scripts/fetch-chromium.mjs` が
-ビルド時に取得し、UI から実行時にインストールする経路は提供しません。
+Desktop も Docker 版と同じく、実行時に Chromium を導入・更新できる。取得元は
+`apps/desktop/browser/src/chromium-manifest.json` に固定した Chrome for Testing で、
+`browser_install` が `<app-data>/chromium` へインストールする。`browser_uninstall`
+は Desktop 独自の管理対象削除で、システムブラウザには触れない。
 
 ## Memories
 
@@ -278,7 +285,7 @@ Desktop 版に意図的に対応が無いもの。`docs/openapi.json` に存在�
 | `/conversations/{key}/restore`, `/conversations/{key}/tool-calls` | 会話の復元と Tool 実行履歴一覧は未実装 |
 | `/mcp/registry/*`, `/mcp/oauth/client-metadata.json` | MCP パッケージレジストリの参照・導入は未実装（接続設定の編集のみ） |
 | `/mcp/connections/{key}/{reinstall,uninstall,update}` | MCP パッケージのライフサイクル操作は未実装 |
-| `/runs/{key}/browser-manual`, `/browser-pause`, `/browser-return` | Browser の手動制御は未実装 |
+| `/runs/{key}/browser-manual`, `/browser-pause`, `/browser-return` | Run を停止する pause / return は未実装。設定画面のライブ画面から `click_at` / `type_active` / `press` は実行できる |
 | `/settings/statistics`, `/settings/usage` | 未実装 |
 | `/skills/{key}/revisions`, `/skills/{key}/restore/{revision}`, `/skills/import/archive`, `/skills/import/directory` | Skill の revision 履歴と Server ディレクトリ取り込みは未実装（Memory には revision がある） |
 | `/messages/{key}/feedback` | 未実装 |

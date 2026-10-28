@@ -1,5 +1,6 @@
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Globe2, Sparkles, KeyRound, Bot, Zap, Shield } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +18,7 @@ export function Setup() {
   const [apiKey, setApiKey] = useState("");
 
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   async function changeLanguage(value: "ja" | "en") {
     setLanguage(value);
@@ -76,6 +78,9 @@ export function Setup() {
       if (installBrowser) {
         await api("/browser/enable", "POST");
         await api("/browser/install", "POST");
+        // The install runs in the background after this screen closes, so the
+        // global notifier needs the fresh status to show its start popup.
+        await queryClient.invalidateQueries({ queryKey: ["/settings"] });
       }
       navigate("/");
     } catch (e) {

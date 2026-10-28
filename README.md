@@ -43,7 +43,7 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 | **プロセス構成** | 単一バイナリ + tokio in-proc（+ 子プロセス Chromium） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
 | **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
 | **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
-| **ブラウザ操作** | 同梱 Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
+| **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
 | **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等） | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
 
 ---
@@ -212,7 +212,7 @@ docker compose --profile test run --rm test # バックエンドテスト
 | [Memory 仕様](docs/memory-spec.md) | 両エディション共通の Memory 契約 |
 | [Desktop 版 README](apps/desktop/README.md) | Desktop 版の構成、ツール仕様、ビルド手順の詳細 |
 | [システムアーキテクチャ](docs/architecture.md) | プロジェクト全体の構造とエディションの設計思想 |
-| [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計と API マッピング |
+| [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計・セキュリティ・更新方法 |
 | [運用ガイド](docs/operations.md) | Docker 版の運用、バックアップ・復元手順 |
 | [検証状況](docs/verification.md) | 実機・Provider での動作検証ログ |
 | [ZimaOS ガイド](docs/zimaos.md) | ZimaOS / CasaOS コミュニティストアでの導入 |

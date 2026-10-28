@@ -55,7 +55,7 @@ async def lifespan(app):
     )
 
 
-app = FastAPI(title="MIX agent", version="0.5.2", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.5.4", lifespan=lifespan)
 LOGGER = logging.getLogger("mix_agent.http")
 
 

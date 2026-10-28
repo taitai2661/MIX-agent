@@ -4,7 +4,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 741 crates
+- **Rust Dependencies**: 743 crates
 - **Python Dependencies**: 78 packages
 - **Node.js / Web Dependencies**: 51 packages
 
@@ -163,7 +163,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 741 crates compiled into Desktop binaries.
+Total: 743 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -344,6 +344,7 @@ Total: 741 crates compiled into Desktop binaries.
 | `foreign-types-macros` | `0.2.4` | Rust |
 | `foreign-types-shared` | `0.3.1` | Rust |
 | `form_urlencoded` | `1.2.2` | Rust |
+| `fs2` | `0.4.3` | Rust |
 | `futures` | `0.3.34` | Rust |
 | `futures-channel` | `0.3.34` | Rust |
 | `futures-core` | `0.3.34` | Rust |
@@ -908,6 +909,7 @@ Total: 741 crates compiled into Desktop binaries.
 | `zip` | `4.6.1` | Rust |
 | `zlib-rs` | `0.6.8` | Rust |
 | `zmij` | `1.0.23` | Rust |
+| `zopfli` | `0.8.4` | Rust |
 | `zvariant` | `5.15.0` | Rust |
 | `zvariant_derive` | `5.15.0` | Rust |
 | `zvariant_utils` | `4.2.0` | Rust |

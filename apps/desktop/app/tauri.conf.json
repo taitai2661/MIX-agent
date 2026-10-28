@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MIX-agent Desktop",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "identifier": "io.github.taitai2661.mix-agent-desktop",
   "build": {
-    "beforeDevCommand": "node scripts/ensure-chromium-dir.mjs && pnpm --filter mix-agent-desktop-ui dev",
-    "beforeBuildCommand": "pnpm --filter mix-agent-desktop-ui build && node scripts/fetch-chromium.mjs",
+    "beforeDevCommand": "pnpm --filter mix-agent-desktop-ui dev",
+    "beforeBuildCommand": "pnpm --filter mix-agent-desktop-ui build",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../ui/dist"
   },
@@ -51,7 +51,6 @@
     "longDescription": "A Tauri 2 + Rust + React desktop application that brings the MIX-agent chat / thinking / agent experience to a single-user local install with OS Keychain integration.",
     "resources": {
       "icons/icon.svg": "icons/icon.svg",
-      "resources/chromium": "chromium",
       "../LICENSE": "LICENSE",
       "../NOTICE": "NOTICE",
       "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md"
@@ -100,7 +99,19 @@
           "libayatana-appindicator3-1",
           "librsvg2-2",
           "libgtk-3-0",
-          "libssl3"
+          "libssl3",
+          "libnss3",
+          "libatk-bridge2.0-0",
+          "libcups2",
+          "libdrm2",
+          "libxkbcommon0",
+          "libgbm1",
+          "libasound2",
+          "libxcomposite1",
+          "libxdamage1",
+          "libxrandr2",
+          "libpango-1.0-0",
+          "libcairo2"
         ]
       }
     }

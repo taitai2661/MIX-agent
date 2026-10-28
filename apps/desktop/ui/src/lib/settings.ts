@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   default_model_id: null,
   default_mode: null,
   egress_allowlist: [],
+  // Local dev servers stay unreachable until the user explicitly opts in.
+  browser_allow_local: false,
   telemetry_consent: false,
   language: null,
   theme: null,

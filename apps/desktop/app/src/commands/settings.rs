@@ -22,6 +22,12 @@ pub struct SettingsView {
     pub default_model_id: Option<String>,
     pub default_mode: Option<String>,
     pub egress_allowlist: Vec<String>,
+    /// Browser-only opt-in for loopback / private-network navigation.
+    ///
+    /// This is separate from the egress allowlist on purpose: the agent needs
+    /// `localhost:5173` to verify a dev server, but the user must say so
+    /// explicitly. Link-local/metadata addresses stay blocked either way.
+    pub browser_allow_local: bool,
     pub telemetry_consent: bool,
     /// UI language override: `"ja" | "en"`; `None` follows the browser.
     pub language: Option<String>,
@@ -120,6 +126,7 @@ impl Default for SettingsView {
             default_model_id: None,
             default_mode: None,
             egress_allowlist: Vec::new(),
+            browser_allow_local: false,
             telemetry_consent: false,
             language: None,
             theme: None,
@@ -164,10 +171,20 @@ pub async fn update_settings(
         let _ = state.secrets.ensure_db_key().await;
     }
     let view = write_settings(state.storage.pool(), input).await?;
+    // Apply the browser opt-in immediately; waiting for a relaunch would make
+    // the setting look broken.
+    state
+        .browser
+        .set_allow_local(view.browser_allow_local)
+        .await;
     // `default_model_id` decides which provider embeds Memory text, so moving
     // the default can change the embedding source; re-derive it on the next
     // recall instead of embedding with the previous provider until relaunch.
     state.embeddings.invalidate();
+    // Re-read the allowlist and rebuild the registry. Without this a change to
+    // the egress list took effect only after an MCP connect or a browser
+    // install, and the manual pane kept the startup copy until a relaunch.
+    crate::refresh_registry(&state).await;
     Ok(view)
 }
 

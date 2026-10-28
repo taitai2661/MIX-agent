@@ -1698,6 +1698,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3133,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "mix-agent-desktop"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3180,27 +3190,32 @@ dependencies = [
 
 [[package]]
 name = "mixd-browser"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chromiumoxide",
  "chrono",
  "dirs 6.0.0",
+ "fs2",
  "futures-util",
  "mixd-storage",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]
 name = "mixd-core"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3224,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-mcp"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3248,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-providers"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3267,7 +3282,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-storage"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3291,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-tools"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8157,8 +8172,10 @@ checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
 dependencies = [
  "arbitrary",
  "crc32fast",
+ "flate2",
  "indexmap 2.14.2",
  "memchr",
+ "zopfli",
 ]
 
 [[package]]
@@ -8172,6 +8189,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zvariant"

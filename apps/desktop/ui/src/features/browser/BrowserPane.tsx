@@ -1,100 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Camera,
-  ChevronRight,
-  Code,
-  FileText,
-  Globe,
-  MousePointerClick,
-  RefreshCw,
-  ScrollText,
-  Search,
-  Terminal,
-  Type as TypeIcon,
-} from "lucide-react";
+import { ChevronRight, ExternalLink, Globe, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
-import { optString } from "@/lib/runEvents";
 import { useUi } from "@/lib/ui";
-import { Card, Field, Row, Section } from "@/components/layout";
+import { Card, Row, Section } from "@/components/layout";
 import { EmptyState, payloadBlock } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { Input, Select, Textarea } from "@/components/ui/input";
-import type { BrowserProfileView, BrowserStatus } from "@/lib/types";
-
-type Action =
-  | "info"
-  | "navigate"
-  | "dom"
-  | "screenshot"
-  | "evaluate"
-  | "click"
-  | "type"
-  | "scroll"
-  | "wait_for";
-
-const ACTIONS: Array<{
-  id: Action;
-  label: string;
-  icon: typeof Globe;
-  hint: string;
-}> = [
-  {
-    id: "info",
-    label: "Page info",
-    icon: FileText,
-    hint: "Title, URL and viewport",
-  },
-  { id: "navigate", label: "Navigate", icon: Globe, hint: "Load a URL" },
-  {
-    id: "dom",
-    label: "DOM",
-    icon: Code,
-    hint: "innerHTML of a selector (or the body)",
-  },
-  {
-    id: "click",
-    label: "Click",
-    icon: MousePointerClick,
-    hint: "Click a CSS selector",
-  },
-  {
-    id: "type",
-    label: "Type",
-    icon: TypeIcon,
-    hint: "Type text into a selector",
-  },
-  { id: "scroll", label: "Scroll", icon: ScrollText, hint: "Scroll by dx/dy" },
-  {
-    id: "wait_for",
-    label: "Wait",
-    icon: Search,
-    hint: "Wait for selector, URL or JS",
-  },
-  {
-    id: "screenshot",
-    label: "Screenshot",
-    icon: Camera,
-    hint: "Capture the viewport",
-  },
-  { id: "evaluate", label: "Evaluate", icon: Terminal, hint: "Run JavaScript" },
-];
-
-interface LogEntry {
-  id: number;
-  action: Action;
-  ok: boolean;
-  summary: string;
-  detail?: string;
-  artifactId?: string | null;
-}
-
-let nextId = 0;
+import { Select } from "@/components/ui/input";
+import { BrowserActionForm } from "./BrowserActionForm";
+import { ChromiumCard } from "./ChromiumCard";
+import { LiveViewCard } from "./LiveViewCard";
+import { makeLogEntry, type LogEntry } from "./browserLog";
+import { useBrowserStatus } from "./useBrowserStatus";
+import { useLiveFrame } from "./useLiveFrame";
 
 /** Lazy screenshot preview for one artifact id. */
 function ArtifactThumb({ id }: { id: string }) {
@@ -139,25 +62,12 @@ function ArtifactThumb({ id }: { id: string }) {
 }
 
 export function BrowserPane() {
-  const [status, setStatus] = useState<BrowserStatus | null>(null);
-  const [profiles, setProfiles] = useState<BrowserProfileView[]>([]);
   // Default to the active conversation's workspace so a manual sign-in lands in
   // the profile the agent will later browse with.
   const activeWorkspace = useUi((s) => s.workspaceId);
   const [workspaceId, setWorkspaceId] = useState<string>(
     () => activeWorkspace ?? crypto.randomUUID(),
   );
-  const [action, setAction] = useState<Action>("info");
-  const [url, setUrl] = useState("");
-  const [selector, setSelector] = useState("");
-  const [text, setText] = useState("");
-  const [script, setScript] = useState("");
-  const [scrollY, setScrollY] = useState(600);
-  const [condition, setCondition] = useState("selector");
-  const [busy, setBusy] = useState(false);
-  // `null` until the first status read lands. The pane used to show a literal
-  // "…" inside a badge, which read as a status value rather than as "loading".
-  const [loading, setLoading] = useState(true);
   const [log, setLog] = useState<LogEntry[]>([]);
   const { confirm, dialog } = useConfirm();
 
@@ -168,92 +78,36 @@ export function BrowserPane() {
     if (activeWorkspace) setWorkspaceId(activeWorkspace);
   }, [activeWorkspace]);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [s, p] = await Promise.all([
-        api.browserStatus(),
-        api.browserProfiles(),
-      ]);
-      setStatus(s);
-      setProfiles(p);
-      if (p.length > 0 && !p.some((x) => x.workspace_id === workspaceId)) {
-        const preferred =
-          activeWorkspace && p.some((x) => x.workspace_id === activeWorkspace)
-            ? activeWorkspace
-            : p[0].workspace_id;
-        setWorkspaceId(preferred);
-      }
-    } catch (e) {
-      setLog((l) => [
+  const reportError = useCallback((e: unknown) => {
+    setLog((l) =>
+      [
+        makeLogEntry({
+          action: "info",
+          ok: false,
+          summary: errorMessage(e),
+        }),
         ...l,
-        { id: nextId++, action: "info", ok: false, summary: errorMessage(e) },
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceId, activeWorkspace]);
-
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      ].slice(0, 50),
+    );
   }, []);
 
-  const run = useCallback(async () => {
-    setBusy(true);
-    try {
-      const scrollValue = Number(scrollY);
-      const out = await api.browserInvoke({
-        workspace_id: workspaceId,
-        action,
-        url: url || null,
-        selector: selector || null,
-        text: text || null,
-        x: null,
-        y:
-          action === "scroll" && Number.isFinite(scrollValue)
-            ? scrollValue
-            : null,
-        script: script || null,
-        full_page: false,
-        condition: action === "wait_for" ? condition : null,
-        timeout_ms: 10_000,
-      });
-      // Shared `optString` guard (see `lib/runEvents.ts`) instead of an
-      // inline `typeof` check on the `unknown` payload.
-      const detail =
-        optString(out.payload) ?? JSON.stringify(out.payload, null, 2);
-      setLog((l) =>
-        [
-          {
-            id: nextId++,
-            action,
-            ok: out.ok,
-            summary: out.ok ? "ok" : (out.error ?? "failed"),
-            detail:
-              detail.length > 4000 ? `${detail.slice(0, 4000)}\n…` : detail,
-            artifactId: out.artifact_id,
-          },
-          ...l,
-        ].slice(0, 50),
-      );
-    } catch (e) {
-      setLog((l) =>
-        [
-          { id: nextId++, action, ok: false, summary: errorMessage(e) },
-          ...l,
-        ].slice(0, 50),
-      );
-    } finally {
-      setBusy(false);
-    }
-  }, [workspaceId, action, url, selector, text, script, scrollY, condition]);
+  const onResult = useCallback((entry: Omit<LogEntry, "id">) => {
+    setLog((l) => [makeLogEntry(entry), ...l].slice(0, 50));
+  }, []);
 
-  const active = ACTIONS.find((a) => a.id === action)!;
-  // The old `needs` returned its argument (always truthy), so every action
-  // rendered the selector and text inputs — a URL-less screenshot form with
-  // two fields that do nothing. Gate each field on the actions that use it.
-  const needsSelector = ["dom", "click", "type", "wait_for"].includes(action);
-  const needsText = action === "type";
+  const {
+    status,
+    profiles,
+    loading,
+    installBusy,
+    installActive,
+    refresh,
+    startInstall,
+    cancelInstall,
+    removeChromium,
+  } = useBrowserStatus(reportError);
+  const live = useLiveFrame(workspaceId);
+
   const knownProfile = profiles.some((p) => p.workspace_id === workspaceId);
 
   return (
@@ -285,6 +139,11 @@ export function BrowserPane() {
           <Badge size="sm">
             {status?.artifacts ?? 0} {t("成果物")}
           </Badge>
+          {status?.allow_local && (
+            <Badge size="sm" tone="warning">
+              {t("ローカルアクセス許可")}
+            </Badge>
+          )}
         </Row>
         {status?.executable ? (
           <code className="break-all text-xs text-faint">
@@ -295,13 +154,37 @@ export function BrowserPane() {
             <Spinner size={12} /> {t("読み込み中…")}
           </span>
         ) : (
-          <p className="m-0 text-xs text-muted">
-            {t(
-              "Chromiumが見つかりません。システムのChromiumを入れるか、バンドル版を用意してください。",
-            )}
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="m-0 text-xs text-muted">
+              {t(
+                "Chromiumが見つかりません。上の「インストール」から導入するか、システムのChromiumを用意してください。",
+              )}
+            </p>
+            <Button
+              size="sm"
+              onClick={() =>
+                void api.openExternal(
+                  "https://github.com/taitai2661/MIX-agent/releases",
+                )
+              }
+            >
+              <ExternalLink size={12} /> {t("Releases を開く")}
+            </Button>
+          </div>
         )}
       </Card>
+
+      <ChromiumCard
+        status={status}
+        loading={loading}
+        installActive={installActive}
+        installBusy={installBusy}
+        onInstall={(force) => void startInstall(force)}
+        onCancel={() => void cancelInstall()}
+        onUninstall={() => void removeChromium()}
+      />
+
+      <LiveViewCard live={live} />
 
       <Card title={t("ワークスペースのプロファイル")}>
         <Row className="gap-2">
@@ -326,7 +209,6 @@ export function BrowserPane() {
             {workspaceId}
           </code>
           <Button
-            disabled={busy}
             onClick={async () => {
               // Wiping a profile's cookies, storage and cache is not reversible,
               // so it is a `danger` confirmation like every other destructive
@@ -340,18 +222,13 @@ export function BrowserPane() {
               if (!ok) return;
               try {
                 await api.browserResetProfile(workspaceId);
-                setWorkspaceId(crypto.randomUUID());
+                // Stay on the same workspace: switching to a random UUID made
+                // the next manual sign-in land in a profile the conversation
+                // would never use.
+                live.clearFrame();
                 await refresh();
               } catch (e) {
-                setLog((l) => [
-                  {
-                    id: nextId++,
-                    action: "info",
-                    ok: false,
-                    summary: errorMessage(e),
-                  },
-                  ...l,
-                ]);
+                reportError(e);
               }
             }}
           >
@@ -360,125 +237,7 @@ export function BrowserPane() {
         </Row>
       </Card>
 
-      <Card title={t("操作")}>
-        <Row className="gap-1.5">
-          {ACTIONS.map((a) => {
-            const Icon = a.icon;
-            return (
-              <Button
-                key={a.id}
-                size="sm"
-                selected={a.id === action}
-                onClick={() => setAction(a.id)}
-                title={t(a.hint)}
-              >
-                <Icon size={12} /> {t(a.label)}
-              </Button>
-            );
-          })}
-        </Row>
-        <p className="m-0 text-xs text-muted">{t(active.hint)}</p>
-
-        {action === "navigate" && (
-          <Field>
-            <Input
-              aria-label={t("開くURL")}
-              placeholder="https://example.com"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
-          </Field>
-        )}
-        {needsSelector &&
-          (action !== "wait_for" || condition === "selector") && (
-            <Field>
-              <Input
-                aria-label={t("CSSセレクター（例: #search、body）")}
-                placeholder={t("CSSセレクター（例: #search、body）")}
-                value={selector}
-                onChange={(e) => setSelector(e.target.value)}
-              />
-            </Field>
-          )}
-        {needsText && (
-          <Field>
-            <Input
-              aria-label={t("入力する文字")}
-              placeholder={t("入力する文字")}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
-          </Field>
-        )}
-        {action === "wait_for" && (
-          <Row className="gap-1.5">
-            <Select
-              aria-label={t("待機条件")}
-              value={condition}
-              onChange={(e) => setCondition(e.target.value)}
-            >
-              <option value="selector">selector</option>
-              <option value="url">url</option>
-              <option value="function">function</option>
-            </Select>
-            {condition === "url" && (
-              <Input
-                className="min-w-0 flex-1"
-                aria-label={t("URLに含まれるまで待機…")}
-                placeholder={t("URLに含まれるまで待機…")}
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            )}
-            {condition === "function" && (
-              <Input
-                className="min-w-0 flex-1 font-mono"
-                aria-label={t("JavaScript 式")}
-                placeholder="() => document.readyState === 'complete'"
-                value={script}
-                onChange={(e) => setScript(e.target.value)}
-              />
-            )}
-          </Row>
-        )}
-        {action === "scroll" && (
-          <Field>
-            <Input
-              type="number"
-              aria-label={t("縦スクロール量")}
-              placeholder="scroll dy"
-              value={Number.isFinite(scrollY) ? scrollY : ""}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") {
-                  setScrollY(0);
-                  return;
-                }
-                const next = Number(raw);
-                setScrollY(Number.isFinite(next) ? next : 0);
-              }}
-            />
-          </Field>
-        )}
-        {action === "evaluate" && (
-          <Field>
-            <Textarea
-              className="font-mono"
-              rows={4}
-              aria-label={t("実行する JavaScript")}
-              placeholder="document.title"
-              value={script}
-              onChange={(e) => setScript(e.target.value)}
-            />
-          </Field>
-        )}
-
-        <Row>
-          <Button variant="primary" disabled={busy} onClick={() => void run()}>
-            <ChevronRight size={12} /> {busy ? t("実行中…") : t("実行")}
-          </Button>
-        </Row>
-      </Card>
+      <BrowserActionForm workspaceId={workspaceId} onResult={onResult} />
 
       <Card title={t("アクティビティ")}>
         {log.length === 0 ? (

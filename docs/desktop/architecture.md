@@ -1,4 +1,4 @@
-# MIX-agent Desktop — Architecture（Phase 6 完了時点）
+# MIX-agent Desktop — Architecture（2026-10-28 時点）
 
 ## 目的
 
@@ -17,7 +17,7 @@ MIX-agent/
 │   │   ├── browser/     Browser Operator + chromiumoxide backend
 │   │   ├── mcp/         MCP client host
 │   │   ├── storage/     SQLite + Keychain
-│   │   ├── scripts/     fetch-chromium.mjs
+│   │   ├── scripts/     pin-chromium.mjs
 │   │   └── ui/          React 19 + Vite + Tailwind (Desktop独自UI)
 │   ├── server/                 # Docker 版バックエンド (FastAPI + Python)
 │   └── web/                    # Docker 版フロントエンド (React 19 + Vite)
@@ -143,21 +143,43 @@ Browser Tool Interface (mixd-browser::interface)
    │
    ▼
 Browser Operator (mixd-browser::operator)   ← Workspace Profile 保持
-   │  navigate / click / type / scroll /
-   │  dom / screenshot / evaluate / wait_for
+   │  navigate / snapshot+ref / click / type / press /
+   │  hover / select / check / scroll / dom / extract /
+   │  screenshot / evaluate / wait_for / tabs / history /
+   │  click_at / type_active
    ▼
    Backend: enum BrowserBackend  ← 差し替え可能
-          Chromium          = 同梱 Chromium を起動
+          Chromium          = 管理対象の Chromium を起動
           SystemChromium    = システム Chromium にフォールバック
           Disabled          = 実行ファイルが見つからない
    │
    ▼
-   Bundled Chromium (~370MB/プラットフォーム) or system Chromium
+   Managed Chromium (<app-data>/chromium) or system Chromium
 ```
 
 `mixd-core` は `chromiumoxide` に依存しません。backend の差し替えだけで
 Browser 実装の差し替えが可能で、`BrowserBackend` は 3 状態
 （`Chromium` / `SystemChromium` / `Disabled`）を持ちます。
+
+アクション語彙は `packages/tool_contracts/browser.json` が正です。Desktop は
+`browser` 1 ツール、Docker は `browser_*` 15 ツールをこの語彙へマップし、
+未対応アクションは `unsupported` として明示します。`scripts/check-browser-parity.py`
+が CI で両版のズレを検出します。
+
+`browser_allow_local`（既定 OFF）を ON にした場合だけ loopback / RFC1918 /
+ULA へ到達できます。169.254.0.0/16（cloud metadata）と link-local は ON でも
+拒否します。IPv4-mapped IPv6（`[::ffff:169.254.169.254]`）も同じ v4 判定に
+落として拒否します。許可リストが設定されている場合、この opt-in は
+loopback / private 宛先だけを免除し、公開ホストには引き続き許可リストが必要です。
+`update_settings` は許可リスト変更時に `refresh_registry` を呼ぶため、再起動なしで
+エージェントと手動パネルの両方へ反映されます。
+
+ナビゲーションは `http` / `https` と `about:blank` だけを許可します。
+`file:` / `data:` / `javascript:` / `chrome:` は `navigate` と `new_tab` の両方で
+拒否し、`new_tab` を抜け道にしないよう Registry 側でも同じゲートを通します。
+`click_at` と `type_active` は手動操作用として契約に `manual_only` で登録し、
+モデルへ渡す `browser` tool の enum からは除外しています。CDP のリクエスト単位の
+強制はまだ未実装で、ページ内 JS 自体は引き続き自由にネットワークへ出られます。
 
 ## セキュリティ
 
@@ -171,45 +193,105 @@ Browser 実装の差し替えが可能で、`BrowserBackend` は 3 状態
   `tauri` 依存の `macos-private-api` feature と対になっています。
 - **OS プロセス sandbox**: **未実装**。macOS `sandbox-exec` / Windows Job Object / Linux landlock + bubblewrap のいずれもコードに存在しません。`terminal` tool はユーザーの権限で任意のプロセスを起動でき、`browser` tool も外部 Chromium を無制限に操作できます。敵対的なコードを安全に実行する用途には使わないでください。
 
-## Bundled Chromium
+## Managed Chromium（初回インストール方式）
 
-Desktop 版はブラウザを同梱する。取得は `scripts/fetch-chromium.mjs` が
-Chrome for Testing の公開エンドポイントから行い、`app/resources/chromium/` に
-次のレイアウトで展開して `.gitignore` 対象（1プラットフォーム約 370 MB）になります。
+同梱をやめた理由・代替案の比較・移行方針は
+[`chromium-on-demand-plan.md`](chromium-on-demand-plan.md) に記録している。ここでは現行の仕様だけを扱う。
 
-| OS | パス（第一候補） | フォールバック候補 |
-| --- | --- | --- |
-| macOS | `chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium` | `chrome-mac/Google Chrome for Testing.app/…`、`chromium/Chromium.app/…` |
-| Windows | `chromium/chrome-win/chrome.exe` | `chromium/chrome.exe` |
-| Linux | `chromium/chrome-linux/chrome` | `chromium/chrome` |
+Desktop 版は Chromium をアプリバンドルに含めない。ブラウザ機能を初めて使う
+ときに、アプリ内のインストーラーが Chrome for Testing を
+`<app-data>/chromium/` へダウンロードする。配布物（DMG / NSIS / MSI /
+AppImage / deb）にはブラウザ本体が入らない。macOS arm64 のローカルビルドでは
+`.app` が 35.58 MiB（アップデータ用 `.app.tar.gz` は 12.72 MiB）になった。
 
-`tauri.conf.json` の `bundle.resources` は **map 形式**（source → target）で
-`"resources/chromium": "chromium"` を宣言し、macOS バンドルでは
-`Contents/Resources/chromium` 配下に配置されます。
+### インストール先と解決順
 
-探索は `mixd_browser::profile` が行います。
-
-- `find_bundled_chromium()` が上の候補を順に `is_file()` で探します。
-- 基準ディレクトリの選定は `resolve_resource_dir()` が担当します。
-  パッケージ済みアプリでは `app.path().resource_dir()` を優先します
-  （`app_data` から推測しません）。一方 debug ビルド（`cargo` / `tauri dev`）では
-  `resource_dir()` が `target/debug` を指し、`tauri-build` がミラーした Chromium は
-  macOS framework のシンボリックリンクを欠いた不完全なツリーになるため、
-  `app/resources` の pristine な実体を優先します。`env!("CARGO_MANIFEST_DIR")` は
-  `cfg` で release から切り離されるため、ローカルパスが配布バイナリに焼き込まれません。
-
-同梱が無い場合は system Chromium（macOS / Windows / Linux の既知パス）に
-フォールバックし、それも無ければ Browser 機能を `disabled` として報告します。
-
-```bash
-node scripts/fetch-chromium.mjs              # 安定版を取得
-MIX_SKIP_CHROMIUM=1 cargo check              # 取得をスキップ
-MIX_CHROMIUM_VERSION=154.0.8037.57 node scripts/fetch-chromium.mjs  # 固定
+```
+<app-data>/
+├── browser/                     # ワークスペースプロファイル
+├── artifacts/                   # スクリーンショット
+├── chromium/                    # 管理対象 Chromium
+│   ├── chrome-mac/…             # macOS（CfT の .app を保持）
+│   ├── chrome-win/…             # Windows
+│   ├── chrome-linux/…           # Linux
+│   └── chromium-version.json
+└── chromium-install-state.json  # 失敗・キャンセル状態（進捗は保存しない）
 ```
 
-`pnpm tauri build` の `beforeBuildCommand` が UI ビルド後に Chromium を自動取得します。
+探索は `mixd_browser::profile` が行い、`BrowserOperator::resolve()` は次の順で
+最初に見つかったものを使う。
+
+1. `MIX_CHROMIUM_HOME`（開発・検証用の明示パス）
+2. `<app-data>/chromium`（管理対象）
+3. 旧バンドルの `resources/chromium`（移行期間の互換）
+4. システムの Chromium / Chrome / Edge
+5. 無ければ `disabled`
+
+`BrowserStatus.source` が `installed` / `bundled` / `system` / `override` /
+`none` を返すので、UI は管理対象だけに更新・削除を出す。
+
+### バージョン固定と取得
+
+`browser/src/chromium-manifest.json` に、サポートする CfT プラットフォーム
+（`mac-arm64` / `mac-x64` / `win64` / `linux64`）の URL・SHA-256・サイズを
+固定する。マニフェストは `scripts/pin-chromium.mjs` で生成し、アプリの
+バイナリに埋め込む。実行時に CfT の latest を解決して無検証で入れることは
+しない。
+
+```bash
+pnpm chromium:pin                                  # 最新 Stable を固定
+node scripts/pin-chromium.mjs --version 156.0.8078.73
+```
+
+インストーラー（`browser/src/installer.rs`）は次を行う。
+
+1. 空き容量を確認（zip + 展開後 + 余裕）
+2. HTTPS でストリーム受信し、`storage.googleapis.com` 以外へのリダイレクトを拒否
+3. SHA-256 とサイズを検証
+4. `chromium.staging-*` へ zip を展開（パストラバーサル・危険な symlink を拒否）
+5. `chrome-mac-arm64` などを `chrome-mac` へ正規化（`.app` 内の名前は変えない）
+6. `--version` を 30 秒以内に実行して起動可能性を確認
+7. 旧 `chromium` を退避してから staging を rename し、最後に旧ツリーを削除
+
+失敗時は既存のインストールを残す。アプリ終了で中断した staging / download は
+次回起動時に掃除する。UI は `browser_install` / `browser_install_cancel` /
+`browser_uninstall` / `browser_status` を使い、進捗は
+`browser://install` イベントと 1 秒ポーリングの両方で受ける。
+
+### 署名と供給網
+
+Chrome for Testing の `.app` は ad-hoc / linker-signed で、上流の zip でも
+`codesign --verify --deep --strict` は成功しない。そのため署名検証を必須には
+せず、**アプリに埋め込んだ SHA-256** を供給網のアンカーにする。展開後は
+`--version` の起動確認だけを行う。旧 `fetch-chromium.mjs` のように `.app` 内の
+実行ファイル名を `Chromium` にリネームすると Mach-O 署名が壊れるため、CfT の
+名前（`Google Chrome for Testing.app`）をそのまま保持する。
+
+### ライブ表示と成果物
+
+- ライブ表示は 1.5 秒ごとに非永続の JPEG フレームを取得する。PNG ではなく
+  JPEG（品質 70、`optimize_for_speed`）にし、ウィンドウが非表示の間は
+  ポーリングを止める。エージェント操作と同じ workspace ロックは `try_lock`
+  で取り、操作中はフレームを諦めて前回の画像を残す（スクリーンショット待ちで
+  クリックを遅らせない）。
+- ライブ画面のクリックは `object-contain` の letterbox を考慮し、描画矩形の
+  中央・拡大率からページ座標へ変換する。描画矩形の外側はクリックしない。
+- スクリーンショットのインデックスは 500 件で上限。退避したエントリの PNG は
+  実ファイルごと削除し、起動時には実体の無いインデックス行を落とす。
+
+### 移行と開発
+
+- 既存の同梱版からアップデートした場合、初回にブラウザの再ダウンロードが必要。
+  UI は未インストール状態を表示し、システムブラウザがあればそれをフォールバックに使う。
+- `pnpm tauri dev` はリソースを持たないため、システム Chromium か
+  `MIX_CHROMIUM_HOME=/path/to/chromium` を使う。
+- オフライン環境では `<app-data>/chromium` へ手動で展開するか、システム
+  Chromium を使う。手順はリリースノートに記載する。
+- リリース CI はもう Chromium を取得・同梱しない。macOS の署名検査はアプリ本体
+  だけで行い、ブラウザの CPU アーキテクチャはマニフェストと起動確認で担保する。
+
 **Desktop版のmacOSアプリはApple Developer IDコード署名・公証を行いません。** ただし `tauri.conf.json` の `bundle.macOS.signingIdentity` に `-` を設定し、ad-hoc署名は必ず付与します。Apple Siliconでは署名のないアプリバンドルを起動できず、ダウンロードしたDMGからコピーしただけで「壊れているため開けません」と表示されるためです。ad-hoc署名でも公証チケットはないため、初回起動時にGatekeeperの「このまま開く」確認が必要です。Windowsインストーラーは未署名です。
-ビルドにApple証明書・AppleアカウントSecrets・Windows署名証明書を渡さず、macOS GatekeeperとWindows SmartScreenの警告や起動制限の可能性をRelease notesに明記します。リリースワークフローはmacOSバンドルに対して `codesign --verify --deep --strict` とCPUアーキテクチャ検査を実行し、署名欠落や誤アーキテクチャの同梱Chromiumを公開前にfail closedで止めます。
+ビルドにApple証明書・AppleアカウントSecrets・Windows署名証明書を渡さず、macOS GatekeeperとWindows SmartScreenの警告や起動制限の可能性をRelease notesに明記します。リリースワークフローはmacOSバンドルに対して `codesign --verify --deep --strict` とCPUアーキテクチャ検査を実行します。
 
 ## 更新方法（署名付き自動更新）
 
@@ -271,6 +353,8 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 | 6 | tray / menu / notification / backup / 署名付き自動更新 + macOS・Windows・Linux リリースCI | ✅ |
 | 7 | macOS 完成 + Windows x64 + Linux 配布 | ✅（v0.5.1 で Windows x64 追加、v0.5.2 で Linux 追加・アプリ内更新） |
 | 8 | コーディングエージェント化（編集・検証・探索・git・UI 証跡） | ✅（8.1〜8.4。詳細は [`coding-agent-plan.md`](coding-agent-plan.md)） |
+| 9 | 洗練 & パリティ（Server ツール parity / `@` 補完 / モノレポ整備） | 未着手（着手時点の計画は [`coding-agent-plan.md`](coding-agent-plan.md)） |
+| 10 | コーディングエージェントの信頼性（ツール契約・評価・計画承認・ロールバック） | 10.0 完了。10.1 以降は計画（詳細は [`coding-agent-plan.md`](coding-agent-plan.md)） |
 
 Phase 6 で Tauri updater を再有効化しました。`desktop-release.yml` は Apple Silicon／Intel macOS の ad-hoc 署名済み DMG、Windows x64 の未署名 NSIS/MSI、Linux x64 の AppImage/deb に加え、署名済みアップデータ（`.app.tar.gz` / `-setup.exe` / `.AppImage` と各 `.sig`）と `latest.json` を Release へ添付します。秘密鍵は GitHub Actions の Repository Secrets のみに置きます。
 Phase 7 は v0.5.1 / v0.5.2 で配布まで到達しました。各 OS 実機での更新適用確認は [`verification.md`](../verification.md) に記録します。

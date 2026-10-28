@@ -140,39 +140,12 @@ pub async fn delete_connection(state: State<'_, AppState>, id: String) -> Result
     Ok(())
 }
 
-/// Rebuild the engine's Tool Registry from the live MCP host.
+/// Rebuild the engine's Tool Registry after an MCP change.
 ///
-/// `with_mcp` alone only makes `mcp__*` calls dispatchable; `set_mcp_specs` is
-/// what puts them in the list the Provider is shown. Without that second step,
-/// connecting a server changed the tool count in the UI and nothing else — the
-/// model was never told the tools existed.
-///
-/// The registry is rebuilt through [`crate::build_registry`] rather than from
-/// scratch: assembling it here once dropped the `skill` and `agent` tools and
-/// reset the egress allowlist, so every MCP operation quietly uninstalled half
-/// the agent's capabilities until the next launch.
+/// The shared implementation lives in [`crate::refresh_registry`] because a
+/// Chromium install also changes the tool list.
 async fn refresh_registry(state: &AppState) {
-    let egress = crate::load_egress_policy(state.storage.as_ref()).await;
-    let mut tools = crate::build_registry(
-        &state.storage,
-        &state.browser,
-        &state.mcp,
-        &state.agent_runner,
-        &state.embeddings,
-        egress,
-    );
-    tools.set_mcp_specs(
-        mixd_mcp::collect_tool_specs(&state.mcp)
-            .await
-            .into_iter()
-            .map(|spec| mixd_tools::ToolSpec {
-                name: spec.name,
-                description: spec.description,
-                parameters: spec.parameters,
-            })
-            .collect(),
-    );
-    state.engine.replace_tools(tools).await;
+    crate::refresh_registry(state).await;
 }
 
 /// (Re)connect every configured MCP server and report the total tool count.

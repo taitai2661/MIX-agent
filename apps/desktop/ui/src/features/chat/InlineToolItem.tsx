@@ -7,6 +7,7 @@ import {
   ExternalLink,
   FileCode,
   GitBranch,
+  Globe,
   Search,
   Terminal as TerminalIcon,
   Undo2,
@@ -39,6 +40,8 @@ function toolIcon(name: string) {
       return FileCode;
     case "git":
       return GitBranch;
+    case "browser":
+      return Globe;
     case "symbols":
     case "glob":
     case "grep":
@@ -90,6 +93,7 @@ export const InlineToolItem = memo(function InlineToolItem({
   const activeRoot = useActiveRoot();
   const setRightPanel = useUi((s) => s.setRightPanel);
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
+  const openSettings = useUi((s) => s.openSettings);
   const [busy, setBusy] = useState(false);
 
   const handleOpenInChanges = (path: string) => {
@@ -175,6 +179,19 @@ export const InlineToolItem = memo(function InlineToolItem({
 
       {hasDetail && (
         <div className="flex flex-col gap-2 border-t border-line bg-inset/40 p-2.5">
+          {tool.name === "browser" && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => openSettings("browser")}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover hover:text-fg"
+                title={t("ブラウザ画面を開く")}
+              >
+                <Globe size={10} />
+                <span className="font-sans">{t("ブラウザ画面")}</span>
+              </button>
+            </div>
+          )}
           {tool.error && <ErrorBadge error={tool.error} />}
 
           {/* Rich Terminal view */}

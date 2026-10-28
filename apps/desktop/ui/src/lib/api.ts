@@ -3,7 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentView,
   AttachmentPayload,
+  BrowserFrameView,
   BrowserInvokeOutput,
+  BrowserInstallState,
   BrowserProfileView,
   BrowserStatus,
   CheckpointView,
@@ -226,23 +228,43 @@ export const api = {
     invoke<void>("handle_oauth_callback", { url }),
 
   browserStatus: () => invoke<BrowserStatus>("browser_status"),
+  browserInstall: (force = false) =>
+    invoke<BrowserInstallState>("browser_install", { force }),
+  browserInstallCancel: () =>
+    invoke<BrowserInstallState>("browser_install_cancel"),
+  /** Progress/completion events from the background installer. */
+  browserInstallEvent: (handler: (state: BrowserInstallState) => void) =>
+    listen<BrowserInstallState>("browser://install", (event) =>
+      handler(event.payload),
+    ),
+  browserUninstall: () => invoke<void>("browser_uninstall"),
   browserInvoke: (input: {
     workspace_id: string | null;
     action: string;
-    url: string | null;
-    selector: string | null;
-    text: string | null;
-    x: number | null;
-    y: number | null;
-    script: string | null;
-    full_page: boolean | null;
-    condition: string | null;
-    timeout_ms: number | null;
+    url?: string | null;
+    selector?: string | null;
+    ref?: string | null;
+    text?: string | null;
+    key?: string | null;
+    value?: string | null;
+    checked?: boolean | null;
+    clear?: boolean | null;
+    x?: number | null;
+    y?: number | null;
+    script?: string | null;
+    full_page?: boolean | null;
+    condition?: string | null;
+    timeout_ms?: number | null;
+    max_nodes?: number | null;
+    limit?: number | null;
+    tab_id?: string | null;
   }) => invoke<BrowserInvokeOutput>("browser_invoke", { input }),
   browserProfiles: () => invoke<BrowserProfileView[]>("browser_profiles"),
   browserResetProfile: (workspaceId: string) =>
     invoke<void>("browser_reset_profile", { workspaceId }),
   browserArtifact: (id: string) => invoke<string>("browser_artifact", { id }),
+  browserFrame: (workspaceId: string, fullPage = false) =>
+    invoke<BrowserFrameView | null>("browser_frame", { workspaceId, fullPage }),
 
   listMemories: () => invoke<MemoryView[]>("list_memories"),
   createMemory: (input: {

@@ -323,17 +323,27 @@ impl ToolRegistry {
             // poll would be the hole the navigate gate closed (the backend
             // re-checks with DNS resolution before dialling; this parse-time
             // literal check fails fast on the obvious shapes).
+            let allow_local = operator.allows_local();
             if let mixd_browser::BrowserAction::Navigate { url } = &action {
-                self.egress.resolve_async(url).await?;
-                mixd_browser::reject_private_navigate_url(url)?;
+                self.egress.resolve_async_with(url, allow_local).await?;
+                mixd_browser::reject_private_navigate_url_with(url, allow_local)?;
             }
             if let mixd_browser::BrowserAction::WaitFor {
                 condition: mixd_browser::WaitCondition::Url { url },
                 ..
             } = &action
             {
-                self.egress.resolve_async(url).await?;
-                mixd_browser::reject_private_navigate_url(url)?;
+                self.egress.resolve_async_with(url, allow_local).await?;
+                mixd_browser::reject_private_navigate_url_with(url, allow_local)?;
+            }
+            // `new_tab` is a second navigation entry point. Without this arm it
+            // reached Chromium with `file:`/`data:` untouched (and its http(s)
+            // URL only checked inside the backend).
+            if let mixd_browser::BrowserAction::NewTab { url: Some(url) } = &action {
+                if url != "about:blank" {
+                    self.egress.resolve_async_with(url, allow_local).await?;
+                    mixd_browser::reject_private_navigate_url_with(url, allow_local)?;
+                }
             }
             let response = operator
                 .invoke(mixd_browser::BrowserCall {
@@ -401,20 +411,33 @@ fn browser_action(args: &serde_json::Value) -> anyhow::Result<mixd_browser::Brow
     let action = crate::args::str_arg(args, "action")
         .ok_or_else(|| anyhow::anyhow!("browser action is required"))?;
     let text = |key: &str| crate::args::str_or(args, key, "").to_string();
+    let optional_text = |key: &str| {
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
     // Missing/invalid numbers fall back to 0 (origin scroll): logged at debug
     // so a malformed model argument is visible without failing the turn.
     let number = |key: &str| {
-        let v = args.get(key).and_then(|v| v.as_i64()).unwrap_or_else(|| {
+        args.get(key).and_then(|v| v.as_i64()).unwrap_or_else(|| {
             if args.get(key).is_some() {
                 tracing::debug!(key, "browser numeric arg is not an integer; using 0");
             }
             0
-        }) as i32;
-        v
+        }) as i32
+    };
+    let positive = |key: &str, default: u64, max: u64| {
+        args.get(key)
+            .and_then(|v| v.as_u64())
+            .map(|value| value.clamp(1, max))
+            .unwrap_or(default)
     };
     let condition = || -> anyhow::Result<mixd_browser::WaitCondition> {
         Ok(match crate::args::str_or(args, "condition", "selector") {
             "url" => mixd_browser::WaitCondition::Url { url: text("url") },
+            "text" => mixd_browser::WaitCondition::Text { text: text("text") },
+            "load" => mixd_browser::WaitCondition::Load,
             "function" => mixd_browser::WaitCondition::Function {
                 script: text("script"),
             },
@@ -427,47 +450,76 @@ fn browser_action(args: &serde_json::Value) -> anyhow::Result<mixd_browser::Brow
         "navigate" => A::Navigate { url: text("url") },
         "click" => A::Click {
             selector: text("selector"),
+            reference: optional_text("ref"),
+        },
+        "click_at" => A::ClickAt {
+            x: number("x"),
+            y: number("y"),
         },
         "type" => A::Type {
             selector: text("selector"),
             text: text("text"),
+            reference: optional_text("ref"),
+            clear: crate::args::bool_or(args, "clear", false),
+        },
+        "type_active" => A::TypeActive { text: text("text") },
+        "press" => A::Press { key: text("key") },
+        "hover" => A::Hover {
+            selector: text("selector"),
+            reference: optional_text("ref"),
+        },
+        "select" => A::Select {
+            selector: text("selector"),
+            value: text("value"),
+            reference: optional_text("ref"),
+        },
+        "check" => A::Check {
+            selector: text("selector"),
+            checked: crate::args::bool_or(args, "checked", true),
+            reference: optional_text("ref"),
         },
         "scroll" => A::Scroll {
             x: number("x"),
             y: number("y"),
         },
         "dom" => A::Dom {
-            selector: args
-                .get("selector")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+            selector: optional_text("selector"),
+        },
+        "extract" => A::Extract {
+            selector: text("selector"),
+            limit: positive("limit", 20, mixd_browser::MAX_EXTRACT_ITEMS as u64) as usize,
+        },
+        "snapshot" => A::Snapshot {
+            max_nodes: positive("max_nodes", 300, mixd_browser::MAX_SNAPSHOT_NODES as u64) as usize,
         },
         "screenshot" => A::Screenshot {
-            full_page: args
-                .get("full_page")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
+            full_page: crate::args::bool_or(args, "full_page", false),
         },
         "evaluate" => A::Evaluate {
             script: text("script"),
         },
         "wait_for" => A::WaitFor {
             condition: condition()?,
-            // Default 10 s documented in the tool schema; an invalid value is
-            // logged and clamped to it rather than failing the call.
             timeout_ms: args
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
-                .unwrap_or_else(|| {
-                    if args.get("timeout_ms").is_some() {
-                        tracing::debug!(
-                            "browser timeout_ms is not a positive integer; using 10_000"
-                        );
-                    }
-                    10_000
-                }),
+                .unwrap_or(10_000)
+                .min(60_000),
         },
         "info" => A::Info,
+        "reload" => A::Reload,
+        "back" => A::Back,
+        "forward" => A::Forward,
+        "tabs" => A::Tabs,
+        "new_tab" => A::NewTab {
+            url: optional_text("url"),
+        },
+        "switch_tab" => A::SwitchTab {
+            tab_id: text("tab_id"),
+        },
+        "close_tab" => A::CloseTab {
+            tab_id: optional_text("tab_id"),
+        },
         "close" => A::Close,
         other => return Err(anyhow::anyhow!("unknown browser action: {}", other)),
     })
@@ -549,6 +601,17 @@ mod tests {
                 other => panic!("unexpected condition: {:?}", other),
             },
             other => panic!("unexpected action: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn every_contract_action_is_parseable_from_the_flat_arguments() {
+        for action in mixd_browser::desktop_contract_actions() {
+            let args = serde_json::json!({ "action": action });
+            assert!(
+                browser_action(&args).is_ok(),
+                "contract action {action} is advertised but the registry cannot parse it"
+            );
         }
     }
 

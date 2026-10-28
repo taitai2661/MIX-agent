@@ -57,42 +57,13 @@ pub fn default_profile_root(app_data: &std::path::Path) -> std::path::PathBuf {
     app_data.join("browser")
 }
 
-/// Resolve a bundled Chromium executable for the current OS.
+/// Resolve a Chromium executable inside an extracted install root.
 ///
-/// The layout is produced by `scripts/fetch-chromium.mjs`. Several shapes are
-/// accepted so a hand-dropped build (or a Tauri resource remap) still works.
-/// Returns the first path that exists; when none is present the caller is
-/// expected to fall back to a system-installed browser.
-pub fn find_bundled_chromium(
-    app_resource_dir: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
-    let root = app_resource_dir?;
-    let candidates: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
-        vec![
-            root.join("chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium"),
-            root.join("chromium/chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
-            root.join("chromium/Chromium.app/Contents/MacOS/Chromium"),
-        ]
-    } else if cfg!(target_os = "windows") {
-        vec![
-            root.join("chromium/chrome-win/chrome.exe"),
-            root.join("chromium/chrome.exe"),
-        ]
-    } else {
-        vec![
-            root.join("chromium/chrome-linux/chrome"),
-            root.join("chromium/chrome"),
-        ]
-    };
-    candidates.into_iter().find(|p| p.is_file())
-}
-
-/// Resolve a downloaded Chromium executable located in the user app-data directory.
-///
-/// This supports the on-demand download distribution strategy, allowing lightweight
-/// app installation where Chromium can be downloaded after installation.
-pub fn find_downloaded_chromium(app_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let root = app_data_dir.join("chromium");
+/// `root` is the directory that contains `chrome-mac/`, `chrome-win/` or
+/// `chrome-linux/` — either the old bundle's `resources/chromium` or the
+/// managed `<app-data>/chromium`. Several shapes are accepted so a hand-dropped
+/// build still works.
+pub fn find_chromium_in_root(root: &std::path::Path) -> Option<std::path::PathBuf> {
     let candidates: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
         vec![
             root.join("chrome-mac/Chromium.app/Contents/MacOS/Chromium"),
@@ -100,6 +71,7 @@ pub fn find_downloaded_chromium(app_data_dir: &std::path::Path) -> Option<std::p
                 "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
             ),
             root.join("Chromium.app/Contents/MacOS/Chromium"),
+            root.join("Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
         ]
     } else if cfg!(target_os = "windows") {
         vec![root.join("chrome-win/chrome.exe"), root.join("chrome.exe")]
@@ -107,6 +79,31 @@ pub fn find_downloaded_chromium(app_data_dir: &std::path::Path) -> Option<std::p
         vec![root.join("chrome-linux/chrome"), root.join("chrome")]
     };
     candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Resolve the legacy bundled Chromium for the current OS.
+///
+/// The install model no longer ships this, but the lookup stays for one
+/// migration release and for developers who still have `resources/chromium`.
+pub fn find_bundled_chromium(
+    app_resource_dir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let root = app_resource_dir?;
+    find_chromium_in_root(&root.join("chromium"))
+}
+
+/// Resolve a managed Chromium executable in the user app-data directory.
+pub fn find_downloaded_chromium(app_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    find_chromium_in_root(&app_data_dir.join("chromium"))
+}
+
+/// Developer override for testing a pre-seeded install without touching the
+/// real app-data directory. `MIX_CHROMIUM_HOME` points at the directory that
+/// contains `chrome-mac/`, `chrome-win/` or `chrome-linux/`.
+pub fn find_override_chromium() -> Option<std::path::PathBuf> {
+    std::env::var_os("MIX_CHROMIUM_HOME")
+        .map(std::path::PathBuf::from)
+        .and_then(|root| find_chromium_in_root(&root))
 }
 
 /// Pick the resource root to hand to [`find_bundled_chromium`].
@@ -193,10 +190,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The candidate list must actually match what `fetch-chromium.mjs` writes,
-    /// or the packaged app silently falls back to a system browser.
+    /// The candidate list must actually match Chrome for Testing's archive
+    /// layout, or the managed install silently falls back to a system browser.
     #[test]
-    fn resolves_the_fetch_script_layout() {
+    fn resolves_the_chrome_for_testing_layout() {
         use std::path::PathBuf;
         let dir: PathBuf =
             std::env::temp_dir().join(format!("mixd-bundle-{}", uuid::Uuid::new_v4()));
@@ -242,7 +239,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// `MIX_SKIP_CHROMIUM=1` leaves `app/resources` absent; the Tauri lookup is
+    /// A clean checkout has no `app/resources/chromium`; the Tauri lookup is
     /// then the only source and must still be honoured.
     #[test]
     #[cfg(debug_assertions)]

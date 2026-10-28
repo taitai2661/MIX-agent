@@ -21,7 +21,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 | **データ管理** | SQLite (WAL モード + FTS5 全文検索) | PostgreSQL (pg_trgm インデックス) |
 | **秘密情報保護** | **OS Keychain**（macOS Keychain / Windows Credential Manager / Linux Secret Service） | 暗号化 DB カラム (AES-GCM + scrypt) |
 | **ターミナル実行** | ローカルマシンの **永続 PTY シェル**（環境変数や `cd` が継続） | execution-runner コンテナ内の非 root シェル |
-| **ブラウザ操作** | 同梱 Chromium / システムブラウザを tokio 子プロセスで直接制御 | execution-runner コンテナ内の Playwright |
+| **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを tokio 子プロセスで直接制御 | execution-runner コンテナ内の Playwright |
 | **ファイル操作** | ホストマシンのファイルに直接アクセス・インライン差分編集 (`edit`) | マウントされたボリュームのみ操作可能 |
 
 ---
@@ -43,7 +43,7 @@ apps/desktop/
 ├── browser/              # Browser Operator + chromiumoxide backend
 ├── mcp/                  # MCP client host (stdio / Remote HTTP)
 ├── storage/              # SQLite + OS Keychain (keyring-rs)
-├── scripts/              # fetch-chromium.mjs（同梱 Chromium 取得スクリプト）
+├── scripts/              # pin-chromium.mjs（Chrome for Testing のバージョン固定）
 └── ui/                   # React 19 + Vite + Tailwind（Desktop 専用ネイティブ UI）
 ```
 
@@ -62,6 +62,22 @@ apps/desktop/
 - **macOS**: Xcode Command Line Tools（macOS 12.0 以上推奨）
 - **Windows**: Visual Studio Build Tools 2022 (C++ workload) + WebView2。ターミナルで POSIX コマンドを使う場合は Git for Windows（Git Bash）を推奨。無い場合は PowerShell にフォールバックします。
 - **Linux**: `libwebkit2gtk-4.1-dev`, `libssl-dev`, `librsvg2-dev`, `libappindicator3-dev`, `libayatana-appindicator3-dev`, `libxdo-dev`, `libgtk-3-dev`, `patchelf`
+
+### Chromium（初回インストール）
+Desktop版はブラウザを同梱しない。初回利用時に設定 ▸ ブラウザから Chrome for Testing を
+`<app-data>/chromium` へ導入する。バージョンと SHA-256 は
+`browser/src/chromium-manifest.json` に固定されており、更新は次のコマンドで行う。
+
+```sh
+pnpm chromium:pin                                  # 最新 Stable を固定
+node scripts/pin-chromium.mjs --version 156.0.8078.73
+node scripts/pin-chromium.mjs --verify             # 固定アーカイブを再検証
+```
+
+開発時はシステムの Chromium にフォールバックする。任意のビルドを使う場合は
+`MIX_CHROMIUM_HOME=/path/to/chromium`（`chrome-mac/` などを含むディレクトリ）を指定する。
+Linuxの`.deb`はChromiumの実行時ライブラリを`depends`に含むが、AppImageはホスト側の
+ライブラリに依存する。
 
 ---
 
@@ -132,7 +148,7 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 | `web_search` | DuckDuckGo による Web 検索 | allow |
 | `web_fetch` | URL からのコンテンツ取得（egress 制御 & プライベート IP 拒否） | ask |
 | `web_fetch_pdf` | Web 上の PDF からテキスト抽出 | ask |
-| `browser` | 実 Chromium を自動操作（ページ遷移、クリック、スクショ等） | ask |
+| `browser` | 実 Chromium を自動操作（snapshot + ref、実クリック/入力、タブ、スクショ等）。localhost は「ブラウザのローカルアクセス」を ON にした場合のみ | ask |
 | `mcp__<conn>__<tool>` | 接続された外部 MCP サーバーのツール | ask |
 
 ### 権限ゲート（Permission Gate）とスコープ制限
