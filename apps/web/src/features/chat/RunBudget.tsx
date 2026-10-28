@@ -59,7 +59,7 @@ export function RunBudget({
   const stepsRatio = ratio(stepsUsed, stepsTotal);
   const callsRatio = ratio(callsUsed, callsTotal);
   return (
-    <div className="run-budget-card" role="status">
+    <div className="run-budget-card">
       <p className="run-budget">
         {run.mode}
         {t(" · 残り ")}

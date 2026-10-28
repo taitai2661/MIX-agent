@@ -3,7 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentView,
   AttachmentPayload,
+  BrowserFrameView,
   BrowserInvokeOutput,
+  BrowserInstallState,
   BrowserProfileView,
   BrowserStatus,
   CheckpointView,
@@ -19,6 +21,8 @@ import type {
   HealthReport,
   KnowledgeDocView,
   KnowledgeSearchHit,
+  LocalJobView,
+  LocalRuntimeSnapshotView,
   LocalRuntimeView,
   LocalScanView,
   McpConnectionView,
@@ -83,6 +87,31 @@ export const api = {
       "import_local_runtime",
       { input },
     ),
+
+  localRuntimeSnapshot: () =>
+    invoke<LocalRuntimeSnapshotView[]>("local_runtime_snapshot"),
+  localRuntimeRefresh: () =>
+    invoke<LocalRuntimeSnapshotView[]>("local_runtime_refresh"),
+  localRuntimeStart: (slug: string) =>
+    invoke<LocalRuntimeSnapshotView>("local_runtime_start", { slug }),
+  localRuntimeStop: (slug: string) =>
+    invoke<LocalRuntimeSnapshotView>("local_runtime_stop", { slug }),
+  localRuntimeRestart: (slug: string) =>
+    invoke<LocalRuntimeSnapshotView>("local_runtime_restart", { slug }),
+  localRuntimeLogs: (slug: string) =>
+    invoke<string[]>("local_runtime_logs", { slug }),
+  localRuntimeOpenApp: (slug: string) =>
+    invoke<void>("local_runtime_open_app", { slug }),
+  localModelPull: (slug: string, model: string) =>
+    invoke<string>("local_model_pull", { slug, model }),
+  localModelDelete: (slug: string, model: string) =>
+    invoke<void>("local_model_delete", { slug, model }),
+  localModelLoad: (slug: string, model: string) =>
+    invoke<void>("local_model_load", { slug, model }),
+  localModelUnload: (slug: string, model: string) =>
+    invoke<void>("local_model_unload", { slug, model }),
+  localJobList: () => invoke<LocalJobView[]>("local_job_list"),
+  localJobCancel: (id: string) => invoke<boolean>("local_job_cancel", { id }),
 
   listModels: () => invoke<ModelView[]>("list_models", { providerId: null }),
   verifyTools: (modelId: string) =>
@@ -199,22 +228,43 @@ export const api = {
     invoke<void>("handle_oauth_callback", { url }),
 
   browserStatus: () => invoke<BrowserStatus>("browser_status"),
+  browserInstall: (force = false) =>
+    invoke<BrowserInstallState>("browser_install", { force }),
+  browserInstallCancel: () =>
+    invoke<BrowserInstallState>("browser_install_cancel"),
+  /** Progress/completion events from the background installer. */
+  browserInstallEvent: (handler: (state: BrowserInstallState) => void) =>
+    listen<BrowserInstallState>("browser://install", (event) =>
+      handler(event.payload),
+    ),
+  browserUninstall: () => invoke<void>("browser_uninstall"),
   browserInvoke: (input: {
     workspace_id: string | null;
     action: string;
-    url: string | null;
-    selector: string | null;
-    text: string | null;
-    x: number | null;
-    y: number | null;
-    script: string | null;
-    full_page: boolean | null;
-    condition: string | null;
-    timeout_ms: number | null;
+    url?: string | null;
+    selector?: string | null;
+    ref?: string | null;
+    text?: string | null;
+    key?: string | null;
+    value?: string | null;
+    checked?: boolean | null;
+    clear?: boolean | null;
+    x?: number | null;
+    y?: number | null;
+    script?: string | null;
+    full_page?: boolean | null;
+    condition?: string | null;
+    timeout_ms?: number | null;
+    max_nodes?: number | null;
+    limit?: number | null;
+    tab_id?: string | null;
   }) => invoke<BrowserInvokeOutput>("browser_invoke", { input }),
   browserProfiles: () => invoke<BrowserProfileView[]>("browser_profiles"),
   browserResetProfile: (workspaceId: string) =>
     invoke<void>("browser_reset_profile", { workspaceId }),
+  browserArtifact: (id: string) => invoke<string>("browser_artifact", { id }),
+  browserFrame: (workspaceId: string, fullPage = false) =>
+    invoke<BrowserFrameView | null>("browser_frame", { workspaceId, fullPage }),
 
   listMemories: () => invoke<MemoryView[]>("list_memories"),
   createMemory: (input: {
@@ -337,6 +387,16 @@ export const api = {
   }) => invoke<ScheduleJobView>("create_job", { input }),
   setScheduleJobEnabled: (id: string, enabled: boolean) =>
     invoke<void>("set_job_enabled", { id, enabled }),
+  updateScheduleJob: (input: {
+    id: string;
+    name: string;
+    cron: string;
+    prompt: string;
+    conversation_id: string | null;
+    model_id: string | null;
+    mode: string | null;
+  }) => invoke<void>("update_job", { input }),
+  runScheduleJobNow: (id: string) => invoke<string>("run_job_now", { id }),
   previewCron: (cron: string) => invoke<string[]>("preview_cron", { cron }),
   deleteScheduleJob: (id: string) => invoke<void>("delete_job", { id }),
 

@@ -151,6 +151,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
     skill_rows = context_retrievers.search_skills(
         db, owner_id, data["prompt"], agent.get("skill_ids") or None
     )
+    knowledge_rows = context_retrievers.search_knowledge(db, owner_id, data["prompt"])
     window_info = _model_window_info(model, snapshot)
     built = context_builder.build_initial(
         system_text=system_text,
@@ -161,7 +162,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         task_goal=data["prompt"],
         memories=memories,
         skills=skill_rows,
-        knowledge=[],
+        knowledge=knowledge_rows,
         tools=[available[t] for t in tool_ids if t in available],
         window_info=window_info,
         model_id=model.data.get("model_id", ""),

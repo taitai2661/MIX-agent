@@ -25,6 +25,7 @@ export function NetworkSettings() {
       <form
         className="card"
         key={setting.dataUpdatedAt}
+        onInput={() => setSaved(false)}
         onSubmit={async (e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);

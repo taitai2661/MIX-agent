@@ -18,9 +18,50 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useRef, useState, type FormEvent, type ReactNode } from "react";
 
+import { CardSkeleton } from "@/components/loading";
+import { trapFocus, useModalDialog } from "@/components/modal";
 import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
+
+function InstallDialog({
+  installing,
+  onClose,
+  onSubmit,
+  children,
+}: {
+  installing: boolean;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  children: ReactNode;
+}) {
+  const panelRef = useRef<HTMLFormElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useModalDialog(panelRef, () => closeRef.current());
+  return (
+    <div
+      className="mcp-install-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mcp-install-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeRef.current();
+      }}
+    >
+      <form
+        ref={panelRef}
+        className="card form-grid mcp-install-panel"
+        onSubmit={onSubmit}
+        onKeyDown={(event) => {
+          if (event.key === "Tab" && panelRef.current) trapFocus(panelRef.current, event);
+        }}
+      >
+        {children}
+      </form>
+    </div>
+  );
+}
 
 export function MCP() {
   const rows = useRows("/mcp/connections"),
@@ -68,7 +109,10 @@ export function MCP() {
           </Button>
         }
       />
-      <ErrorBox error={error || rows.error || catalog.error} />
+      <ErrorBox
+        error={error || rows.error || catalog.error}
+        onRetry={() => { setError(null); void rows.refetch(); void catalog.refetch(); }}
+      />
       {notice && (
         <p className="success">
           <Check size={16} />
@@ -113,7 +157,7 @@ export function MCP() {
             {t("Registryを読み込んでいます")}
           </div>
         )}
-        {!catalog.isLoading && !catalog.data?.servers?.length && (
+        {!catalog.isLoading && !catalog.isError && !catalog.data?.servers?.length && (
           <div className="mcp-store-state">
             <PackageOpen size={24} />
             <strong>{t("該当するMCPがありません")}</strong>
@@ -178,18 +222,10 @@ export function MCP() {
         </div>
       </section>
       {selected && (
-        <div
-          className="mcp-install-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !installing)
-              setSelected(null);
-          }}
-        >
-          <form
-            className="card form-grid mcp-install-panel"
-            aria-labelledby="mcp-install-title"
-            onSubmit={async (event) => {
+        <InstallDialog
+          installing={installing}
+          onClose={() => { if (!installing) setSelected(null); }}
+          onSubmit={async (event) => {
               event.preventDefault();
               const form = new FormData(event.currentTarget);
               const domains = String(form.get("domains") || "")
@@ -241,8 +277,8 @@ export function MCP() {
               } finally {
                 setInstalling(false);
               }
-            }}
-          >
+          }}
+        >
             <div className="mcp-install-header">
               <div className="mcp-install-icon">
                 {selected.selected?.kind === "remote" ? (
@@ -391,8 +427,7 @@ export function MCP() {
                 )}
               </Button>
             </div>
-          </form>
-        </div>
+        </InstallDialog>
       )}
       <div className="template-row">
         <Button
@@ -519,7 +554,9 @@ export function MCP() {
           </div>
         </form>
       )}
-      {rows.data?.map((r) => (
+      {rows.isLoading ? (
+        <CardSkeleton />
+      ) : rows.isError ? null : rows.data?.map((r) => (
         <div className="card" key={r.id}>
           <h3>
             <Globe size={18} />
@@ -700,7 +737,7 @@ export function MCP() {
           </div>
         </div>
       ))}
-      {!rows.data?.length && !open && (
+      {!error && !rows.isLoading && !rows.isError && !rows.data?.length && !open && (
         <Empty>{t("MCP接続を追加すると、Tool Registryに登録できます。")}</Empty>
       )}
     </>

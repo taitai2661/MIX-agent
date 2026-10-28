@@ -73,6 +73,45 @@ describe("useRunEvents flush timer", () => {
     expect(useRunEvents.getState().timeline).toBeNull();
   });
 
+  it("keeps a background thread's run alive when another thread starts", () => {
+    useRunEvents.getState().startRun("run-1", "conv-1");
+    useRunEvents.getState().push(event("text", { delta: "first" }));
+    vi.advanceTimersByTime(60);
+
+    useRunEvents.getState().startRun("run-2", "conv-2");
+    useRunEvents
+      .getState()
+      .push(event("text", { delta: " second" }, "run-1", 2));
+    vi.advanceTimersByTime(60);
+
+    const state = useRunEvents.getState();
+    expect(state.byConversation["conv-1"]?.timeline.text).toBe("first second");
+    expect(state.byConversation["conv-2"]?.timeline.text).toBe("");
+    // The newest run remains the backwards-compatible "live" one.
+    expect(state.liveRunId).toBe("run-2");
+  });
+
+  it("clearRun retires one thread without touching the others", () => {
+    useRunEvents.getState().startRun("run-1", "conv-1");
+    useRunEvents.getState().startRun("run-2", "conv-2");
+    useRunEvents.getState().clearRun("run-2");
+    const state = useRunEvents.getState();
+    expect(state.byConversation["conv-1"]?.runId).toBe("run-1");
+    expect(state.byConversation["conv-2"]).toBeUndefined();
+    expect(state.liveRunId).toBeNull();
+  });
+
+  it("a late clearRun cannot delete the next run in the same thread", () => {
+    useRunEvents.getState().startRun("run-1", "conv-1");
+    // run-2 reuses the conversation key before run-1's delayed clear fires.
+    useRunEvents.getState().startRun("run-2", "conv-1");
+    useRunEvents.getState().clearRun("run-1");
+
+    const state = useRunEvents.getState();
+    expect(state.byConversation["conv-1"]?.runId).toBe("run-2");
+    expect(state.liveRunId).toBe("run-2");
+  });
+
   it("startRun discards the previous run's buffer", () => {
     useRunEvents.getState().startRun("run-1", "conv-1");
     useRunEvents.getState().push(event("text", { delta: "stale" }));

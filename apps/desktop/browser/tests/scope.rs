@@ -7,7 +7,8 @@
 
 use mixd_browser::profile::{default_profile_root, BrowserProfile};
 use mixd_browser::{
-    browser_tool_spec, BrowserAction, BrowserBackend, BrowserOperator, WaitCondition,
+    browser_tool_spec, desktop_agent_actions, BrowserAction, BrowserBackend, BrowserOperator,
+    WaitCondition,
 };
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
@@ -70,10 +71,18 @@ fn the_tool_spec_only_requires_an_action() {
         .filter_map(|v| v.as_str().map(str::to_string))
         .collect();
     assert_eq!(
-        advertised.len(),
-        10,
-        "every action must be advertised: {advertised:?}"
+        advertised,
+        desktop_agent_actions(),
+        "the tool spec and the model-facing contract disagree"
     );
+    // The manual surface still supports these; only the model-facing enum
+    // hides them.
+    for manual in ["click_at", "type_active"] {
+        assert!(
+            !advertised.iter().any(|action| action == manual),
+            "{manual} is manual-only and must not be advertised to the model"
+        );
+    }
 }
 
 /// The spec's `action` enum is a hand-written string list while the enum is
@@ -95,13 +104,40 @@ fn every_action_serialises_to_a_kind_the_spec_advertises() {
         },
         BrowserAction::Click {
             selector: "#go".into(),
+            reference: None,
         },
         BrowserAction::Type {
             selector: "#q".into(),
             text: "hi".into(),
+            reference: None,
+            clear: false,
+        },
+        BrowserAction::ClickAt { x: 10, y: 20 },
+        BrowserAction::TypeActive { text: "hi".into() },
+        BrowserAction::Press {
+            key: "Enter".into(),
+        },
+        BrowserAction::Hover {
+            selector: "#menu".into(),
+            reference: None,
+        },
+        BrowserAction::Select {
+            selector: "#choice".into(),
+            value: "a".into(),
+            reference: None,
+        },
+        BrowserAction::Check {
+            selector: "#agree".into(),
+            checked: true,
+            reference: None,
         },
         BrowserAction::Scroll { x: 0, y: 100 },
         BrowserAction::Dom { selector: None },
+        BrowserAction::Extract {
+            selector: "a".into(),
+            limit: 20,
+        },
+        BrowserAction::Snapshot { max_nodes: 50 },
         BrowserAction::Screenshot { full_page: false },
         BrowserAction::Evaluate {
             script: "1 + 1".into(),
@@ -113,15 +149,31 @@ fn every_action_serialises_to_a_kind_the_spec_advertises() {
             timeout_ms: 1_000,
         },
         BrowserAction::Info,
+        BrowserAction::Reload,
+        BrowserAction::Back,
+        BrowserAction::Forward,
+        BrowserAction::Tabs,
+        BrowserAction::NewTab { url: None },
+        BrowserAction::SwitchTab {
+            tab_id: "tab".into(),
+        },
+        BrowserAction::CloseTab { tab_id: None },
         BrowserAction::Close,
     ];
     for action in actions {
         let value = serde_json::to_value(&action).expect("serialise");
         let kind = value["kind"].as_str().expect("tagged kind").to_string();
-        assert!(
-            advertised.contains(&kind),
-            "{kind} is not in the spec enum {advertised:?}"
-        );
+        if kind == "click_at" || kind == "type_active" {
+            assert!(
+                !advertised.contains(&kind),
+                "manual-only {kind} must stay out of the model-facing enum"
+            );
+        } else {
+            assert!(
+                advertised.contains(&kind),
+                "{kind} is not in the spec enum {advertised:?}"
+            );
+        }
     }
 }
 

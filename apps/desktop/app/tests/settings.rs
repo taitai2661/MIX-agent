@@ -18,6 +18,7 @@ fn full_settings() -> SettingsView {
         default_model_id: Some("prov:model-a".into()),
         default_mode: Some("agent".into()),
         egress_allowlist: vec!["https://api.example.com".into()],
+        browser_allow_local: true,
         telemetry_consent: true,
         language: Some("ja".into()),
         theme: Some("dark".into()),
@@ -34,6 +35,12 @@ fn full_settings() -> SettingsView {
         database_encryption: true,
         onboarding_completed: Some(true),
         auto_check_updates: false,
+        local_scan_on_start: false,
+        local_stop_on_exit: false,
+        local_auto_start: false,
+        local_keep_alive: Some("30m".into()),
+        local_context_window: Some(16384),
+        local_prefer: true,
     }
 }
 

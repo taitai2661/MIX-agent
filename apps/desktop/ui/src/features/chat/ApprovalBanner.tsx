@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useState, type KeyboardEvent } from "react";
 import {
   ChevronDown,
   ShieldAlert,
@@ -10,9 +10,11 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
+import { prefersReducedMotion } from "@/lib/motion";
 import type { PendingApproval } from "@/lib/runEvents";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/layout";
+import { ApprovalCountdown, useApprovalRemaining } from "./ApprovalCountdown";
 
 export const ApprovalBanner = memo(function ApprovalBanner({
   approval,
@@ -21,59 +23,61 @@ export const ApprovalBanner = memo(function ApprovalBanner({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const remaining = useApprovalRemaining(approval.expiresAt);
+  const expired = remaining === 0;
 
   const scrollToCard = () => {
-    const card = document.querySelector('[role="alertdialog"]');
+    const card = document.querySelector<HTMLElement>('[role="alertdialog"]');
     if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-      const firstBtn = card.querySelector("button");
-      firstBtn?.focus();
+      // Focus the card itself, not its first button. The first button is
+      // 「拒否」, so the old behaviour armed a destructive answer and the very
+      // next Enter/Space denied the request.
+      card.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "center",
+      });
+      card.focus();
     }
   };
 
   const decide = useCallback(
-    async (grant: boolean) => {
+    async (grant: boolean, remember = false) => {
       const id = approval.approvalId;
-      if (!id || busy) return;
+      if (!id || busy || expired) return;
       setBusy(true);
       setError(null);
       try {
-        await api.decideApproval({ id, grant, remember: false });
+        await api.decideApproval({ id, grant, remember });
       } catch (err) {
         setError(errorMessage(err) || t("エラー"));
       } finally {
         setBusy(false);
       }
     },
-    [approval.approvalId, busy],
+    [approval.approvalId, busy, expired],
   );
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // ⌘+Enter or Ctrl+Enter approves the pending request
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        void decide(true);
-        return;
-      }
-      // Escape rejects only when no open modal dialog / menu is active
-      if (e.key === "Escape") {
-        if (
-          document.querySelector(
-            "[role='dialog'][data-modal='true'], [role='menu']",
-          )
-        ) {
-          return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        void decide(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [decide]);
+  // Approval shortcuts are scoped to the banner: they only fire while focus is
+  // inside it. A window-level listener used to approve a destructive tool when
+  // the user pressed ⌘Enter to *send a message*, and Escape (used to close a
+  // palette/dialog) could silently deny the request instead.
+  //
+  // The handler sits on the banner container, not on two of its four buttons:
+  // the chips claimed Esc/⌘↵ while focus was on 「常に許可」 or 「詳細を確認」,
+  // where neither did anything.
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      void decide(true);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      void decide(false);
+    }
+  };
 
   const isTerminal = approval.name.toLowerCase().includes("terminal");
   const isFileEdit =
@@ -81,28 +85,41 @@ export const ApprovalBanner = memo(function ApprovalBanner({
     approval.name.toLowerCase().includes("file");
 
   return (
+    // The shortcuts are scoped to focus inside this alert, deliberately: a
+    // window-level listener approved tools when the user pressed ⌘Enter to
+    // send a message. The container handles bubbled keys from its buttons.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
       role="alert"
+      onKeyDown={onKeyDown}
+      aria-keyshortcuts="Meta+Enter Control+Enter Escape"
       className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning shadow-xs backdrop-blur-md"
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <ShieldAlert
           size={15}
           className="shrink-0 text-warning animate-mix-pulse"
         />
-        <span className="font-semibold">{t("承認待ち")}:</span>
-        <span className="inline-flex items-center gap-1 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-2xs text-fg shadow-2xs">
+        <span className="shrink-0 font-semibold">{t("承認待ち")}:</span>
+        <span className="inline-flex min-w-0 items-center gap-1 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-2xs text-fg shadow-2xs">
           {isTerminal ? (
-            <Terminal size={11} className="text-warning shrink-0" />
+            <Terminal size={11} className="shrink-0 text-warning" />
           ) : isFileEdit ? (
-            <FileCode size={11} className="text-brand shrink-0" />
+            <FileCode size={11} className="shrink-0 text-brand" />
           ) : (
-            <Wrench size={11} className="text-muted shrink-0" />
+            <Wrench size={11} className="shrink-0 text-muted" />
           )}
-          <span>{approval.name}</span>
+          <span className="truncate" title={approval.name}>
+            {approval.name}
+          </span>
         </span>
-        {error && <span className="text-danger text-2xs">({error})</span>}
+        {error && (
+          <span className="min-w-0 truncate text-2xs text-danger" title={error}>
+            ({error})
+          </span>
+        )}
       </div>
+      <ApprovalCountdown expiresAt={approval.expiresAt} />
       <div className="flex shrink-0 items-center gap-1.5">
         <Button
           variant="ghost"
@@ -117,7 +134,7 @@ export const ApprovalBanner = memo(function ApprovalBanner({
         <Button
           variant="default"
           size="sm"
-          disabled={busy || !approval.approvalId}
+          disabled={busy || !approval.approvalId || expired}
           onClick={() => void decide(false)}
           className="h-6 gap-1 px-2 text-2xs border-warning/30 text-warning hover:bg-warning/20"
           title={`${t("拒否")} · Esc`}
@@ -126,15 +143,25 @@ export const ApprovalBanner = memo(function ApprovalBanner({
           <Kbd className="text-[9px] px-1 py-0 opacity-70">Esc</Kbd>
         </Button>
         <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy || !approval.approvalId || expired}
+          onClick={() => void decide(true, true)}
+          className="h-6 gap-1 px-2 text-2xs text-warning hover:bg-warning/20"
+          title={t("常に許可")}
+        >
+          <span>{t("常に許可")}</span>
+        </Button>
+        <Button
           variant="primary"
           size="sm"
-          disabled={busy || !approval.approvalId}
+          disabled={busy || !approval.approvalId || expired}
           onClick={() => void decide(true)}
           className="h-6 gap-1 px-2 text-2xs shadow-xs"
           title={`${t("今回のみ許可")} · ${chord("Mod", "Enter")}`}
         >
           <span>{t("今回のみ許可")}</span>
-          <Kbd className="text-[9px] px-1 py-0 bg-white/20 text-white border-white/30">
+          <Kbd className="text-[9px] px-1 py-0 border-on-solid/40 bg-transparent text-on-solid">
             {chord("Mod", "↵")}
           </Kbd>
         </Button>

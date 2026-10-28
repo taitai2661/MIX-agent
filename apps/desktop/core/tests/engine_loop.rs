@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures_util::StreamExt as _;
 use mixd_core::mode::Mode;
 use mixd_core::runs::checkpoint_store::CheckpointStore;
 use mixd_core::runs::engine::{
@@ -160,6 +161,47 @@ impl Provider for FailingProvider {
     }
 }
 
+/// Emits one delta and then never finishes, so a cancellation lands mid-stream.
+struct SlowProvider {
+    name: String,
+}
+
+impl SlowProvider {
+    fn new() -> Self {
+        Self {
+            name: SLOW_PROVIDER_ID.to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for SlowProvider {
+    fn id(&self) -> &String {
+        &self.name
+    }
+    fn label(&self) -> &str {
+        "Slow"
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            vision: false,
+            tool_calling: true,
+            reasoning: false,
+            streaming: true,
+        }
+    }
+    async fn stream(&self, _req: ProviderRequest) -> anyhow::Result<StreamBox> {
+        Ok(Box::pin(
+            futures_util::stream::once(async {
+                StreamEvent::TextDelta("partial answer that must survive".to_string())
+            })
+            .chain(futures_util::stream::pending()),
+        ))
+    }
+}
+
+const SLOW_PROVIDER_ID: &str = "slow";
+
 struct Harness {
     engine: Arc<RunEngine>,
     storage: Arc<mixd_storage::Storage>,
@@ -235,6 +277,7 @@ impl Harness {
             temperature: None,
             reasoning: None,
             max_tokens: None,
+            keep_alive: None,
             temporary: false,
             tools: std::sync::Arc::new(self.engine.tool_specs().await),
             history: Vec::new(),
@@ -508,6 +551,7 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         temperature: None,
         reasoning: None,
         max_tokens: None,
+        keep_alive: None,
         temporary: false,
         tools: std::sync::Arc::new(Vec::new()),
         history: Vec::new(),
@@ -721,6 +765,51 @@ async fn cancellation_stops_the_run() {
         matches!(outcome.status, RunStatus::Cancelled | RunStatus::Completed),
         "unexpected status: {:?}",
         outcome.status
+    );
+}
+
+/// Stopping a run must keep what the model had already produced. Cancelling
+/// used to retire the live block and write nothing, so the partial answer
+/// vanished and the thread looked like the send had never started.
+#[tokio::test]
+async fn cancellation_persists_the_partial_answer() {
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    harness
+        .engine
+        .providers
+        .register(SLOW_PROVIDER_ID.to_string(), Arc::new(SlowProvider::new()))
+        .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.provider_id = SLOW_PROVIDER_ID.to_string();
+    let run_id = request.run_id;
+    let engine = harness.engine.clone();
+    let task = tokio::spawn(async move { engine.execute(request).await });
+
+    // Wait until the first delta has been streamed, then cancel.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    harness.engine.cancel(run_id).await;
+    let outcome = task.await.expect("join").expect("run");
+    assert!(
+        matches!(outcome.status, RunStatus::Cancelled),
+        "unexpected status: {:?}",
+        outcome.status
+    );
+
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT json_extract(data, '$.role'), json_extract(data, '$.content'), \
+                COALESCE(json_extract(data, '$.reasoning'), '') \
+         FROM messages WHERE conversation_id = ? ORDER BY rowid ASC",
+    )
+    .bind(harness.conversation_id.to_string())
+    .fetch_all(harness.storage.pool())
+    .await
+    .expect("read messages");
+    assert!(
+        rows.iter().any(|(role, content, _)| {
+            role == "assistant" && content == "partial answer that must survive"
+        }),
+        "partial assistant text was not persisted: {rows:?}"
     );
 }
 
@@ -1492,6 +1581,56 @@ async fn plan_mode_still_allows_the_reads_it_needs_to_plan() {
     assert!(
         outcome.tool_calls[0].error.is_none(),
         "a read-only call must still run in plan mode"
+    );
+}
+
+#[tokio::test]
+async fn plan_mode_allows_the_tools_the_plan_prompt_asks_for() {
+    // The plan prompt tells the model to propose with `user_plan`, and the UI
+    // renders the checklist from `todo`. Both used to be classified as
+    // mutations, so plan mode refused the two tools it exists for; `symbols`
+    // was refused too because the classifier only knew the stale `outline`.
+    let harness = Harness::new(vec![
+        tool_turn("c1", "symbols", r#"{"action":"outline","path":"a.rs"}"#),
+        tool_turn(
+            "c2",
+            "todo",
+            r#"{"todos":[{"content":"inspect the code","status":"in_progress"}]}"#,
+        ),
+        tool_turn(
+            "c3",
+            "user_plan",
+            r#"{"title":"Fix it","steps":["read","edit"]}"#,
+        ),
+        text_turn("here is the plan"),
+    ])
+    .await;
+    std::fs::write(harness.workspace.join("a.rs"), "fn main() {}\n").unwrap();
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.mode = Mode::Plan;
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(
+        tool_names(&outcome.tool_calls),
+        vec!["symbols", "todo", "user_plan"]
+    );
+    for call in &outcome.tool_calls {
+        assert!(
+            call.error.is_none(),
+            "plan mode must run `{}`; got {:?}",
+            call.name,
+            call.error
+        );
+    }
+    let outline = outcome.tool_calls[0]
+        .result
+        .as_ref()
+        .expect("symbols must return a result");
+    assert_eq!(
+        outline["symbols"][0]["name"], "main",
+        "the outline must describe the file it read; got {outline}"
     );
 }
 

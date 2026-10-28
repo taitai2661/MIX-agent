@@ -43,7 +43,7 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 | **プロセス構成** | 単一バイナリ + tokio in-proc（+ 子プロセス Chromium） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
 | **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
 | **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
-| **ブラウザ操作** | 同梱 Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
+| **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
 | **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等） | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
 
 ---
@@ -73,7 +73,9 @@ Docker や複雑なサーバー設定なしで、OpenCode のようにローカ�
   - *WebView2*: 初回インストール時にブートストラップが導入を試みます。WebView2 が未導入の場合はインターネット接続が必要です。
   - *Windows SmartScreen の注意*: 未署名のため「Windows によって PC が保護されました」と表示される場合があります。「詳細情報」→「実行」を選択してください。
   - *ターミナル / Git*: [Git for Windows](https://gitforwindows.org/)（Git Bash）を推奨します。未導入の場合、ターミナルは PowerShell にフォールバックしますが、POSIX コマンド（`ls` / `grep` など）や Git 連携の一部は使えません。
-- **Linux**: 現在の GitHub Release では配布していません。必要な場合はソースからビルドしてください。
+- **Linux (x64)**:
+  - v0.5.2から`AppImage`と`deb`を配布します。
+  - AppImageはアプリ内更新（設定 ▸ アップデート）に対応します。debはパッケージ管理下のため、GitHub Releasesから手動で更新してください。
 
 ダウンロード後は、Release に添付された `SHA256SUMS` とファイルのチェックサムを照合してください。
 
@@ -146,6 +148,7 @@ docker compose up -d --build
 ### 2. 52 種類の Provider 対応 & 自動能力判定
 - OpenAI、Anthropic、Gemini、OpenRouter、Groq、Mistral、DeepSeek、Cohere、Ollama、LM Studio などの主要 Provider プリセットを網羅。
 - **Capability Probe**: モデルの Tool Calling 対応状況を実行前に副作用のない安全なプローブで自動検証。
+- **ローカルランタイム管理（Desktop）**: Ollama / LM Studio を自動検出し、アプリから起動・停止・再起動、モデルの取得・削除・ロード/アンロードまで行えます。Ollama は `num_ctx`（既定 8K 上限）と `keep_alive` をネイティブ API で制御します。
 
 ### 3. Tool Registry と柔軟な権限管理
 - ファイル操作、コード編集、永続ターミナル、Web 検索、ブラウザ操作、メモリ、ナレッジ検索などの組み込みツール。
@@ -205,9 +208,11 @@ docker compose --profile test run --rm test # バックエンドテスト
 
 | ドキュメント | 内容 |
 | :--- | :--- |
+| [ドキュメント索引](docs/README.md) | docs/ 全体の索引・配置制約・リリースノート一覧 |
+| [Memory 仕様](docs/memory-spec.md) | 両エディション共通の Memory 契約 |
 | [Desktop 版 README](apps/desktop/README.md) | Desktop 版の構成、ツール仕様、ビルド手順の詳細 |
 | [システムアーキテクチャ](docs/architecture.md) | プロジェクト全体の構造とエディションの設計思想 |
-| [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計と API マッピング |
+| [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計・セキュリティ・更新方法 |
 | [運用ガイド](docs/operations.md) | Docker 版の運用、バックアップ・復元手順 |
 | [検証状況](docs/verification.md) | 実機・Provider での動作検証ログ |
 | [ZimaOS ガイド](docs/zimaos.md) | ZimaOS / CasaOS コミュニティストアでの導入 |

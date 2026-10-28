@@ -456,6 +456,8 @@ impl JobRunner {
             max_tokens: Some(EXTRACTION_MAX_TOKENS),
             reasoning: None,
             stream: true,
+            context_window: None,
+            keep_alive: None,
         };
 
         let text = tokio::time::timeout(self.timeout, complete(provider.as_ref(), request))

@@ -1,4 +1,12 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AtSign,
@@ -12,6 +20,7 @@ import {
   FolderOpen,
   FolderTree,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -19,11 +28,13 @@ import { t, tf } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { useActiveProject, gitStatusKey, useGitStatus } from "@/lib/queries";
 import { usePromptInsert } from "@/lib/promptInsert";
+import { getString, setString } from "@/lib/storage";
 import { PanelHeader } from "@/components/layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/input";
 import { GitStatusBadge } from "@/components/ui/status";
-import { EmptyState, ErrorAlert } from "@/components/shared";
+import { EmptyState, ErrorAlert, ListSkeleton } from "@/components/shared";
 import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 import { panelStyle } from "@/features/shell/usePanelCap";
 
@@ -140,6 +151,11 @@ const DirRows = memo(function DirRows({
             <div key={childPath}>
               <button
                 type="button"
+                data-tree-row
+                data-tree-path={childPath}
+                data-tree-depth={depth}
+                data-tree-dir="true"
+                data-tree-open={open ? "true" : "false"}
                 className={rowClass}
                 style={indent}
                 aria-expanded={open}
@@ -176,6 +192,9 @@ const DirRows = memo(function DirRows({
           >
             <button
               type="button"
+              data-tree-row
+              data-tree-path={childPath}
+              data-tree-depth={depth}
               className={rowClass}
               onClick={() => ctx.onOpenFile(childPath)}
               title={
@@ -225,10 +244,104 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
   const openFilePreview = useUi((s) => s.openFilePreview);
   const setView = useUi((s) => s.setView);
   const queryClient = useQueryClient();
+  const treeRef = useRef<HTMLDivElement | null>(null);
+  const expandedKey = `mix:file-tree-expanded:${root ?? ""}`;
+  // Expansion used to be component-local, so closing the tree (which unmounts
+  // this pane) collapsed every folder and destroyed the user's orientation.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [showHidden, setShowHidden] = useState(false);
+  const [filter, setFilter] = useState("");
+  const deferredFilter = useDeferredValue(filter.trim());
+  // The backend already walks the tree with the project's .gitignore rules;
+  // reusing it keeps search results identical to what the agent can read.
+  const search = useQuery({
+    queryKey: ["workspace_files", root, deferredFilter],
+    queryFn: () => api.findWorkspaceFiles(root!, deferredFilter, 80),
+    enabled: !!root && deferredFilter.length > 0,
+    staleTime: 10_000,
+  });
+  // Only persist after a user toggle, otherwise the mount-time effect would
+  // write the initial empty set over the paths restored from storage.
+  const expandedDirty = useRef(false);
+
+  useEffect(() => {
+    if (!root) return;
+    expandedDirty.current = false;
+    try {
+      const raw = getString(expandedKey);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      setExpanded(
+        new Set(
+          Array.isArray(parsed)
+            ? parsed.filter((p): p is string => typeof p === "string")
+            : [],
+        ),
+      );
+    } catch {
+      setExpanded(new Set());
+    }
+  }, [expandedKey, root]);
+
+  // Keyboard travel over the visible rows (the sidebar already does this).
+  // ArrowRight expands a folder, ArrowLeft collapses it or jumps to its parent.
+  const onTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>(
+      "[data-tree-row]",
+    );
+    if (!target) return;
+    const rows = Array.from(
+      treeRef.current?.querySelectorAll<HTMLElement>("[data-tree-row]") ?? [],
+    );
+    const index = rows.indexOf(target);
+    if (index === -1) return;
+    const depth = Number(target.dataset.treeDepth ?? "0");
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      rows[
+        Math.min(
+          rows.length - 1,
+          Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)),
+        )
+      ]?.focus();
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      rows[event.key === "Home" ? 0 : rows.length - 1]?.focus();
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      if (
+        target.dataset.treeDir === "true" &&
+        target.dataset.treeOpen !== "true"
+      ) {
+        target.click();
+      } else {
+        rows[index + 1]?.focus();
+      }
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (
+        target.dataset.treeDir === "true" &&
+        target.dataset.treeOpen === "true"
+      ) {
+        target.click();
+        return;
+      }
+      for (let i = index - 1; i >= 0; i -= 1) {
+        if (Number(rows[i].dataset.treeDepth ?? "0") < depth) {
+          rows[i].focus();
+          break;
+        }
+      }
+    }
+  };
 
   const git = useGitStatus(root);
 
@@ -239,16 +352,20 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
     return map;
   }, [git.data]);
 
-  const toggle = useCallback(
-    (path: string) =>
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        if (next.has(path)) next.delete(path);
-        else next.add(path);
-        return next;
-      }),
-    [],
-  );
+  const toggle = useCallback((path: string) => {
+    expandedDirty.current = true;
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!root || !expandedDirty.current) return;
+    setString(expandedKey, JSON.stringify([...expanded]));
+  }, [expanded, expandedKey, root]);
 
   const insertFileReference = usePromptInsert((s) => s.insertFileReference);
 
@@ -335,10 +452,81 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
         }
       />
 
-      {root ? (
-        <div className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
-          <DirRows path="" depth={0} ctx={ctx} />
+      {root && (
+        <div className="shrink-0 px-2 pb-1.5">
+          <SearchField
+            icon={<Search size={12} />}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={t("ファイルを検索")}
+            aria-label={t("ファイルを検索")}
+            {...(filter
+              ? { onClear: () => setFilter(""), clearLabel: t("クリア") }
+              : {})}
+          />
         </div>
+      )}
+
+      {root ? (
+        deferredFilter ? (
+          // Keyboard travel is delegated from the container to its native
+          // buttons, the same pattern the thread sidebar uses.
+          // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+          <div
+            ref={treeRef}
+            onKeyDown={onTreeKeyDown}
+            aria-label={t("検索結果")}
+            className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
+          >
+            {search.isPending ? (
+              <ListSkeleton rows={3} />
+            ) : search.isError ? (
+              <ErrorAlert error={search.error} />
+            ) : (search.data ?? []).length === 0 ? (
+              <EmptyState compact title={t("一致するファイルがありません")} />
+            ) : (
+              (search.data ?? []).map((path) => {
+                const at = path.lastIndexOf("/");
+                return (
+                  <button
+                    key={path}
+                    type="button"
+                    data-tree-row
+                    data-tree-path={path}
+                    data-tree-depth={0}
+                    onClick={() => openFilePreview(path)}
+                    title={path}
+                    className={rowClass}
+                  >
+                    <File size={12} className="shrink-0 text-faint" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {at >= 0 ? (
+                        <>
+                          <span className="text-faint">
+                            {path.slice(0, at + 1)}
+                          </span>
+                          {path.slice(at + 1)}
+                        </>
+                      ) : (
+                        path
+                      )}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : (
+          // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+          <div
+            ref={treeRef}
+            onKeyDown={onTreeKeyDown}
+            aria-label={t("ファイル")}
+            className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
+          >
+            <DirRows path="" depth={0} ctx={ctx} />
+          </div>
+        )
       ) : (
         <EmptyState
           compact

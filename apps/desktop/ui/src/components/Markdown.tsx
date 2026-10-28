@@ -28,22 +28,30 @@ const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const COMPONENTS = {
   a({ href, children }: { href?: string; children?: ReactNode }) {
     const external = !!href && /^https?:\/\//.test(href);
+    // react-markdown emits an <a> for relative/mailto/file links too. Leaving
+    // it with no href made a dead element that still inherited the brand link
+    // colour and hover underline, so it looked clickable but did nothing.
+    if (!external) {
+      return (
+        <span title={href ? t("外部リンクのみ開けます") : undefined}>
+          {children}
+        </span>
+      );
+    }
     return (
       <a
-        href={external ? href : undefined}
-        target={external ? "_blank" : undefined}
+        href={href}
+        target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => href && onLinkClick(e, href)}
-        className={external ? "inline-flex items-center gap-0.5" : undefined}
+        onClick={(e) => onLinkClick(e, href)}
+        className="inline-flex items-center gap-0.5"
       >
         {children}
-        {external && (
-          <ExternalLink
-            size={12}
-            aria-hidden="true"
-            className="shrink-0 text-faint"
-          />
-        )}
+        <ExternalLink
+          size={12}
+          aria-hidden="true"
+          className="shrink-0 text-faint"
+        />
       </a>
     );
   },

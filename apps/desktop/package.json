@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-desktop-workspace",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "private": true,
   "license": "Apache-2.0",
   "description": "MIX-agent Desktop — Rust + Tauri 2 + React workspace root",
@@ -10,6 +10,7 @@
     "ui:test": "pnpm --filter mix-agent-desktop-ui test",
     "ui:lint": "pnpm --filter mix-agent-desktop-ui lint",
     "ui:typecheck": "pnpm --filter mix-agent-desktop-ui typecheck",
+    "chromium:pin": "node scripts/pin-chromium.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",

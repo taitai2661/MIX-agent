@@ -236,6 +236,23 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
 
     let context_window =
         crate::commands::projects::context_window_for(state.storage.pool(), &model_id).await;
+    let locality =
+        crate::commands::providers::provider_locality(state.storage.pool(), &provider_id).await;
+    let settings = crate::commands::settings::read_settings(state.storage.pool())
+        .await
+        .ok();
+    let context_window = crate::commands::projects::effective_context_window(
+        context_window,
+        locality.is_managed,
+        settings
+            .as_ref()
+            .and_then(|value| value.local_context_window),
+    );
+    let keep_alive = if locality.is_managed && locality.is_ollama {
+        settings.and_then(|value| value.local_keep_alive)
+    } else {
+        None
+    };
 
     let request = mixd_core::runs::engine::RunRequest {
         run_id,
@@ -258,6 +275,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         temperature: None,
         reasoning: None,
         max_tokens: None,
+        keep_alive,
         temporary,
         tools,
         history: Vec::new(),

@@ -27,6 +27,8 @@ export const PENDING_APPROVALS_QUERY_KEY = ["pending_approvals"] as const;
 export const PROVIDERS_QUERY_KEY = ["providers"] as const;
 export const PROVIDER_PRESETS_QUERY_KEY = ["provider_presets"] as const;
 export const MODELS_QUERY_KEY = ["models"] as const;
+export const LOCAL_RUNTIMES_QUERY_KEY = ["local_runtimes"] as const;
+export const LOCAL_JOBS_QUERY_KEY = ["local_jobs"] as const;
 
 export const gitStatusKey = (root: string) => ["git_status", root] as const;
 
@@ -63,6 +65,21 @@ export function useModels() {
     queryKey: MODELS_QUERY_KEY,
     queryFn: () => api.listModels(),
     staleTime: PROVIDERS_STALE_MS,
+  });
+}
+
+/** Lifecycle state of every discovered local runtime.
+ *
+ * The manager also emits `local_runtime_event`; the polling interval is the
+ * fallback for a missed event (a hidden WebView, a runtime that dies while the
+ * pane is closed) rather than the primary update path.
+ */
+export function useLocalRuntimes() {
+  return useQuery({
+    queryKey: LOCAL_RUNTIMES_QUERY_KEY,
+    queryFn: api.localRuntimeSnapshot,
+    staleTime: 0,
+    refetchInterval: 10_000,
   });
 }
 

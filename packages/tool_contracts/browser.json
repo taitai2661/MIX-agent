@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "description": "Canonical browser action contract shared by the Desktop (chromiumoxide) and Docker (Playwright) editions. Action names are edition-neutral; each edition maps its own tool surface onto them. This file is data, not a runtime dependency: Desktop embeds it at compile time and Docker copies it into the image.",
+  "actions": {
+    "navigate": {
+      "args": { "url": "string" },
+      "description": "Load a URL in the active tab."
+    },
+    "click": {
+      "args": { "selector": "string?", "ref": "string?" },
+      "description": "Click the element named by a CSS selector or a snapshot ref."
+    },
+    "click_at": {
+      "args": { "x": "integer", "y": "integer" },
+      "description": "Click viewport coordinates. Used by the manual takeover surface."
+    },
+    "type": {
+      "args": {
+        "selector": "string?",
+        "ref": "string?",
+        "text": "string",
+        "clear": "boolean?"
+      },
+      "description": "Focus an element and type text with real keyboard events."
+    },
+    "type_active": {
+      "args": { "text": "string" },
+      "description": "Type into the currently focused element."
+    },
+    "press": {
+      "args": { "key": "string" },
+      "description": "Press a keyboard key (Enter, Tab, Escape, ArrowDown, ...)."
+    },
+    "hover": {
+      "args": { "selector": "string?", "ref": "string?" },
+      "description": "Move the mouse over an element."
+    },
+    "select": {
+      "args": { "selector": "string?", "ref": "string?", "value": "string" },
+      "description": "Choose an option in a native select element."
+    },
+    "check": {
+      "args": { "selector": "string?", "ref": "string?", "checked": "boolean" },
+      "description": "Set a checkbox or radio button state."
+    },
+    "scroll": {
+      "args": { "x": "integer?", "y": "integer?" },
+      "description": "Scroll the viewport by a delta."
+    },
+    "dom": {
+      "args": { "selector": "string?" },
+      "description": "Return capped innerHTML for a selector (or the body)."
+    },
+    "extract": {
+      "args": { "selector": "string", "limit": "integer?" },
+      "description": "Return structured text and href values for matching elements."
+    },
+    "snapshot": {
+      "args": { "max_nodes": "integer?" },
+      "description": "Return a capped accessibility-oriented element tree with stable refs."
+    },
+    "screenshot": {
+      "args": { "full_page": "boolean?" },
+      "description": "Capture a PNG screenshot."
+    },
+    "evaluate": {
+      "args": { "script": "string" },
+      "description": "Evaluate a bounded JavaScript expression in the page."
+    },
+    "wait_for": {
+      "args": {
+        "condition": "string",
+        "selector": "string?",
+        "url": "string?",
+        "text": "string?",
+        "script": "string?",
+        "timeout_ms": "integer?"
+      },
+      "description": "Wait for selector, URL, text, function or document load."
+    },
+    "info": {
+      "args": {},
+      "description": "Read the active tab URL and title."
+    },
+    "reload": {
+      "args": {},
+      "description": "Reload the active tab."
+    },
+    "back": {
+      "args": {},
+      "description": "Go back in the active tab's history."
+    },
+    "forward": {
+      "args": {},
+      "description": "Go forward in the active tab's history."
+    },
+    "tabs": {
+      "args": {},
+      "description": "List open tabs."
+    },
+    "new_tab": {
+      "args": { "url": "string?" },
+      "description": "Open a new tab and make it active."
+    },
+    "switch_tab": {
+      "args": { "tab_id": "string" },
+      "description": "Make an existing tab active."
+    },
+    "close_tab": {
+      "args": { "tab_id": "string?" },
+      "description": "Close a tab (the active tab when omitted)."
+    },
+    "close": {
+      "args": {},
+      "description": "Close every browser tab and shut Chromium down."
+    }
+  },
+  "surfaces": {
+    "desktop": {
+      "tool": "browser",
+      "manual_only": ["click_at", "type_active"],
+      "expose": [
+        "navigate",
+        "click",
+        "click_at",
+        "type",
+        "type_active",
+        "press",
+        "hover",
+        "select",
+        "check",
+        "scroll",
+        "dom",
+        "extract",
+        "snapshot",
+        "screenshot",
+        "evaluate",
+        "wait_for",
+        "info",
+        "reload",
+        "back",
+        "forward",
+        "tabs",
+        "new_tab",
+        "switch_tab",
+        "close_tab",
+        "close"
+      ]
+    },
+    "docker": {
+      "tools": {
+        "browser_open": "navigate",
+        "browser_click": "click",
+        "browser_type": "type",
+        "browser_read": "dom",
+        "browser_extract": "extract",
+        "browser_wait": "wait_for",
+        "browser_screenshot": "screenshot",
+        "browser_hover": "hover",
+        "browser_press": "press",
+        "browser_select": "select",
+        "browser_check": "check",
+        "browser_reload": "reload",
+        "browser_back": "back",
+        "browser_forward": "forward",
+        "browser_close": "close"
+      },
+      "unsupported": [
+        "click_at",
+        "type_active",
+        "scroll",
+        "snapshot",
+        "evaluate",
+        "info",
+        "tabs",
+        "new_tab",
+        "switch_tab",
+        "close_tab"
+      ]
+    }
+  },
+  "errors": [
+    "browser_missing",
+    "blocked_url",
+    "selector_not_found",
+    "not_navigated",
+    "timeout",
+    "script_rejected",
+    "permission_denied",
+    "invalid_argument",
+    "tab_not_found"
+  ],
+  "limits": {
+    "max_dom_chars": 200000,
+    "max_text_chars": 30000,
+    "max_snapshot_nodes": 300,
+    "max_screenshot_bytes": 8388608,
+    "max_wait_ms": 60000,
+    "max_evaluate_bytes": 16384,
+    "max_extract_items": 100
+  }
+}

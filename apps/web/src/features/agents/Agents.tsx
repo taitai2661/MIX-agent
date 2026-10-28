@@ -20,7 +20,7 @@ export function Agents() {
     [open, setOpen] = useState(false),
     [error, setError] = useState<unknown>(null);
   return (
-    <main className="page">
+    <section className="page">
       <Title
         title={t("アシスタント設定")}
         sub={t("役割と使えるToolを決めて、自分に合ったアシスタントに。")}
@@ -248,6 +248,6 @@ export function Agents() {
           {t("用途別のアシスタント設定を作成できます。標準のAgentモードは設定を作成せずに利用できます。")}
         </Empty>
       )}
-    </main>
+    </section>
   );
 }

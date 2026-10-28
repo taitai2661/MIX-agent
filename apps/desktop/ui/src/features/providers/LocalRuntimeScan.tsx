@@ -4,12 +4,15 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  ExternalLink,
+  Play,
   Plus,
   Radar,
   Search,
   Terminal,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatBytes, formatContext } from "@/lib/format";
 import { t, tf } from "@/lib/i18n";
 import {
   DataTable,
@@ -26,7 +29,11 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot } from "@/components/ui/status";
-import { MODELS_QUERY_KEY, PROVIDERS_QUERY_KEY } from "@/lib/queries";
+import {
+  LOCAL_RUNTIMES_QUERY_KEY,
+  MODELS_QUERY_KEY,
+  PROVIDERS_QUERY_KEY,
+} from "@/lib/queries";
 import type { LocalRuntimeView } from "@/lib/types";
 
 /** Stable identity for a row: the same runtime on two ports is two rows. */
@@ -83,6 +90,17 @@ export function LocalRuntimeScan({
     mutationFn: () => api.probeLocalEndpoint(manualUrl),
   });
 
+  const startRuntime = useMutation({
+    mutationFn: (runtime: LocalRuntimeView) =>
+      api.localRuntimeStart(runtime.slug),
+    onSuccess: () => {
+      void scan.refetch();
+      void queryClient.invalidateQueries({
+        queryKey: LOCAL_RUNTIMES_QUERY_KEY,
+      });
+    },
+  });
+
   const importRuntime = useMutation({
     mutationFn: (runtime: LocalRuntimeView) =>
       api.importLocalRuntime({
@@ -96,6 +114,9 @@ export function LocalRuntimeScan({
       setImported((prev) => ({ ...prev, [rowKey(runtime)]: true }));
       void queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: LOCAL_RUNTIMES_QUERY_KEY,
+      });
       onImported?.(out.provider.label);
     },
   });
@@ -165,6 +186,9 @@ export function LocalRuntimeScan({
             const hasModels = r.models.length > 0;
             const isManual =
               probe.isSuccess && rowKey(probe.data as LocalRuntimeView) === key;
+            const canStartHere = r.installed && r.can_start;
+            const starting =
+              startRuntime.isPending && startRuntime.variables?.slug === r.slug;
             return (
               <>
                 <td className={tdStrong}>
@@ -231,16 +255,39 @@ export function LocalRuntimeScan({
                               className="flex flex-wrap items-center gap-1.5 text-xs"
                             >
                               <span className="font-mono text-fg">{m.id}</span>
+                              {m.loaded && (
+                                <Badge tone="success" size="sm">
+                                  {t("ロード中")}
+                                </Badge>
+                              )}
+                              {m.family && <Badge size="sm">{m.family}</Badge>}
                               {m.parameter_size && (
                                 <Badge size="sm">{m.parameter_size}</Badge>
                               )}
                               {m.quantization && (
                                 <Badge size="sm">{m.quantization}</Badge>
                               )}
+                              {(m.size_bytes ?? 0) > 0 && (
+                                <span className="text-faint">
+                                  {formatBytes(m.size_bytes ?? 0)}
+                                </span>
+                              )}
                               {m.context_window > 0 && (
                                 <span className="text-faint">
-                                  {`ctx ${Math.round(m.context_window / 1024)}k`}
+                                  {`ctx ${formatContext(m.context_window)}`}
                                 </span>
+                              )}
+                              {m.capabilities?.tools === true && (
+                                <Badge size="sm">tools</Badge>
+                              )}
+                              {m.capabilities?.vision === true && (
+                                <Badge size="sm">vision</Badge>
+                              )}
+                              {m.capabilities?.reasoning === true && (
+                                <Badge size="sm">reasoning</Badge>
+                              )}
+                              {m.capabilities?.embedding === true && (
+                                <Badge size="sm">embedding</Badge>
                               )}
                             </li>
                           ))}
@@ -279,9 +326,45 @@ export function LocalRuntimeScan({
                         : t("取り込む")}
                     </Button>
                   ) : isManual ? null : (
-                    <span className="text-xs text-faint">
-                      {t("起動してください")}
-                    </span>
+                    <div className="flex flex-col items-start gap-1">
+                      {canStartHere && (
+                        <Button
+                          size="sm"
+                          disabled={starting}
+                          onClick={() => startRuntime.mutate(r)}
+                        >
+                          {starting ? (
+                            <Spinner size={12} />
+                          ) : (
+                            <Play size={12} />
+                          )}
+                          {t("起動")}
+                        </Button>
+                      )}
+                      {r.can_open_app && r.install_hint && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            void api
+                              .localRuntimeOpenApp(r.slug)
+                              .catch(() => undefined);
+                          }}
+                        >
+                          <ExternalLink size={12} /> {t("アプリを開く")}
+                        </Button>
+                      )}
+                      {!r.installed ? (
+                        <span className="text-xs text-faint">
+                          {t("インストールしてください")}
+                        </span>
+                      ) : !canStartHere &&
+                        !(r.can_open_app && r.install_hint) ? (
+                        <span className="text-xs text-faint">
+                          {t("起動方法が不明です")}
+                        </span>
+                      ) : null}
+                    </div>
                   )}
                 </td>
               </>
@@ -290,6 +373,7 @@ export function LocalRuntimeScan({
         </DataTable>
       )}
 
+      {startRuntime.isError && <ErrorBox error={startRuntime.error} />}
       {importRuntime.isError && <ErrorBox error={importRuntime.error} />}
       {importRuntime.isSuccess && (
         <p className="m-0 text-xs text-success">

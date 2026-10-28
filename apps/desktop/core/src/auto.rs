@@ -29,6 +29,8 @@ pub struct AutoCandidate {
     pub vision: bool,
     pub tool_calling: bool,
     pub reasoning: bool,
+    /// Locally hosted runtime (Ollama / LM Studio / vLLM / …).
+    pub is_local: bool,
 }
 
 /// User-selectable tradeoff, mirroring Docker's `PRIORITIES`.
@@ -100,6 +102,9 @@ pub struct AutoSelectOptions {
     pub prefer_other_provider_than: Option<String>,
     pub priority: AutoPriority,
     pub request_key: String,
+    /// Give locally hosted models a modest score bonus. The user opts into
+    /// this; capability and context filters still apply first.
+    pub prefer_local: bool,
 }
 
 /// Auditable details about the selection, persisted on the run.
@@ -556,12 +561,18 @@ pub fn select_auto_model(
         } else {
             0.0
         };
+        let local_bonus = if opts.prefer_local && c.is_local {
+            0.15
+        } else {
+            0.0
+        };
         let speed = sig.map(|s| s.speed_score).unwrap_or(0.0) * speed_scale;
         let cost = cost_score(&c.id) * cost_weight;
-        let score = mean + exploration + reasoning_bonus + speed + cost + continuity_bonus
-            - context_penalty
-            - reliability_penalty
-            - provider_retry_penalty;
+        let score =
+            mean + exploration + reasoning_bonus + speed + cost + continuity_bonus + local_bonus
+                - context_penalty
+                - reliability_penalty
+                - provider_retry_penalty;
         ranked.push((score, i));
         tie_entries.push((i, up, down, prior_up, prior_down));
     }
@@ -623,6 +634,7 @@ mod tests {
             vision: true,
             tool_calling: true,
             reasoning: false,
+            is_local: false,
         }
     }
 
@@ -637,6 +649,7 @@ mod tests {
             prefer_other_provider_than: None,
             priority: AutoPriority::Balanced,
             request_key: "test-key".to_string(),
+            prefer_local: false,
         }
     }
 
@@ -673,6 +686,22 @@ mod tests {
         let (selected, _) =
             select_auto_model(&candidates, &HashMap::new(), &o, &[]).expect("select");
         assert_eq!(selected.id, "b");
+    }
+
+    #[test]
+    fn prefer_local_breaks_an_otherwise_equal_choice() {
+        let local = AutoCandidate {
+            id: "local".into(),
+            provider_id: "p2".into(),
+            is_local: true,
+            ..candidate("local", "p2", "gpt-4o")
+        };
+        let cloud = candidate("cloud", "p1", "gpt-4o");
+        let mut o = opts("hello");
+        o.prefer_local = true;
+        let (selected, _) =
+            select_auto_model(&[local, cloud], &HashMap::new(), &o, &[]).expect("select");
+        assert_eq!(selected.id, "local");
     }
 
     #[test]

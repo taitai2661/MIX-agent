@@ -1,7 +1,9 @@
 import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
-import { ErrorBox, Title } from "@/components/shared";
+import { ConfirmButton } from "@/components/modal";
+import { CardSkeleton } from "@/components/loading";
+import { Empty, ErrorBox, Title } from "@/components/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -38,11 +40,17 @@ export function Projects() {
       await qc.invalidateQueries({ queryKey: ["/projects"] });
     } catch (cause) { setError(cause); }
   }
-  return <main className="page projects-page">
+  return <section className="page projects-page">
     <Title title={t("プロジェクト")} sub={t("会話、指示、資料テキストをまとめます。既存の会話はそのまま残ります。")} />
-    <ErrorBox error={error || projects.error || conversations.error} />
+    <ErrorBox error={error || projects.error || conversations.error} onRetry={() => { setError(null); void projects.refetch(); void conversations.refetch(); }} />
     <form onSubmit={create} className="folder-create"><input aria-label={t("プロジェクト名")} value={name} onChange={event => setName(event.target.value)} placeholder={t("新しいプロジェクト")} maxLength={100} /><Button type="submit">{t("作成")}</Button></form>
-    <div className="folder-chips">{projects.data?.map(item => <Link key={item.id} to={`/projects/${item.id}`}>{item.data.name}</Link>)}</div>
+    {projects.isLoading ? (
+      <CardSkeleton />
+    ) : projects.isError ? null : projects.data && projects.data.length > 0 ? (
+      <div className="folder-chips">{projects.data.map(item => <Link key={item.id} to={`/projects/${item.id}`}>{item.data.name}</Link>)}</div>
+    ) : error ? null : (
+      <Empty>{t("プロジェクトはまだありません。")}</Empty>
+    )}
     {project && <section className="project-detail">
       <h2>{project.data.name}</h2>
       <Link to={`/projects/${project.id}/chat`}>{t("このプロジェクトで新しいチャット")}</Link>
@@ -55,7 +63,22 @@ export function Projects() {
       <Button variant="outline" disabled={!source.trim() || project.data.sources.length >= 20} onClick={() => { update({ sources: [...project.data.sources, source.trim()] }); setSource(""); }}>{t("資料を追加")}</Button>
       <h3>{t("会話")}</h3>
       {conversations.data?.filter(item => item.data.project_id === project.id).map(item => <p key={item.id}><Link to={`/chat/${item.id}`}>{item.data.title}</Link></p>)}
-      <Button variant="outline" onClick={async () => { if (!confirm(t("プロジェクトを削除しますか？ 会話は残ります。"))) return; try { await api(`/projects/${project.id}`, "DELETE"); await qc.invalidateQueries({ queryKey: ["/projects"] }); await qc.invalidateQueries({ queryKey: ["/conversations"] }); location.href = "/projects"; } catch (cause) { setError(cause); } }}>{t("プロジェクトを削除")}</Button>
+      <ConfirmButton
+        variant="outline"
+        title={t("プロジェクトを削除")}
+        message={t("プロジェクトを削除しますか？ 会話は残ります。")}
+        confirmLabel={t("削除")}
+        onConfirm={async () => {
+          try {
+            await api(`/projects/${project.id}`, "DELETE");
+            await qc.invalidateQueries({ queryKey: ["/projects"] });
+            await qc.invalidateQueries({ queryKey: ["/conversations"] });
+            window.location.href = "/projects";
+          } catch (cause) {
+            setError(cause);
+          }
+        }}
+      >{t("プロジェクトを削除")}</ConfirmButton>
     </section>}
-  </main>;
+  </section>;
 }

@@ -13,6 +13,8 @@ docker compose stop
 
 Docker初回起動時のinitがDBパスワード、内部トークン、暗号鍵を生成します。既存の値は上書きしません。Runnerはread-only filesystem、非root、Capability削除、メモリ/CPU/PID上限で起動します。
 
+`mcp-manager` はホストのDocker Socketを直接マウントしません。`docker-socket-proxy` 経由でコンテナ・ボリューム・ネットワーク・イメージのAPIだけを許可し、build/swarm/secrets等の管理APIを減らしています。ただしMCPの導入にはコンテナ作成APIが必要で、managerが侵害された場合の影響は依然として大きいため、信頼できるネットワーク（`mcp` internal network）に限定しています。
+
 ## Browser Runtimeの更新
 
 Browser Toolは専用RunnerのPlaywright Chromiumを使います。依存関係の更新候補はDependabotが毎週作成します。更新を取り込んだら、通常どおり `docker compose up -d --build` でexecution-runnerを再ビルドしてください。これによりPlaywrightと対応するChromium shellも一緒に更新されます。

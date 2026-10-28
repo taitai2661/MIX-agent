@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/button";
 import { ja } from "@/app/strings";
 import { t } from "@/app/i18n";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
+export function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
   const focusable = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
   if (!focusable.length) return;
   const first = focusable[0],
@@ -19,19 +19,24 @@ function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
   }
 }
 
-function useModalDialog(panelRef: RefObject<HTMLDivElement | null>, onCancel: () => void) {
+export function useModalDialog<T extends HTMLElement>(panelRef: RefObject<T | null>, onCancel: () => void) {
+  // Keep the latest handler without re-running the focus effect on every
+  // parent render (typing in a controlled field used to steal focus).
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
   useEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    const preferred = panelRef.current?.querySelector<HTMLElement>("[data-autofocus]");
+    (preferred ?? panelRef.current?.querySelector<HTMLElement>(FOCUSABLE))?.focus();
     const keydown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
+      if (event.key === "Escape") cancelRef.current();
     };
     document.addEventListener("keydown", keydown);
     return () => {
       document.removeEventListener("keydown", keydown);
       previouslyFocused?.focus();
     };
-  }, [onCancel, panelRef]);
+  }, [panelRef]);
 }
 
 function ModalFrame({ panelRef, title, onMouseDown, onKeyDown, children }: {
@@ -59,11 +64,19 @@ function ModalFrame({ panelRef, title, onMouseDown, onKeyDown, children }: {
 export function ConfirmModal({
   title,
   message,
+  confirmLabel,
+  cancelLabel,
+  tone = "default",
   onConfirm,
   onCancel,
 }: {
   title: string;
   message: string;
+  /** Explicit action label ("削除", "移動"…). "確認" is too generic for a
+   *  destructive dialog and gives no hint about what Enter will do. */
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "default" | "danger";
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -86,19 +99,56 @@ export function ConfirmModal({
       <p>{message}</p>
       <div className="form-actions">
         <Button
-          autoFocus
+          variant={tone === "danger" ? "destructive" : "default"}
           onClick={() => {
             onConfirm();
             onCancel();
           }}
         >
-          {t(ja.approve)}
+          {confirmLabel ?? t(ja.approve)}
         </Button>
-        <Button variant="ghost" type="button" onClick={onCancel}>
-          {t(ja.cancel)}
+        <Button autoFocus data-autofocus variant="ghost" type="button" onClick={onCancel}>
+          {cancelLabel ?? t(ja.cancel)}
         </Button>
       </div>
     </ModalFrame>
+  );
+}
+
+/** Button that owns its destructive confirmation, so a call site cannot forget
+ *  the dialog (the old inline `if (!confirm(...))` pattern). */
+export function ConfirmButton({
+  title,
+  message,
+  confirmLabel,
+  tone = "danger",
+  onConfirm,
+  children,
+  ...props
+}: ComponentProps<typeof Button> & {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  tone?: "default" | "danger";
+  onConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button {...props} onClick={() => setOpen(true)}>
+        {children}
+      </Button>
+      {open && (
+        <ConfirmModal
+          title={title}
+          message={message}
+          confirmLabel={confirmLabel}
+          tone={tone}
+          onConfirm={onConfirm}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -142,6 +192,7 @@ export function PromptModal({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           autoFocus
+          data-autofocus
         />
         <div className="form-actions">
           <Button type="submit">{t(ja.confirm)}</Button>

@@ -20,6 +20,8 @@ export interface PendingApproval {
   toolCallId: string;
   name: string;
   arguments: unknown;
+  /** Instant the prompt auto-denies. Absent on older backends. */
+  expiresAt?: string | null;
 }
 
 export interface BudgetRequest {
@@ -223,14 +225,17 @@ export function applyRunEvent(
       }
       break;
     }
-    case "tool_approval_requested":
+    case "tool_approval_requested": {
+      const expiresAt = optString(d.expires_at);
       next.approval = {
         approvalId: optString(d.approval_id) ?? null,
         toolCallId: optString(d.tool_call_id) ?? "",
         name: optString(d.name) ?? "tool",
         arguments: d.arguments,
+        ...(expiresAt ? { expiresAt } : {}),
       };
       break;
+    }
     case "tool_approval_resolved":
       next.approval = null;
       break;

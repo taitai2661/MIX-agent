@@ -41,8 +41,8 @@ describe("i18n", () => {
   it("detects the browser language", () => {
     expect(browserLanguage(["ja-JP", "en"])).toBe("ja");
     expect(browserLanguage(["en-US"])).toBe("en");
-    expect(browserLanguage(["de-DE"])).toBe("ja");
-    expect(browserLanguage([])).toBe("ja");
+    expect(browserLanguage(["de-DE"])).toBe("en");
+    expect(browserLanguage([])).toBe("en");
   });
 
   it("translates relativeTime labels", async () => {

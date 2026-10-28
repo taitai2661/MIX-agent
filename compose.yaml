@@ -144,19 +144,52 @@ services:
     cpus: 1
     depends_on:
       init: {condition: service_completed_successfully}
+  docker-socket-proxy:
+    # Reduces the mcp-manager's Docker API surface.  The manager still needs
+    # container creation for isolated MCP workloads, which is inherently
+    # powerful; build, swarm, secrets, configs and system endpoints are denied.
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
+    restart: unless-stopped
+    # The image writes its generated HAProxy config at startup, so the root
+    # filesystem cannot be read-only.  Everything that can be dropped is.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 128m
+    environment:
+      CONTAINERS: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      IMAGES: 1
+      POST: 1
+      EXEC: 0
+      BUILD: 0
+      SYSTEM: 0
+      SWARM: 0
+      SECRETS: 0
+      CONFIGS: 0
+      EVENTS: 0
+      INFO: 0
+      VERSION: 0
+      PING: 0
+      ALLOW_START: 0
+      ALLOW_STOP: 0
+      ALLOW_RESTARTS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [mcp]
   mcp-manager:
     <<: *restricted
     image: mix-agent-mcp-runtime:local
     user: "1000:1000"
-    group_add: ["0"]
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: mcp-runtime}
     environment:
       TOKEN_FILE: /tokens/manager.token
       POLICY_FILE: /policy/mcp-policy.json
+      DOCKER_HOST: http://docker-socket-proxy:2375
       MCP_RUNTIME_IMAGE: mix-agent-mcp-runtime:local
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - manager-token:/tokens:ro
       - policy:/policy
     command: ["uvicorn", "mcp_manager:app", "--host", "0.0.0.0", "--port", "8003"]
@@ -166,6 +199,7 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
       egress-proxy: {condition: service_started}
+      docker-socket-proxy: {condition: service_started}
   egress-proxy:
     <<: *restricted
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: egress}

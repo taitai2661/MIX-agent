@@ -1,13 +1,31 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { api, listenRunEvents } from "@/lib/api";
-import { useRunEvents } from "@/lib/runStore";
+import { conversationForRun, useRunEvents } from "@/lib/runStore";
+import { isTerminal } from "@/lib/runEvents";
 import {
   CONVERSATIONS_QUERY_KEY,
   PENDING_APPROVALS_QUERY_KEY,
 } from "@/lib/queries";
 import { useUi, type SettingsTab, type View } from "@/lib/ui";
+import { t } from "@/lib/i18n";
+
+/**
+ * Open a blank chat without creating an empty conversation row.
+ *
+ * The backend conversation is created on first send by `ChatPane`, so clicking
+ * 新規チャット three times no longer leaves three untitled rows behind.
+ */
+export function useNewThread() {
+  const setConversationId = useUi((s) => s.setConversationId);
+  const setView = useUi((s) => s.setView);
+  return () => {
+    setConversationId(null);
+    setView("chat");
+  };
+}
 
 /** Create a thread from whatever mode / model / project is selected *now*.
  *
@@ -89,6 +107,30 @@ export function useShellEvents(handlers: {
             queryKey: PENDING_APPROVALS_QUERY_KEY,
           });
         }
+        // A run can finish while the user is reading another thread. The chat
+        // pane only watches the active conversation, so without this its
+        // sidebar marker stayed "running" forever and its transcript stayed
+        // stale until the thread was opened again.
+        if (evt.kind === "status") {
+          const status = (evt.data as { status?: unknown })?.status;
+          if (typeof status === "string" && isTerminal(status)) {
+            const conversationId = conversationForRun(evt.run_id);
+            if (conversationId) {
+              void queryClient.invalidateQueries({
+                queryKey: ["messages", conversationId],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["runs", conversationId],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: CONVERSATIONS_QUERY_KEY,
+              });
+            }
+            window.setTimeout(() => {
+              useRunEvents.getState().clearRun(evt.run_id);
+            }, 1500);
+          }
+        }
       }),
     );
 
@@ -113,6 +155,21 @@ export function useShellEvents(handlers: {
         if (!active) return;
         handlersRef.current.openView("chat");
         window.dispatchEvent(new CustomEvent("mix:new-thread"));
+      }),
+    );
+    track(
+      listen("app://hidden-to-tray", () => {
+        if (!active) return;
+        try {
+          sendNotification({
+            title: "MIX-agent",
+            body: t(
+              "実行はバックグラウンドで継続しています。トレイから再表示できます。",
+            ),
+          });
+        } catch {
+          // Notification permission may be denied; the tray icon is still there.
+        }
       }),
     );
     // DOM-level event so the command palette can trigger the same flow.
@@ -178,7 +235,6 @@ export function useAppShortcuts() {
         setPaletteOpen: palette,
         toggleFileTree: tree,
         toggleSidebar: sidebar,
-        openSettings: settings,
         setRightPanel: rightPanelSetter,
         setSurface: surface,
         setShortcutsOpen: shortcuts,
@@ -186,24 +242,34 @@ export function useAppShortcuts() {
 
       const isMod = e.metaKey || e.ctrlKey;
 
+      // Text scaling for low-vision users / small laptop panels. WebView zoom
+      // is not exposed by the platform menu, so keep the standard chords here.
+      if (isMod && !e.altKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        const state = useUi.getState();
+        state.setZoom(state.zoom + 0.1);
+        return;
+      }
+      if (isMod && !e.altKey && e.key === "-") {
+        e.preventDefault();
+        const state = useUi.getState();
+        state.setZoom(state.zoom - 0.1);
+        return;
+      }
+      if (isMod && !e.altKey && e.key === "0") {
+        e.preventDefault();
+        useUi.getState().setZoom(1);
+        return;
+      }
+
       if (isMod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         palette(true);
         return;
       }
-      if (isMod && !e.shiftKey && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("mix:new-thread"));
-        return;
-      }
       if (isMod && !e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         sidebar();
-        return;
-      }
-      if (isMod && !e.shiftKey && e.key === ",") {
-        e.preventDefault();
-        settings();
         return;
       }
       if (isMod && e.shiftKey && e.key.toLowerCase() === "e") {

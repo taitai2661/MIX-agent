@@ -1,5 +1,9 @@
-//! User-facing Plan Tool: blocks the Run until the user confirms the agent's
-//! structured proposal.
+//! User-facing Plan Tool: renders a structured proposal in the transcript.
+//!
+//! The engine does not yet pause for an approval here: `invoke` returns the
+//! proposal and the run continues. The promise of "blocks until the user
+//! confirms" was previously only in this comment and was never implemented, so
+//! the wording must not claim a gate that does not exist.
 
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -17,8 +21,13 @@ impl Tool for UserPlanTool {
     fn name(&self) -> &str {
         "User plan"
     }
+    /// A proposal is data for the user to read, not an action: showing it must
+    /// not depend on an approval prompt of its own.
+    fn is_sensitive(&self, _args: &serde_json::Value) -> bool {
+        false
+    }
     fn description(&self) -> &str {
-        "Ask the user to confirm a structured plan before proceeding."
+        "Present a structured plan to the user for review."
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({

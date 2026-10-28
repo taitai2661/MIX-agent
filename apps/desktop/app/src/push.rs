@@ -19,6 +19,16 @@ pub const EVT_APPROVAL_REQUESTED: &str = "tool_approval_requested";
 /// Ask the OS to show a notification. Failures are logged, never fatal: a
 /// missing notification must not take down a finished run.
 pub fn notify<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
+    // Interrupting a user who is already looking at the app is noise; the
+    // in-app header/approval card already carries the same information.
+    use tauri::Manager;
+    let focused = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    if focused {
+        return;
+    }
     if let Err(err) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(%err, title, "could not show a notification");
     }
@@ -29,8 +39,11 @@ pub fn request_permission<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_notification::NotificationExt;
-        if let Err(err) = handle.notification().permission_state() {
-            tracing::warn!(%err, "could not read the notification permission state");
+        // Reading the state is not enough on macOS/Windows: the first call has
+        // to actually request it or every notification is silently dropped.
+        match handle.notification().request_permission() {
+            Ok(state) => tracing::info!(?state, "notification permission"),
+            Err(err) => tracing::warn!(%err, "could not request notification permission"),
         }
     });
 }
@@ -38,6 +51,7 @@ pub fn request_permission<R: Runtime>(app: &AppHandle<R>) {
 /// Watch Run Engine events and surface the two that matter.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
     use tauri::Manager;
+    request_permission(app);
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let engine = handle.state::<crate::AppState>().engine.clone();

@@ -1,5 +1,6 @@
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Globe2, Sparkles, KeyRound, Bot, Zap, Shield } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +18,7 @@ export function Setup() {
   const [apiKey, setApiKey] = useState("");
 
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   async function changeLanguage(value: "ja" | "en") {
     setLanguage(value);
@@ -76,6 +78,9 @@ export function Setup() {
       if (installBrowser) {
         await api("/browser/enable", "POST");
         await api("/browser/install", "POST");
+        // The install runs in the background after this screen closes, so the
+        // global notifier needs the fresh status to show its start popup.
+        await queryClient.invalidateQueries({ queryKey: ["/settings"] });
       }
       navigate("/");
     } catch (e) {
@@ -96,36 +101,36 @@ export function Setup() {
 
   const steps = [
     {
-      title: "Welcome to MIX agent",
-      desc: "あなたの指示に従ってコードを書いたり、Webを調べたりする自律型AIエージェントです。設定はたったの数ステップで終わります。",
+      title: t("Welcome to MIX agent"),
+      desc: t("あなたの指示に従ってコードを書いたり、Webを調べたりする自律型AIエージェントです。設定はたったの数ステップで終わります。"),
       content: (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <Bot size={64} style={{ color: "var(--accent)", marginBottom: 20 }} />
-          <h2>AIエージェントを始めましょう</h2>
-          <p style={{ color: "var(--muted)", marginTop: 10 }}>初期設定はすぐに完了します。後から設定画面でいつでも変更可能です。</p>
+          <h2>{t("AIエージェントを始めましょう")}</h2>
+          <p style={{ color: "var(--muted)", marginTop: 10 }}>{t("初期設定はすぐに完了します。後から設定画面でいつでも変更可能です。")}</p>
           <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 30 }}>
             <div style={{ textAlign: "center" }}>
               <Zap size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
-              <p style={{ fontSize: 12, color: "var(--muted)" }}>高速な応答</p>
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>{t("高速な応答")}</p>
             </div>
             <div style={{ textAlign: "center" }}>
               <Shield size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
-              <p style={{ fontSize: 12, color: "var(--muted)" }}>安全な実行環境</p>
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>{t("安全な実行環境")}</p>
             </div>
             <div style={{ textAlign: "center" }}>
               <Globe2 size={28} style={{ color: "var(--accent)", marginBottom: 8 }} />
-              <p style={{ fontSize: 12, color: "var(--muted)" }}>Webアクセス</p>
+              <p style={{ fontSize: 12, color: "var(--muted)" }}>{t("Webアクセス")}</p>
             </div>
           </div>
         </div>
       )
     },
     {
-      title: "AIモデルの接続",
-      desc: "利用するAIプロバイダを選択し、APIキーを入力してください。",
+      title: t("AIモデルの接続"),
+      desc: t("利用するAIプロバイダを選択し、APIキーを入力してください。"),
       content: (
         <div className="card form-grid" style={{ marginTop: 20 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+          <div className="setup-provider-grid">
              <Button variant={selectedProvider === "openai" ? "default" : "outline"} onClick={() => setSelectedProvider("openai")}>OpenAI</Button>
              <Button variant={selectedProvider === "anthropic" ? "default" : "outline"} onClick={() => setSelectedProvider("anthropic")}>Anthropic</Button>
              <Button variant={selectedProvider === "gemini" ? "default" : "outline"} onClick={() => setSelectedProvider("gemini")}>Gemini</Button>
@@ -142,8 +147,8 @@ export function Setup() {
       )
     },
     {
-      title: "ブラウザ機能の準備",
-      desc: "AIがウェブを検索したり、ページを読んだりできるようにしますか？",
+      title: t("ブラウザ機能の準備"),
+      desc: t("AIがウェブを検索したり、ページを読んだりできるようにしますか？"),
       content: (
         <section className="card setup-browser-card" style={{ marginTop: 20 }}>
           <div className="setup-browser-icon"><Globe2 size={24} /></div>
@@ -160,12 +165,12 @@ export function Setup() {
       )
     },
     {
-      title: "準備完了",
-      desc: "すべての設定が終わりました！",
+      title: t("準備完了"),
+      desc: t("すべての設定が終わりました！"),
       content: (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <Sparkles size={64} style={{ color: "var(--accent)", marginBottom: 20 }} />
-          <h2>さあ、始めましょう！</h2>
+          <h2>{t("さあ、始めましょう！")}</h2>
           <p style={{ color: "var(--muted)", marginTop: 10 }}>
             {t("追加のモデル設定やMCPツールの追加は、左下の「設定」からいつでも行えます。")}
           </p>
@@ -175,8 +180,8 @@ export function Setup() {
   ];
 
   return (
-    <main className="setup-page" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="setup-shell" style={{ width: "100%", maxWidth: 800, display: "flex", flexDirection: "column", minHeight: "auto", borderRadius: 24, padding: 40, border: "1px solid var(--line)", background: "var(--surface)", boxShadow: "var(--shadow)" }}>
+    <section className="setup-page">
+      <div className="setup-shell">
 
         <header className="setup-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 30 }}>
           <div>
@@ -196,7 +201,13 @@ export function Setup() {
 
         <ErrorBox error={error} />
 
-        <div className="setup-footer" style={{ display: "flex", justifyContent: "space-between", marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--line)" }}>
+        {step === 0 && (
+          <p className="setup-defer-note">
+            {t("「あとで設定する」を選ぶとセットアップは未完了のままです。ホームに案内が表示され、いつでもここへ戻れます。")}
+          </p>
+        )}
+
+        <div className="setup-footer">
           <Button variant="ghost" onClick={() => step === 0 ? navigate("/") : setStep(step - 1)}>
             {step === 0 ? t("あとで設定する") : <><ChevronLeft size={15} />{t("戻る")}</>}
           </Button>
@@ -211,6 +222,6 @@ export function Setup() {
         </div>
 
       </div>
-    </main>
+    </section>
   );
 }

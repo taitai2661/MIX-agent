@@ -481,7 +481,7 @@ impl RunEngine {
             Vec::new()
         });
         let mut skipped = 0usize;
-        let views: Vec<RunView> = rows
+        let mut views: Vec<RunView> = rows
             .iter()
             .filter_map(|row| {
                 run_view_from_row(row).or_else(|| {
@@ -492,6 +492,32 @@ impl RunEngine {
             .collect();
         if skipped > 0 {
             tracing::warn!(%conversation_id, skipped, "list_runs skipped corrupt run rows");
+        }
+        // One grouped query for the whole conversation instead of one per run.
+        // A denied approval also writes a `tool_result` with an error, so the
+        // count covers both failures and refusals.
+        let failures: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT e.run_id, COUNT(*) FROM run_events e \
+             JOIN runs r ON r.id = e.run_id \
+             WHERE r.conversation_id = ? AND e.kind = 'tool_result' \
+               AND json_extract(e.data, '$.error') IS NOT NULL \
+             GROUP BY e.run_id",
+        )
+        .bind(conversation_id.to_string())
+        .fetch_all(self.storage.pool())
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(?err, %conversation_id, "failed tool count query failed");
+            Vec::new()
+        });
+        let by_run: std::collections::HashMap<String, u32> = failures
+            .into_iter()
+            .map(|(run_id, count)| (run_id, count as u32))
+            .collect();
+        for view in &mut views {
+            if let Some(count) = by_run.get(&view.id.to_string()) {
+                view.failed_tool_count = *count;
+            }
         }
         views
     }
@@ -570,9 +596,30 @@ impl RunEngine {
         model_id: &str,
         message: &HistoryMessage,
     ) {
+        self.append_message_with_reasoning(conversation_id, run_id, model_id, message, None)
+            .await;
+    }
+
+    /// Append one turn, optionally carrying the model's reasoning text.
+    ///
+    /// Reasoning normally lives only in the live view. A cancelled Run is the
+    /// exception: its final assistant turn is never rebuilt from `messages`
+    /// (there is no next turn), so if the partial answer is not written here it
+    /// is lost the moment the UI retires the live block. `list_messages` already
+    /// reads `$.reasoning`, so the persisted row renders exactly like a
+    /// completed one.
+    async fn append_message_with_reasoning(
+        &self,
+        conversation_id: uuid::Uuid,
+        run_id: RunId,
+        model_id: &str,
+        message: &HistoryMessage,
+        reasoning: Option<&str>,
+    ) {
         let data = serde_json::json!({
             "role": message.role,
             "content": message.content,
+            "reasoning": reasoning.unwrap_or(""),
             "modelId": model_id,
             "runId": run_id.to_string(),
             "toolCalls": message.tool_calls,
@@ -685,6 +732,9 @@ fn run_view_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<RunView> {
             .get("toolCallCount")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
+        // Filled by `list_runs` from the persisted events: the count lives in
+        // one row per failed tool result, not in the run's data blob.
+        failed_tool_count: 0,
         started_at: data
             .get("startedAt")
             .and_then(|v| v.as_str())
@@ -856,6 +906,10 @@ pub struct RunRequest {
     pub temperature: Option<f32>,
     pub reasoning: Option<ReasoningControl>,
     pub max_tokens: Option<u32>,
+    /// How long a local runtime should keep the model resident after this
+    /// request. Only the native Ollama transport sends it; a cloud provider
+    /// ignores it. `None` leaves the runtime's own default in force.
+    pub keep_alive: Option<String>,
     /// A throwaway turn: Memory / Knowledge are not injected, and the app layer
     /// purges the transcript afterwards (Docker edition's "temporary mode").
     ///
@@ -972,6 +1026,8 @@ impl RunEngine {
     async fn finish_cancelled(
         &self,
         run_id: RunId,
+        conversation_id: uuid::Uuid,
+        model_id: &str,
         text: String,
         reasoning: String,
         tool_calls: Vec<RunToolCall>,
@@ -979,6 +1035,23 @@ impl RunEngine {
         finish_reason: Option<String>,
         steps: u32,
     ) -> anyhow::Result<RunOutcome> {
+        // Persist what the model had produced before the user pressed Stop.
+        // Cancelling used to discard the partial answer entirely: the live
+        // block was retired 1.5s after the terminal event and no assistant row
+        // was ever written, so the transcript fell back to the bare user turn
+        // with no sign that anything had been generated. The Run row keeps
+        // `cancelled`, which is what the transcript uses to render the marker.
+        if !text.is_empty() || !reasoning.is_empty() {
+            let message = Message::text("assistant", text.clone());
+            self.append_message_with_reasoning(
+                conversation_id,
+                run_id,
+                model_id,
+                &message_to_history(&message),
+                Some(&reasoning),
+            )
+            .await;
+        }
         self.finish_run(
             run_id,
             RunStatus::Cancelled,
@@ -1166,6 +1239,8 @@ impl RunEngine {
                 return self
                     .finish_cancelled(
                         run_id,
+                        request.conversation_id,
+                        &request.model_id,
                         final_text,
                         final_reasoning,
                         all_tool_calls,
@@ -1187,6 +1262,8 @@ impl RunEngine {
                         return self
                             .finish_cancelled(
                                 run_id,
+                                request.conversation_id,
+                                &request.model_id,
                                 final_text,
                                 final_reasoning,
                                 all_tool_calls,
@@ -1334,13 +1411,18 @@ impl RunEngine {
                 .await?;
 
             // A cancellation observed mid-stream comes back as `turn.error`;
-            // report it as Cancelled rather than as a failure.
+            // report it as Cancelled rather than as a failure. `run_turn` keeps
+            // the deltas it had already streamed in `turn.text/reasoning`, so
+            // those are what get persisted — `final_text` only holds a turn
+            // that was already written to the transcript.
             if cancellation.is_cancelled() {
                 return self
                     .finish_cancelled(
                         run_id,
-                        final_text,
-                        final_reasoning,
+                        request.conversation_id,
+                        &request.model_id,
+                        turn.text,
+                        turn.reasoning,
                         all_tool_calls,
                         last_usage,
                         last_finish,
@@ -2139,6 +2221,10 @@ impl RunEngine {
                     "approval_id": record.approval_id,
                     "name": tool_name,
                     "arguments": arguments,
+                    // The prompt auto-denies at this instant. Without the
+                    // deadline the card looked answerable forever and the run
+                    // silently continued as "denied" while the user was away.
+                    "expires_at": expires_at.to_rfc3339(),
                 }),
             )
             .await;
@@ -2329,6 +2415,8 @@ impl RunEngine {
             max_tokens: request.max_tokens,
             reasoning: request.reasoning,
             stream: true,
+            context_window: Some(request.context_window).filter(|value| *value > 0),
+            keep_alive: request.keep_alive.clone(),
         };
 
         self.emit(
@@ -2574,6 +2662,8 @@ async fn summarize_turns(
         max_tokens: Some(SUMMARIZER_MAX_TOKENS),
         reasoning: None,
         stream: true,
+        context_window: None,
+        keep_alive: None,
     };
     let mut stream = match provider.stream(req).await {
         Ok(s) => s,
@@ -2763,6 +2853,7 @@ mod execute_tests {
             temperature: None,
             reasoning: None,
             max_tokens: None,
+            keep_alive: None,
             temporary: true,
             tools: Arc::new(Vec::new()),
             history: Vec::new(),

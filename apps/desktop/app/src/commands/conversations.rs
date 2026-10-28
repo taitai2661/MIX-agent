@@ -712,6 +712,27 @@ async fn dispatch(
     let temporary_mode = input.temporary_mode;
     let purge_conversation = temporary_mode && history.is_empty();
 
+    // A local model's advertised context is a maximum, not a budget. Apply the
+    // user's ceiling and hand Ollama the resulting `num_ctx`, and carry the
+    // keep-alive preference for the native Ollama transport.
+    let locality = super::providers::provider_locality(pool, &provider_id).await;
+    let local_settings = crate::commands::settings::read_settings(pool).await.ok();
+    let max_window = super::projects::context_window_for(pool, &model_id).await;
+    let context_window = super::projects::effective_context_window(
+        max_window,
+        locality.is_managed,
+        local_settings
+            .as_ref()
+            .and_then(|settings| settings.local_context_window),
+    );
+    let keep_alive = if locality.is_managed && locality.is_ollama {
+        local_settings
+            .as_ref()
+            .and_then(|settings| settings.local_keep_alive.clone())
+    } else {
+        None
+    };
+
     let request = RunRequest {
         run_id,
         conversation_id: Uuid::parse_str(&input.conversation_id).map_err(crate::error::cmd_err)?,
@@ -724,10 +745,11 @@ async fn dispatch(
         system: project.system,
         verify_command: project.verify_command,
         format_command: project.format_command,
-        context_window: super::projects::context_window_for(pool, &model_id).await,
+        context_window,
         temperature: input.temperature,
         reasoning,
         max_tokens: input.max_tokens,
+        keep_alive,
         temporary: temporary_mode,
         tools,
         history,

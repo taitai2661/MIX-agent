@@ -229,6 +229,11 @@ pub struct PendingApprovalView {
     pub arguments: serde_json::Value,
     pub created_at: String,
     pub expires_at: String,
+    /// The task this prompt belongs to. A security decision that does not name
+    /// its conversation/folder invites rubber-stamping: "常に許可" then applies
+    /// to a task the user cannot identify.
+    pub conversation_id: Option<String>,
+    pub conversation_title: Option<String>,
 }
 
 #[tauri::command]
@@ -236,16 +241,32 @@ pub async fn list_pending_approvals(
     state: State<'_, AppState>,
 ) -> Result<Vec<PendingApprovalView>, String> {
     let pending = state.engine.executor.list_pending().await;
-    Ok(pending
-        .into_iter()
-        .map(|p| PendingApprovalView {
+    let mut out = Vec::with_capacity(pending.len());
+    for p in pending {
+        let run_id = p.run_id.to_string();
+        // One point lookup per pending prompt (there are only ever a handful).
+        // The join is what gives the approval queue its task context.
+        let context: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT r.conversation_id, json_extract(c.data, '$.title') \
+             FROM runs r LEFT JOIN conversations c ON c.id = r.conversation_id \
+             WHERE r.id = ?",
+        )
+        .bind(&run_id)
+        .fetch_optional(state.storage.pool())
+        .await
+        .map_err(crate::error::cmd_err)?;
+        let (conversation_id, conversation_title) = context.unwrap_or((None, None));
+        out.push(PendingApprovalView {
             approval_id: p.approval_id,
-            run_id: p.run_id.to_string(),
+            run_id,
             tool_call_id: p.tool_call_id,
             tool_name: p.tool_name,
             arguments: p.arguments,
             created_at: p.created_at.to_rfc3339(),
             expires_at: p.expires_at.to_rfc3339(),
-        })
-        .collect())
+            conversation_id,
+            conversation_title,
+        });
+    }
+    Ok(out)
 }

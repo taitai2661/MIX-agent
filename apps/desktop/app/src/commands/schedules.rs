@@ -11,14 +11,36 @@ pub struct ScheduleJobView {
     pub last_run_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Next fire time, when the expression still resolves.
     pub next_run_at: Option<String>,
+    /// What the job actually does. The table used to show only name/cron/state,
+    /// so a schedule could keep firing a prompt the user could no longer see.
+    pub prompt: String,
+    pub mode: String,
+    pub model_id: Option<String>,
+    pub conversation_id: Option<String>,
 }
+
+/// `(id, name, cron, enabled, lastRunAt, prompt, mode, modelId, conversationId)`
+type ScheduleRow = (
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 #[tauri::command]
 pub async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<ScheduleJobView>, String> {
     let pool = state.storage.pool();
-    let rows: Vec<(String, String, String, i64, Option<String>)> = sqlx::query_as(
+    let rows: Vec<ScheduleRow> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.name') AS name, json_extract(data, '$.cron') AS cron, \
-         json_extract(data, '$.enabled') AS enabled, json_extract(data, '$.lastRunAt') AS last_run_at \
+         json_extract(data, '$.enabled') AS enabled, json_extract(data, '$.lastRunAt') AS last_run_at, \
+         json_extract(data, '$.prompt') AS prompt, json_extract(data, '$.mode') AS mode, \
+         json_extract(data, '$.modelId') AS model_id, \
+         json_extract(data, '$.conversationId') AS conversation_id \
          FROM scheduled_jobs ORDER BY json_extract(data, '$.name')",
     )
     .fetch_all(pool)
@@ -26,28 +48,34 @@ pub async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<ScheduleJobView
     .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
-        .map(|(id, name, cron, enabled, last_run_at)| {
-            let last = last_run_at
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                .map(|t| t.with_timezone(&chrono::Utc));
-            let enabled = enabled != 0;
-            let next_run_at = if enabled {
-                mixd_core::schedule::CronSchedule::parse(&cron)
-                    .ok()
-                    .and_then(|s| s.next_after(last.unwrap_or_else(chrono::Utc::now)))
-                    .map(|t| t.to_rfc3339())
-            } else {
-                None
-            };
-            ScheduleJobView {
-                id,
-                name,
-                cron,
-                enabled,
-                last_run_at: last,
-                next_run_at,
-            }
-        })
+        .map(
+            |(id, name, cron, enabled, last_run_at, prompt, mode, model_id, conversation_id)| {
+                let last = last_run_at
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|t| t.with_timezone(&chrono::Utc));
+                let enabled = enabled != 0;
+                let next_run_at = if enabled {
+                    mixd_core::schedule::CronSchedule::parse(&cron)
+                        .ok()
+                        .and_then(|s| s.next_after(last.unwrap_or_else(chrono::Utc::now)))
+                        .map(|t| t.to_rfc3339())
+                } else {
+                    None
+                };
+                ScheduleJobView {
+                    id,
+                    name,
+                    cron,
+                    enabled,
+                    last_run_at: last,
+                    next_run_at,
+                    prompt: prompt.unwrap_or_default(),
+                    mode: mode.unwrap_or_else(|| "chat".into()),
+                    model_id,
+                    conversation_id,
+                }
+            },
+        )
         .collect())
 }
 
@@ -111,13 +139,16 @@ pub async fn create_job(
             .map_err(|_| "invalid mode".to_string())?;
     }
     let id = uuid::Uuid::new_v4().to_string();
+    // Computed once: the same value is stored and returned, and unwrapping the
+    // Option in both places would move it.
+    let mode = input.mode.clone().unwrap_or_else(|| "chat".into());
     let data = serde_json::json!({
         "name": input.name,
         "cron": input.cron,
         "prompt": input.prompt,
         "conversationId": input.conversation_id,
         "modelId": input.model_id,
-        "mode": input.mode.unwrap_or_else(|| "chat".into()),
+        "mode": mode,
         "enabled": true,
     });
     sqlx::query("INSERT INTO scheduled_jobs (id, owner_id, data) VALUES (?, ?, ?)")
@@ -138,6 +169,10 @@ pub async fn create_job(
         enabled: true,
         last_run_at: None,
         next_run_at: next,
+        prompt: input.prompt,
+        mode,
+        model_id: input.model_id,
+        conversation_id: input.conversation_id,
     })
 }
 
@@ -160,6 +195,88 @@ pub async fn set_job_enabled(
         return Err(format!("job not found: {id}"));
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct ScheduleJobUpdate {
+    pub id: String,
+    pub name: String,
+    pub cron: String,
+    pub prompt: String,
+    pub conversation_id: Option<String>,
+    pub model_id: Option<String>,
+    pub mode: Option<String>,
+}
+
+/// Edit a job in place. Previously a typo in the prompt or cron could only be
+/// fixed by deleting the job and recreating it (losing its run history).
+#[tauri::command]
+pub async fn update_job(
+    state: State<'_, AppState>,
+    input: ScheduleJobUpdate,
+) -> Result<(), String> {
+    validate_cron(&input.cron)?;
+    if input.name.trim().is_empty() {
+        return Err("a schedule needs a name".into());
+    }
+    if input.prompt.trim().is_empty() {
+        return Err("a schedule needs a prompt".into());
+    }
+    let mode = input.mode.unwrap_or_else(|| "chat".into());
+    mode.parse::<mixd_core::Mode>()
+        .map_err(|_| "invalid mode".to_string())?;
+    if let Some(conversation_id) = input
+        .conversation_id
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        let exists: Option<String> =
+            sqlx::query_scalar("SELECT id FROM conversations WHERE id = ?")
+                .bind(conversation_id)
+                .fetch_optional(state.storage.pool())
+                .await
+                .map_err(crate::error::cmd_err)?;
+        if exists.is_none() {
+            return Err(format!("conversation not found: {conversation_id}"));
+        }
+    }
+    if let Some(model_id) = input.model_id.as_ref().filter(|s| !s.trim().is_empty()) {
+        let exists: Option<String> = sqlx::query_scalar("SELECT id FROM models WHERE id = ?")
+            .bind(model_id)
+            .fetch_optional(state.storage.pool())
+            .await
+            .map_err(crate::error::cmd_err)?;
+        if exists.is_none() {
+            return Err(format!("model not found: {model_id}"));
+        }
+    }
+    let result = sqlx::query(
+        "UPDATE scheduled_jobs SET data = json_set(data, \
+           '$.name', ?, '$.cron', ?, '$.prompt', ?, '$.mode', ?, \
+           '$.modelId', ?, '$.conversationId', ?) \
+         WHERE id = ?",
+    )
+    .bind(&input.name)
+    .bind(&input.cron)
+    .bind(&input.prompt)
+    .bind(&mode)
+    .bind(&input.model_id)
+    .bind(&input.conversation_id)
+    .bind(&input.id)
+    .execute(state.storage.pool())
+    .await
+    .map_err(crate::error::cmd_err)?;
+    if result.rows_affected() == 0 {
+        return Err(format!("job not found: {}", input.id));
+    }
+    Ok(())
+}
+
+/// Fire a job immediately. The run counts as this slot's execution, so the
+/// daemon does not immediately start a second one.
+#[tauri::command]
+pub async fn run_job_now(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    crate::scheduler::run_now(state.inner(), &id).await
 }
 
 /// Preview the next fire times for an expression without saving anything.

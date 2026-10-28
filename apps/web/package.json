@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-web",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",

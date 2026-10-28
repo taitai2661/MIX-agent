@@ -28,6 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <p>
             {t("予期しないエラーが発生しました。以下のボタンで再読み込みしてください。")}
           </p>
+          <button onClick={() => this.setState({ hasError: false, error: null })}>{t("再試行")}</button>
           <button onClick={() => window.location.reload()}>{t("再読み込み")}</button>
         </main>
       );

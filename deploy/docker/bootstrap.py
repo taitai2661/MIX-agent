@@ -45,3 +45,10 @@ policy = Path("/policy/policy.json")
 if not policy.exists():
     policy.write_text('{"allowed_domains": []}')
     os.chown(policy, 1000, 1000)
+# An empty MCP policy means "no per-source overrides"; the global policy still
+# applies.  Creating it up front keeps a missing file distinguishable from an
+# intentionally empty policy.
+mcp_policy = Path("/policy/mcp-policy.json")
+if not mcp_policy.exists():
+    mcp_policy.write_text('{"source_policies": {}}')
+    os.chown(mcp_policy, 1000, 1000)

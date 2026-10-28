@@ -25,6 +25,7 @@ vi.mock("@/lib/api", () => ({
     listModels: vi.fn(),
     listProviders: vi.fn(),
     listProjects: vi.fn(),
+    localRuntimeSnapshot: vi.fn(async () => []),
     createConversation: vi.fn(),
     sendMessage: vi.fn(),
     editMessage: vi.fn(),
@@ -153,6 +154,30 @@ describe("ChatPane send/edit/retry", () => {
       ),
     );
     expect(useRunEvents.getState().liveRunId).toBe("run-2");
+  });
+
+  it("resends the exact payload when the send itself failed", async () => {
+    mocked.sendMessage
+      .mockRejectedValueOnce(new Error("provider exploded"))
+      .mockResolvedValueOnce({ run_id: "run-2" });
+    const user = userEvent.setup();
+    renderPane();
+
+    const box = await screen.findByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "送り直す{Enter}");
+
+    const retry = await screen.findByRole("button", { name: "再送信" });
+    await user.click(retry);
+
+    await waitFor(() => expect(mocked.sendMessage).toHaveBeenCalledTimes(2));
+    expect(mocked.sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        conversation_id: "conv-1",
+        content: "送り直す",
+      }),
+    );
+    // A send retry must never re-edit (and truncate) an older turn.
+    expect(mocked.editMessage).not.toHaveBeenCalled();
   });
 
   it("retries a failed run by re-editing the last user turn", async () => {

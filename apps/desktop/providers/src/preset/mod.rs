@@ -555,6 +555,18 @@ pub fn by_slug(slug: &str) -> Option<&'static ProviderPreset> {
     PRESETS.iter().find(|p| p.slug == slug)
 }
 
+/// True for a preset that targets a runtime the user can host on their own
+/// machine (Ollama, LM Studio, vLLM, llama.cpp, …).
+///
+/// The catalogue's `category` is the single source of truth, so a new local
+/// preset does not have to be added to a second hard-coded list in the Auto
+/// router. Callers still need [`crate::discovery::is_local_base_url`] for a
+/// provider row that points at the machine's actual base URL: a preset only
+/// says what kind of runtime it is, not where it is running.
+pub fn is_local_slug(slug: &str) -> bool {
+    by_slug(slug).is_some_and(|preset| preset.category == "ローカル")
+}
+
 impl ProviderKind {
     pub fn as_str(&self) -> &'static str {
         match self {

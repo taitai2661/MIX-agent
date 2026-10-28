@@ -225,6 +225,7 @@ describe("automatic 4-retry mechanism", () => {
       "custom-idempotency-key",
       {
         retryDelayMs: 10,
+        retryUnsafe: true,
       },
     );
     await vi.advanceTimersByTimeAsync(200);
@@ -237,6 +238,25 @@ describe("automatic 4-retry mechanism", () => {
       "custom-idempotency-key",
       "custom-idempotency-key",
     ]);
+  });
+
+  it("does not retry a mutating request unless it opts in", async () => {
+    vi.useFakeTimers();
+    let callCount = 0;
+    const fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      return {
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        json: async () => ({ detail: "Service Unavailable" }),
+      };
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const promise = api("/providers", "POST", { name: "p" }, "key", { retryDelayMs: 10 });
+    await expect(promise).rejects.toThrow("Service Unavailable");
+    expect(callCount).toBe(1);
   });
 
   it("honors Retry-After header on 429 rate limit", async () => {
@@ -320,7 +340,7 @@ describe("automatic 4-retry mechanism", () => {
     });
     vi.stubGlobal("fetch", fetch);
 
-    const promise = binary("/upload", {}, { retryDelayMs: 10 });
+    const promise = binary("/upload", {}, { retryDelayMs: 10, retryUnsafe: true });
     await vi.advanceTimersByTimeAsync(100);
     const result = await promise;
 

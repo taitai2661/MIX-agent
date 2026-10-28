@@ -165,4 +165,83 @@ describe("Transcript user-message editing", () => {
     await user.click(screen.getByRole("button", { name: "再試行" }));
     expect(onRetry).toHaveBeenCalled();
   });
+
+  it("confirms before an edit deletes the messages after it", async () => {
+    const onEditMessage = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    const assistant: MessageView = {
+      ...userMessage("回答"),
+      id: "m-2",
+      role: "assistant",
+      run_id: "run-1",
+    };
+    render(
+      <Transcript
+        messages={[userMessage("元のメッセージ"), assistant]}
+        runs={new Map()}
+        live={null}
+        liveRunId={null}
+        onEditMessage={onEditMessage}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "メッセージを編集" }));
+    await user.clear(screen.getByRole("textbox", { name: "メッセージを編集" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "メッセージを編集" }),
+      "直したメッセージ",
+    );
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    // Nothing is sent until the destructive tail is acknowledged.
+    expect(onEditMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("1件");
+
+    await user.click(screen.getByRole("button", { name: "削除して保存" }));
+    expect(onEditMessage).toHaveBeenCalledWith("m-1", "直したメッセージ");
+  });
+
+  it("marks a stopped run and offers a rerun", async () => {
+    const onRetry = vi.fn();
+    const user = userEvent.setup();
+    const cancelled = {
+      id: "run-1",
+      conversation_id: "c-1",
+      mode: "chat",
+      status: "cancelled",
+      model_id: "p:model",
+      step_count: 1,
+      tool_call_count: 0,
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      summary: "",
+      budget: null,
+      error: null,
+    };
+    render(
+      <Transcript
+        messages={[
+          userMessage("質問"),
+          {
+            id: "m-2",
+            role: "assistant",
+            content: "途中まで",
+            reasoning: null,
+            model_id: "p:model",
+            run_id: "run-1",
+            kind: "assistant",
+            created_at: new Date().toISOString(),
+            attachments: [],
+          },
+        ]}
+        runs={new Map([["run-1", cancelled]])}
+        live={null}
+        liveRunId={null}
+        onRetry={onRetry}
+      />,
+    );
+    expect(screen.getAllByText("停止しました").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "再実行" }));
+    expect(onRetry).toHaveBeenCalled();
+  });
 });

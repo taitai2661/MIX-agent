@@ -373,6 +373,32 @@ async def execute(body: Execute):
                 elif name == "browser_type":
                     await p.locator(args["selector"]).first.fill(args["text"])
                     return await browser_frame(p)
+                elif name == "browser_hover":
+                    await p.locator(args["selector"]).first.hover()
+                    return await browser_frame(p)
+                elif name == "browser_press":
+                    await p.keyboard.press(str(args["key"])[:32])
+                    return await browser_frame(p)
+                elif name == "browser_select":
+                    await p.locator(args["selector"]).first.select_option(args["value"])
+                    return await browser_frame(p)
+                elif name == "browser_check":
+                    await p.locator(args["selector"]).first.set_checked(bool(args["checked"]))
+                    return await browser_frame(p)
+                elif name == "browser_reload":
+                    await p.reload(wait_until="domcontentloaded")
+                    return await browser_frame(p)
+                elif name == "browser_back":
+                    await p.go_back(wait_until="domcontentloaded")
+                    return await browser_frame(p)
+                elif name == "browser_forward":
+                    await p.go_forward(wait_until="domcontentloaded")
+                    return await browser_frame(p)
+                elif name == "browser_close":
+                    entry = PAGES.pop(body.run_id, None)
+                    if entry is not None:
+                        await entry["context"].close()
+                    return {"ok": True}
                 elif name == "browser_extract":
                     limit = max(1, min(100, int(args.get("limit", 20) or 20)))
                     items = await p.locator(args["selector"]).evaluate_all(

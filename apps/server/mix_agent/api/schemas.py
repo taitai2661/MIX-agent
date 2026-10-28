@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Input(BaseModel):
@@ -477,6 +477,12 @@ class MessageInput(Input):
     allow_tools: bool = False
     research_mode: bool = False
 
+    @model_validator(mode="after")
+    def _requires_text_or_attachment(self):
+        if not self.content.strip() and not self.artifact_ids:
+            raise ValueError("メッセージ本文または添付が必要です")
+        return self
+
 
 class DecisionInput(Input):
     decision: Literal["once", "always", "denied"]
@@ -613,7 +619,7 @@ class SettingsInput(Input):
     ui_language: Literal["ja", "en"] = "ja"
     default_model_id: str = ""
     auto_model_ids: list[str] | None = None
-    auto_retry_count: int = Field(default=3, ge=0)
+    auto_retry_count: int = Field(default=3, ge=0, le=10)
     auto_dynamic_switching: bool = True
     auto_priority: Literal["balanced", "quality", "speed", "cost"] = "balanced"
     setup_complete: bool = False

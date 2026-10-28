@@ -43,7 +43,7 @@ Choose the edition that best fits your environment and workflow:
 | **Process Architecture** | Single binary + tokio in-proc (+ Chromium child process) | Docker Compose (app, web, db, runner, proxy containers) |
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM Encryption (Docker volumes) |
 | **Terminal & Files** | Direct host file editing, **persistent PTY shell** | Operations isolated inside mounted `/project` or runner |
-| **Browser Operator** | Bundled Chromium / direct system browser automation | Playwright inside dedicated `execution-runner` |
+| **Browser Operator** | On-demand Chromium install / direct system browser automation | Playwright inside dedicated `execution-runner` |
 | **Security & Sandbox** | OS user permissions + **per-action scoped approval rules** | Container sandbox (non-root runner, egress-proxy rules) |
 
 ---
@@ -73,7 +73,9 @@ Download the installer for your OS from [GitHub Releases](https://github.com/tai
   - *WebView2*: The installer bootstrapper tries to install the runtime. An internet connection is required when WebView2 is missing.
   - *Windows SmartScreen*: The installer is unsigned, so Windows may show "Windows protected your PC". Choose "More info" → "Run anyway".
   - *Terminal / Git*: [Git for Windows](https://gitforwindows.org/) (Git Bash) is recommended. Without it, MIX-agent falls back to PowerShell, where POSIX commands such as `ls` and `grep` and some Git integration are unavailable.
-- **Linux**: Not currently published on GitHub Releases. Build from source if needed.
+- **Linux (x64)**:
+  - `AppImage` and `deb` packages are distributed since v0.5.2.
+  - AppImage supports in-app updates (Settings ▸ Updates). For deb, update manually from GitHub Releases.
 
 After downloading, verify the file against the `SHA256SUMS` asset attached to the Release.
 
@@ -145,6 +147,7 @@ Both editions share a unified agent engine with enterprise-grade capabilities:
 ### 2. 52 Provider Presets & Capability Probing
 - Built-in presets for OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral, DeepSeek, Cohere, Ollama, LM Studio, and more.
 - **Capability Probe**: Automatically checks model tool-calling readiness using zero-side-effect probes before runs.
+- **Local runtime management (Desktop)**: detects Ollama / LM Studio, then starts, stops, restarts, pulls, deletes, loads and unloads from the app. Ollama uses its native API for `num_ctx` (8K ceiling by default) and `keep_alive`.
 
 ### 3. Tool Registry & Fine-Grained Permissions
 - Rich tools for file editing, persistent terminal execution, web search, web browsing, memory, and knowledge retrieval.
@@ -204,9 +207,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 | Document | Content |
 | :--- | :--- |
+| [Documentation Index](docs/README.md) | Full index of `docs/`, placement constraints, and release notes |
+| [Memory Specification](docs/memory-spec.md) | Memory contract shared by both editions |
 | [Desktop README](apps/desktop/README.md) | Desktop edition internals, tool specifications, and packaging |
 | [Architecture Overview](docs/architecture.md) | High-level monorepo architecture and design philosophy |
-| [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) design and API mapping |
+| [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) internals, security, and updates |
 | [Operations Guide](docs/operations.md) | Docker edition administration, backups, and restores |
 | [Verification Matrix](docs/verification.md) | Real-world provider and platform verification status |
 | [ZimaOS Guide](docs/zimaos.md) | Deployment via ZimaOS / CasaOS Community Store |

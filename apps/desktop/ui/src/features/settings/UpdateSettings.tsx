@@ -9,6 +9,7 @@ import { Card, Section } from "@/components/layout";
 import { ToggleRow } from "@/components/common";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
 import { useSettingsForm } from "@/lib/settings";
 import { UPDATE_QUERY_KEY, useUpdateCheck } from "@/lib/updates";
 import type { UpdateProgress } from "@/lib/types";
@@ -31,6 +32,7 @@ export function UpdateSettings() {
   // not fire a second request and an install clears both views at once.
   const checkQuery = useUpdateCheck(loaded && data.auto_check_updates);
   const update = checkQuery.data ?? null;
+  const { confirm, dialog } = useConfirm();
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState<string | null>(null);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
@@ -62,6 +64,22 @@ export function UpdateSettings() {
       unlisten?.();
     };
   }, []);
+
+  const requestInstall = async () => {
+    // The button sits one click away from an alert and used to start an
+    // installer immediately, even though the hint beside it promised a
+    // confirmation dialog. Installing quits/restarts the app on Windows.
+    const ok = await confirm({
+      title: tf("v{version} をインストールしますか？", {
+        version: update?.version ?? "",
+      }),
+      description: t(
+        "ダウンロードとインストールを開始します。インストール後はアプリの再起動が必要です。作業中の実行は完了してからにしてください。",
+      ),
+      confirmLabel: t("ダウンロードしてインストール"),
+    });
+    if (ok) void install();
+  };
 
   const install = async () => {
     setInstalling(true);
@@ -158,7 +176,7 @@ export function UpdateSettings() {
                   <Button
                     size="sm"
                     variant="primary"
-                    onClick={() => void install()}
+                    onClick={() => void requestInstall()}
                   >
                     <Download size={12} /> {t("ダウンロードしてインストール")}
                   </Button>
@@ -235,6 +253,7 @@ export function UpdateSettings() {
           </p>
         </div>
       </Card>
+      {dialog}
     </Section>
   );
 }

@@ -6,7 +6,7 @@ module manageable.  They are re-exported from routes.py for backward compat.
 
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from mix_agent import config
 from mix_agent.db.models import (
@@ -21,6 +21,9 @@ from mix_agent.db.models import (
     ToolCall,
     now,
 )
+
+_LAST_HISTORY_PURGE = None
+TERMINAL_RUN_STATES = ("completed", "failed", "cancelled", "interrupted")
 
 
 def _collect_used_artifact_ids(db, owner_id: str) -> set:
@@ -245,6 +248,25 @@ def purge_conversation(db, conversation):
                 (config.ARTIFACTS / artifact.id).unlink(missing_ok=True)
                 db.delete(artifact)
     db.delete(conversation)
+
+
+def purge_old_run_history(db, retention_days: int = 30) -> int:
+    """Bound the per-run event log for terminal Runs.
+
+    Tool calls and approvals are left in place: approvals reference tool calls
+    and are part of the audit trail.  Events are the high-volume table (one row
+    per streamed activity), so they are the safe first retention target.
+    """
+    global _LAST_HISTORY_PURGE
+    today = now().date()
+    if _LAST_HISTORY_PURGE == today:
+        return 0
+    cutoff = now() - timedelta(days=retention_days)
+    terminal_runs = select(Run.id).where(Run.status.in_(TERMINAL_RUN_STATES))
+    result = db.execute(delete(Event).where(Event.created_at < cutoff, Event.run_id.in_(terminal_runs)))
+    db.commit()
+    _LAST_HISTORY_PURGE = today
+    return result.rowcount or 0
 
 
 def purge_expired_conversations(db):

@@ -32,7 +32,10 @@ import {
   useProviderPresets,
   useProviders,
 } from "@/lib/queries";
-import { LocalDiscoveryCard } from "./LocalDiscoveryCard";
+import {
+  LocalDiscoveryCard,
+  LocalRuntimeManagementCard,
+} from "./LocalDiscoveryCard";
 import type { ProviderPresetView, ProviderView } from "@/lib/types";
 
 function ProviderIcon({ kind }: { kind: string }) {
@@ -179,6 +182,7 @@ export function ProvidersPane() {
   return (
     <Section>
       <LocalDiscoveryCard />
+      <LocalRuntimeManagementCard />
 
       {error && <ErrorBox error={error} />}
 

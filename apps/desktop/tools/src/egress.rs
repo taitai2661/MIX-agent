@@ -10,11 +10,17 @@
 //! callers can pin the actual connection to those addresses. Without the pin
 //! `reqwest` would happily re-resolve the hostname and could land on a
 //! different — possibly private — IP via DNS rebinding.
+//!
+//! The browser's explicit local-network opt-in is handled by the `_with`
+//! variants: a loopback name, a literal private IP, or a hostname that resolves
+//! only to private addresses is allowed without an allowlist entry, while
+//! public destinations still have to match the list.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
+use mixd_browser::{is_forbidden_ip, is_private_ip};
 
 /// How long a hostname resolution may take before the call is failed.
 const DNS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -37,22 +43,45 @@ impl EgressPolicy {
     /// evidence that the address behind it is public, and `localtest.me` and
     /// friends resolve to loopback on purpose.
     pub fn enforce(&self, url: &str) -> anyhow::Result<()> {
+        self.enforce_with(url, false)
+    }
+
+    /// [`enforce`] with an explicit local-network opt-in.
+    ///
+    /// `allow_private` is the browser tool's workspace setting, not a general
+    /// egress relaxation: it lets the agent reach a local dev server while
+    /// keeping link-local/metadata and multicast addresses blocked.
+    pub fn enforce_with(&self, url: &str, allow_private: bool) -> anyhow::Result<()> {
         let parsed = url::Url::parse(url).map_err(|e| anyhow!("invalid url: {}", e))?;
         let host = parsed
             .host_str()
             .ok_or_else(|| anyhow!("url is missing a host: {}", url))?;
-        if self.allowlist.is_empty() {
-            ensure_public_host(host)?;
-            return Ok(());
+        ensure_public_host_with(host, allow_private)?;
+        // The local opt-in is a private-network allowance, not an allowlist
+        // bypass for public hosts. A loopback name or a literal private IP is
+        // reachable without listing it; everything else still has to match.
+        let bare = bare_host(host);
+        let local_literal = allow_private
+            && (is_loopback_name(bare)
+                || bare
+                    .parse::<IpAddr>()
+                    .map(|ip| is_private_ip(&ip))
+                    .unwrap_or(false));
+        if !local_literal {
+            self.check_allowlist(host)?;
         }
-        if !self
-            .allowlist
-            .iter()
-            .any(|pattern| host_matches(pattern, host))
+        Ok(())
+    }
+
+    fn check_allowlist(&self, host: &str) -> anyhow::Result<()> {
+        if !self.allowlist.is_empty()
+            && !self
+                .allowlist
+                .iter()
+                .any(|pattern| host_matches(pattern, host))
         {
             bail!("host {} not in egress allowlist", host);
         }
-        ensure_public_host(host)?;
         Ok(())
     }
 
@@ -65,24 +94,35 @@ impl EgressPolicy {
     /// handing them back in `reqwest::ClientBuilder::resolve` keeps the
     /// connection on the address we vetted.
     pub async fn resolve_async(&self, url: &str) -> anyhow::Result<ResolvedTarget> {
-        self.enforce(url)?;
+        self.resolve_async_with(url, false).await
+    }
+
+    pub async fn resolve_async_with(
+        &self,
+        url: &str,
+        allow_private: bool,
+    ) -> anyhow::Result<ResolvedTarget> {
         let parsed = url::Url::parse(url).map_err(|e| anyhow!("invalid url: {}", e))?;
-        let host = bare_host(
-            parsed
-                .host_str()
-                .ok_or_else(|| anyhow!("url is missing a host: {}", url))?,
-        );
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| anyhow!("url is missing a host: {}", url))?;
+        let bare = bare_host(host);
         let port = parsed.port_or_known_default().unwrap_or(443);
 
         // Literal IP in the URL: no DNS, no rebinding surface, but still
         // honour the policy.
-        if let Ok(ip) = host.parse::<IpAddr>() {
-            if is_private(&ip) {
+        if let Ok(ip) = bare.parse::<IpAddr>() {
+            if is_forbidden_ip(&ip, allow_private) {
                 bail!("refusing to connect to private IP {}", ip);
+            }
+            // Loopback / RFC1918 literals are the whole point of the local
+            // opt-in, so they do not also need an allowlist entry.
+            if !(allow_private && is_private_ip(&ip)) {
+                self.check_allowlist(host)?;
             }
             return Ok(ResolvedTarget {
                 url: url.to_string(),
-                host: host.to_string(),
+                host: bare.to_string(),
                 addrs: vec![SocketAddr::from((ip, port))],
             });
         }
@@ -92,20 +132,29 @@ impl EgressPolicy {
         // answers would otherwise block the tool call (and its cancellation)
         // before reqwest's own timeout can apply.
         let addrs: Vec<SocketAddr> =
-            tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
+            tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((bare, port)))
                 .await
-                .map_err(|_| anyhow!("cannot resolve {}: DNS lookup timed out", host))?
-                .map_err(|e| anyhow!("cannot resolve {}: {}", host, e))?
+                .map_err(|_| anyhow!("cannot resolve {}: DNS lookup timed out", bare))?
+                .map_err(|e| anyhow!("cannot resolve {}: {}", bare, e))?
                 .collect();
         if addrs.is_empty() {
-            bail!("{} did not resolve to any address", host);
+            bail!("{} did not resolve to any address", bare);
+        }
+        // A hostname that resolves *only* to private addresses is a local dev
+        // server under the opt-in, so it is reachable without an allowlist
+        // entry. A mixed answer still has to match: otherwise an unlisted
+        // public host could sneak through by also publishing one private A
+        // record.
+        let all_private = addrs.iter().all(|addr| is_private_ip(&addr.ip()));
+        if !(allow_private && all_private) {
+            self.check_allowlist(host)?;
         }
         let mut vetted = Vec::with_capacity(addrs.len());
         for addr in addrs {
-            if is_private(&addr.ip()) {
+            if is_forbidden_ip(&addr.ip(), allow_private) {
                 bail!(
                     "{} resolves to private address {}, refusing to connect",
-                    host,
+                    bare,
                     addr.ip()
                 );
             }
@@ -113,7 +162,7 @@ impl EgressPolicy {
         }
         Ok(ResolvedTarget {
             url: url.to_string(),
-            host: host.to_string(),
+            host: bare.to_string(),
             addrs: vetted,
         })
     }
@@ -134,23 +183,28 @@ pub struct ResolvedTarget {
     pub addrs: Vec<SocketAddr>,
 }
 
-fn ensure_public_host(host: &str) -> anyhow::Result<()> {
+fn ensure_public_host_with(host: &str, allow_private: bool) -> anyhow::Result<()> {
     // `Url::host_str()` yields IPv6 literals with their brackets intact, and
     // `IpAddr::from_str` rejects those — so `[::1]` slipped past the check.
     let host = bare_host(host);
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private(&ip) {
+        if is_forbidden_ip(&ip, allow_private) {
             bail!("refusing to connect to private IP {}", ip);
         }
         return Ok(());
     }
     // Hostname — try a literal-IP check on the literal form.
     if let Ok(net) = host.parse::<IpNetwork>() {
-        if is_private(&net.network()) {
+        if is_forbidden_ip(&net.network(), allow_private) {
             bail!("refusing to connect to private network {}", net);
         }
     }
     Ok(())
+}
+
+fn is_loopback_name(host: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost")
 }
 
 /// Drop the brackets IPv6 URLs carry around their literal address.
@@ -158,61 +212,6 @@ fn bare_host(host: &str) -> &str {
     host.strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host)
-}
-
-fn is_private(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_private_v4(*v4),
-        IpAddr::V6(v6) => is_private_v6(*v6),
-    }
-}
-
-fn in_cidr(ip: u32, net: u32, prefix: u8) -> bool {
-    debug_assert!(prefix > 0 && prefix <= 32);
-    let mask = u32::MAX << (32 - prefix);
-    (ip & mask) == (net & mask)
-}
-
-/// Address ranges a Tool must never reach: loopback, RFC1918, link-local
-/// (the cloud metadata service lives at `169.254.169.254`), CGNAT,
-/// documentation/benchmark ranges, and multicast/reserved space.
-fn is_private_v4(ip: Ipv4Addr) -> bool {
-    const BLOCKS: &[(u32, u8)] = &[
-        (0x0000_0000, 8),  // 0.0.0.0/8        "this network"
-        (0x0a00_0000, 8),  // 10.0.0.0/8       RFC1918
-        (0x6440_0000, 10), // 100.64.0.0/10    CGNAT
-        (0x7f00_0000, 8),  // 127.0.0.0/8      loopback
-        (0xa9fe_0000, 16), // 169.254.0.0/16   link-local / metadata
-        (0xac10_0000, 12), // 172.16.0.0/12    RFC1918
-        (0xc000_0000, 24), // 192.0.0.0/24     IETF protocol assignments
-        (0xc000_0200, 24), // 192.0.2.0/24     TEST-NET-1
-        (0xc0a8_0000, 16), // 192.168.0.0/16   RFC1918
-        (0xc612_0000, 15), // 198.18.0.0/15    benchmarking
-        (0xc633_6400, 24), // 198.51.100.0/24  TEST-NET-2
-        (0xcb00_7100, 24), // 203.0.113.0/24   TEST-NET-3
-        (0xe000_0000, 4),  // 224.0.0.0/4      multicast
-        (0xf000_0000, 4),  // 240.0.0.0/4      reserved (+ broadcast)
-    ];
-    let raw = u32::from(ip);
-    BLOCKS
-        .iter()
-        .any(|(net, prefix)| in_cidr(raw, *net, *prefix))
-}
-
-fn is_private_v6(ip: Ipv6Addr) -> bool {
-    // IPv4 addresses tunnelled into IPv6 (`::ffff:127.0.0.1`) are the classic
-    // way around a naive IPv6-only check.
-    if let Some(v4) = ip.to_ipv4() {
-        return is_private_v4(v4);
-    }
-    if ip.is_loopback() || ip.is_unspecified() {
-        return true;
-    }
-    let head = ip.segments()[0];
-    (head & 0xffc0) == 0xfe80 // fe80::/10 link-local
-        || (head & 0xfe00) == 0xfc00 // fc00::/7 unique-local
-        || (head & 0xff00) == 0xff00 // ff00::/8 multicast
-        || head == 0x0100 // 100::/64 discard-only
 }
 
 fn host_matches(pattern: &str, host: &str) -> bool {
@@ -265,6 +264,62 @@ mod tests {
                 "{url} must be blocked"
             );
         }
+    }
+
+    #[test]
+    fn local_opt_in_allows_dev_servers_but_not_metadata() {
+        let policy = EgressPolicy::default();
+        for url in [
+            "http://127.0.0.1:5173/",
+            "http://localhost:3000/",
+            "http://192.168.1.20/",
+            "http://[::1]:5173/",
+            "http://[::ffff:127.0.0.1]:5173/",
+        ] {
+            assert!(
+                policy.enforce_with(url, true).is_ok(),
+                "{url} must be reachable with the local opt-in"
+            );
+        }
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[fe80::1]/",
+            "http://224.0.0.1/",
+        ] {
+            assert!(
+                policy.enforce_with(url, true).is_err(),
+                "{url} must stay blocked even with the local opt-in"
+            );
+        }
+    }
+
+    #[test]
+    fn local_opt_in_does_not_bypass_the_allowlist_for_public_hosts() {
+        // The opt-in is for private destinations. A configured allowlist must
+        // still gate public hosts; otherwise turning on "local access" would
+        // silently disable the egress allowlist.
+        let policy = EgressPolicy::from_allowlist(vec!["api.example.com".to_string()]);
+        for url in [
+            "http://127.0.0.1:5173/",
+            "http://localhost:5173/",
+            "http://192.168.1.20/",
+        ] {
+            assert!(
+                policy.enforce_with(url, true).is_ok(),
+                "{url} is local and must not need an allowlist entry"
+            );
+        }
+        assert!(
+            policy.enforce_with("https://example.com/", true).is_err(),
+            "a public host still needs an allowlist entry"
+        );
+        assert!(
+            policy
+                .enforce_with("https://api.example.com/", true)
+                .is_ok(),
+            "an allowlisted public host stays reachable"
+        );
     }
 
     #[test]

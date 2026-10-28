@@ -1,4 +1,4 @@
-import { getJSON, setJSON } from "./storage";
+import { getJSON, removeKey, setJSON } from "./storage";
 
 const PROMPT_HISTORY_KEY = "mix:prompt-history";
 const MAX_PROMPT_HISTORY = 50;
@@ -31,4 +31,14 @@ export function pushPromptHistory(
   );
   setJSON(PROMPT_HISTORY_KEY, next, store);
   return next;
+}
+
+/** Remove the local prompt history. Temporary sends must never reach it. */
+export function clearPromptHistory(store?: Storage | null): void {
+  removeKey(PROMPT_HISTORY_KEY, store);
+}
+
+/** Number of prompts currently available through ArrowUp. */
+export function promptHistoryCount(store?: Storage | null): number {
+  return loadPromptHistory(store).length;
 }

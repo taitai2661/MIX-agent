@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::stream::Stream;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
 pub mod anthropic;
@@ -16,6 +17,8 @@ pub mod discovery;
 pub mod dsml;
 pub mod gemini;
 pub mod lmstudio;
+pub mod local_error;
+pub mod local_ops;
 pub mod ollama;
 pub mod openai;
 pub mod openai_compat;
@@ -47,6 +50,15 @@ pub struct ProviderRequest {
     pub reasoning: Option<ReasoningControl>,
     #[serde(default)]
     pub stream: bool,
+    /// Context window the engine wants this turn to use. Only the native
+    /// Ollama transport can honour it per request (`options.num_ctx`); other
+    /// adapters ignore it.
+    #[serde(default)]
+    pub context_window: Option<u32>,
+    /// How long a local runtime should keep the model resident after this
+    /// request. Only the native Ollama transport sends it.
+    #[serde(default)]
+    pub keep_alive: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,3 +312,138 @@ pub trait Provider: Send + Sync {
 }
 
 pub type StreamBox = std::pin::Pin<Box<dyn Stream<Item = StreamEvent> + Send>>;
+
+/// Verify tool-calling support with one side-effect-free request.
+///
+/// The old `verify_tools` command copied [`Provider::capabilities`], which is
+/// a static property of the *transport* — every OpenAI-compatible adapter
+/// claimed tools. That is wrong for small local models and for compatible
+/// gateways that expose a mixed catalogue. This probe sends a single tool
+/// schema and a 64-token budget, then treats a tool call as "supported" and a
+/// normal finish as "unsupported". A provider error after the stream starts is
+/// also "unsupported": sending tools to it would fail the same way, and the
+/// user asked for a capability answer, not for a retry.
+pub async fn probe_tool_calling(provider: &dyn Provider, model: &str) -> anyhow::Result<bool> {
+    const PROBE_NAME: &str = "mix_tool_probe";
+    let tools = Arc::new(vec![ToolSpec {
+        name: PROBE_NAME.to_string(),
+        description: "Internal compatibility check. Call this function now.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        }),
+    }]);
+    let request = ProviderRequest {
+        model: model.to_string(),
+        messages: vec![Message::text(
+            "user",
+            "Call mix_tool_probe now. Do not answer with text.",
+        )],
+        system: None,
+        tools,
+        temperature: Some(0.0),
+        top_p: None,
+        max_tokens: Some(64),
+        reasoning: None,
+        stream: true,
+        context_window: None,
+        keep_alive: None,
+    };
+    let mut stream = provider.stream(request).await?;
+    let supported = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::ToolCallStart { name, .. }
+                | StreamEvent::ToolCallFinish { name, .. }
+                    if name == PROBE_NAME =>
+                {
+                    return true;
+                }
+                StreamEvent::Finished { .. } => return false,
+                StreamEvent::Error(err) => {
+                    tracing::debug!(%err, model, "tool capability probe ended with an error");
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        false
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("tool capability probe timed out"))?;
+    Ok(supported)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct StubProvider {
+        id: String,
+        events: Vec<StreamEvent>,
+    }
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn id(&self) -> &ProviderId {
+            &self.id
+        }
+
+        fn label(&self) -> &str {
+            "stub"
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                vision: false,
+                tool_calling: true,
+                reasoning: false,
+                streaming: true,
+            }
+        }
+
+        async fn stream(&self, _req: ProviderRequest) -> anyhow::Result<StreamBox> {
+            Ok(Box::pin(futures_util::stream::iter(self.events.clone())))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_proves_support() {
+        let provider = StubProvider {
+            id: "stub".to_string(),
+            events: vec![
+                StreamEvent::ToolCallStart {
+                    id: "call_1".into(),
+                    name: "mix_tool_probe".into(),
+                },
+                StreamEvent::ToolCallFinish {
+                    id: "call_1".into(),
+                    name: "mix_tool_probe".into(),
+                    arguments: "{}".into(),
+                },
+                StreamEvent::Finished {
+                    finish_reason: "tool_calls".into(),
+                    usage: None,
+                },
+            ],
+        };
+        assert!(probe_tool_calling(&provider, "test-model")
+            .await
+            .expect("probe"));
+    }
+
+    #[tokio::test]
+    async fn a_plain_finish_proves_absence() {
+        let provider = StubProvider {
+            id: "stub".to_string(),
+            events: vec![StreamEvent::Finished {
+                finish_reason: "stop".into(),
+                usage: None,
+            }],
+        };
+        assert!(!probe_tool_calling(&provider, "test-model")
+            .await
+            .expect("probe"));
+    }
+}

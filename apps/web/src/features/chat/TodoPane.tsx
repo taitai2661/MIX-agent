@@ -1,4 +1,5 @@
 import { t } from "@/app/i18n";
+import { useState } from "react";
 import { CheckCircle2, ChevronDown, Circle, ListTodo, Loader2 } from "lucide-react";
 
 type Status = "pending" | "in_progress" | "completed";
@@ -35,13 +36,15 @@ export function TodoPane({ items }: { items?: unknown }) {
     list.find((item) => item.status === "in_progress") ??
     list.find((item) => item.status === "pending");
   const progressPercent = Math.round((done / list.length) * 100);
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const detailsOpen = userOpen ?? !allCompleted;
 
   return (
     <section
       className={`todo-panel${allCompleted ? " is-completed" : ""}`}
       aria-label={t("この会話のTodo")}
     >
-      <details className="todo-panel-details" open={!allCompleted}>
+      <details className="todo-panel-details" open={detailsOpen} onToggle={(e) => setUserOpen(e.currentTarget.open)}>
         <summary className="todo-panel-heading">
           <div className="todo-panel-summary-left">
             <span className="todo-panel-icon">

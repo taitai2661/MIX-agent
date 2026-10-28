@@ -22,6 +22,13 @@ async fn dispatch<R: Runtime>(app: &AppHandle<R>, url: &str) {
     // Surface the result in the UI and republish the server's tools.
     use tauri::Emitter;
     let _ = app.emit("mcp_oauth_complete", url);
+    // Returning from the browser used to leave the app hidden/minimised with
+    // no visible result. Surface it first.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<crate::AppState>();

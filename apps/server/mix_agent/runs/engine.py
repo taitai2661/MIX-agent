@@ -633,6 +633,14 @@ def launch(run_id):
             db.commit()
     task = asyncio.create_task(drive(run_id))
     task.launch_epoch = epoch
+
+    def _forget(completed):
+        # Remove the finished task immediately instead of waiting for the next
+        # launch, so a long-lived process does not retain completed Run state.
+        if TASKS.get(run_id) is completed:
+            TASKS.pop(run_id, None)
+
+    task.add_done_callback(_forget)
     TASKS[run_id] = task
 
 
@@ -2358,8 +2366,15 @@ async def scheduler():
                 delay = 2.0
             else:
                 with SessionLocal() as db:
-                    from mix_agent.api.helpers.cleanup import purge_expired_conversations
+                    from mix_agent.api.helpers.cleanup import (
+                        purge_expired_conversations,
+                        purge_old_run_history,
+                    )
+                    from mix_agent.auth.security import purge_expired_sessions
 
+                    if purge_expired_sessions(db):
+                        db.commit()
+                    purge_old_run_history(db)
                     purge_expired_conversations(db)
                     from mix_agent.schedules import tick
 
