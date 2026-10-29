@@ -119,7 +119,7 @@ def tick(db, launch):
         job = db.get(ScheduledJob, scheduled.job_id)
         if not job or not job.data.get("enabled"):
             continue
-        from mix_agent.api.routes import enqueue_scheduled_run
+        from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
 
         try:
             run = enqueue_scheduled_run(db, job.owner_id, job, scheduled)
@@ -151,7 +151,7 @@ def tick(db, launch):
             notify(db, job.owner_id, "schedule.skipped", data["name"], scheduled)
             db.commit()
             continue
-        from mix_agent.api.routes import enqueue_scheduled_run
+        from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
 
         try:
             run = enqueue_scheduled_run(db, job.owner_id, job, scheduled)
@@ -201,7 +201,7 @@ def reconcile(db, launch):
         if not occurrences:
             continue
         chosen = occurrences[-1] if job.data.get("catch_up") else None
-        from mix_agent.api.routes import enqueue_scheduled_run
+        from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
 
         for occurrence in occurrences[-MAX_MISSED_ROWS:]:
             scheduled = claim(db, job, occurrence)

@@ -29,11 +29,9 @@ from mix_agent.tools.registry import registry
 def enqueue_scheduled_run(db, owner_id, job, scheduled):
     """Create a normal engine Run from a scheduled job using ContextBuilder."""
     # Lazy imports to avoid circular dependency with routes.py
-    from mix_agent.api.routes import (
-        _model_window_info,
-        effective_tool_ids,
-        own,
-    )
+    from mix_agent.api.common import own
+    from mix_agent.api.routes_conversations import effective_tool_ids
+    from mix_agent.api.routes_messages import _model_window_info
     from mix_agent.providers.probing import tool_capability
 
     data = job.data

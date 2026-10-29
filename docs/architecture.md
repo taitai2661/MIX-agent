@@ -46,7 +46,30 @@ React (Web UI) ─► REST / SSE ─► FastAPI (apps/server)
                                                             egress-proxy ─► 許可ドメイン (HTTPS)
 ```
 
-### 1. プロセスと並行処理
+### 1. モジュール構成（Docker 版）
+
+`apps/server/mix_agent/api/routes.py` は互換 import の集約だけを持ち、エンドポイントは
+ドメイン別モジュールに分割されています。
+
+| モジュール | 担当 |
+| :--- | :--- |
+| `api/routes_settings.py` | 設定、Browser 管理、診断、Tool 権限 |
+| `api/routes_statistics.py` | 利用統計・使用量 |
+| `api/routes_conversations.py` | 会話一覧・状態・履歴・プロジェクト削除 |
+| `api/routes_messages.py` | メッセージ送信/編集、フィードバック、モデル検証、履歴構築 |
+| `api/routes_runs.py` | Run 取得、SSE、キャンセル、承認、予算延長、Browser 操作 |
+| `api/routes_memories.py` | Memory の一覧・解決・関連・復元 |
+| `api/routes_skills.py` / `routes_mcp.py` | Skills / MCP |
+| `api/routes_schedules.py` | 定期実行 |
+| `api/routes_collections.py` | 汎用 CRUD（models / agents / projects など） |
+
+Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ）、`engine_support.py`
+（共通ヘルパ）、`engine_tools.py`、`engine_context.py`、`engine_routing.py`、
+`engine_provider.py` に分かれています。`routes.py` は旧 import 経路
+（`from mix_agent.api.routes import context` など）を維持するための薄い
+ファサードです。
+
+### 2. プロセスと並行処理
 - FastAPI は 1 プロセスで起動します。メモリ内の Task 管理や承認の排他制御は単一プロセス前提です。
 - 会話単位の有効な Run は部分ユニークインデックスにより 1 件に制限されます。
 

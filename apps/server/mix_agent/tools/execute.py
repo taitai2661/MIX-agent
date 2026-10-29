@@ -716,7 +716,7 @@ async def execute(db, run, tool, args):
             scheduled = claim(db, job, now())
             if not scheduled:
                 raise ValueError("This scheduled run has already started")
-            from mix_agent.api.routes import enqueue_scheduled_run
+            from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
             from mix_agent.runs.engine import launch
 
             scheduled_run = enqueue_scheduled_run(db, run.owner_id, job, scheduled)

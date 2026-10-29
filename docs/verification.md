@@ -293,5 +293,13 @@ Dockerビルド中にホストの空き容量が約1.8GiBまで低下したた�
 - Docker: `/memories*` 10ルートを `api/routes_memories.py` へ分割し、`docs/openapi.json` と `apps/web/src/generated/api.ts` を再生成した。
 - Web: ESLint（`--max-warnings 0`, react-hooks, jsx-a11y）と Prettier を CI に追加。`any` を生成型へ置換し、条件付き Hook 3件を修正。カバレッジ下限を lines/statements 34%、functions 57.5% へ引き上げた。E2E に「送信 → SSE text → done」を追加。
 - CI: 外部 Action をコミット SHA に固定（`dtolnay/rust-toolchain@master` を含む）。
-- 検証: `pytest` 605 passed / 1 skipped、`cargo test --workspace` 全 suite 成功、`cargo clippy --workspace --all-targets -D warnings`、`ruff check` / `ruff format --check`、pyright budget（0 errors / 45 warnings）、Web lint / format / 174 tests / coverage / build / Playwright 3 tests が成功。
-- 未実施: Developer ID / Authenticode 署名（証明書が無いため。手順は `docs/release-checklist.md`）、SQLCipher 実装、`routes.py` / `engine.*` の全面的な分割。
+- 検証: `pytest` 605 passed / 1 skipped、`cargo test --workspace` 全 suite 成功、`cargo clippy --workspace --all-targets -D warnings`、`ruff check` / `ruff format --check`、pyright budget（0 errors / 45 warnings）、Web lint / format / 198 tests / coverage 41.2% lines・79.9% branches・60.36% functions / build / Playwright 3 tests、Desktop UI lint / typecheck / 317 tests / build が成功。
+- 未実施: Developer ID / Authenticode 署名（証明書が無いため。手順は `docs/release-checklist.md`）、SQLCipher 実装。
+- 巨大ファイル分割（2026-10-29）:
+  - `api/routes.py` 3,520行 → 集約33行 + `routes_{settings,statistics,schedules,conversations,messages,runs,memories,skills,mcp,collections}.py`。
+  - `runs/engine.py` 2,444行 → `engine.py`（起動・駆動・scheduler）+ `engine_support/tools/context/routing/provider.py`。
+  - Desktop `core/src/runs/engine.rs` 3,499行 → `engine.rs` 690行 + `engine/{event_bus,query,execute,execute_turn,execute_tools,execute_budget,finish,helpers}.rs`。
+  - Desktop `tools/src/terminal.rs` 1,992行 → `terminal.rs` 632行 + `terminal/{shell,session,parsing,sandbox,tests}.rs`。
+  - Web `features/chat/Chat.tsx` 1,123行 → 438行 + `useChatRunStream` / `useChatActions` / `ChatTranscript` / `ChatMessage` / `ChatComposer` / `ChatRunPanels` / `ChatWelcome` / `ChatMarkdown`。
+  - Desktop UI `Composer.tsx` 1,110行 → 317行 + `useComposerState` / `ComposerToolbar` / `ComposerAttachments` / `composerTypes` / `composerModes`。
+  - 確認: `cargo test --workspace` / `clippy -D warnings` / `cargo fmt --check`、Docker `pytest` 605 passed / 1 skipped、Web lint / format / 198 tests / coverage 41.2% lines・79.9% branches・60.36% functions / build / E2E 3 tests、Desktop UI lint / typecheck / 317 tests / build / format をすべて再実行して成功。

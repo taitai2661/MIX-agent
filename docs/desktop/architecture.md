@@ -26,6 +26,23 @@ MIX-agent/
 └── compose.yaml                # Docker Compose 設定
 ```
 
+### Run Engine / Terminal のモジュール分割
+
+`core/src/runs/engine.rs` は型定義と起動・駆動・スケジューラだけを持ち、実装は
+`core/src/runs/engine/` 配下へ分割されています。
+
+| ファイル | 担当 |
+| :--- | :--- |
+| `engine/event_bus.rs` | イベントのバッファリング、シーケンス、DB 永続化 |
+| `engine/query.rs` | Run 一覧・状態、履歴、スナップショット、steering |
+| `engine/execute.rs` | 1 Run のメインループ |
+| `engine/execute_turn.rs` / `execute_tools.rs` | Provider ターン、Tool 実行と承認 |
+| `engine/execute_budget.rs` / `finish.rs` | 予算延長、終了処理 |
+| `engine/helpers.rs` | 履歴変換、要約、並列可否などの純粋関数 |
+
+`tools/src/terminal.rs` も `terminal/{shell,session,parsing,sandbox,tests}.rs` に
+分割し、公開 API（`TerminalTool` と `truncate_to_char_boundary`）は変えていません。
+
 ## 信頼境界
 
 ```

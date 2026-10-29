@@ -35,10 +35,12 @@ export default defineConfig({
       // Ratchet: keep each metric at the measured value so new code must be
       // tested instead of relying on the large untested legacy surface.
       thresholds: {
-        lines: 34,
-        functions: 57.5,
-        branches: 78,
-        statements: 34,
+        // Raised after the Chat/Composer split added interaction tests:
+        // measured 41.2 / 60.36 / 79.9, kept slightly below to avoid flakes.
+        lines: 40.5,
+        functions: 60,
+        branches: 79.5,
+        statements: 40.5,
         // The API error envelope and its translations are a contract with the
         // server; a global 33% floor says nothing about them. Keep these high
         // so a new status code or message cannot land untested.

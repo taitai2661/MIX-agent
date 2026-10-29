@@ -9,7 +9,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
-import type { DraftAttachment } from "./Composer";
+import type { DraftAttachment } from "./composerTypes";
 
 export const MAX_ATTACHMENTS = 8;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;

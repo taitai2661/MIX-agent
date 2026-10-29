@@ -20,9 +20,17 @@ from mix_agent.logging_setup import configure_logging
 from mix_agent.api.routes import router
 from mix_agent.api.routes_artifacts import router as artifacts_router
 from mix_agent.api.routes_auth import router as auth_router
+from mix_agent.api.routes_conversations import router as conversations_router
+from mix_agent.api.routes_mcp import router as mcp_router
 from mix_agent.api.routes_memories import router as memories_router
+from mix_agent.api.routes_messages import router as messages_router
 from mix_agent.api.routes_notifications import router as notifications_router
 from mix_agent.api.routes_providers import router as providers_router
+from mix_agent.api.routes_runs import router as runs_router
+from mix_agent.api.routes_schedules import router as schedules_router
+from mix_agent.api.routes_settings import router as settings_router
+from mix_agent.api.routes_skills import router as skills_router
+from mix_agent.api.routes_statistics import router as statistics_router
 from mix_agent.runs.engine import TASKS, scheduler
 
 
@@ -288,6 +296,16 @@ app.include_router(providers_router)
 app.include_router(artifacts_router)
 app.include_router(notifications_router)
 app.include_router(memories_router)
+app.include_router(settings_router)
+app.include_router(statistics_router)
+app.include_router(schedules_router)
+# Conversations owns the explicit `/projects/{key}` route, so it must be
+# registered before the generic `/{collection}/{key}` router below.
+app.include_router(messages_router)
+app.include_router(conversations_router)
+app.include_router(runs_router)
+app.include_router(skills_router)
+app.include_router(mcp_router)
 app.include_router(router)
 web = Path(os.getenv("WEB_DIST", "apps/web/dist"))
 if (web / "assets").exists():

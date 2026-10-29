@@ -1,3 +1,4 @@
+import type { Row } from "@/app/api";
 import type { components } from "@/generated/api";
 import type { ActivitySummary } from "./ToolActivity";
 
@@ -8,6 +9,7 @@ export type ApprovalDecision =
 export type Artifact = components["schemas"]["ArtifactView"];
 export type ConversationHistory =
   components["schemas"]["ConversationMessagesView"];
+export type ConversationRun = NonNullable<ConversationHistory["runs"]>[number];
 export type Run = components["schemas"]["RunView"] & {
   browser_manual_active?: boolean;
   browser_pause_requested?: boolean;
@@ -26,6 +28,42 @@ export type StagnationFinding = {
   tool_id?: string;
   count?: number;
 };
+export type Feedback = components["schemas"]["FeedbackInput"]["value"];
+export type ChatModel = Row & {
+  data: {
+    capabilities?: Record<string, boolean | null>;
+    overrides?: Record<string, boolean | null>;
+    reasoning_control?: boolean;
+    tool_probe?: { status?: string };
+  };
+};
+export type ChatAgent = Row & {
+  data: {
+    mode: ChatMode;
+    model_id?: string;
+    name: string;
+    tool_ids?: string[];
+    max_seconds?: number;
+    max_steps?: number;
+    max_tool_calls?: number;
+  };
+};
+
+/** Runs that still own a live stream or a polling fallback. */
+export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "paused",
+  "budget_extension_pending",
+];
+/** Runs that will never emit another event. */
+export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
 
 type JsonRecord = Record<string, unknown>;
 const runStatuses = new Set<RunStatus>([

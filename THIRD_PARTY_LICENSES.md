@@ -148,7 +148,7 @@ This document lists third-party software components and dependencies used by MIX
 | `eslint` | `^9.39.5` | npm |
 | `eslint-plugin-jsx-a11y` | `^6.10.2` | npm |
 | `eslint-plugin-react-hooks` | `^5.2.0` | npm |
-| `jsdom` | `^30.1.1` | npm |
+| `jsdom` | `30.1.3` | npm |
 | `lucide-react` | `^0.511.0` | npm |
 | `openapi-typescript` | `^7.8.0` | npm |
 | `prettier` | `3.5.3` | npm |
