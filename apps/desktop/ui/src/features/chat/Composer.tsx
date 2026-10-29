@@ -120,6 +120,8 @@ export const Composer = memo(function Composer(props: {
     options: { temporaryMode: boolean; allowTools: boolean },
   ) => void | Promise<unknown>;
   onStop: () => void;
+  /** Sends text to a Run that is already working, instead of stopping it. */
+  onSteer?: (content: string) => void | Promise<unknown>;
   /** Key shortcut used to send messages (Enter vs Cmd/Ctrl+Enter). */
   sendShortcut?: SendShortcut;
   /** Drafts are scoped per conversation so switching threads no longer drops
@@ -146,7 +148,7 @@ export const Composer = memo(function Composer(props: {
   const modelsPending = props.modelsPending ?? ctx?.modelsPending ?? false;
   const projectsPending =
     props.projectsPending ?? ctx?.projectsPending ?? false;
-  const { busy, onSend, onStop, draftKey = null } = props;
+  const { busy, onSend, onStop, onSteer, draftKey = null } = props;
   const [draft, setDraft] = useState(() => loadComposerDraft(draftKey ?? null));
   const {
     attachments,
@@ -378,6 +380,7 @@ export const Composer = memo(function Composer(props: {
           : !modelId
             ? t("モデルを選択してください")
             : null;
+  const canSteer = busy && !!onSteer && draft.trim().length > 0;
   const canSend =
     draft.trim().length > 0 &&
     !busy &&
@@ -435,6 +438,25 @@ export const Composer = memo(function Composer(props: {
   }, [setMode, allowedModes]);
 
   const submit = async () => {
+    // While a Run is working, Enter sends the text as an interjection instead
+    // of being ignored. The draft is only cleared once the backend accepted it.
+    if (busy) {
+      const trimmed = draft.trim();
+      if (!trimmed || !onSteer) return;
+      try {
+        await onSteer(trimmed);
+      } catch {
+        textareaRef.current?.focus();
+        return;
+      }
+      pushPromptHistory(trimmed);
+      historyIndexRef.current = -1;
+      historyDraftRef.current = "";
+      setDraft("");
+      clearComposerDraft(draftKeyRef.current);
+      textareaRef.current?.focus();
+      return;
+    }
     if (!canSend) return;
     const trimmed = draft.trim();
     const pending = onSend(trimmed, attachments, { temporaryMode, allowTools });
@@ -955,16 +977,30 @@ export const Composer = memo(function Composer(props: {
               {/* Stop and send share one `size="icon"` slot, so both glyphs are
                 the same 18px and swapping between them does not shift the row. */}
               {busy ? (
-                <Button
-                  variant="default"
-                  size="icon"
-                  onClick={onStop}
-                  aria-label={t("停止")}
-                  title={t("停止")}
-                  className="shrink-0 rounded-full shadow-md"
-                >
-                  <Square size={18} />
-                </Button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {canSteer && (
+                    <Button
+                      variant="primary"
+                      size="icon"
+                      onClick={() => void submit()}
+                      aria-label={t("実行中に追加指示を送る")}
+                      title={t("実行中に追加指示を送る")}
+                      className="rounded-full shadow-md"
+                    >
+                      <ArrowUp size={18} />
+                    </Button>
+                  )}
+                  <Button
+                    variant="default"
+                    size="icon"
+                    onClick={onStop}
+                    aria-label={t("停止")}
+                    title={t("停止")}
+                    className="shrink-0 rounded-full shadow-md"
+                  >
+                    <Square size={18} />
+                  </Button>
+                </div>
               ) : (
                 <Button
                   variant="primary"

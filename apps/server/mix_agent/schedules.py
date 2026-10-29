@@ -127,7 +127,7 @@ def tick(db, launch):
             launch(run.id)
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             db.rollback()
-    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean() == True)):
+    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean().is_(True))):
         data = job.data
         try:
             due = matches(data["cron"], current, data["timezone"])
@@ -175,7 +175,7 @@ def reconcile(db, launch):
     created per job is capped so a long-dormant job cannot hang startup.
     """
     current = now().replace(second=0, microsecond=0)
-    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean() == True)):
+    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean().is_(True))):
         try:
             parsed, tz = parse(job.data["cron"]), job.data["timezone"]
             ZoneInfo(tz)

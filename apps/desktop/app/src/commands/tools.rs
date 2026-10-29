@@ -122,7 +122,9 @@ pub async fn set_permission_rule(
     }
     let workspace_id = match scope {
         mixd_tools::RuleScope::Workspace => input.workspace_id.unwrap_or_default(),
-        mixd_tools::RuleScope::Global => String::new(),
+        // `parse_scope` never produces Session (it is in-memory only), but the
+        // enum is shared with the executor.
+        mixd_tools::RuleScope::Global | mixd_tools::RuleScope::Session => String::new(),
     };
     let rule_id = format!("{}:{}:{}", scope.as_str(), input.tool_id, workspace_id);
     let data = serde_json::json!({

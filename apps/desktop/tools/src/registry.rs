@@ -54,6 +54,9 @@ pub struct ToolRegistry {
     /// Held typed as well so the caches can be dropped when the user edits a
     /// profile; a `dyn Tool` cannot be downcast back.
     agent_tool: Option<Arc<AgentTool>>,
+    /// Held typed so the app can flip the terminal sandbox after a settings
+    /// change without rebuilding the registry.
+    terminal_tool: Option<Arc<TerminalTool>>,
     /// The advertised spec list, built on first use.
     ///
     /// Materialising it asks every tool to write out its JSON schema, and the
@@ -83,7 +86,8 @@ impl ToolRegistry {
         tools.insert("edit".to_string(), Arc::new(EditTool));
         tools.insert("glob".to_string(), Arc::new(GlobTool));
         tools.insert("grep".to_string(), Arc::new(GrepTool));
-        tools.insert("terminal".to_string(), Arc::new(TerminalTool::default()));
+        let terminal = Arc::new(TerminalTool::default());
+        tools.insert("terminal".to_string(), terminal.clone());
         tools.insert("symbols".to_string(), Arc::new(SymbolsTool));
         tools.insert("git".to_string(), Arc::new(GitTool));
         tools.insert("workspace_check".to_string(), Arc::new(WorkspaceCheckTool));
@@ -109,7 +113,15 @@ impl ToolRegistry {
             mcp_specs: Arc::new(Vec::new()),
             skill_tool: None,
             agent_tool: None,
+            terminal_tool: Some(terminal),
             specs_cache: OnceLock::new(),
+        }
+    }
+
+    /// Enable or disable the OS sandbox for shells spawned from now on.
+    pub fn set_terminal_sandbox(&self, enabled: bool) {
+        if let Some(tool) = &self.terminal_tool {
+            tool.set_sandbox(enabled);
         }
     }
 

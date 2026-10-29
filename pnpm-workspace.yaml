@@ -1,5 +1,13 @@
+# Each edition keeps its own workspace and lockfile so that its Docker/CI
+# build can install a frozen dependency set without the other edition's
+# packages:
+#
+#   apps/web           -> apps/web/pnpm-lock.yaml
+#   apps/desktop       -> apps/desktop/pnpm-lock.yaml (ui/ is its member)
+#
+# Listing them here as well made pnpm install web/desktop packages into the
+# repository-root store and lockfile too, so two installs could disagree about
+# which copy of a shared peer (vitest, jest-dom, ...) got linked. The root
+# workspace therefore only owns `packages/*`.
 packages:
-  - "apps/web"
-  - "apps/desktop"
-  - "apps/desktop/ui"
   - "packages/*"

@@ -20,9 +20,16 @@ MIX-agent への改善提案、バグ報告、ドキュメント修正を歓迎�
 ### 1. 準備
 Node.js 22 以上、pnpm 10.x、Rust 1.82 以上（Desktop 版を触る場合）、Docker & Docker Compose（Docker 版を触る場合）を用意します。
 
+> [!TIP]
+> Rust のビルド成果物（`apps/desktop/target`）は数 GB〜30 GB 超まで育ちます。
+> ディスクを空けたいときは `cargo clean --manifest-path apps/desktop/Cargo.toml` を
+> 実行してください。`apps/server/.venv` と各 `node_modules` も同様に再生成できます。
+
 ```sh
 # 依存関係のインストール（リポジトリルート）
 pnpm install
+# Web / Desktop は独立した lockfile を持つため、各エディションも導入する
+pnpm setup
 ```
 
 ### 2. Docker 版の開発・テスト
@@ -32,12 +39,29 @@ Docker 版を変更した場合は、以下のテストとビルド確認を実�
 # バックエンドの単体テスト（使い捨て PostgreSQL コンテナで migration 後に実行）
 docker compose --profile test run --rm test
 
-# Web フロントエンドのテストとビルド
-pnpm web:test
+# カバレッジ込み（CI と同じ。現在の下限は 70%）
+docker compose --profile test run --rm test \
+  sh -c "cd /app && export COVERAGE_FILE=/tmp/.coverage \
+    && alembic upgrade head \
+    && pytest -c /app/pyproject.toml -p no:cacheprovider -q \
+         --cov=mix_agent --cov-report=term-missing --cov-fail-under=70 /workspace/tests"
+
+# 型チェック（apps/server で。warning の総数も予算で監視する）
+cd apps/server && uv run python ../../scripts/check-pyright-budget.py
+
+# Web フロントエンドの lint / 整形 / テスト（カバレッジ下限付き）とビルド
+pnpm web:lint
+pnpm web:format:check
+pnpm web:test:coverage
 pnpm web:build
+
+# ブラウザのスモークテスト（API はモックするため DB 不要）
+pnpm --dir apps/web test:e2e
+# ビルド成果物に対して実行する場合（CI と同じ）
+E2E_SERVER=preview pnpm --dir apps/web test:e2e
 ```
 
-API 仕様（FastAPI ルート）を変更した場合は、`scripts/export-openapi.py` を実行して `docs/openapi.json` を更新し、`pnpm generate:api` で TypeScript 型定義を再生成してください。
+API 仕様（FastAPI ルート）を変更した場合は、`scripts/export-openapi.py` を実行して `docs/openapi.json` を更新し、`pnpm generate:api` で TypeScript 型定義を再生成してください。新しい HTTP エラーを追加した場合は、`mix_agent/api/error_codes.py` と `apps/web/src/app/errorCodes.ts` の両方に登録してください（`python3 scripts/check-error-i18n.py` が検査します）。新規コードは `HTTPException` ではなく `APIError(status, code)` を使うと、日本語文言の変更で機械可読コードが変わらなくなります。
 
 ### 3. Desktop 版の開発・テスト
 Desktop 版を変更した場合は、以下のチェックとテストを実施してください：
@@ -52,7 +76,9 @@ cargo check --workspace --manifest-path apps/desktop/Cargo.toml
 cargo test --workspace --manifest-path apps/desktop/Cargo.toml
 
 # （任意）デスクトップアプリのローカルビルド確認
-pnpm desktop:build:dmg # macOS の場合
+pnpm desktop:build:dmg      # macOS の場合
+pnpm desktop:build:windows  # Windows の場合
+pnpm desktop:build          # Linux の場合（AppImage + deb）
 ```
 
 ### 4. ドキュメント修正時の注意

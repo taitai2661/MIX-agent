@@ -21,7 +21,8 @@ function createDocument() {
       dataset: {} as Record<string, string>,
       style: {
         props,
-        setProperty: (name: string, value: string) => void (props[name] = value),
+        setProperty: (name: string, value: string) =>
+          void (props[name] = value),
         getPropertyValue: (name: string) => props[name] ?? "",
       },
       lang: "",
@@ -45,12 +46,20 @@ describe("accent color", () => {
     expect(accent.getAccent()).toBe("green");
 
     accent.applyAccent("light");
-    expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#167c5b");
-    expect(document.documentElement.style.getPropertyValue("--accent-soft")).toBe("#e4f3ed");
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe(
+      "#167c5b",
+    );
+    expect(
+      document.documentElement.style.getPropertyValue("--accent-soft"),
+    ).toBe("#e4f3ed");
 
     accent.applyAccent("dark");
-    expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#54c79a");
-    expect(document.documentElement.style.getPropertyValue("--accent-soft")).toBe("#153c2d");
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe(
+      "#54c79a",
+    );
+    expect(
+      document.documentElement.style.getPropertyValue("--accent-soft"),
+    ).toBe("#153c2d");
   });
 
   it("persists a selected accent and applies it immediately", async () => {
@@ -60,7 +69,9 @@ describe("accent color", () => {
 
     expect(accent.getAccent()).toBe("blue");
     expect(localStorage.getItem("mix-agent-accent")).toBe("blue");
-    expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#6ba3ff");
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe(
+      "#6ba3ff",
+    );
   });
 
   it("restores a saved accent and ignores unknown values", async () => {

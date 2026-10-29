@@ -35,7 +35,7 @@ struct AnthropicRequest<'a> {
     model: &'a str,
     messages: &'a [AnthropicMessage],
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
+    system: Option<Vec<AnthropicSystemBlock>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a [AnthropicTool]>,
     max_tokens: u32,
@@ -44,6 +44,32 @@ struct AnthropicRequest<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<AnthropicThinking>,
+}
+
+/// Marks the end of a cacheable prompt prefix.
+///
+/// The Messages API caches nothing unless a request carries at least one
+/// `cache_control` breakpoint; the base agent instructions, the tool schemas
+/// and every earlier turn are otherwise re-billed at full price on every step.
+#[derive(Clone, Debug, Serialize)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+impl CacheControl {
+    fn ephemeral() -> Self {
+        Self { kind: "ephemeral" }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicSystemBlock {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
 }
 
 #[derive(Serialize)]
@@ -68,17 +94,23 @@ struct AnthropicMessage {
 enum AnthropicBlock {
     Text {
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     ToolUse {
         id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     ToolResult {
         tool_use_id: String,
         content: String,
         #[serde(skip_serializing_if = "serde_json::Value::is_null")]
         is_error: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
 }
 
@@ -87,6 +119,8 @@ struct AnthropicTool {
     name: String,
     description: String,
     input_schema: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
 }
 
 #[derive(Deserialize, Default)]
@@ -186,21 +220,41 @@ impl Provider for AnthropicProvider {
         let base_url = self.base_url.trim_end_matches('/').to_string();
         let url = format!("{}/v1/messages", base_url);
 
-        let (inlined_system, messages) = build_messages(&req);
+        let (inlined_system, mut messages) = build_messages(&req);
+        // Cache the whole prompt prefix up to the end of this turn: the next
+        // step reuses it instead of paying for every earlier message again.
+        if let Some(last) = messages.last_mut() {
+            last.mark_last_block_cached();
+        }
         let tools = if req.tools.is_empty() {
             None
         } else {
-            Some(
-                req.tools
-                    .iter()
-                    .map(|t| AnthropicTool {
-                        name: t.name.clone(),
-                        description: t.description.clone(),
-                        input_schema: t.parameters.clone(),
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            let mut tools: Vec<AnthropicTool> = req
+                .tools
+                .iter()
+                .map(|t| AnthropicTool {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    input_schema: t.parameters.clone(),
+                    cache_control: None,
+                })
+                .collect();
+            // The tool block is stable for the whole Run, so one breakpoint at
+            // its end makes the (large) schema list a cache hit.
+            if let Some(last) = tools.last_mut() {
+                last.cache_control = Some(CacheControl::ephemeral());
+            }
+            Some(tools)
         };
+        // The block form (rather than a bare string) is what lets the system
+        // prompt carry a cache breakpoint.
+        let system = inlined_system.map(|text| {
+            vec![AnthropicSystemBlock {
+                kind: "text",
+                text,
+                cache_control: Some(CacheControl::ephemeral()),
+            }]
+        });
         let mut thinking = match req.reasoning {
             Some(ReasoningControl::Low) => Some(AnthropicThinking {
                 kind: "enabled",
@@ -236,7 +290,7 @@ impl Provider for AnthropicProvider {
         let body = AnthropicRequest {
             model: &req.model,
             messages: &messages,
-            system: inlined_system.as_deref(),
+            system,
             tools: tools.as_deref(),
             max_tokens,
             stream: true,
@@ -474,6 +528,7 @@ fn build_messages(req: &ProviderRequest) -> (Option<String>, Vec<AnthropicMessag
                     } else {
                         serde_json::Value::Null
                     },
+                    cache_control: None,
                 };
                 // Results for parallel tool calls belong in one user turn, so
                 // append to the previous user message when that is what it is.
@@ -492,6 +547,7 @@ fn build_messages(req: &ProviderRequest) -> (Option<String>, Vec<AnthropicMessag
                 if !m.content.is_empty() {
                     blocks.push(AnthropicBlock::Text {
                         text: m.content.clone(),
+                        cache_control: None,
                     });
                 }
                 for call in &m.tool_calls {
@@ -501,6 +557,7 @@ fn build_messages(req: &ProviderRequest) -> (Option<String>, Vec<AnthropicMessag
                         id: call.id.clone(),
                         name: call.function.name.clone(),
                         input,
+                        cache_control: None,
                     });
                 }
                 if blocks.is_empty() {
@@ -521,6 +578,7 @@ fn build_messages(req: &ProviderRequest) -> (Option<String>, Vec<AnthropicMessag
                     role: "user",
                     content: vec![AnthropicBlock::Text {
                         text: m.content.clone(),
+                        cache_control: None,
                     }],
                 });
             }
@@ -559,6 +617,19 @@ fn build_messages(req: &ProviderRequest) -> (Option<String>, Vec<AnthropicMessag
 }
 
 impl AnthropicMessage {
+    /// Put the prompt-cache breakpoint on the last block of this turn.
+    fn mark_last_block_cached(&mut self) {
+        let control = CacheControl::ephemeral();
+        match self.content.last_mut() {
+            Some(AnthropicBlock::Text { cache_control, .. })
+            | Some(AnthropicBlock::ToolUse { cache_control, .. })
+            | Some(AnthropicBlock::ToolResult { cache_control, .. }) => {
+                *cache_control = Some(control)
+            }
+            None => {}
+        }
+    }
+
     /// True when every block in this turn is a tool result, which is the only
     /// kind of user turn that may be merged with a following one.
     fn content_is_tool_results(&self) -> bool {
@@ -706,7 +777,9 @@ mod tests {
             .find(|m| m.role == "assistant")
             .expect("assistant turn");
         match assistant.content.iter().find_map(|b| match b {
-            AnthropicBlock::ToolUse { id, name, input } => Some((id, name, input)),
+            AnthropicBlock::ToolUse {
+                id, name, input, ..
+            } => Some((id, name, input)),
             _ => None,
         }) {
             Some((id, name, input)) => {
@@ -876,5 +949,47 @@ mod tests {
         assert_eq!(json["content"][0]["type"], "tool_result");
         assert_eq!(json["content"][0]["tool_use_id"], "call_1");
         assert_eq!(json["content"][0]["is_error"], true);
+    }
+
+    #[test]
+    fn cache_breakpoints_are_emitted_for_system_tools_and_history() {
+        let mut message = AnthropicMessage {
+            role: "user",
+            content: vec![AnthropicBlock::Text {
+                text: "hi".into(),
+                cache_control: None,
+            }],
+        };
+        message.mark_last_block_cached();
+        let tools = [AnthropicTool {
+            name: "edit".into(),
+            description: "d".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            cache_control: Some(CacheControl::ephemeral()),
+        }];
+        let request = AnthropicRequest {
+            model: "claude",
+            messages: std::slice::from_ref(&message),
+            system: Some(vec![AnthropicSystemBlock {
+                kind: "text",
+                text: "sys".into(),
+                cache_control: Some(CacheControl::ephemeral()),
+            }]),
+            tools: Some(&tools),
+            max_tokens: 16,
+            stream: true,
+            temperature: None,
+            thinking: None,
+        };
+
+        let value = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(value["system"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(value["tools"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(
+            value["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        // Nothing else in the body should have gained the key.
+        assert!(value["messages"][0]["content"][0]["text"].is_string());
     }
 }

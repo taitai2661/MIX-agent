@@ -19,9 +19,18 @@ export type ProviderPreset = {
   extra_config_schema: { key: string; label: string; required?: boolean }[];
 };
 
-export const FEATURED_PRESET_IDS = ["openai", "anthropic", "gemini", "openrouter", "ollama"] as const;
+export const FEATURED_PRESET_IDS = [
+  "openai",
+  "anthropic",
+  "gemini",
+  "openrouter",
+  "ollama",
+] as const;
 
-export function visibleProviderFields(preset: ProviderPreset | null, isNew: boolean) {
+export function visibleProviderFields(
+  preset: ProviderPreset | null,
+  isNew: boolean,
+) {
   const custom = !preset || preset.id === "custom";
   return {
     picker: isNew && !preset,
@@ -59,7 +68,9 @@ function PresetChips({
         <button
           key={preset.id}
           type="button"
-          className={"provider-chip" + (selectedId === preset.id ? " is-selected" : "")}
+          className={
+            "provider-chip" + (selectedId === preset.id ? " is-selected" : "")
+          }
           onClick={() => onPick(preset)}
         >
           {preset.name}
@@ -89,14 +100,19 @@ export function Providers() {
     [allowPrivate, setAllowPrivate] = useState(false);
   const fields = visibleProviderFields(selectedPreset, !editing);
   const featured = useMemo(
-    () => FEATURED_PRESET_IDS.map((id) => presets.data?.find((preset) => preset.id === id)).filter(Boolean) as ProviderPreset[],
+    () =>
+      FEATURED_PRESET_IDS.map((id) =>
+        presets.data?.find((preset) => preset.id === id),
+      ).filter(Boolean) as ProviderPreset[],
     [presets.data],
   );
   const filtered = useMemo(() => {
     const needle = filter.trim().toLocaleLowerCase();
     const all = presets.data || [];
     if (!needle) return all;
-    return all.filter((preset) => (preset.name + preset.category).toLocaleLowerCase().includes(needle));
+    return all.filter((preset) =>
+      (preset.name + preset.category).toLocaleLowerCase().includes(needle),
+    );
   }, [filter, presets.data]);
   function applyPreset(preset: ProviderPreset | null) {
     setSelectedPreset(preset);
@@ -115,7 +131,8 @@ export function Providers() {
     setEditing(row);
     setFilter("");
     if (row) {
-      const preset = presets.data?.find((item) => item.id === row.data.preset_id) || null;
+      const preset =
+        presets.data?.find((item) => item.id === row.data.preset_id) || null;
       setSelectedPreset(preset);
       setName(row.data.name || "");
       setKind(row.data.kind || "compatible");
@@ -136,7 +153,14 @@ export function Providers() {
     setBusy(true);
     setError(null);
     try {
-      const result = await api<{ model_sync?: { status: string; count: number; auto_count: number; error?: string } }>(
+      const result = await api<{
+        model_sync?: {
+          status: string;
+          count: number;
+          auto_count: number;
+          error?: string;
+        };
+      }>(
         "/providers" + (editing ? "/" + editing.id : ""),
         editing ? "PATCH" : "POST",
         {
@@ -148,20 +172,30 @@ export function Providers() {
           allow_private: f.has("allow_private"),
           rate_limit_rpm: Number(f.get("rate_limit_rpm") || 0),
           rate_limit_period: f.get("rate_limit_period") || "minute",
-          extra_config: Object.fromEntries((selectedPreset?.extra_config_schema || []).map((field) => [
-            field.key, f.get("extra_config." + field.key) || "",
-          ])),
+          extra_config: Object.fromEntries(
+            (selectedPreset?.extra_config_schema || []).map((field) => [
+              field.key,
+              f.get("extra_config." + field.key) || "",
+            ]),
+          ),
         },
       );
       setOpen(false);
       const sync = result.model_sync;
       if (sync?.status === "ok") {
-        setNotice(`${sync.count}件のモデルを取得し、${sync.auto_count}件をAuto候補へ追加しました`);
+        setNotice(
+          `${sync.count}件のモデルを取得し、${sync.auto_count}件をAuto候補へ追加しました`,
+        );
       } else if (sync?.status === "failed") {
         const missing = sync.error?.startsWith("missing_extra_config:")
-          ? "追加設定が不足しています: " + sync.error.slice("missing_extra_config:".length)
+          ? "追加設定が不足しています: " +
+            sync.error.slice("missing_extra_config:".length)
           : "モデル取得に失敗しました。";
-        setNotice("Providerは保存しましたが、" + missing + " 接続を確認して「モデル取得」で再試行してください。");
+        setNotice(
+          "Providerは保存しましたが、" +
+            missing +
+            " 接続を確認して「モデル取得」で再試行してください。",
+        );
       }
       qc.invalidateQueries({ queryKey: ["/providers"] });
       qc.invalidateQueries({ queryKey: ["/models"] });
@@ -176,11 +210,17 @@ export function Providers() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api("/providers/" + row.id + "/" + name, "POST");
+      const r = await api<{ count?: number; auto_count?: number }>(
+        "/providers/" + row.id + "/" + name,
+        "POST",
+      );
       setNotice(
         name === "test"
           ? "接続できました（推論テストは行っていません）"
-          : r.count + "件のモデルを取得し、" + (r.auto_count || 0) + "件をAuto候補へ追加しました",
+          : r.count +
+              "件のモデルを取得し、" +
+              (r.auto_count || 0) +
+              "件をAuto候補へ追加しました",
       );
       qc.invalidateQueries({ queryKey: ["/models"] });
     } catch (e) {
@@ -208,7 +248,9 @@ export function Providers() {
     <>
       <Title
         title="AI Providers"
-        sub={t("接続を選んでAPI Keyを保存すると、モデル一覧とAuto候補を自動設定します。")}
+        sub={t(
+          "接続を選んでAPI Keyを保存すると、モデル一覧とAuto候補を自動設定します。",
+        )}
         action={
           <Button
             onClick={() => {
@@ -246,7 +288,13 @@ export function Providers() {
             </div>
           )}
           <div className="provider-preset-groups">
-            {groupPresets(filter ? filtered : filtered.filter((preset) => !FEATURED_PRESET_ID_SET.has(preset.id))).map(([category, items]) => (
+            {groupPresets(
+              filter
+                ? filtered
+                : filtered.filter(
+                    (preset) => !FEATURED_PRESET_ID_SET.has(preset.id),
+                  ),
+            ).map(([category, items]) => (
               <div key={category}>
                 <h4>{t(category)}</h4>
                 <PresetChips items={items} onPick={pickPreset} />
@@ -254,7 +302,11 @@ export function Providers() {
             ))}
           </div>
           <div className="form-actions">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setOpen(false)}
+            >
               {t("キャンセル")}
             </Button>
           </div>
@@ -266,24 +318,38 @@ export function Providers() {
           key={editing?.id || selectedPreset?.id || "new"}
           onSubmit={submit}
         >
-          <input type="hidden" name="preset_id" value={selectedPreset?.id || ""} />
+          <input
+            type="hidden"
+            name="preset_id"
+            value={selectedPreset?.id || ""}
+          />
           {!fields.kind && <input type="hidden" name="kind" value={kind} />}
           {!fields.name && <input type="hidden" name="name" value={name} />}
-          {!fields.url && <input type="hidden" name="base_url" value={baseUrl} />}
+          {!fields.url && (
+            <input type="hidden" name="base_url" value={baseUrl} />
+          )}
           <div className="provider-selected">
             <div>
               <small>{t("選択中:")}</small>
-              <strong>{selectedPreset?.name || editing?.data.name || t("カスタム")}</strong>
+              <strong>
+                {selectedPreset?.name || editing?.data.name || t("カスタム")}
+              </strong>
             </div>
             {!editing && (
-              <Button type="button" variant="ghost" onClick={() => applyPreset(null)}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => applyPreset(null)}
+              >
                 {t("Providerを変更")}
               </Button>
             )}
           </div>
           <p className="provider-form-hint">
             {selectedPreset && !selectedPreset.api_key_required
-              ? t("ローカル接続はAPI Key不要です。保存するとモデルを取得します。")
+              ? t(
+                  "ローカル接続はAPI Key不要です。保存するとモデルを取得します。",
+                )
               : selectedPreset?.default_url
                 ? t("API Keyを貼り付けて保存すると、モデルを自動取得します。")
                 : t("接続先URLを入力してください。")}
@@ -300,20 +366,36 @@ export function Providers() {
             </Field>
           )}
           {fields.kind && (
-            <Field label={t("カスタム接続方式")} hint={t("カスタム以外では選択したプリセットの方式が使用されます。")}>
-              <select name="kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+            <Field
+              label={t("カスタム接続方式")}
+              hint={t(
+                "カスタム以外では選択したプリセットの方式が使用されます。",
+              )}
+            >
+              <select
+                name="kind"
+                value={kind}
+                onChange={(e) => setKind(e.target.value)}
+              >
                 <option value="compatible">{t("OpenAI互換")}</option>
                 <option value="anthropic">Anthropic Messages</option>
                 <option value="gemini">Gemini GenerateContent</option>
-                <option value="openai">{t("OpenAI Responses（従来設定）")}</option>
-                <option value="openrouter">{t("OpenRouter（従来設定）")}</option>
+                <option value="openai">
+                  {t("OpenAI Responses（従来設定）")}
+                </option>
+                <option value="openrouter">
+                  {t("OpenRouter（従来設定）")}
+                </option>
                 <option value="ollama">{t("Ollama（従来設定）")}</option>
                 <option value="lmstudio">{t("LM Studio（従来設定）")}</option>
               </select>
             </Field>
           )}
           {fields.url && (
-            <Field label="Base URL" hint={t("カスタムとURL未設定のプリセットでは必須です。")}>
+            <Field
+              label="Base URL"
+              hint={t("カスタムとURL未設定のプリセットでは必須です。")}
+            >
               <input
                 name="base_url"
                 required
@@ -332,13 +414,25 @@ export function Providers() {
                   : t("接続方式とURLは自動で設定されます。")
               }
             >
-              <input name="api_key" type="password" autoComplete="off" required={!editing} />
+              <input
+                name="api_key"
+                type="password"
+                autoComplete="off"
+                required={!editing}
+              />
             </Field>
           )}
           {selectedPreset?.extra_config_schema.map((field) => (
-            <Field key={field.key} label={field.label} hint={t("このProvider固有の接続設定です。")}>
-              <input name={"extra_config." + field.key} required={field.required}
-                defaultValue={editing?.data.extra_config?.[field.key] || ""} />
+            <Field
+              key={field.key}
+              label={field.label}
+              hint={t("このProvider固有の接続設定です。")}
+            >
+              <input
+                name={"extra_config." + field.key}
+                required={field.required}
+                defaultValue={editing?.data.extra_config?.[field.key] || ""}
+              />
             </Field>
           ))}
           <details className="provider-advanced">
@@ -350,14 +444,29 @@ export function Providers() {
             )}
             {!fields.url && (
               <Field label="Base URL">
-                <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+                <input
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                />
               </Field>
             )}
-            <Field label={t("要求回数の上限")} hint={t("Providerへの要求を制限します。0は無制限です。")}>
+            <Field
+              label={t("要求回数の上限")}
+              hint={t("Providerへの要求を制限します。0は無制限です。")}
+            >
               <div className="rate-limit-input">
-                <input name="rate_limit_rpm" type="number" min="0" max="10000" step="1"
-                  defaultValue={editing?.data.rate_limit_rpm || 0} />
-                <select name="rate_limit_period" defaultValue={editing?.data.rate_limit_period || "minute"}>
+                <input
+                  name="rate_limit_rpm"
+                  type="number"
+                  min="0"
+                  max="10000"
+                  step="1"
+                  defaultValue={editing?.data.rate_limit_rpm || 0}
+                />
+                <select
+                  name="rate_limit_period"
+                  defaultValue={editing?.data.rate_limit_period || "minute"}
+                >
                   <option value="minute">{t("回 / 分")}</option>
                   <option value="second">{t("回 / 秒")}</option>
                 </select>
@@ -386,7 +495,9 @@ export function Providers() {
         </form>
       )}
       {rows.data?.map((row) => {
-        const preset = presets.data?.find((item) => item.id === row.data.preset_id);
+        const preset = presets.data?.find(
+          (item) => item.id === row.data.preset_id,
+        );
         return (
           <div className="card provider-card" key={row.id}>
             <div className="provider-icon">
@@ -397,7 +508,9 @@ export function Providers() {
               <p>
                 {preset?.name || row.data.kind}
                 <span> · </span>
-                {row.data.has_secret_id ? t("API Key 保存済み") : t("API Key なし")}
+                {row.data.has_secret_id
+                  ? t("API Key 保存済み")
+                  : t("API Key なし")}
               </p>
               <small>{row.data.base_url}</small>
             </div>
@@ -429,7 +542,9 @@ export function Providers() {
                 variant="ghost"
                 disabled={busy}
                 title={t("Providerを削除")}
-                message={t("Providerと取得済みのモデルを削除しますか？ 元に戻せません。")}
+                message={t(
+                  "Providerと取得済みのモデルを削除しますか？ 元に戻せません。",
+                )}
                 confirmLabel={t("削除")}
                 onConfirm={() => remove(row)}
               >
@@ -446,7 +561,11 @@ export function Providers() {
             <div className="provider-quick-add">
               <h4>{t("よく使う接続")}</h4>
               <PresetChips items={featured} onPick={pickPreset} />
-              <Button type="button" variant="ghost" onClick={() => openForm(null)}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => openForm(null)}
+              >
                 {t("その他のProvider")}
               </Button>
             </div>

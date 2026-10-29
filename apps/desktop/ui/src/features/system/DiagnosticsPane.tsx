@@ -139,18 +139,18 @@ export function DiagnosticsPane() {
                 <span className="text-fg">
                   {d.db_encrypted
                     ? t("保存時は暗号化済み")
-                    : t("未暗号化（メモリ内 + Keychainのみ）")}
+                    : t("未暗号化（平文SQLite）")}
                 </span>
                 <span className="text-xs text-muted">
                   {d.db_key_present === true
-                    ? t("マスターキーはOSのKeychainにあります")
+                    ? t("暗号化用キーはKeychainに準備済み（未使用）")
                     : d.db_key_present === false
-                      ? t("マスターキーは初回利用時に作成されます")
+                      ? t("暗号化用キーは未作成")
                       : t("Keychainの状態は不明")}
                 </span>
               </div>
               <Badge tone={d.db_encrypted ? "success" : "warning"} size="sm">
-                {d.db_encrypted ? t("暗号化済み") : t("保留中")}
+                {d.db_encrypted ? t("暗号化済み") : t("未対応")}
               </Badge>
             </Row>
             {!d.db_encrypted && (

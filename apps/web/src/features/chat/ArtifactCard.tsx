@@ -19,9 +19,14 @@ function fileKind(mime = "", name = "") {
   const extension = name.split(".").pop()?.toUpperCase();
   if (mime.startsWith("image/")) return { label: t("画像"), Icon: Image };
   if (mime === "application/pdf") return { label: "PDF", Icon: FileText };
-  if (["HTML", "CSS", "JS", "TS", "JSON", "MD"].includes(extension || "")) return { label: `${t("コード")} · ${extension}`, Icon: Code2 };
-  if (["CSV", "XLS", "XLSX"].includes(extension || "")) return { label: t("表計算"), Icon: Table2 };
-  return { label: extension ? `${t("ファイル")} · ${extension}` : t("ファイル"), Icon: File };
+  if (["HTML", "CSS", "JS", "TS", "JSON", "MD"].includes(extension || ""))
+    return { label: `${t("コード")} · ${extension}`, Icon: Code2 };
+  if (["CSV", "XLS", "XLSX"].includes(extension || ""))
+    return { label: t("表計算"), Icon: Table2 };
+  return {
+    label: extension ? `${t("ファイル")} · ${extension}` : t("ファイル"),
+    Icon: File,
+  };
 }
 
 export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
@@ -31,16 +36,29 @@ export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
     <section className="artifact-card">
       {isImage ? (
         <div className="artifact-image-container">
-          <img src={`/api/v1/artifacts/${artifact.artifact_id}`} alt={artifact.name || ""} className="artifact-preview-image" />
+          <img
+            src={`/api/v1/artifacts/${artifact.artifact_id}`}
+            alt={artifact.name || ""}
+            className="artifact-preview-image"
+          />
         </div>
       ) : (
-        <div className="artifact-icon"><Icon aria-hidden="true" size={27} /></div>
+        <div className="artifact-icon">
+          <Icon aria-hidden="true" size={27} />
+        </div>
       )}
       <div className="artifact-details">
         <b className="artifact-name-trunc">{artifact.name || t("成果物")}</b>
-        <span>{label}{artifact.size ? ` · ${formatSize(artifact.size)}` : ""}</span>
+        <span>
+          {label}
+          {artifact.size ? ` · ${formatSize(artifact.size)}` : ""}
+        </span>
       </div>
-      <a className="artifact-download" href={`/api/v1/artifacts/${artifact.artifact_id}`} download={artifact.name || true}>
+      <a
+        className="artifact-download"
+        href={`/api/v1/artifacts/${artifact.artifact_id}`}
+        download={artifact.name || true}
+      >
         <Download aria-hidden="true" size={17} /> {t("ダウンロード")}
       </a>
     </section>

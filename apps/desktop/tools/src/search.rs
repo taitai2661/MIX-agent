@@ -262,6 +262,17 @@ struct GrepMatch {
     path: String,
     line: usize,
     text: String,
+    /// Lines immediately before the match, when `context` was requested.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    before: Vec<ContextLine>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    after: Vec<ContextLine>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ContextLine {
+    line: usize,
+    text: String,
 }
 
 #[async_trait]
@@ -290,6 +301,11 @@ impl Tool for GrepTool {
                 "path": { "type": "string", "description": "Optional subdirectory or file to search." },
                 "glob": { "type": "string", "description": "Only search files matching this glob, e.g. `*.rs`." },
                 "case_sensitive": { "type": "boolean", "default": true },
+                "context": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Lines of context to include before and after each match (0-5)."
+                },
                 "max_results": { "type": "integer", "default": 100 }
             },
             "required": ["pattern"]
@@ -333,6 +349,11 @@ impl Tool for GrepTool {
             .and_then(|v| v.as_str())
             .map(|g| g.to_string());
         let limit = read_max_matches(&args);
+        let context = args
+            .get("context")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .min(5) as usize;
 
         let (hits, truncated, files_scanned) = tokio::task::spawn_blocking(move || {
             let file_matcher = match file_glob
@@ -380,12 +401,27 @@ impl Tool for GrepTool {
                     continue;
                 };
                 files_scanned += 1;
-                for (idx, line) in text.lines().enumerate() {
+                let lines: Vec<&str> = text.lines().collect();
+                for (idx, line) in lines.iter().enumerate() {
                     if regex.is_match(line) {
+                        let before = (idx.saturating_sub(context)..idx)
+                            .map(|i| ContextLine {
+                                line: i + 1,
+                                text: truncate_line(lines[i]),
+                            })
+                            .collect();
+                        let after = (idx + 1..(idx + 1 + context).min(lines.len()))
+                            .map(|i| ContextLine {
+                                line: i + 1,
+                                text: truncate_line(lines[i]),
+                            })
+                            .collect();
                         hits.push(GrepMatch {
                             path: path.to_string_lossy().to_string(),
                             line: idx + 1,
                             text: truncate_line(line),
+                            before,
+                            after,
                         });
                         if hits.len() >= limit {
                             truncated = true;
@@ -404,6 +440,8 @@ impl Tool for GrepTool {
                 path: relative_to(&workspace_root, Path::new(&m.path)),
                 line: m.line,
                 text: m.text,
+                before: m.before,
+                after: m.after,
             })
             .collect();
         Ok(ToolResult {
@@ -488,6 +526,37 @@ mod tests {
         std::fs::write(dir.join("node_modules/dep.js"), "todo!();\n").unwrap();
         std::fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    #[tokio::test]
+    async fn grep_includes_context_lines_when_asked() {
+        let dir = fixture("context");
+        let tool = GrepTool;
+        let result = tool
+            .invoke(
+                ToolContext {
+                    run_id: uuid::Uuid::new_v4(),
+                    workspace_id: uuid::Uuid::new_v4(),
+                    root_path: Some(dir.to_string_lossy().to_string()),
+                    additional_paths: Vec::new(),
+                    approval_token: None,
+                },
+                serde_json::json!({
+                    "pattern": "todo!",
+                    "path": "src",
+                    "context": 1
+                }),
+            )
+            .await
+            .expect("grep");
+        let matches = result.content["matches"].as_array().expect("matches");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0]["before"][0]["text"], "fn main() {",
+            "the preceding line must be included: {}",
+            matches[0]
+        );
+        assert_eq!(matches[0]["after"][0]["text"], "}");
     }
 
     #[test]

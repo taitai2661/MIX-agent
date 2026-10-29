@@ -55,6 +55,10 @@ services:
       MIX_KEYS: /keys
       RUNNER_KEYS: /runner-keys
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+      # `text` (default) or `json`; see docs/operations.md.
+      MIX_LOG_FORMAT: "${MIX_LOG_FORMAT:-text}"
+      # Optional: require `Authorization: Bearer <token>` on /metrics.
+      METRICS_TOKEN: "${METRICS_TOKEN:-}"
       # Read-only view of one host folder, used for AGENTS.md / CLAUDE.md and
       # for skills discovered under .mix/skills (then .claude/skills, then
       # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
@@ -85,6 +89,21 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     mem_limit: 1g
     cpus: 2
+    healthcheck:
+      # `/live` is dependency-free, so a DB hiccup does not restart a healthy
+      # app (the ready probe at `/health` would). The start period covers
+      # `alembic upgrade head` on a fresh volume.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=3).status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       db: {condition: service_healthy}
   execution-runner:

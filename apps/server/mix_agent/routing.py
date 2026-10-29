@@ -205,7 +205,9 @@ def _thompson_tiebreak(tied, request_key):
     def draw(entry):
         _, model, up, down, prior_up, prior_down = entry
         seeded = hashlib.sha256((request_key + model.id).encode()).digest()
-        return random.Random(seeded).betavariate(prior_up + up, prior_down + down)
+        # Deterministic tie-break, not a security decision: the same request
+        # key must always resolve the same tie.
+        return random.Random(seeded).betavariate(prior_up + up, prior_down + down)  # noqa: S311
 
     return sorted(
         tied,

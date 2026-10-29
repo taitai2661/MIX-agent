@@ -185,14 +185,20 @@ async fn pending_prompt_blocks_until_answered() {
         .resolve_approval(
             &approval_id,
             TOOL,
-            ApprovalOutcome::Approve { remember: true },
+            ApprovalOutcome::Approve {
+                remember: true,
+                remember_session: false,
+            },
         )
         .await
         .expect("resolve");
 
     assert_eq!(
         rx.await.expect("outcome delivered"),
-        ApprovalOutcome::Approve { remember: true }
+        ApprovalOutcome::Approve {
+            remember: true,
+            remember_session: false,
+        }
     );
     assert!(executor.list_pending().await.is_empty(), "prompt cleared");
     assert_eq!(
@@ -228,7 +234,10 @@ async fn always_allow_is_scoped_to_the_prompted_call() {
         .resolve_approval(
             &approval_id,
             TOOL,
-            ApprovalOutcome::Approve { remember: true },
+            ApprovalOutcome::Approve {
+                remember: true,
+                remember_session: false,
+            },
         )
         .await
         .expect("resolve");
@@ -594,5 +603,68 @@ async fn workspace_rules_do_not_apply_to_calls_without_a_workspace() {
             )
             .await,
         PermissionDecision::Allow
+    );
+}
+
+/// "Allow for this session" must allow later calls without writing a durable
+/// rule: closing the app has to forget it.
+#[tokio::test]
+async fn a_session_allow_is_not_persisted() {
+    let (executor, _dir) = executor().await;
+    let run_id = seed_call(&executor, "call-session").await;
+    let workspace = Uuid::new_v4();
+    let scoped = PermissionContext {
+        workspace_id: Some(workspace),
+        pattern_target: None,
+    };
+    let (rx, _expires) = executor
+        .request_approval(
+            run_id,
+            "call-session",
+            TOOL,
+            serde_json::json!({"cmd": "ls"}),
+            Some(workspace),
+            None,
+        )
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+
+    executor
+        .resolve_approval(
+            &approval_id,
+            TOOL,
+            ApprovalOutcome::Approve {
+                remember: false,
+                remember_session: true,
+            },
+        )
+        .await
+        .expect("resolve");
+    assert!(rx.await.is_ok());
+
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &scoped, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Allow,
+        "the session grant must apply to later calls"
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permission_rules")
+        .fetch_one(executor.storage.pool())
+        .await
+        .expect("count");
+    assert_eq!(rows, 0, "a session grant must not reach the database");
+
+    // A different workspace is unaffected.
+    let other = PermissionContext {
+        workspace_id: Some(Uuid::new_v4()),
+        pattern_target: None,
+    };
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &other, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask
     );
 }

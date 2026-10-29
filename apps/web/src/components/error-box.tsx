@@ -43,9 +43,7 @@ export function ErrorBox({
           </button>
         )}
       </div>
-      {expanded && details && (
-        <pre className="error-details">{details}</pre>
-      )}
+      {expanded && details && <pre className="error-details">{details}</pre>}
     </div>
   );
 }

@@ -13,6 +13,22 @@ docker compose stop
 
 Docker初回起動時のinitがDBパスワード、内部トークン、暗号鍵を生成します。既存の値は上書きしません。Runnerはread-only filesystem、非root、Capability削除、メモリ/CPU/PID上限で起動します。
 
+### 構造化ログ
+
+既定は従来どおり人が読むテキスト形式です。ログ収集基盤へ渡す場合は `MIX_LOG_FORMAT=json` を設定すると、1行1オブジェクトのJSON（`ts` / `level` / `logger` / `message` と、呼び出し側が付けた `request_id` などの追加フィールド）になります。
+
+```sh
+MIX_LOG_FORMAT=json docker compose up -d
+```
+
+`request_id` はレスポンスの `X-Request-ID` と一致するため、ユーザーから報告されたIDで該当リクエストを検索できます。
+
+## ヘルスチェックとメトリクス
+
+Compose の `app` には `/live` を使う healthcheck があります。`/live` はDBに触れないため、DBが一時的に落ちてもアプリを再起動しません。DB接続まで含めた準備確認は `/health` を使ってください。
+
+`/metrics` は Prometheus 形式のプロセス内カウンタを返します（HTTPメソッド・ルートテンプレート・ステータス別の件数、レイテンシの summary、稼働時間）。ラベルは `GET /api/v1/runs` のようにルート単位へ丸めるため、Run IDや任意の404パスがそのままラベルになることはありません。外部に公開する場合はReverse Proxyでアクセス元を制限するか、`METRICS_TOKEN` を設定して `Authorization: Bearer <token>` を要求してください。複数workerで動かす場合、カウンタはプロセスごとに分かれる点に注意してください。
+
 `mcp-manager` はホストのDocker Socketを直接マウントしません。`docker-socket-proxy` 経由でコンテナ・ボリューム・ネットワーク・イメージのAPIだけを許可し、build/swarm/secrets等の管理APIを減らしています。ただしMCPの導入にはコンテナ作成APIが必要で、managerが侵害された場合の影響は依然として大きいため、信頼できるネットワーク（`mcp` internal network）に限定しています。
 
 ## Browser Runtimeの更新

@@ -26,7 +26,7 @@
 
 ### 2.4 UI 証跡 & 承認体験 (Phase 8.4 完了)
 - `ApprovalCard` / `ApprovalDiffView`: 承認時に変更前後の差分ハイライトを直接プレビュー可能 (`ui/src/features/chat/ApprovalDiffView.tsx`)。
-- `ApprovalBanner`: 画面上部への承認待ち固定バナー、`⌘+Enter` (承認) / `Esc` (拒否) キーボードショートカット。
+- `ApprovalBanner`: 画面上部への承認待ち固定バナー、`⌘+Enter`（macOS）/ `Ctrl+Enter`（Windows / Linux）(承認) / `Esc` (拒否) キーボードショートカット。
 - `TerminalResultView`: 終了コードバッジ（0: 緑、非0: 赤）、実行時間（ms/s）、ワンクリックコピー、ANSI カラー装飾。
 - `RightPanel`: ドッキング（分割表示）とオーバーレイ（引き出し表示）の切り替えおよび幅制御。
 
@@ -102,3 +102,20 @@ Phase 10（信頼性）を優先したため、この節は着手時点の計画
 | 10.4 | ロールバック | 編集前スナップショットと「この run の変更を戻す」 |
 | 10.5 | 探索 | `repo_map`、`symbols` の definition、grep の context、`@` 補完のインデックス化 |
 | 10.6 | 性能・コスト | Anthropic の prompt cache、読み取りツールの並列化、UI の分割読み込み |
+
+### 10.1〜10.6 実装状況（2026-10-29）
+
+| # | 状態 | 実装 |
+|---|---|---|
+| 10.1 | 一部 | `engine_loop.rs` に実ツールを使うシナリオテストを追加（並列読み取り、整形、ロールバック、stale edit、plan 承認、不正 JSON 引数）。fixture repo を採点する独立ハーネスは未着手 |
+| 10.2 | 完了 | `format_command` を編集ステップ後に自動実行（失敗はモデルへ返す）。`verify_command` / `format_command` をプロジェクト設定とアプリ既定値から編集可能にし、検証候補を UI に表示 |
+| 10.3 | 完了 | `user_plan` を sensitive 化して承認プロンプトで停止。承認で Plan モードをその Run の間だけ解除し、次ターンから編集可能 |
+| 10.4 | 完了 | `edit` / `files` の変更前内容を Run 単位で保持し、ActivityPanel の「実行前の状態に戻す」で復元。ターミナル経由の変更は対象外 |
+| 10.5 | 一部 | `files read` の行番号付与、`edit` の番号付きアンカー許容、`grep` の context 行、`git` に `log` / `show` / `blame` を追加。`repo_map` と LSP definition / diagnostics は未着手 |
+| 10.6 | 完了 | Anthropic の `cache_control`（system / tools / 履歴末尾）、読み取り専用ツールの並列実行（最大 4）、実行中の追加指示（steering） |
+
+追加の安全対策:
+
+- ターミナルの `sandbox_terminal` 設定を実装（macOS `sandbox-exec`。ワークスペースと一時ディレクトリ以外への書き込みを拒否。Linux / Windows は未対応）。
+- 承認の TTL を 5 分から 15 分へ延長し、「このセッションで許可」（メモリ内のみ、再起動で消える）を追加。
+- ツール出力の資格情報マスキング（`redact`）、読み取り後に変更されたファイルへの編集拒否、PTY を Run 単位で分離。

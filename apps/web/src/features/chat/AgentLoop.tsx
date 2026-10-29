@@ -25,7 +25,13 @@ export function CheckpointsPanel({
           variant="outline"
           disabled={busy}
           onClick={async () => {
-            if (!confirm(t("結果不明の操作は再実行しません。外部状態を確認してから続けてください。"))) {
+            if (
+              !confirm(
+                t(
+                  "結果不明の操作は再実行しません。外部状態を確認してから続けてください。",
+                ),
+              )
+            ) {
               return;
             }
             setBusy(true);
@@ -53,7 +59,10 @@ export function CheckpointsPanel({
       <ul className="checkpoint-list">
         {checkpoints.slice(0, 8).map((ck) => (
           <li key={ck.id}>
-            <label className="checkpoint-row">
+            <label
+              className="checkpoint-row"
+              aria-label={`${t("ステップ")} ${ck.step} · ${ck.tool_count} ${t("Tool Call")}`}
+            >
               <input
                 type="radio"
                 name="checkpoint"
@@ -62,10 +71,14 @@ export function CheckpointsPanel({
                 onChange={() => setSelected(ck.id)}
               />
               <span>
-                <b>{t("ステップ")} {ck.step}</b>
+                <b>
+                  {t("ステップ")} {ck.step}
+                </b>
                 <small>
                   {ck.tool_count} {t("Tool Call")} · {ck.trigger}
-                  {ck.created_at ? ` · ${new Date(ck.created_at).toLocaleString()}` : ""}
+                  {ck.created_at
+                    ? ` · ${new Date(ck.created_at).toLocaleString()}`
+                    : ""}
                 </small>
               </span>
             </label>
@@ -77,7 +90,13 @@ export function CheckpointsPanel({
           variant="outline"
           disabled={busy || !selected}
           onClick={async () => {
-            if (!confirm(t("選択したチェックポイントから再開します。結果不明の操作は破棄されます。"))) {
+            if (
+              !confirm(
+                t(
+                  "選択したチェックポイントから再開します。結果不明の操作は破棄されます。",
+                ),
+              )
+            ) {
               return;
             }
             setBusy(true);
@@ -100,7 +119,13 @@ export function CheckpointsPanel({
           variant="ghost"
           disabled={busy}
           onClick={async () => {
-            if (!confirm(t("結果不明の操作は再実行しません。外部状態を確認してから続けてください。"))) {
+            if (
+              !confirm(
+                t(
+                  "結果不明の操作は再実行しません。外部状態を確認してから続けてください。",
+                ),
+              )
+            ) {
               return;
             }
             setBusy(true);
@@ -151,20 +176,33 @@ export function BudgetExtensionPanel({
     }
   };
   return (
-    <div className="run-resume budget-extension" role="group" aria-label={t("予算延長")}>
+    <div
+      className="run-resume budget-extension"
+      role="group"
+      aria-label={t("予算延長")}
+    >
       <p className="run-resume-title">{t("実行予算の上限に近づいています")}</p>
       <ul className="checkpoint-list">
         <li>
-          <span>{t("Tool Call")}: {request.tool_calls_used} / {request.tool_calls_limit}</span>
+          <span>
+            {t("Tool Call")}: {request.tool_calls_used} /{" "}
+            {request.tool_calls_limit}
+          </span>
         </li>
         <li>
-          <span>{t("ステップ")}: {request.steps_used} / {request.steps_limit}</span>
+          <span>
+            {t("ステップ")}: {request.steps_used} / {request.steps_limit}
+          </span>
         </li>
         <li>
-          <span>{t("経過時間")}: {request.elapsed_seconds} / {request.max_seconds}秒</span>
+          <span>
+            {t("経過時間")}: {request.elapsed_seconds} / {request.max_seconds}秒
+          </span>
         </li>
         <li>
-          <span>{t("延長回数")}: {used} / {max}</span>
+          <span>
+            {t("延長回数")}: {used} / {max}
+          </span>
         </li>
       </ul>
       <p className="run-resume-detail">
@@ -182,7 +220,16 @@ export function BudgetExtensionPanel({
   );
 }
 
-export function StagnationPanel({ findings }: { findings: { code: string; severity?: string; tool_id?: string; count?: number }[] }) {
+export function StagnationPanel({
+  findings,
+}: {
+  findings: {
+    code: string;
+    severity?: string;
+    tool_id?: string;
+    count?: number;
+  }[];
+}) {
   if (!findings.length) return null;
   return (
     <div className="run-stagnation" role="status">
@@ -192,7 +239,9 @@ export function StagnationPanel({ findings }: { findings: { code: string; severi
           <li key={`${finding.code}-${index}`}>
             <code>{finding.code}</code>
             {finding.tool_id ? <span> · {finding.tool_id}</span> : null}
-            {typeof finding.count === "number" ? <span> · {finding.count}回</span> : null}
+            {typeof finding.count === "number" ? (
+              <span> · {finding.count}回</span>
+            ) : null}
           </li>
         ))}
       </ul>

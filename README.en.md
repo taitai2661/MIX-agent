@@ -44,7 +44,7 @@ Choose the edition that best fits your environment and workflow:
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM Encryption (Docker volumes) |
 | **Terminal & Files** | Direct host file editing, **persistent PTY shell** | Operations isolated inside mounted `/project` or runner |
 | **Browser Operator** | On-demand Chromium install / direct system browser automation | Playwright inside dedicated `execution-runner` |
-| **Security & Sandbox** | OS user permissions + **per-action scoped approval rules** | Container sandbox (non-root runner, egress-proxy rules) |
+| **Security & Sandbox** | OS user permissions + **per-action scoped approval rules** + optional macOS `sandbox-exec` write confinement | Container sandbox (non-root runner, egress-proxy rules) |
 
 ---
 
@@ -84,14 +84,15 @@ After downloading, verify the file against the `SHA256SUMS` asset attached to th
 Requires Rust (1.82+), Node.js (22+), and pnpm.
 
 ```sh
-# Install dependencies
+# Install dependencies (Web and Desktop keep separate lockfiles)
 pnpm install
+pnpm setup
 
 # Launch in development mode
 pnpm desktop:dev
 
 # Build an installer for the current OS
-# macOS: .dmg / Windows: NSIS + MSI
+# macOS: .dmg / Windows: NSIS + MSI / Linux: AppImage + deb
 pnpm desktop:build
 
 # Build a macOS .dmg only
@@ -171,6 +172,7 @@ Security and isolation models differ by edition:
 - **OS Permissions**: Runs natively with the permissions of your logged-in desktop user.
 - **Secrets Management**: API keys and tokens are securely stored in the native OS Keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
 - **Interactive Gates**: High-impact actions (file writes, shell commands, browser automation) trigger interactive approval prompts (`Ask`) by default, scoped to specific paths or commands.
+- **Optional Terminal Sandbox**: On macOS, the opt-in terminal sandbox runs shells under `sandbox-exec` with writes confined to the workspace and temp directories (Linux and Windows are not supported yet).
 
 ### Docker Edition Security Model
 - **Container Isolation**: Execution runners run non-root with read-only root filesystems, dropped capabilities, and memory limits. Neither the host root nor the Docker socket are mounted.
@@ -186,6 +188,7 @@ This repository is structured as a pnpm workspace monorepo:
 ```sh
 # Install workspace dependencies
 pnpm install
+pnpm setup
 
 # --- Desktop Edition Development ---
 pnpm desktop:dev        # Run native desktop app

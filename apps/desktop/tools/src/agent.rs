@@ -27,6 +27,11 @@ pub struct AgentProfile {
     /// Permitted tool ids. Empty means "the parent's tools, unchanged".
     #[serde(default)]
     pub tool_ids: Vec<String>,
+    /// Optional `provider:model` override. Empty means "the parent's model",
+    /// which is the right default: a cheaper model is fine for a read-only
+    /// explorer but wrong for a delegate that has to edit code.
+    #[serde(default)]
+    pub model_id: Option<String>,
 }
 
 /// A finished sub-run, handed back to the parent.
@@ -125,10 +130,10 @@ impl Tool for AgentTool {
         "Agent"
     }
     fn description(&self) -> &str {
-        "Delegate a self-contained task to a saved agent profile. The sub-agent gets its \
+        "Delegate self-contained work to a saved agent profile. The sub-agent gets its \
          own context and budget and returns only its conclusion, so use it for open-ended \
-         exploration rather than for steps you could do yourself. Call with no arguments \
-         to list the available profiles."
+         exploration rather than for steps you could do yourself. Pass `tasks` to fan out \
+         to several sub-agents at once. Call with no arguments to list the profiles."
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
@@ -138,9 +143,13 @@ impl Tool for AgentTool {
                 "task": {
                     "type": "string",
                     "description": "The full task, including everything the sub-agent needs. It cannot see this conversation."
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Several independent tasks to run in parallel. Prefer this over repeated calls when the sub-tasks do not depend on each other."
                 }
-            },
-            "required": ["task"]
+            }
         })
     }
 
@@ -186,31 +195,105 @@ impl Tool for AgentTool {
                 error: Some(format!("no agent profile named {name:?}")),
             });
         };
-        let task = args
-            .get("task")
-            .and_then(|v| v.as_str())
-            .map(|t| t.trim())
-            .filter(|t| !t.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("task is required when delegating"))?;
+        let mut tasks: Vec<String> = args
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if tasks.is_empty() {
+            if let Some(task) = args
+                .get("task")
+                .and_then(|v| v.as_str())
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+            {
+                tasks.push(task.to_string());
+            }
+        }
+        if tasks.is_empty() {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({ "agent": profile.name }),
+                error: Some("task or tasks is required when delegating".to_string()),
+            });
+        }
 
-        match self.runner.delegate(&ctx, profile, task).await {
+        if tasks.len() == 1 {
+            let task = tasks.remove(0);
+            return Ok(self.delegate_one(&ctx, profile, task).await);
+        }
+
+        // Fan-out: independent sub-tasks run at the same time. Each one still
+        // owns its own context and budget, which is the point — a big
+        // exploration split three ways costs one wall-clock wait, not three.
+        use futures_util::StreamExt;
+        let mut results: Vec<serde_json::Value> = Vec::with_capacity(tasks.len());
+        let ctx_ref = &ctx;
+        for chunk in tasks.chunks(MAX_PARALLEL_DELEGATES) {
+            let mut in_flight = futures_util::stream::FuturesUnordered::new();
+            for task in chunk {
+                in_flight.push(async move {
+                    let outcome = self.delegate_one(ctx_ref, profile, task.clone()).await;
+                    (task.clone(), outcome)
+                });
+            }
+            while let Some((task, outcome)) = in_flight.next().await {
+                let mut value = outcome.content;
+                if let Some(map) = value.as_object_mut() {
+                    map.insert("task".to_string(), serde_json::json!(task));
+                }
+                results.push(value);
+            }
+        }
+        let any_failed = results.iter().any(|item| item.get("error").is_some());
+        Ok(ToolResult {
+            ok: !any_failed,
+            content: serde_json::json!({
+                "agent": profile.name,
+                "results": results,
+            }),
+            error: any_failed.then(|| "one or more delegated tasks failed".to_string()),
+        })
+    }
+}
+
+impl AgentTool {
+    async fn delegate_one(
+        &self,
+        ctx: &ToolContext,
+        profile: &AgentProfile,
+        task: String,
+    ) -> ToolResult {
+        match self.runner.delegate(ctx, profile, &task).await {
             Ok(result) => {
                 let failed = result.error.is_some();
-                Ok(ToolResult {
+                ToolResult {
                     ok: !failed,
                     content: serde_json::to_value(&result)
                         .unwrap_or_else(|_| serde_json::json!({})),
                     error: result.error,
-                })
+                }
             }
-            Err(err) => Ok(ToolResult {
+            Err(err) => ToolResult {
                 ok: false,
-                content: serde_json::json!({ "agent": profile.name }),
+                content: serde_json::json!({ "agent": profile.name, "error": err.to_string() }),
                 error: Some(format!("delegation failed: {err}")),
-            }),
+            },
         }
     }
 }
+
+/// Delegates fan out at most this many at a time. Each sub-agent is a full Run
+/// with its own Tool calls, so an unbounded fan-out multiplies provider spend
+/// and local I/O.
+const MAX_PARALLEL_DELEGATES: usize = 4;
 
 #[cfg(test)]
 mod tests {
@@ -272,12 +355,14 @@ mod tests {
                 name: "explorer".into(),
                 instructions: "Read-only. Never edits.".into(),
                 tool_ids: vec!["files".into(), "grep".into(), "glob".into()],
+                model_id: None,
             },
             AgentProfile {
                 id: "2".into(),
                 name: "builder".into(),
                 instructions: "Makes changes.".into(),
                 tool_ids: vec!["files".into(), "edit".into(), "terminal".into()],
+                model_id: None,
             },
         ]
     }
@@ -394,10 +479,33 @@ mod tests {
     #[tokio::test]
     async fn a_missing_task_is_rejected() {
         let tool = AgentTool::new(Arc::new(StaticAgents(profiles())), Arc::new(EchoRunner));
-        assert!(tool
+        let result = tool
             .invoke(ctx(), serde_json::json!({ "agent": "explorer" }))
             .await
-            .is_err());
+            .expect("invoke");
+        assert!(!result.ok);
+        assert!(result.error.as_deref().is_some_and(|e| e.contains("task")));
+    }
+
+    #[tokio::test]
+    async fn tasks_fan_out_and_each_result_carries_its_task() {
+        let tool = AgentTool::new(Arc::new(StaticAgents(profiles())), Arc::new(EchoRunner));
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({
+                    "agent": "explorer",
+                    "tasks": ["first", "second", "third"]
+                }),
+            )
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        let results = result.content["results"].as_array().expect("results");
+        assert_eq!(results.len(), 3);
+        let mut tasks: Vec<&str> = results.iter().filter_map(|r| r["task"].as_str()).collect();
+        tasks.sort_unstable();
+        assert_eq!(tasks, vec!["first", "second", "third"]);
     }
 
     #[tokio::test]

@@ -69,6 +69,29 @@ impl EditTool {
             return Err(EditError::NoOp);
         }
 
+        // `files.read` prefixes every line with its number. A model that copies
+        // a region straight back into an anchor carries those prefixes with it,
+        // and the anchor then cannot match the on-disk text. Strip them and
+        // retry — but only after an exact and then a whitespace-tolerant match
+        // has failed, so a file that genuinely contains `"  12\t"` still edits
+        // normally.
+        let mut anchor = old.to_string();
+        let mut replacement = new.to_string();
+        if !content.contains(&anchor) && loose_occurrences(content, &anchor) == 0 {
+            if let Some(stripped) = strip_line_number_prefixes(&anchor) {
+                anchor = stripped;
+                replacement = strip_line_number_prefixes(&replacement).unwrap_or(replacement);
+            }
+        }
+        let old = anchor.as_str();
+        let new = replacement.as_str();
+        if old.is_empty() {
+            return Err(EditError::EmptyAnchor);
+        }
+        if old == new {
+            return Err(EditError::NoOp);
+        }
+
         let occurrences = content.matches(old).count();
         if occurrences == 0 {
             // Fall back to a whitespace-tolerant comparison before giving up.
@@ -166,6 +189,35 @@ fn loose_replace(content: &str, old: &str, new: &str, replace_all: bool) -> Stri
 
 fn trim_end(line: &str) -> &str {
     line.trim_end_matches(['\r', ' ', '\t'])
+}
+
+/// Remove a leading `"   123\t"` (the `files.read` line prefix) from every line.
+///
+/// Returns `None` when any line lacks a numeric prefix, so a normal multi-line
+/// anchor is never rewritten by accident.
+fn strip_line_number_prefixes(text: &str) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start_matches(' ');
+        let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 || digits > 9 {
+            return None;
+        }
+        let rest = trimmed[digits..].strip_prefix('\t')?;
+        if idx > 0 {
+            out.push('\n');
+        }
+        out.push_str(rest);
+        changed = true;
+    }
+    if changed && text.ends_with('\n') {
+        out.push('\n');
+    }
+    changed.then_some(out)
 }
 
 /// Render a minimal `@@`-style preview around the first changed line so the
@@ -588,6 +640,40 @@ mod tests {
         let (out, count) = EditTool::replace("a\nb\nc\n", "b", "B", false).expect("replace");
         assert_eq!(out, "a\nB\nc\n");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn an_anchor_copied_from_a_numbered_read_still_matches() {
+        // `files.read` returns `"     2\tbeta"`; a model may paste that block
+        // straight back without removing the numbers.
+        let numbered = "     2\tbeta\n     3\tgamma";
+        let (out, count) =
+            EditTool::replace("alpha\nbeta\ngamma\n", numbered, "BETA\nGAMMA", false)
+                .expect("replace");
+        assert_eq!(out, "alpha\nBETA\nGAMMA\n");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_numbered_replacement_is_unprefixed_too() {
+        let (out, _) = EditTool::replace(
+            "alpha\nbeta\n",
+            "     2\tbeta",
+            "     2\tBETA\n     3\tDELTA",
+            false,
+        )
+        .expect("replace");
+        assert_eq!(out, "alpha\nBETA\nDELTA\n");
+    }
+
+    #[test]
+    fn strip_only_accepts_a_uniform_numeric_prefix() {
+        assert_eq!(
+            strip_line_number_prefixes("  12\tx\n  13\ty").as_deref(),
+            Some("x\ny")
+        );
+        assert_eq!(strip_line_number_prefixes("x\n  13\ty"), None);
+        assert_eq!(strip_line_number_prefixes("    x"), None);
     }
 
     #[test]

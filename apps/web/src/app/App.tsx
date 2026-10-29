@@ -54,7 +54,7 @@ import { Auth } from "@/features/auth/Auth";
 import { Chat } from "@/features/chat/Chat";
 import { Conversations } from "@/features/chat/Conversations";
 import type { WorkspaceSnapshot } from "@/features/chat/greeting";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useCallback } from "react";
 
 const Skills = lazy(() =>
   import("@/features/skills/Skills").then((m) => ({ default: m.Skills })),
@@ -89,6 +89,10 @@ function useMediaQuery(query: string) {
 }
 
 type Me = { username: string; csrf: string };
+type SetupInfo = { needs_admin: boolean };
+type SettingsInfo = {
+  data: { ui_language?: string; setup_complete?: boolean };
+};
 
 /** Keyed wrapper so switching conversations remounts the composer. That lets
  *  the per-conversation draft survive a session-expiry round trip through the
@@ -138,6 +142,17 @@ export function App() {
   const [renameTarget, setRenameTarget] = useState<Row | null>(null);
   const [trashTarget, setTrashTarget] = useState<Row | null>(null);
   const [showTour, setShowTour] = useState(false);
+  const updateConversation = useCallback(
+    async (id: string, data: object) => {
+      await api(`/conversations/${id}/state`, "PATCH", data);
+      setOpenConversationMenu(null);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["/conversations"] }),
+        qc.invalidateQueries({ queryKey: ["/conversation-folders"] }),
+      ]);
+    },
+    [qc],
+  );
   const folders = useQuery<Row[]>({
     queryKey: ["/conversation-folders"],
     queryFn: () => api("/conversation-folders"),
@@ -210,6 +225,35 @@ export function App() {
     };
   }, [location.pathname, qc, user]);
   useEffect(() => {
+    Promise.all([
+      api<SetupInfo>("/setup"),
+      api<Me>("/auth/me").catch(() => null),
+    ])
+      .then(async ([setup, me]) => {
+        setNeedsAdmin(setup.needs_admin);
+        if (me) {
+          setCSRF(me.csrf);
+          const settings = await api<SettingsInfo>("/settings");
+          setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
+          setSetupComplete(
+            settings.data.setup_complete === false ? false : true,
+          );
+          setUser(me);
+        }
+        setReady(true);
+        // 初回ログイン時にツアーを表示
+        if (me && !localStorage.getItem("mix-agent-tour-done")) {
+          setShowTour(true);
+        }
+      })
+      .catch(setError);
+  }, []);
+  const conversations = useQuery<Row[]>({
+    queryKey: ["/conversations"],
+    queryFn: () => api("/conversations?state=active"),
+    enabled: !!user,
+  });
+  useEffect(() => {
     if (!openConversationMenu) return;
     const close = (event: MouseEvent) => {
       if (!(event.target as HTMLElement).closest(".conversation-sidebar-item"))
@@ -246,33 +290,7 @@ export function App() {
       document.removeEventListener("click", close);
       document.removeEventListener("keydown", keydown);
     };
-  }, [openConversationMenu]);
-  useEffect(() => {
-    Promise.all([api("/setup"), api("/auth/me").catch(() => null)])
-      .then(async ([setup, me]) => {
-        setNeedsAdmin(setup.needs_admin);
-        if (me) {
-          setCSRF(me.csrf);
-          const settings = await api("/settings");
-          setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
-          setSetupComplete(
-            settings.data.setup_complete === false ? false : true,
-          );
-          setUser(me);
-        }
-        setReady(true);
-        // 初回ログイン時にツアーを表示
-        if (me && !localStorage.getItem("mix-agent-tour-done")) {
-          setShowTour(true);
-        }
-      })
-      .catch(setError);
-  }, []);
-  const conversations = useQuery<Row[]>({
-    queryKey: ["/conversations"],
-    queryFn: () => api("/conversations?state=active"),
-    enabled: !!user,
-  });
+  }, [openConversationMenu, conversations.data, updateConversation]);
   useEffect(() => {
     // A session can expire while the tab is open.  The API client emits this
     // event instead of surfacing a generic network error, so drop the cached
@@ -335,6 +353,7 @@ export function App() {
     if (!isMobile || !sidebar) return;
     const el = sidebarRef.current;
     const returnFocus = document.activeElement as HTMLElement | null;
+    const sidebarToggle = sidebarToggleRef.current;
     sidebarCloseRef.current?.focus();
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -362,7 +381,7 @@ export function App() {
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      (returnFocus ?? sidebarToggleRef.current)?.focus();
+      (returnFocus ?? sidebarToggle)?.focus();
     };
   }, [isMobile, sidebar]);
   // 新しいチャット画面の挨拶に使う、ワークスペースの状況だけを渡す。
@@ -389,7 +408,7 @@ export function App() {
     try {
       if (needsAdmin)
         await api("/settings", "PUT", { ui_language: getLanguage() });
-      const settings = await api("/settings");
+      const settings = await api<SettingsInfo>("/settings");
       setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
       setSetupComplete(settings.data.setup_complete === false ? false : true);
     } catch (cause) {
@@ -420,14 +439,6 @@ export function App() {
   async function newChat() {
     navigate("/");
     setSidebar(false);
-  }
-  async function updateConversation(id: string, data: object) {
-    await api(`/conversations/${id}/state`, "PATCH", data);
-    setOpenConversationMenu(null);
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ["/conversations"] }),
-      qc.invalidateQueries({ queryKey: ["/conversation-folders"] }),
-    ]);
   }
   async function renameConversation(conversation: Row) {
     setRenameTarget(conversation);
@@ -751,6 +762,9 @@ export function App() {
             onClick={() => setSidebar(false)}
           />
         )}
+        {/* Focusable window splitter (ARIA APG): separator is interactive when
+            it controls a resize. */}
+        {/* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- focusable separator is a splitter widget */}
         <div
           className="sidebar-resizer"
           role="separator"
@@ -763,6 +777,7 @@ export function App() {
           onPointerDown={resizeSidebar}
           onKeyDown={resizeSidebarWithKeyboard}
         />
+        {/* eslint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
         <main id="main-content" className="main" tabIndex={-1}>
           <header className="topbar">
             {isMobile || collapsed ? (

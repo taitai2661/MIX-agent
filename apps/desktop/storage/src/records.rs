@@ -77,8 +77,6 @@ pub struct SettingsData {
     pub egress_allowlist: Vec<String>,
     #[serde(rename = "autoUpdate", default)]
     pub auto_update: bool,
-    #[serde(rename = "telemetryConsent", default)]
-    pub telemetry_consent: bool,
     /// Default parent folder used when auto-generating project workspaces
     /// (Projectless chats, legacy backfills). `None` →
     /// `~/Documents/MIX-agent Projects`.

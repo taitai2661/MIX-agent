@@ -70,6 +70,21 @@ pub struct RunEngine {
     /// records an answer. The DB row remains the fallback (polled every
     /// [`BUDGET_DB_POLL_INTERVAL`]) for answers written before a restart.
     pub budget_notify: Arc<tokio::sync::Notify>,
+    /// Files the Run is about to change, captured before the first change so
+    /// the whole Run can be reverted. In memory: a restart drops the undo
+    /// history, which is the honest lifetime for "undo what just happened".
+    pub snapshots: Arc<tokio::sync::Mutex<HashMap<RunId, Vec<FileSnapshot>>>>,
+    /// Content fingerprints of files the Run has read, so an edit can refuse
+    /// to apply to content the model never saw.
+    pub read_fingerprints:
+        Arc<tokio::sync::Mutex<HashMap<RunId, HashMap<std::path::PathBuf, u64>>>>,
+    /// Mid-Run user messages waiting to be folded into the next turn.
+    ///
+    /// A coding agent that can only be stopped, never redirected, throws away
+    /// every step it has already taken when the user spots a wrong assumption.
+    /// The queue is drained at each turn boundary rather than interrupted into
+    /// a streaming completion, so a provider request is never cut mid-token.
+    pub steering: Arc<tokio::sync::Mutex<HashMap<RunId, Vec<String>>>>,
 }
 
 /// Cooperative cancellation handle for an in-flight Run.
@@ -117,6 +132,15 @@ impl Default for RunCancellation {
     }
 }
 
+/// A file's content before a Run first changed it.
+///
+/// `previous: None` means the file did not exist, so reverting deletes it.
+#[derive(Debug, Clone)]
+pub struct FileSnapshot {
+    pub path: std::path::PathBuf,
+    pub previous: Option<Vec<u8>>,
+}
+
 impl RunEngine {
     /// Build an engine bound to an existing storage handle. Used by the Tauri
     /// shell, which owns the app-data directory.
@@ -156,6 +180,9 @@ impl RunEngine {
             active: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             budget_decisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             budget_notify: Arc::new(tokio::sync::Notify::new()),
+            steering: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            snapshots: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            read_fingerprints: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -437,6 +464,187 @@ impl RunEngine {
     pub async fn tool_specs_for_mode(&self, mode: Mode) -> Vec<mixd_providers::ToolSpec> {
         let registry = self.tools.read().await;
         super::tool_specs::map_tool_specs(&registry.specs_for_mode(mode.as_str()))
+    }
+
+    /// Snapshot `paths` before a mutating call runs.
+    ///
+    /// Only the first sighting of a path is recorded: reverting a Run restores
+    /// the state it started from, not the state before its most recent edit.
+    async fn snapshot_paths(&self, run_id: RunId, root_path: Option<&str>, paths: &[String]) {
+        if paths.is_empty() {
+            return;
+        }
+        let root = root_path
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::current_dir().ok());
+        let mut needed: Vec<std::path::PathBuf> = Vec::new();
+        {
+            let mut guard = self.snapshots.lock().await;
+            // Keep the undo history for the most recent Runs only; an
+            // unbounded map would pin every edited file for the process
+            // lifetime.
+            if guard.len() > MAX_SNAPSHOT_RUNS && !guard.contains_key(&run_id) {
+                if let Some(oldest) = guard.keys().next().copied() {
+                    guard.remove(&oldest);
+                }
+            }
+            let entry = guard.entry(run_id).or_default();
+            if entry.len() >= MAX_SNAPSHOT_FILES {
+                return;
+            }
+            for path in paths {
+                let resolved = resolve_snapshot_path(root.as_deref(), path);
+                if entry.iter().any(|snapshot| snapshot.path == resolved)
+                    || needed.contains(&resolved)
+                {
+                    continue;
+                }
+                needed.push(resolved);
+            }
+        }
+        let mut captured: Vec<FileSnapshot> = Vec::with_capacity(needed.len());
+        for path in needed {
+            let previous = tokio::fs::read(&path).await.ok();
+            captured.push(FileSnapshot { path, previous });
+        }
+        if captured.is_empty() {
+            return;
+        }
+        self.snapshots
+            .lock()
+            .await
+            .entry(run_id)
+            .or_default()
+            .extend(captured);
+    }
+
+    /// Why a write should be refused because the file changed under the model.
+    ///
+    /// Returns `None` for a path the Run never read: the policy is "do not edit
+    /// stale content", not "must read before every edit", which would reject
+    /// perfectly good one-shot edits (and every existing test) for no safety.
+    async fn stale_write_reason(
+        &self,
+        run_id: RunId,
+        root: Option<&str>,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Option<String> {
+        let action = args
+            .get("action")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let mutates = match tool {
+            "edit" => true,
+            "files" => matches!(action, "write" | "append" | "delete" | "create"),
+            _ => false,
+        };
+        if !mutates {
+            return None;
+        }
+        let paths = mutated_paths(tool, args);
+        if paths.is_empty() {
+            return None;
+        }
+        // Clone the small map and drop the guard before touching the disk.
+        let known = {
+            let guard = self.read_fingerprints.lock().await;
+            guard.get(&run_id).cloned().unwrap_or_default()
+        };
+        if known.is_empty() {
+            return None;
+        }
+        let root = root.map(std::path::Path::new);
+        for path in paths {
+            let key = normalize_tool_path(root, &path);
+            let Some(expected) = known.get(&key).copied() else {
+                continue;
+            };
+            match tokio::fs::read(&key).await {
+                Ok(bytes) => {
+                    if mixd_tools::files::fingerprint_of(&bytes) != expected {
+                        return Some(format!(
+                            "`{path}` changed on disk after you read it. Re-read it and copy \
+                             the anchor from the current content."
+                        ));
+                    }
+                }
+                Err(_) => {
+                    return Some(format!("`{path}` was deleted after you read it."));
+                }
+            }
+        }
+        None
+    }
+
+    /// Restore every file the Run changed to its pre-Run content.
+    ///
+    /// Returns the number of files restored. Terminal commands are not covered:
+    /// which files a shell command writes is not knowable without sandboxing
+    /// the write, so only `edit` / `files` mutations are snapshotted.
+    pub async fn revert_run(&self, run_id: RunId) -> anyhow::Result<usize> {
+        let snapshots = self
+            .snapshots
+            .lock()
+            .await
+            .remove(&run_id)
+            .unwrap_or_default();
+        let mut restored = 0usize;
+        for snapshot in snapshots.into_iter().rev() {
+            match snapshot.previous {
+                Some(bytes) => {
+                    if let Some(parent) = snapshot.path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    tokio::fs::write(&snapshot.path, bytes).await?;
+                }
+                None => {
+                    if tokio::fs::metadata(&snapshot.path).await.is_ok() {
+                        tokio::fs::remove_file(&snapshot.path).await?;
+                    }
+                }
+            }
+            restored += 1;
+        }
+        Ok(restored)
+    }
+
+    /// Queue a user message for the next turn of an active Run.
+    ///
+    /// Returns `false` when the Run is no longer active, so the caller can fall
+    /// back to starting a normal turn instead of dropping the message into a
+    /// queue nobody will drain.
+    pub async fn steer(&self, run_id: RunId, content: String) -> bool {
+        let text = content.trim().to_string();
+        if text.is_empty() {
+            return false;
+        }
+        let active = self.active.lock().await.contains_key(&run_id);
+        if !active {
+            return false;
+        }
+        self.steering
+            .lock()
+            .await
+            .entry(run_id)
+            .or_default()
+            .push(text);
+        true
+    }
+
+    async fn take_steering(&self, run_id: RunId) -> Vec<String> {
+        self.steering
+            .lock()
+            .await
+            .remove(&run_id)
+            .unwrap_or_default()
+    }
+
+    /// Enable or disable the OS sandbox for shells spawned after this call.
+    /// Existing sessions keep the profile they were started with.
+    pub async fn set_terminal_sandbox(&self, enabled: bool) {
+        let registry = self.tools.read().await.clone();
+        registry.set_terminal_sandbox(enabled);
     }
 
     pub async fn cancel(&self, run_id: RunId) {
@@ -994,6 +1202,9 @@ impl RunEngine {
         self.active.lock().await.remove(&run_id);
         self.sequences.lock().await.remove(&run_id);
         self.flush_scheduled.lock().await.remove(&run_id);
+        // A message typed as the Run finished has no turn left to reach.
+        self.steering.lock().await.remove(&run_id);
+        self.read_fingerprints.lock().await.remove(&run_id);
     }
 
     /// Record a Run's terminal state and return its outcome.
@@ -1190,6 +1401,10 @@ impl RunEngine {
         // Without this a failing check would re-arm the gate every turn and
         // loop until the step budget is exhausted.
         let mut auto_verified = false;
+        // Plan mode is lifted for the rest of the Run once the user approves a
+        // `user_plan` proposal. Kept here rather than on the request: it is a
+        // property of this execution, not of the conversation.
+        let mut plan_approved = false;
         // Last checklist emitted, so the UI only gets an event when it changes.
         let mut last_todos: Vec<mixd_tools::todo::TodoItem> = Vec::new();
         let mut summary = crate::context::TieredSummary::new();
@@ -1249,6 +1464,28 @@ impl RunEngine {
                         steps,
                     )
                     .await;
+            }
+
+            // Fold any message the user typed while the Run was working into
+            // the transcript. It becomes an ordinary user turn, so the model
+            // sees it exactly where it would have seen a message sent between
+            // Runs, and the persisted transcript matches what the UI showed.
+            for text in self.take_steering(run_id).await {
+                let message = Message::text("user", format!("[user interjection] {text}"));
+                self.append_message(
+                    request.conversation_id,
+                    run_id,
+                    &request.model_id,
+                    &message_to_history(&message),
+                )
+                .await;
+                messages.push(message);
+                self.emit(
+                    run_id,
+                    "steering_applied",
+                    serde_json::json!({ "content": text }),
+                )
+                .await;
             }
 
             // Budget gate before each Provider turn.
@@ -1693,8 +1930,21 @@ impl RunEngine {
                 .collect();
 
             let cancellation = self.cancellation_of(run_id).await;
-            let mut tool_messages: Vec<Message> = Vec::new();
-            for (call, args) in turn.tool_calls.iter().zip(call_args.iter()) {
+            // Whether this step changed a file, so the formatter can run once
+            // after the batch instead of after every individual edit.
+            let mut step_mutated = false;
+
+            // Read-only calls run concurrently. A model that asks for five
+            // greps and three reads used to wait for the sum of their
+            // latencies; now it waits for the slowest. Mutating calls stay
+            // strictly ordered, and every result is reassembled in the order
+            // the model emitted the calls, because providers pair a `tool`
+            // message with its call by position and id.
+            let mut results: Vec<Option<RunToolCall>> = vec![None; turn.tool_calls.len()];
+            let mut destructive: Vec<Option<String>> = vec![None; turn.tool_calls.len()];
+            let mut pending_reads: Vec<(usize, AssistantToolCall, serde_json::Value)> = Vec::new();
+
+            for (index, (call, args)) in turn.tool_calls.iter().zip(call_args.iter()).enumerate() {
                 if cancellation.is_cancelled() {
                     break;
                 }
@@ -1709,8 +1959,9 @@ impl RunEngine {
                 // that follows it in the same turn can clear it. Doing this
                 // after the loop meant a `write` then `read` in one assistant
                 // turn left the gate open even though the read had confirmed it.
-                let destructive = destructive_reason(&call.function.name, args);
-                if self.policy.strict_verification && destructive.is_some() {
+                let effect = destructive_reason(&call.function.name, args);
+                destructive[index] = effect.clone();
+                if self.policy.strict_verification && effect.is_some() {
                     verification.requires_confirmation(&call.function.name, args);
                     self.emit(
                         run_id,
@@ -1718,20 +1969,18 @@ impl RunEngine {
                         serde_json::json!({
                             "tool": call.function.name,
                             "arguments": args,
-                            "reason": destructive.clone().unwrap_or_default(),
+                            "reason": effect.clone().unwrap_or_default(),
                         }),
                     )
                     .await;
                 }
-                // A `terminal` call or a slow fetch must not make the Run
-                // uncancellable: race the dispatch against the cancellation
-                // signal and stop as soon as the user asks to.
                 // Plan mode refuses anything that changes the workspace, before
                 // the permission gate and therefore before any stored allow
                 // rule can turn it writable. A refusal is reported through the
                 // same denied-call path as a user denial, so the model gets a
                 // reason it can act on instead of a silent no-op.
-                let result = if request.mode.is_read_only()
+                if request.mode.is_read_only()
+                    && !plan_approved
                     && crate::runs::stagnation::is_mutating(&call.function.name, args)
                 {
                     let record = RunToolCall {
@@ -1742,35 +1991,150 @@ impl RunEngine {
                         error: None,
                         approval_id: None,
                     };
-                    self.deny_tool(
+                    results[index] = Some(
+                        self.deny_tool(
+                            run_id,
+                            record,
+                            "plan mode is read-only; describe the change and present it \
+                             with `user_plan` instead of making it",
+                        )
+                        .await,
+                    );
+                    continue;
+                }
+                // Refuse to edit content the model has not seen. Only a file it
+                // actually read is checked, so a fresh edit with no prior read
+                // keeps working; the dangerous case is the file changing on
+                // disk after the read and the anchor still matching stale text.
+                if let Some(reason) = self
+                    .stale_write_reason(
                         run_id,
-                        record,
-                        "plan mode is read-only; describe the change and present it \
-                         with `user_plan` instead of making it",
+                        request.root_path.as_deref(),
+                        &call.function.name,
+                        args,
                     )
                     .await
-                } else {
-                    tokio::select! {
-                        biased;
-                        _ = cancellation.cancelled_signal() => {
-                            tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
-                            break;
-                        }
-                        result = self.dispatch_tool(run_id, &request, call, args) => result,
+                {
+                    let record = RunToolCall {
+                        id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        arguments: args.clone(),
+                        result: None,
+                        error: None,
+                        approval_id: None,
+                    };
+                    results[index] = Some(self.fail_tool(run_id, record, &reason).await);
+                    continue;
+                }
+                // Capture the pre-Run content before the first change, so the
+                // whole Run can be undone. Read-only calls have no paths.
+                let paths = mutated_paths(&call.function.name, args);
+                if !paths.is_empty() {
+                    self.snapshot_paths(run_id, request.root_path.as_deref(), &paths)
+                        .await;
+                }
+                if can_run_concurrently(&call.function.name, args) {
+                    pending_reads.push((index, call.clone(), args.clone()));
+                    continue;
+                }
+                // A mutating call may depend on nothing, but a read scheduled
+                // *after* it in the same turn may depend on its effect. Flush
+                // the current batch first so the two cannot race.
+                self.flush_concurrent_reads(
+                    run_id,
+                    &request,
+                    &mut pending_reads,
+                    &mut results,
+                    &cancellation,
+                )
+                .await;
+                // A `terminal` call or a slow fetch must not make the Run
+                // uncancellable: race the dispatch against the cancellation
+                // signal and stop as soon as the user asks to.
+                let result = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled_signal() => {
+                        tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
+                        break;
                     }
+                    result = self.dispatch_tool(run_id, &request, call, args) => result,
+                };
+                results[index] = Some(result);
+            }
+            // Anything still buffered (the turn ended, or was cancelled between
+            // calls) runs now.
+            self.flush_concurrent_reads(
+                run_id,
+                &request,
+                &mut pending_reads,
+                &mut results,
+                &cancellation,
+            )
+            .await;
+
+            // Post-processing is a separate pass in call order: the verification
+            // ledger, stagnation signals and the transcript must observe the
+            // calls in the order the model made them, not the order concurrent
+            // reads happened to finish.
+            let mut tool_messages: Vec<Message> = Vec::new();
+            let mut plan_handoff = false;
+            for (index, (call, args)) in turn.tool_calls.iter().zip(call_args.iter()).enumerate() {
+                let Some(result) = results[index].take() else {
+                    // The Run was cancelled before this call ran. The assistant
+                    // turn already declared it, so it still needs a terminal
+                    // result or the persisted transcript is invalid for every
+                    // provider (a dangling `tool_calls` turn is rejected).
+                    tool_messages.push(Message::tool_result(call, "Error: run cancelled", true));
+                    continue;
                 };
                 all_tool_calls.push(result.clone());
                 let is_error = result.error.is_some();
+                if !is_error
+                    && call.function.name == "files"
+                    && args.get("action").and_then(|v| v.as_str()) == Some("read")
+                {
+                    if let (Some(path), Some(fingerprint)) = (
+                        args.get("path").and_then(|v| v.as_str()),
+                        result
+                            .result
+                            .as_ref()
+                            .and_then(|payload| payload.get("fingerprint"))
+                            .and_then(|value| value.as_u64()),
+                    ) {
+                        if fingerprint != 0 {
+                            let key = normalize_tool_path(
+                                request.root_path.as_deref().map(std::path::Path::new),
+                                path,
+                            );
+                            self.read_fingerprints
+                                .lock()
+                                .await
+                                .entry(run_id)
+                                .or_default()
+                                .insert(key, fingerprint);
+                        }
+                    }
+                }
+                // The user approved the proposal: lift Plan mode for the rest
+                // of this Run and tell the model that it may now make changes.
+                if request.mode == Mode::Plan && call.function.name == "user_plan" && !is_error {
+                    plan_approved = true;
+                    plan_handoff = true;
+                }
                 // Only a read that actually succeeded closes the gate, and only
                 // for the target it confirms.
-                if !is_error && destructive.is_none() {
+                if !is_error && destructive[index].is_none() {
                     verification.confirm(&call.function.name, args);
                 }
                 if !is_error {
                     // A deliberate file change re-arms the check gate, and a
                     // successful `terminal` run of the configured check is the
                     // only thing that clears it.
-                    for path in mutated_paths(&call.function.name, args) {
+                    let mutated = mutated_paths(&call.function.name, args);
+                    if !mutated.is_empty() {
+                        step_mutated = true;
+                    }
+                    for path in mutated {
                         verification.note_mutation(&path);
                     }
                     if call.function.name == "terminal" {
@@ -1801,15 +2165,6 @@ impl RunEngine {
                 signals.push(classify_tool_call(&call.function.name, args, is_error));
                 tool_messages.push(Message::tool_result(call, content, is_error));
             }
-            // If we stopped early on cancellation, the assistant turn already
-            // declared every tool call; give the remaining ones a terminal
-            // result so the persisted transcript stays valid for the next turn
-            // (a dangling `tool_calls` turn is rejected by every provider).
-            if cancellation.is_cancelled() && tool_messages.len() < turn.tool_calls.len() {
-                for call in turn.tool_calls.iter().skip(tool_messages.len()) {
-                    tool_messages.push(Message::tool_result(call, "Error: run cancelled", true));
-                }
-            }
             for message in &tool_messages {
                 self.append_message(
                     request.conversation_id,
@@ -1820,6 +2175,69 @@ impl RunEngine {
                 .await;
             }
             messages.extend(tool_messages);
+            if plan_handoff {
+                messages.push(Message::text(
+                    "user",
+                    "[plan approved] The user approved this plan. Plan mode is lifted for \
+                     the rest of this Run: make the changes now, run the project's check, \
+                     and report what you actually verified.",
+                ));
+            }
+
+            // Auto-format: run the project's formatter/lint command after a
+            // step that changed files. The command was previously only
+            // mentioned in the verification hint, so a configured formatter
+            // never actually ran. A failure is surfaced to the model as a user
+            // turn; success is only reported as an event.
+            if step_mutated {
+                if let Some(command) = request
+                    .format_command
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty())
+                {
+                    let command = command.to_string();
+                    let ctx = ToolContext {
+                        run_id,
+                        workspace_id: request.workspace_id,
+                        root_path: request.root_path.clone(),
+                        additional_paths: request.additional_paths.clone(),
+                        approval_token: None,
+                    };
+                    let result = registry
+                        .dispatch(ctx, "terminal", serde_json::json!({ "command": command }))
+                        .await;
+                    let (ok, output) = match result {
+                        Ok(r) => {
+                            let exit_ok = r
+                                .content
+                                .get("exit_code")
+                                .and_then(|v| v.as_i64())
+                                .is_some_and(|c| c == 0);
+                            (r.ok && exit_ok, r.content.to_string())
+                        }
+                        Err(e) => (false, format!("Error: {e}")),
+                    };
+                    self.emit(
+                        run_id,
+                        "format_applied",
+                        serde_json::json!({
+                            "command": command,
+                            "ok": ok,
+                            "output": truncate_event_text(&output),
+                        }),
+                    )
+                    .await;
+                    if !ok {
+                        messages.push(Message::text(
+                            "user",
+                            format!(
+                                "[auto-format] `{command}` failed. Fix the cause before you conclude:\n{output}"
+                            ),
+                        ));
+                    }
+                }
+            }
 
             // Auto-verify: when the project's check is configured and the
             // agent has changed files without running it, run the check
@@ -2102,6 +2520,47 @@ impl RunEngine {
         data.get("budgetDecision").and_then(|v| v.as_bool())
     }
 
+    /// Run the buffered read-only calls concurrently, at most
+    /// [`MAX_CONCURRENT_READS`] at a time, and fill `results` in place.
+    ///
+    /// Only calls that are both read-only and non-sensitive are buffered by the
+    /// caller, so none of them can prompt for approval or change the workspace.
+    /// A cancellation stops the batch: the futures dropped here are the same
+    /// ones a `select!` would have dropped in the serial path.
+    async fn flush_concurrent_reads(
+        &self,
+        run_id: RunId,
+        request: &RunRequest,
+        pending: &mut Vec<(usize, AssistantToolCall, serde_json::Value)>,
+        results: &mut [Option<RunToolCall>],
+        cancellation: &RunCancellation,
+    ) {
+        use futures_util::StreamExt;
+
+        if pending.is_empty() {
+            return;
+        }
+        let batch = std::mem::take(pending);
+        for chunk in batch.chunks(MAX_CONCURRENT_READS) {
+            if cancellation.is_cancelled() {
+                break;
+            }
+            let mut in_flight = futures_util::stream::FuturesUnordered::new();
+            for (index, call, args) in chunk {
+                in_flight.push(async move {
+                    let result = self.dispatch_tool(run_id, request, call, args).await;
+                    (*index, result)
+                });
+            }
+            while let Some((index, result)) = in_flight.next().await {
+                if cancellation.is_cancelled() {
+                    break;
+                }
+                results[index] = Some(result);
+            }
+        }
+    }
+
     /// Dispatch a single Tool call, honouring the permission policy.
     #[tracing::instrument(skip_all, fields(run_id = %run_id))]
     async fn dispatch_tool(
@@ -2127,6 +2586,22 @@ impl RunEngine {
             error: None,
             approval_id: None,
         };
+
+        // A malformed argument blob reaches this function as `Null` (the caller
+        // logs the parse error). Dispatching it anyway produced a misleading
+        // "path required" from the Tool; report the actual problem instead.
+        if arguments.is_null() {
+            let raw = call.function.arguments.trim();
+            if !raw.is_empty() && raw != "null" {
+                return self
+                    .fail_tool(
+                        run_id,
+                        record,
+                        &format!("arguments are not valid JSON: {}", truncate_event_text(raw)),
+                    )
+                    .await;
+            }
+        }
 
         // One read of the registry for the whole call, taken as a snapshot
         // rather than a guard. The gate used to take the lock twice here and a
@@ -2281,7 +2756,19 @@ impl RunEngine {
             additional_paths: request.additional_paths.clone(),
             approval_token,
         };
-        let outcome = registry.dispatch(ctx, &tool_name, arguments.clone()).await;
+        // Mask credentials before the result reaches the transcript, the model
+        // or the event log: one `cat .env` would otherwise copy a live key into
+        // all three.
+        let outcome = registry
+            .dispatch(ctx, &tool_name, arguments.clone())
+            .await
+            .map(|mut result| {
+                mixd_tools::redact::redact_value(&mut result.content);
+                if let Some(error) = result.error.as_mut() {
+                    *error = mixd_tools::redact::redact_text(error);
+                }
+                result
+            });
 
         match outcome {
             Ok(result) => {
@@ -2347,6 +2834,41 @@ impl RunEngine {
 
     /// Record a refused Tool call and tell the model why, so it can adapt
     /// instead of retrying blindly.
+    /// Report a call that the engine refused before it reached the Tool. Same
+    /// bookkeeping as `deny_tool`, but recorded as a failure rather than a
+    /// permission denial.
+    async fn fail_tool(&self, run_id: RunId, record: RunToolCall, reason: &str) -> RunToolCall {
+        let message = format!("Tool `{}` was not run: {}", record.name, reason);
+        let _ = self
+            .executor
+            .record_tool_call(
+                run_id,
+                &record.id,
+                &record.name.clone(),
+                record.arguments.clone(),
+                "failed",
+                None,
+                Some(&message),
+            )
+            .await;
+        self.emit(
+            run_id,
+            "tool_result",
+            serde_json::json!({
+                "tool_call_id": record.id,
+                "name": record.name,
+                "arguments": record.arguments,
+                "result": message,
+                "error": message,
+            }),
+        )
+        .await;
+        RunToolCall {
+            error: Some(message),
+            ..record
+        }
+    }
+
     async fn deny_tool(&self, run_id: RunId, record: RunToolCall, reason: &str) -> RunToolCall {
         let message = format!("Tool `{}` was not run: {}", record.name, reason);
         let _ = self
@@ -2621,6 +3143,73 @@ struct TurnResult {
     error: Option<String>,
 }
 
+/// Files snapshotted per Run. A large refactor touches far fewer, and an
+/// unbounded in-memory snapshot set would hold every edited file for the
+/// process lifetime.
+const MAX_SNAPSHOT_FILES: usize = 128;
+
+/// How many Runs keep their undo history in memory.
+const MAX_SNAPSHOT_RUNS: usize = 24;
+
+/// Resolve a Tool's path argument to an absolute key for the read fingerprint
+/// map. `std::path::absolute` folds `.` and makes relative/absolute spellings
+/// of the same file compare equal.
+fn normalize_tool_path(root: Option<&std::path::Path>, path: &str) -> std::path::PathBuf {
+    let joined = resolve_snapshot_path(root, path);
+    std::path::absolute(&joined).unwrap_or(joined)
+}
+
+/// Resolve a Tool's path argument against the workspace root.
+fn resolve_snapshot_path(root: Option<&std::path::Path>, path: &str) -> std::path::PathBuf {
+    let candidate = std::path::Path::new(path);
+    if candidate.is_absolute() {
+        return candidate.to_path_buf();
+    }
+    match root {
+        Some(root) => root.join(candidate),
+        None => candidate.to_path_buf(),
+    }
+}
+
+/// How many read-only Tool calls may be in flight at once.
+///
+/// Bounded rather than unbounded: a model that emits twenty greps should not
+/// spawn twenty directory walks that compete for the same disk.
+const MAX_CONCURRENT_READS: usize = 4;
+
+/// Whether a call is safe to dispatch alongside another one in the same turn.
+///
+/// Deliberately narrower than [`crate::runs::stagnation::is_read_only`]: network
+/// fetches are read-only in the "does not mutate the workspace" sense, but
+/// bursting them at a provider or a site invites rate limits, so they keep the
+/// serial path. These are all local, non-sensitive reads.
+fn can_run_concurrently(name: &str, args: &serde_json::Value) -> bool {
+    let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    match name {
+        "files" => matches!(action, "read" | "list"),
+        "glob" | "grep" | "symbols" => true,
+        "git" => matches!(action, "status" | "diff" | "log" | "show" | "blame"),
+        "knowledge" => action == "search",
+        _ => false,
+    }
+}
+
+/// Trim a tool transcript before putting it in a Run event payload. Failure
+/// output can be hundreds of kilobytes; the UI only needs enough to see why.
+fn truncate_event_text(text: &str) -> String {
+    const MAX: usize = 4_000;
+    if text.len() <= MAX {
+        return text.to_string();
+    }
+    let cut = text
+        .char_indices()
+        .take_while(|(index, _)| *index < MAX)
+        .last()
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    format!("{}…", &text[..cut])
+}
+
 /// Remove a leading `system` head block injected by the compression step.
 fn strip_head(messages: &[Message]) -> Vec<Message> {
     messages
@@ -2865,5 +3454,46 @@ mod execute_tests {
         assert_eq!(outcome.text, "hello");
         assert_eq!(outcome.steps, 1);
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::can_run_concurrently;
+
+    #[test]
+    fn local_reads_are_parallelised() {
+        for args in [
+            serde_json::json!({ "action": "read", "path": "a.rs" }),
+            serde_json::json!({ "action": "list", "path": "." }),
+        ] {
+            assert!(can_run_concurrently("files", &args));
+        }
+        assert!(can_run_concurrently("grep", &serde_json::json!({})));
+        assert!(can_run_concurrently("glob", &serde_json::json!({})));
+        assert!(can_run_concurrently("symbols", &serde_json::json!({})));
+        assert!(can_run_concurrently(
+            "git",
+            &serde_json::json!({ "action": "diff" })
+        ));
+        assert!(can_run_concurrently(
+            "knowledge",
+            &serde_json::json!({ "action": "search" })
+        ));
+    }
+
+    #[test]
+    fn writes_and_network_calls_stay_serial() {
+        assert!(!can_run_concurrently(
+            "files",
+            &serde_json::json!({ "action": "write", "path": "a.rs" })
+        ));
+        assert!(!can_run_concurrently("edit", &serde_json::json!({})));
+        assert!(!can_run_concurrently("terminal", &serde_json::json!({})));
+        assert!(!can_run_concurrently("web_fetch", &serde_json::json!({})));
+        assert!(!can_run_concurrently(
+            "workspace_check",
+            &serde_json::json!({})
+        ));
     }
 }

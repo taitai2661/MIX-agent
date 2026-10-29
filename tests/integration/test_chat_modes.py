@@ -1,9 +1,10 @@
 import asyncio
 
 import pytest
-from mix_agent.api import routes
+from mix_agent.api import routes, routes_providers
 from mix_agent.db.models import Message, Model, Provider, Run, Settings, User
 from mix_agent.db.session import SessionLocal
+from mix_agent.providers import probing
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.runs.mode_policy import mode_prompt, tool_allowed
 from mix_agent.tools.registry import BUILTINS
@@ -138,7 +139,7 @@ def test_chat_keeps_plain_conversation_available(signed, monkeypatch, caps):
         async def probe_tools(self, _):
             return False
 
-    monkeypatch.setattr(routes, "Adapter", UnsupportedProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", UnsupportedProbeAdapter)
     response = send(signed, monkeypatch, mid)
     assert response.status_code == 200
     with SessionLocal() as db:
@@ -169,7 +170,7 @@ def test_thinking_probes_unknown_tools_once_and_persists_result(signed, monkeypa
             calls.append(True)
             return True
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     first = send(signed, monkeypatch, mid, "thinking")
     second = send(signed, monkeypatch, mid, "thinking")
     assert first.status_code == second.status_code == 200
@@ -192,7 +193,7 @@ def test_unknown_tool_probe_failure_is_not_retried_until_manual_check(signed, mo
             calls.append(True)
             raise TimeoutError()
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     assert send(signed, monkeypatch, mid, "thinking").status_code == 200
     assert send(signed, monkeypatch, mid, "thinking").status_code == 200
     assert len(calls) == 1
@@ -222,7 +223,7 @@ def test_chat_reprobes_stale_probe_and_keeps_tools(signed, monkeypatch):
             calls.append(True)
             return True
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     response = send(signed, monkeypatch, mid, "chat")
     assert response.status_code == 200
     assert len(calls) == 1
@@ -249,7 +250,7 @@ def test_thinking_reprobes_stale_probe(signed, monkeypatch):
             calls.append(True)
             return True
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     response = send(signed, monkeypatch, mid, "thinking")
     assert response.status_code == 200
     assert len(calls) == 1
@@ -275,7 +276,8 @@ def test_tool_probe_survives_model_edit_and_provider_sync(signed, monkeypatch):
         async def list_models(self):
             return [{"model_id": "test-reasoning", "capabilities": {}, "overrides": {}}]
 
-    monkeypatch.setattr(routes, "Adapter", SyncAdapter)
+    monkeypatch.setattr(probing, "Adapter", SyncAdapter)
+    monkeypatch.setattr(routes_providers, "Adapter", SyncAdapter)
     response = signed.post(f"/api/v1/providers/{provider_id}/sync-models")
     assert response.status_code == 200
     with SessionLocal() as db:
@@ -293,7 +295,7 @@ def test_manual_tool_override_wins_over_automatic_probe(signed, monkeypatch):
         def __init__(self, *_):
             raise AssertionError("manual override must skip the probe")
 
-    monkeypatch.setattr(routes, "Adapter", ForbiddenProbe)
+    monkeypatch.setattr(probing, "Adapter", ForbiddenProbe)
     response = send(signed, monkeypatch, mid, "thinking")
     assert response.status_code == 200
     with SessionLocal() as db:
@@ -312,7 +314,7 @@ def test_chat_probes_unknown_tools_automatically(signed, monkeypatch):
             calls.append(True)
             return True
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     response = send(signed, monkeypatch, mid, "chat")
     assert response.status_code == 200, response.text
     assert len(calls) == 1
@@ -334,7 +336,7 @@ def test_agent_probes_unknown_tools_automatically(signed, monkeypatch):
             calls.append(True)
             return True
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     response = send(signed, monkeypatch, mid, "agent")
     assert response.status_code == 200, response.text
     assert len(calls) == 1
@@ -356,7 +358,7 @@ def test_agent_silently_drops_tools_when_probe_returns_unknown(signed, monkeypat
         async def probe_tools(self, _):
             raise TimeoutError()
 
-    monkeypatch.setattr(routes, "Adapter", UnknownProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", UnknownProbeAdapter)
     response = send(signed, monkeypatch, mid, "agent")
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
@@ -385,9 +387,9 @@ async def test_background_probe_confirms_auto_candidate_capabilities(signed, mon
         async def probe_vision(self, _):
             return False
 
-    monkeypatch.setattr(routes, "Adapter", ProbeAdapter)
+    monkeypatch.setattr(probing, "Adapter", ProbeAdapter)
     with SessionLocal() as db:
-        confirmed = await routes.probe_due_models(db, limit=1)
+        confirmed = await probing.probe_due_models(db, limit=1)
         db.commit()
         assert confirmed == 1
         record = db.get(Model, mid).data["tool_probe"]

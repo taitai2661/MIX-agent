@@ -7,7 +7,7 @@
 /// store and run store drive the flow.
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setLanguage } from "@/lib/i18n";
@@ -30,6 +30,7 @@ vi.mock("@/lib/api", () => ({
     sendMessage: vi.fn(),
     editMessage: vi.fn(),
     cancelRun: vi.fn(),
+    deleteConversation: vi.fn(),
   },
 }));
 
@@ -54,6 +55,20 @@ function userMessage(
     kind: "user",
     created_at: new Date().toISOString(),
     attachments: [],
+  };
+}
+
+function conversationSummary(id: string) {
+  return {
+    id,
+    title: "既存のスレッド",
+    mode: "chat",
+    model_id: "auto",
+    updated_at: new Date().toISOString(),
+    preview: null,
+    message_count: 1,
+    project_id: null,
+    workspace_id: null,
   };
 }
 
@@ -97,6 +112,7 @@ beforeEach(() => {
     mode: "chat",
     surface: "chat",
     activeProjectId: null,
+    newThreadDraft: false,
   });
   useRunEvents.getState().clear();
   mocked.listMessages.mockResolvedValue([]);
@@ -198,5 +214,61 @@ describe("ChatPane send/edit/retry", () => {
         expect.objectContaining({ message_id: "m-1", content: "失敗した質問" }),
       ),
     );
+  });
+
+  it("creates a new conversation on first send after New chat", async () => {
+    mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
+    mocked.createConversation.mockResolvedValue(
+      conversationSummary("conv-new"),
+    );
+    mocked.sendMessage.mockResolvedValue({ run_id: "run-new" });
+    const user = userEvent.setup();
+    renderPane();
+
+    // New chat opens a blank draft. The pane must not immediately adopt the
+    // newest existing thread, or the next message would be appended there.
+    act(() => useUi.getState().startNewThread());
+    await waitFor(() => expect(useUi.getState().newThreadDraft).toBe(true));
+    expect(useUi.getState().conversationId).toBeNull();
+
+    const box = await screen.findByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "新しいチャット{Enter}");
+
+    await waitFor(() =>
+      expect(mocked.createConversation).toHaveBeenCalledTimes(1),
+    );
+    expect(mocked.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversation_id: "conv-new",
+        content: "新しいチャット",
+      }),
+    );
+    expect(mocked.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ conversation_id: "conv-1" }),
+    );
+  });
+
+  it("keeps a blank draft when the first send fails", async () => {
+    mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
+    mocked.createConversation.mockResolvedValue(
+      conversationSummary("conv-new"),
+    );
+    mocked.sendMessage.mockRejectedValue(new Error("provider exploded"));
+    const user = userEvent.setup();
+    renderPane();
+
+    act(() => useUi.getState().startNewThread());
+    await waitFor(() => expect(useUi.getState().newThreadDraft).toBe(true));
+
+    const box = await screen.findByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "失敗する質問{Enter}");
+
+    await waitFor(() =>
+      expect(mocked.deleteConversation).toHaveBeenCalledWith("conv-new"),
+    );
+    // Clearing only the id would end draft mode and the auto-select effect
+    // would adopt `conv-1`, making the retry jump to an unrelated thread.
+    expect(useUi.getState().newThreadDraft).toBe(true);
+    expect(useUi.getState().conversationId).toBeNull();
   });
 });

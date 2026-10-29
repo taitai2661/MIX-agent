@@ -1,10 +1,20 @@
 import { useSyncExternalStore } from "react";
 import { t } from "@/app/i18n";
 
-export type Accent = "green" | "blue" | "indigo" | "violet" | "rose" | "amber" | "teal";
+export type Accent =
+  | "green"
+  | "blue"
+  | "indigo"
+  | "violet"
+  | "rose"
+  | "amber"
+  | "teal";
 export type ResolvedTheme = "light" | "dark";
 
-type Palette = Record<ResolvedTheme, { accent: string; strong: string; soft: string }>;
+type Palette = Record<
+  ResolvedTheme,
+  { accent: string; strong: string; soft: string }
+>;
 
 export type AccentOption = {
   id: Accent;
@@ -130,7 +140,11 @@ export function applyAccent(theme: ResolvedTheme) {
 export function AccentPicker() {
   const selected = useAccent();
   return (
-    <div className="accent-picker" role="group" aria-label={t("アクセントカラーを選択")}>
+    <div
+      className="accent-picker"
+      role="group"
+      aria-label={t("アクセントカラーを選択")}
+    >
       {ACCENTS.map((option) => (
         <button
           aria-label={t(option.label)}

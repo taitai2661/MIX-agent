@@ -6,6 +6,35 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
+/// Append a message to an active Run's next turn.
+///
+/// Returns `false` when the Run has already finished, so the UI can send the
+/// text as a normal new turn instead of losing it in a queue nobody drains.
+#[tauri::command]
+pub async fn steer_run(
+    state: State<'_, AppState>,
+    run_id: String,
+    content: String,
+) -> Result<bool, String> {
+    if content.trim().is_empty() {
+        return Err("message is empty".to_string());
+    }
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    Ok(state.engine.steer(id, content).await)
+}
+
+/// Restore every file the Run changed through `edit` / `files` to its
+/// pre-Run content. Terminal commands are out of scope.
+#[tauri::command]
+pub async fn revert_run(state: State<'_, AppState>, run_id: String) -> Result<usize, String> {
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    state
+        .engine
+        .revert_run(id)
+        .await
+        .map_err(crate::error::cmd_err)
+}
+
 #[tauri::command]
 pub async fn get_run(state: State<'_, AppState>, id: String) -> Result<RunView, String> {
     let run_id = Uuid::parse_str(&id).map_err(crate::error::cmd_err)?;

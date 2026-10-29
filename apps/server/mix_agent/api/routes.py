@@ -7,7 +7,7 @@ import secrets
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
@@ -16,15 +16,21 @@ from sqlalchemy.exc import IntegrityError
 
 from mix_agent import config, pricing, project_docs
 from mix_agent import todos as conversation_todos
+from mix_agent.api.common import (
+    audit,
+    context,
+    conversation_title as _conversation_title,
+    own,
+    public,
+    skill_filename as _skill_filename,
+)
 from mix_agent.api.schemas import (
     AgentInput,
-    ArtifactView,
     BudgetExtensionDecisionInput,
     ConversationFolderInput,
     ConversationInput,
     ConversationMessagesView,
     ConversationStateInput,
-    Credentials,
     DecisionInput,
     DiagnosticsView,
     FeedbackInput,
@@ -33,24 +39,16 @@ from mix_agent.api.schemas import (
     MCPInstallInput,
     MCPOAuthStartInput,
     MCPUninstallInput,
-    MemoryInput,
-    MemoryResolveConflictInput,
-    MemoryResolveConflictView,
     MessageInput,
     ModelInput,
-    NotificationReadInput,
-    PasswordChangeInput,
     PermissionInput,
     PermissionRuleView,
     ProjectInput,
-    ProviderInput,
-    ProviderView,
     RecordView,
     ResumeInput,
     RunView,
     ScheduledJobInput,
     SendMessageView,
-    SessionRevocationInput,
     SettingsInput,
     SkillImportInput,
     SkillInput,
@@ -58,24 +56,11 @@ from mix_agent.api.schemas import (
     ToolCallHistoryView,
     ToolView,
     UsageView,
-    UsernameChangeInput,
 )
 from mix_agent.auth.security import (
-    ACCOUNT_CHANGE_LIMIT,
-    ACCOUNT_CHANGE_WINDOW_SECONDS,
-    LOGIN_ACCOUNT_LIMIT,
-    LOGIN_IP_LIMIT,
-    LOGIN_WINDOW_SECONDS,
     authenticate,
-    clear_attempts,
-    dummy_password_hash,
-    new_session,
-    new_session_csrf,
-    passwords,
     read_secret,
-    record_failed_attempt,
     store_secret,
-    throttle_attempt,
 )
 from mix_agent.context import budget as context_budget
 from mix_agent.context import builder as context_builder
@@ -85,39 +70,30 @@ from mix_agent.db.models import (
     Agent,
     Approval,
     Artifact,
-    Audit,
     AutoReliabilityEvent,
     Conversation,
     ConversationFolder,
     Event,
     Feedback,
-    LoginEvent,
     MCPAuthState,
     MCPConnection,
     Memory,
-    MemoryActionEvent,
-    MemoryRevision,
     Message,
     Model,
     ModelUsageEvent,
-    Notification,
     PerformanceEvent,
     Permission,
     Project,
     Provider,
-    PushSubscription,
     Run,
     ScheduledJob,
     ScheduledRun,
     Secret,
-    Session,
     Settings,
     Skill,
     SkillRevision,
     Tool,
     ToolCall,
-    User,
-    Workspace,
     now,
 )
 from mix_agent.db.session import SessionLocal, get_db
@@ -125,12 +101,15 @@ from mix_agent.mcp import oauth as mcp_oauth
 from mix_agent.mcp import registry as mcp_registry
 from mix_agent.mcp.protocol import validate_schema as validate_mcp_schema
 from mix_agent.memory import embeddings as mem_embeddings
-from mix_agent.memory import runtime as memory_runtime
 from mix_agent.memory import service as memory
 from mix_agent.providers import capability_probe
-from mix_agent.providers.adapters import DEFAULT_URLS, Adapter
-from mix_agent.providers.catalog import CUSTOM_KINDS, KIND_VALUES, catalog, get_preset
-from mix_agent.providers.model_roles import is_auto_chat_eligible
+from mix_agent.providers.probing import (
+    capability_targets,
+    probe_auto_candidates,
+    tool_capability,
+    verify_model_capabilities,
+    verify_tool_capability,
+)
 from mix_agent.providers.reasoning import reasoning_control, resolve_reasoning
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.runs.engine import TASKS, auto_retry_count, launch
@@ -144,7 +123,7 @@ from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, registry
 router = APIRouter(prefix="/api/v1")
 
 # Backward-compatible re-exports for external callers (engine.py, scheduler, etc.)
-from mix_agent.api.helpers.cleanup import (
+from mix_agent.storage.cleanup import (
     _delete_message_tail,
     _doomed_messages,
     purge_conversation,
@@ -182,75 +161,6 @@ DEFAULT_SETTINGS = {
 }
 
 
-def context(request: Request, db=Depends(get_db)):
-    return db, authenticate(request, db)
-
-
-def own(db, cls, key, owner):
-    row = db.get(cls, key)
-    if not row or row.owner_id != owner:
-        raise HTTPException(404, "見つかりません")
-    return row
-
-
-def public(row):
-    data = dict(row.data)
-    for key in ("secret_id", "brave_secret_id", "tavily_secret_id", "exa_secret_id", "serper_secret_id"):
-        if key in data:
-            data["has_" + key] = bool(data.pop(key))
-    return {"id": row.id, "data": data, "created_at": row.created_at.isoformat()}
-
-
-def audit(db, owner, action, target):
-    db.add(Audit(owner_id=owner, data={"action": action, "target": target}))
-
-
-def _skill_filename(data):
-    base = re.sub(r"[^A-Za-z0-9_-]+", "-", str(data.get("source_slug") or data.get("name") or "skill")).strip(
-        "-"
-    )
-    return base or "skill"
-
-
-def _conversation_title(content):
-    text = " ".join(content.strip().split())
-    return (text[:77] + "…") if len(text) > 78 else (text or "新しいチャット")
-
-
-def record_login(db, owner_id, successful, ip="unknown"):
-    """Keep only the latest 100 outcomes for this account, with connection metadata."""
-    db.add(LoginEvent(owner_id=owner_id, successful=successful, ip=ip))
-    db.flush()
-    stale_ids = (
-        select(LoginEvent.id)
-        .where(LoginEvent.owner_id == owner_id)
-        .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
-        .offset(100)
-    )
-    db.execute(delete(LoginEvent).where(LoginEvent.id.in_(stale_ids)))
-
-
-def revoke_sessions(db, owner_id, current_session_id=None):
-    rows = db.scalars(select(Session).where(Session.owner_id == owner_id))
-    for row in rows:
-        if current_session_id is None or row.id != current_session_id:
-            db.delete(row)
-
-
-def tool_capability(model_data):
-    """Return the effective tool capability, respecting explicit user overrides."""
-    return capability_probe.capability(model_data, "tools")
-
-
-def capability_targets(model_data, provider_kind):
-    """Capabilities worth confirming automatically for one model."""
-    return capability_probe.due_capabilities(model_data, provider_kind)
-
-
-async def _capability_adapter(db, provider):
-    return Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
-
-
 async def _memory_query_vector(db, owner_id: str, query: str, provider=None):
     """Query embedding used to rank memory; ``None`` means lexical ranking.
 
@@ -285,524 +195,6 @@ def effective_tool_ids(settings, agent, requested):
     if settings.data.get("web_search_enabled", True) is False:
         result = [x for x in result if x not in ("web_search", "web_fetch")]
     return result
-
-
-async def verify_tool_capability(db, owner, model, provider, source):
-    """Persist a safe, one-call tool support check without executing a tool."""
-    try:
-        adapter = await _capability_adapter(db, provider)
-    except Exception as exc:  # noqa: BLE001 - classified; never leaks provider details
-        model.data = capability_probe.merge(
-            model.data, {"tools": "unknown"}, {"tools": type(exc).__name__}, source
-        )
-        return "unknown"
-    model.data = await capability_probe.probe(
-        adapter, model.data, ["tools"], source, provider.data.get("kind")
-    )
-    return model.data["tool_probe"]["status"]
-
-
-async def verify_model_capabilities(db, owner, model, provider, source, capabilities=None):
-    """Confirm the requested (or all due) capabilities and persist the verdicts."""
-    requested = capabilities or capability_targets(model.data, provider.data.get("kind"))
-    if not requested:
-        return model.data
-    try:
-        adapter = await _capability_adapter(db, provider)
-    except Exception as exc:  # noqa: BLE001 - classified; never leaks provider details
-        model.data = capability_probe.merge(
-            model.data,
-            {capability: "unknown" for capability in requested},
-            {capability: type(exc).__name__ for capability in requested},
-            source,
-        )
-        return model.data
-    model.data = await capability_probe.probe(
-        adapter, model.data, requested, source, provider.data.get("kind")
-    )
-    return model.data
-
-
-async def probe_due_models(db, limit=None):
-    """Confirm due capabilities for Auto candidates across owners, bounded."""
-    limit = config.PROBE_BATCH if limit is None else limit
-    if limit <= 0:
-        return 0
-    seen, pending = set(), []
-    for settings_row in db.scalars(select(Settings)):
-        for model_id in settings_row.data.get("auto_model_ids", []):
-            if model_id in seen:
-                continue
-            seen.add(model_id)
-            model = db.get(Model, model_id)
-            provider = db.get(Provider, model.data.get("provider_id")) if model else None
-            if model is None or provider is None or provider.owner_id != settings_row.owner_id:
-                continue
-            due = capability_targets(model.data, provider.data.get("kind"))
-            if due:
-                pending.append((model, provider, due))
-            if len(pending) >= limit:
-                break
-        if len(pending) >= limit:
-            break
-    confirmed = 0
-    for model, provider, due in pending:
-        try:
-            await verify_model_capabilities(db, provider.owner_id, model, provider, "automatic", due)
-            db.commit()
-            confirmed += 1
-        except Exception:  # noqa: BLE001 - one model must not abort the pass
-            db.rollback()
-    return confirmed
-
-
-async def probe_auto_candidates(db, owner_id, allowed_ids, capabilities, limit=None):
-    """Confirm the requested capabilities for Auto candidates before selecting.
-
-    Only unknown capabilities are probed, so confirmed models cost nothing.
-    """
-    limit = config.PROBE_SELECT_BATCH if limit is None else limit
-    confirmed = 0
-    for model_id in allowed_ids:
-        if confirmed >= limit:
-            break
-        model = db.get(Model, model_id)
-        provider = db.get(Provider, model.data.get("provider_id")) if model else None
-        if model is None or model.owner_id != owner_id or provider is None or provider.owner_id != owner_id:
-            continue
-        due = [
-            capability
-            for capability in capabilities
-            if capability_probe.probe_needed(model.data, capability, provider.data.get("kind"))
-        ]
-        if not due:
-            continue
-        try:
-            await verify_model_capabilities(db, owner_id, model, provider, "automatic", due)
-            db.commit()
-            confirmed += 1
-        except Exception:  # noqa: BLE001 - probing must never block a request
-            db.rollback()
-    return confirmed
-
-
-@router.get("/setup")
-def setup(db=Depends(get_db)):
-    return {"needs_admin": db.scalar(select(User.id)) is None}
-
-
-@router.post("/setup/admin")
-def setup_admin(body: Credentials, response: Response, db=Depends(get_db)):
-    if db.scalar(select(User.id)):
-        raise HTTPException(409, "初期設定は完了しています")
-    user = User(username=body.username, password_hash=passwords.hash(body.password))
-    db.add(user)
-    try:
-        db.flush()
-        session = new_session(db, user.id, response)
-        db.add(
-            Settings(
-                id="settings",
-                owner_id=user.id,
-                data={
-                    "setup_complete": False,
-                    "allowed_domains": [],
-                    "auto_retry_count": 3,
-                },
-            )
-        )
-        db.add(Workspace(owner_id=user.id, data={"name": "Workspace", "path": "/workspace"}))
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "管理者は作成済みです")
-    return {"username": user.username, "csrf": session.csrf}
-
-
-@router.post("/auth/login")
-async def login(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
-    ip = request.client.host if request.client else "unknown"
-    user = db.scalar(select(User).where(User.username == body.username))
-    ip_key = "login-ip:" + ip
-    account_key = f"login:{user.id}" if user else None
-    await throttle_attempt(
-        ip_key,
-        LOGIN_IP_LIMIT,
-        LOGIN_WINDOW_SECONDS,
-    )
-    if account_key:
-        await throttle_attempt(
-            account_key,
-            LOGIN_ACCOUNT_LIMIT,
-            LOGIN_WINDOW_SECONDS,
-        )
-    try:
-        if user:
-            valid = bool(passwords.verify(user.password_hash, body.password))
-        else:
-            # Unknown username: still run a real argon2 verification so the
-            # response time does not reveal whether the account exists.
-            passwords.verify(dummy_password_hash(), body.password)
-            valid = False
-    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-        valid = False
-    if not valid:
-        # Failures only consume the throttle budget; a successful login must
-        # never exhaust the bucket with its own legitimate traffic.
-        await record_failed_attempt(ip_key, LOGIN_WINDOW_SECONDS)
-        if account_key:
-            await record_failed_attempt(account_key, LOGIN_WINDOW_SECONDS)
-            record_login(db, user.id, False, ip)
-            db.commit()
-        raise HTTPException(401, "ユーザー名またはパスワードが違います")
-    # A valid password clears this account's failure budget.  The IP bucket is
-    # intentionally left alone: resetting it on any successful login would let
-    # an attacker with one valid account clear the address-wide brute-force
-    # protection for every other account on the same address.
-    clear_attempts(account_key)
-    session = new_session(db, user.id, response)
-    record_login(db, user.id, True, ip)
-    db.commit()
-    return {"username": user.username, "csrf": session.csrf}
-
-
-@router.get("/auth/me")
-def me(ctx=Depends(context)):
-    db, session = ctx
-    return {"username": db.get(User, session.owner_id).username, "csrf": session.csrf}
-
-
-@router.post("/auth/logout")
-def logout(response: Response, ctx=Depends(context)):
-    db, session = ctx
-    db.delete(session)
-    db.commit()
-    response.delete_cookie("mix_session")
-    return {"ok": True}
-
-
-@router.post("/auth/password")
-async def change_password(body: PasswordChangeInput, response: Response, ctx=Depends(context)):
-    db, session = ctx
-    change_key = "password-change:" + session.owner_id
-    await throttle_attempt(change_key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
-    user = db.get(User, session.owner_id)
-    try:
-        valid = passwords.verify(user.password_hash, body.current_password)
-    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-        valid = False
-    if not valid:
-        await record_failed_attempt(change_key, ACCOUNT_CHANGE_WINDOW_SECONDS)
-        raise HTTPException(401, "現在のパスワードが違います")
-    clear_attempts(change_key)
-    user.password_hash = passwords.hash(body.new_password)
-    audit(db, user.id, "password_changed", "account")
-    if body.revoke_all_sessions:
-        revoke_sessions(db, user.id)
-        db.commit()
-        response.delete_cookie("mix_session")
-        return {"ok": True, "relogin_required": True}
-    session.csrf = new_session_csrf()
-    db.commit()
-    return {"ok": True, "csrf": session.csrf, "relogin_required": False}
-
-
-@router.post("/auth/username")
-async def change_username(body: UsernameChangeInput, ctx=Depends(context)):
-    db, session = ctx
-    change_key = "username-change:" + session.owner_id
-    await throttle_attempt(change_key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
-    user = db.get(User, session.owner_id)
-    try:
-        valid = passwords.verify(user.password_hash, body.current_password)
-    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-        valid = False
-    if not valid:
-        await record_failed_attempt(change_key, ACCOUNT_CHANGE_WINDOW_SECONDS)
-        raise HTTPException(401, "現在のパスワードが違います")
-    clear_attempts(change_key)
-    existing = db.scalar(select(User).where(User.username == body.username))
-    if existing and existing.id != user.id:
-        raise HTTPException(409, "そのユーザー名はすでに使われています")
-    user.username = body.username
-    audit(db, user.id, "username_changed", "account")
-    db.commit()
-    return {"username": user.username, "csrf": session.csrf}
-
-
-@router.post("/auth/sessions/revoke")
-def revoke_account_sessions(body: SessionRevocationInput, response: Response, ctx=Depends(context)):
-    db, session = ctx
-    revoke_sessions(db, session.owner_id, None if body.scope == "all" else session.id)
-    audit(db, session.owner_id, "sessions_revoked", body.scope)
-    db.commit()
-    if body.scope == "all":
-        response.delete_cookie("mix_session")
-    return {"ok": True, "relogin_required": body.scope == "all"}
-
-
-@router.get("/auth/login-history")
-def login_history(ctx=Depends(context)):
-    db, session = ctx
-    rows = db.scalars(
-        select(LoginEvent)
-        .where(LoginEvent.owner_id == session.owner_id)
-        .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
-        .limit(100)
-    )
-    return [{"successful": row.successful, "created_at": row.created_at.isoformat()} for row in rows]
-
-
-async def provider_values(body, db, owner, previous=None):
-    data = body.model_dump(exclude={"api_key", "kind"})
-    preset = get_preset(body.preset_id) if body.preset_id else None
-    if body.preset_id and not preset:
-        raise HTTPException(422, "不明なProviderプリセットです")
-    if preset:
-        fields = {field["key"]: field for field in preset.get("extra_config_schema", [])}
-        if any(key not in fields for key in body.extra_config):
-            raise HTTPException(422, "このProviderでは使えない追加設定があります")
-        if any(field.get("required") and not body.extra_config.get(key) for key, field in fields.items()):
-            # Keep incomplete connections editable; sync/transport can explain the missing field.
-            pass
-    if preset and preset["id"] == "custom":
-        if body.kind not in CUSTOM_KINDS:
-            raise HTTPException(422, "カスタムはOpenAI互換・Anthropic・Geminiから選択してください")
-        kind, url = body.kind, body.base_url
-    elif preset:
-        kind, url = preset["kind"], body.base_url or preset["default_url"]
-    else:
-        if body.kind not in KIND_VALUES:
-            raise HTTPException(422, "Providerの接続方式を指定してください")
-        kind, url = body.kind, body.base_url or DEFAULT_URLS[body.kind]
-    if not url:
-        raise HTTPException(422, "このProviderはBase URLを指定してください")
-    data["kind"] = kind
-    parsed = urlsplit(url)
-    if (
-        parsed.scheme not in ("http", "https")
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise HTTPException(422, "有効なHTTP(S) Base URLを指定してください")
-    if not body.allow_private:
-        from mix_agent.tools.network import public_address
-
-        try:
-            await public_address(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-            raise HTTPException(422, "LAN接続先は「プライベート接続を許可」を明示してください")
-    data["base_url"] = url
-    data["extra_config"] = body.extra_config
-    old_secret_id = previous.get("secret_id") if previous else None
-    if body.api_key is not None:
-        data["secret_id"] = store_secret(db, owner, body.api_key, "provider") if body.api_key else None
-        # Replacing or clearing a key must not leave the previous ciphertext
-        # orphaned in the secrets table.
-        if old_secret_id and old_secret_id != data["secret_id"]:
-            old_secret = db.get(Secret, old_secret_id)
-            if old_secret and old_secret.owner_id == owner:
-                db.delete(old_secret)
-    elif previous:
-        data["secret_id"] = old_secret_id
-    return data
-
-
-async def sync_provider_models(db, owner_id, provider):
-    """Fetch a provider catalog, preserve local model state, and seed Auto.
-
-    This deliberately leaves models without a known context window out of
-    Auto.  They remain visible for a user to configure manually.
-    """
-    try:
-        adapter = Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
-        fetched = await adapter.list_models()
-    except Exception as exc:  # noqa: BLE001 - Provider errors must not undo a saved connection.
-        error = str(exc) if str(exc).startswith("missing_extra_config:") else type(exc).__name__
-        return {"status": "failed", "count": 0, "auto_count": 0, "error": error}
-
-    existing = {
-        m.data["model_id"]: m
-        for m in db.scalars(select(Model).where(Model.owner_id == owner_id))
-        if m.data["provider_id"] == provider.id
-    }
-    settings = own(db, Settings, "settings", owner_id)
-    auto_ids = list(dict.fromkeys(settings.data.get("auto_model_ids", [])))
-    auto_id_set = set(auto_ids)
-    added_to_auto = 0
-    for item in fetched:
-        model = existing.get(item["model_id"])
-        data = {**item, "provider_id": provider.id, "fetched_at": now().isoformat()}
-        if model:
-            data["overrides"] = model.data.get("overrides", {})
-            # Manual context limits are deliberate safety limits.  Preserve
-            # them independently from API data so refreshes cannot erase them.
-            manual_context = model.data.get("context_window_override")
-            if manual_context is None and model.data.get("context_source") == "manual":
-                manual_context = model.data.get("context_window")
-            data["context_window_override"] = manual_context
-            data["metadata_overrides"] = model.data.get("metadata_overrides", {})
-            if "tool_probe" in model.data:
-                data["tool_probe"] = model.data["tool_probe"]
-        if data.get("context_window"):
-            data["provider_context_window"] = data["context_window"]
-            data["provider_context_source"] = data.get("context_source")
-        if data.get("context_window_override"):
-            data["context_window"] = data["context_window_override"]
-            data["context_source"] = "manual"
-            data["context_confidence"] = "runtime"
-            data.setdefault("metadata", {})["context_window"] = {
-                "value": data["context_window_override"],
-                "source": "manual",
-                "confidence": "runtime",
-                "resolved_at": now().isoformat(),
-            }
-        if model:
-            model.data = data
-        else:
-            model = Model(owner_id=owner_id, data=data)
-            db.add(model)
-            db.flush()
-        if (
-            data.get("context_window")
-            and is_auto_chat_eligible(data, provider.data.get("kind"))
-            and model.id not in auto_id_set
-        ):
-            auto_ids.append(model.id)
-            auto_id_set.add(model.id)
-            added_to_auto += 1
-
-    # ``existing`` contains every previously synced model for this provider and
-    # now points at its refreshed data. New special-purpose models were never
-    # added above, so only retained IDs need cleanup here.
-    provider_models_by_id = {model.id: model for model in existing.values()}
-    auto_ids = [
-        model_id
-        for model_id in auto_ids
-        if model_id not in provider_models_by_id
-        or is_auto_chat_eligible(provider_models_by_id[model_id].data, provider.data.get("kind"))
-    ]
-
-    settings.data = {
-        **settings.data,
-        "auto_model_ids": auto_ids,
-        "default_model_id": settings.data.get("default_model_id") or ("auto" if auto_ids else ""),
-    }
-    return {"status": "ok", "count": len(fetched), "auto_count": added_to_auto}
-
-
-def provider_response(row, sync):
-    response = public(row)
-    response["model_sync"] = sync
-    return response
-
-
-@router.get("/providers")
-def providers(ctx=Depends(context)):
-    db, s = ctx
-    return [public(r) for r in db.scalars(select(Provider).where(Provider.owner_id == s.owner_id))]
-
-
-@router.get("/provider-presets")
-def provider_presets(ctx=Depends(context)):
-    # Require an authenticated admin session: this catalog describes outbound services.
-    return catalog()
-
-
-@router.post("/providers", response_model=ProviderView)
-async def add_provider(body: ProviderInput, ctx=Depends(context)):
-    db, s = ctx
-    row = Provider(owner_id=s.owner_id, data=await provider_values(body, db, s.owner_id))
-    db.add(row)
-    db.flush()
-    audit(db, s.owner_id, "provider.create", row.id)
-    db.commit()
-    sync = await sync_provider_models(db, s.owner_id, row)
-    db.commit()
-    return provider_response(row, sync)
-
-
-@router.patch("/providers/{key}", response_model=ProviderView)
-async def edit_provider(key: str, body: ProviderInput, ctx=Depends(context)):
-    db, s = ctx
-    row = own(db, Provider, key, s.owner_id)
-    previous = dict(row.data)
-    row.data = await provider_values(body, db, s.owner_id, row.data)
-    connection_changed = any(
-        row.data.get(field) != previous.get(field)
-        for field in ("kind", "base_url", "secret_id", "extra_config")
-    )
-    audit(db, s.owner_id, "provider.update", key)
-    db.commit()
-    sync = (
-        await sync_provider_models(db, s.owner_id, row)
-        if connection_changed
-        else {
-            "status": "skipped",
-            "count": 0,
-            "auto_count": 0,
-        }
-    )
-    db.commit()
-    return provider_response(row, sync)
-
-
-@router.delete("/providers/{key}")
-def delete_provider(key: str, ctx=Depends(context)):
-    db, s = ctx
-    row = own(db, Provider, key, s.owner_id)
-    models = [
-        model
-        for model in db.scalars(select(Model).where(Model.owner_id == s.owner_id))
-        if model.data.get("provider_id") == key
-    ]
-    model_ids = {model.id for model in models}
-    for model in models:
-        db.delete(model)
-    secret_id = row.data.get("secret_id")
-    if secret_id:
-        secret = db.get(Secret, secret_id)
-        if secret and secret.owner_id == s.owner_id:
-            db.delete(secret)
-    settings = db.scalar(select(Settings).where(Settings.id == "settings", Settings.owner_id == s.owner_id))
-    if settings:
-        auto_ids = [mid for mid in settings.data.get("auto_model_ids", []) if mid not in model_ids]
-        default_model_id = settings.data.get("default_model_id", "")
-        if default_model_id in model_ids:
-            default_model_id = "auto" if auto_ids else ""
-        settings.data = {**settings.data, "auto_model_ids": auto_ids, "default_model_id": default_model_id}
-    for agent in db.scalars(select(Agent).where(Agent.owner_id == s.owner_id)):
-        if agent.data.get("model_id") in model_ids:
-            agent.data = {**agent.data, "model_id": ""}
-    for conversation in db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)):
-        selection = conversation.data.get("selection")
-        if isinstance(selection, dict) and selection.get("model_id") in model_ids:
-            conversation.data = {**conversation.data, "selection": {**selection, "model_id": "auto"}}
-    db.delete(row)
-    audit(db, s.owner_id, "provider.delete", key)
-    db.commit()
-    return {"ok": True}
-
-
-@router.post("/providers/{key}/{action}")
-async def provider_action(key: str, action: str, ctx=Depends(context)):
-    db, s = ctx
-    row = own(db, Provider, key, s.owner_id)
-    if action == "test":
-        try:
-            return await Adapter(row.data, read_secret(db, row.data.get("secret_id"))).test_connection()
-        except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-            raise HTTPException(502, "接続テストに失敗しました。")
-    if action != "sync-models":
-        raise HTTPException(404)
-    result = await sync_provider_models(db, s.owner_id, row)
-    if result["status"] != "ok":
-        raise HTTPException(502, "モデル一覧を取得できません。既存設定は保持されています。")
-    db.commit()
-    return {"ok": True, **result}
 
 
 @router.get("/settings")
@@ -1441,9 +833,13 @@ def edit_conversation_folder(key: str, body: ConversationFolderInput, ctx=Depend
 def delete_conversation_folder(key: str, ctx=Depends(context)):
     db, s = ctx
     row = own(db, ConversationFolder, key, s.owner_id)
-    for conversation in db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)):
-        if conversation.data.get("folder_id") == key:
-            conversation.data = {**conversation.data, "folder_id": None}
+    for conversation in db.scalars(
+        select(Conversation).where(
+            Conversation.owner_id == s.owner_id,
+            Conversation.data["folder_id"].astext == key,
+        )
+    ):
+        conversation.data = {**conversation.data, "folder_id": None}
     db.delete(row)
     audit(db, s.owner_id, "conversation-folder.delete", key)
     db.commit()
@@ -1516,9 +912,13 @@ def list_conversations(
 def delete_project(key: str, ctx=Depends(context)):
     db, s = ctx
     project = own(db, Project, key, s.owner_id)
-    for conversation in db.scalars(select(Conversation).where(Conversation.owner_id == s.owner_id)):
-        if conversation.data.get("project_id") == key:
-            conversation.data = {**conversation.data, "project_id": None}
+    for conversation in db.scalars(
+        select(Conversation).where(
+            Conversation.owner_id == s.owner_id,
+            Conversation.data["project_id"].astext == key,
+        )
+    ):
+        conversation.data = {**conversation.data, "project_id": None}
     db.delete(project)
     audit(db, s.owner_id, "project.delete", key)
     db.commit()
@@ -1635,82 +1035,6 @@ def list_scheduled_runs(key: str, ctx=Depends(context)):
             value["answer"] = message.data.get("content") if message else None
         rows.append(value)
     return rows
-
-
-@router.get("/notifications")
-def list_notifications(unread: bool = False, ctx=Depends(context)):
-    db, s = ctx
-    query = select(Notification).where(Notification.owner_id == s.owner_id)
-    if unread:
-        query = query.where(Notification.read_at.is_(None))
-    return [public(row) for row in db.scalars(query.order_by(Notification.created_at.desc()).limit(100))]
-
-
-@router.get("/push/key")
-def push_key(ctx=Depends(context)):
-    from mix_agent.push import public_key
-
-    return {"public_key": public_key()}
-
-
-@router.get("/push/subscriptions")
-def push_subscriptions(ctx=Depends(context)):
-    db, s = ctx
-    return {
-        "endpoints": [
-            row.endpoint
-            for row in db.scalars(select(PushSubscription).where(PushSubscription.owner_id == s.owner_id))
-        ]
-    }
-
-
-@router.post("/push/subscriptions")
-def save_push_subscription(body: dict, ctx=Depends(context)):
-    from mix_agent.push import unb64, valid_endpoint
-
-    db, s = ctx
-    endpoint = body.get("endpoint")
-    keys = body.get("keys")
-    if not isinstance(endpoint, str) or not valid_endpoint(endpoint) or not isinstance(keys, dict):
-        raise HTTPException(422, "Push購読が不正です")
-    try:
-        if len(unb64(keys["p256dh"])) != 65 or len(unb64(keys["auth"])) != 16:
-            raise ValueError()
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(422, "Push購読キーが不正です") from None
-    row = db.scalar(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
-    if row and row.owner_id != s.owner_id:
-        raise HTTPException(409, "別ユーザーの購読です")
-    if not row:
-        row = PushSubscription(owner_id=s.owner_id, endpoint=endpoint)
-        db.add(row)
-    row.data = {"p256dh": keys["p256dh"], "auth": keys["auth"]}
-    db.commit()
-    return {"enabled": True}
-
-
-@router.delete("/push/subscriptions")
-def delete_push_subscription(body: dict, ctx=Depends(context)):
-    db, s = ctx
-    endpoint = body.get("endpoint")
-    if not isinstance(endpoint, str):
-        raise HTTPException(422, "Push購読が不正です")
-    db.execute(
-        delete(PushSubscription).where(
-            PushSubscription.owner_id == s.owner_id, PushSubscription.endpoint == endpoint
-        )
-    )
-    db.commit()
-    return {"enabled": False}
-
-
-@router.patch("/notifications/{key}")
-def read_notification(key: str, body: NotificationReadInput, ctx=Depends(context)):
-    db, s = ctx
-    row = own(db, Notification, key, s.owner_id)
-    row.read_at = now() if body.read else None
-    db.commit()
-    return public(row)
 
 
 @router.patch("/conversations/{key}/state")
@@ -1964,7 +1288,7 @@ def conversation_tool_calls(key: str, ctx=Depends(context)):
                 "risk": data.get("risk"),
                 "created_at": call.created_at.isoformat(),
                 "result": _redact_tool_result(raw_result) if raw_result is not None else None,
-                "failure": raw_result.get("error") if failed else None,
+                "failure": raw_result.get("error") if failed and isinstance(raw_result, dict) else None,
                 "artifact": raw_result.get("artifact")
                 if isinstance(raw_result, dict) and is_user_artifact(raw_result.get("artifact"))
                 else None,
@@ -1982,21 +1306,6 @@ def conversation_tool_calls(key: str, ctx=Depends(context)):
             }
         )
     return result
-
-
-@router.get("/audit-events", response_model=list[RecordView])
-def audit_events(
-    action: str = "",
-    limit: int = Query(default=100, ge=1, le=500),
-    ctx=Depends(context),
-):
-    """Read-only audit trail.  Writes already existed; this exposes them."""
-    db, s = ctx
-    statement = select(Audit).where(Audit.owner_id == s.owner_id)
-    if action.strip():
-        statement = statement.where(Audit.data["action"].astext == action.strip())
-    statement = statement.order_by(Audit.created_at.desc()).limit(limit)
-    return [public(row) for row in db.scalars(statement)]
 
 
 @router.get("/settings/diagnostics", response_model=DiagnosticsView)
@@ -2863,6 +2172,11 @@ async def run_events(key: str, request: Request, after: int = 0):
                     )
                 )
                 run = session.get(Run, key)
+                # The run can be deleted between the authenticated request and
+                # this poll; end the stream instead of dereferencing None.
+                if run is None:
+                    yield "event: done\ndata: {}\n\n"
+                    return
                 status = run.status
                 for event in events:
                     cursor = event.sequence
@@ -2908,7 +2222,6 @@ def _record_browser_frame(db, run, frame, tool="manual"):
     encoded = frame.pop("frame_base64", None)
     if not encoded:
         return None
-    from mix_agent.tools.execute import save_artifact
 
     artifact = save_artifact(
         db, run.owner_id, base64.b64decode(encoded), "browser-frame.png", "image/png", kind="browser-frame"
@@ -3138,6 +2451,8 @@ def resume(key: str, body: ResumeInput, ctx=Depends(context)):
 
 @router.post("/runs/{key}/budget-extension")
 def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=Depends(context)):
+    from mix_agent.runs.engine import emit
+
     db, s = ctx
     run = own(db, Run, key, s.owner_id)
     if run.status != "budget_extension_pending":
@@ -3170,7 +2485,6 @@ def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=De
             "snapshot": snapshot,
             "budget_extension_request": None,
         }
-        from mix_agent.runs.engine import emit
 
         emit(
             db,
@@ -3241,234 +2555,6 @@ def decide(key: str, body: DecisionInput, ctx=Depends(context)):
     db.commit()
     launch(run.id)
     return {"ok": True}
-
-
-@router.post("/artifacts", response_model=ArtifactView)
-async def upload(file: UploadFile = File(...), ctx=Depends(context)):
-    db, s = ctx
-    content = await file.read(config.MAX_UPLOAD + 1)
-    if len(content) > config.MAX_UPLOAD:
-        raise HTTPException(413, "添付は20MBまでです")
-    mime = file.content_type or "text/plain"
-    if mime not in (
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "image/gif",
-        "application/pdf",
-        "text/plain",
-        "text/markdown",
-    ):
-        raise HTTPException(422, "対応形式: 画像・PDF・テキスト・Markdown")
-    result = save_artifact(db, s.owner_id, content, (file.filename or "attachment")[:200], mime)
-    db.commit()
-    return result
-
-
-@router.get("/artifacts/{key}")
-def download(key: str, ctx=Depends(context)):
-    db, s = ctx
-    row = own(db, Artifact, key, s.owner_id)
-    name = row.data["name"]
-    # Always serve as an attachment: model-created text/html or SVG artifacts
-    # must never render as active documents in this origin. Content-Disposition
-    # is set explicitly (Starlette's FileResponse would otherwise inject its own).
-    return FileResponse(
-        config.ARTIFACTS / key,
-        media_type=row.data["mime"],
-        filename=name,
-        headers={
-            "X-Content-Type-Options": "nosniff",
-            "X-Download-Options": "noopen",
-            "Content-Disposition": "attachment; filename=\"{}\"; filename*=utf-8''{}".format(
-                name.replace('"', ""), quote(name)
-            ),
-        },
-    )
-
-
-@router.get("/memories")
-def memories(q: str = "", state: str | None = None, ctx=Depends(context)):
-    """Flat listing. ``state`` narrows it to one §2 ``lifecycle_state``.
-
-    A value outside §2 is a **422**, not an empty list: answering "nothing
-    matched" for a typo is the same failure mode as ignoring ``state``
-    outright, which is what this parameter used to do.
-    """
-    db, s = ctx
-    try:
-        rows = memory.list_traces(db, s.owner_id, q, state)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-    records = {row.id: row for row in db.scalars(select(Memory).where(Memory.owner_id == s.owner_id))}
-    # Spec §4: how many edges touch each row, counted once for the whole page.
-    # Same convention `views.render` uses — the key appears only when the count
-    # is non-zero, so a store without links answers exactly what it did before
-    # §4 existed (additive, never a new required key).
-    counts = memory.link_counts(db, s.owner_id, [item["id"] for item in rows])
-    return [
-        {
-            "id": item["id"],
-            "data": {
-                **{k: v for k, v in item.items() if k != "id"},
-                **({"link_count": counts[item["id"]]} if counts.get(item["id"]) else {}),
-            },
-            "created_at": records[item["id"]].created_at.isoformat() if item["id"] in records else "",
-        }
-        for item in rows
-        if item["id"] in records
-    ]
-
-
-@router.post("/memories/{key}/resolve", response_model=MemoryResolveConflictView)
-def resolve_memory_conflict(key: str, body: MemoryResolveConflictInput, ctx=Depends(context)):
-    """Spec §3 ``resolve_conflict`` over HTTP: settle a dispute in place.
-
-    The UI reaches this from a row that §1 already reports as ``disputed``.
-    Everything the settlement does stays §3's: the adopted row goes back to
-    ``active``, the rejected one becomes ``superseded`` (``expired`` for
-    ``dismiss``) and points at the winner, both rows keep a revision first, and
-    §4's mirrors follow in the same transaction.
-
-    ``prefer`` is passed through untouched and **left alone when the client
-    does not send it**: §3's default — the memory ``disputed_by_id`` points at
-    is the one already stored, and it wins — is decided here, not in the form.
-    """
-    db, s = ctx
-    own(db, Memory, key, s.owner_id)
-    try:
-        result = memory_runtime.resolve_conflict(
-            db, s.owner_id, conflict_id=key, resolution=body.resolution, prefer=body.prefer
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-    db.commit()
-    return {
-        "decision": "resolved",
-        "id": result["winner"],
-        "reason": result["resolution"],
-        "loser_id": result["loser"],
-        "loser_state": result["loser_state"],
-    }
-
-
-@router.get("/memories/{key}/associations")
-def memory_associations(key: str, ctx=Depends(context)):
-    """Spec §4: the `memory_links` edges touching one memory (§9 #3).
-
-    Both directions, owner-scoped through the same `own()` guard every other
-    `/memories/{key}` route uses, so an edge can never be enumerated by
-    guessing another owner's ids. Returns the flat edge dicts (source,
-    target, kind, weight, coactivation_count) — §4 is the contract for the
-    shape, not the trace view.
-    """
-    db, s = ctx
-    own(db, Memory, key, s.owner_id)
-    return memory.associations_for(db, s.owner_id, key)
-
-
-@router.get("/memories-debug/search")
-async def debug_memory_search(q: str, ctx=Depends(context)):
-    db, s = ctx
-    provider = mem_embeddings.default_provider(db, s.owner_id)
-    key = read_secret(db, provider.data.get("secret_id")) if provider else None
-    vector = (
-        await mem_embeddings.query_vector({**provider.data, "id": provider.id}, key, q) if provider else None
-    )
-    return memory.search(db, s.owner_id, q, debug=True, query_vector=vector)
-
-
-@router.post("/memories-debug/reembed")
-async def debug_reembed(limit: int = 50, ctx=Depends(context)):
-    """Backfill embeddings for rows written before this feature existed.
-
-    Kept behind the debug namespace: it spends provider quota, so it is an
-    operator action rather than something the UI should trigger implicitly.
-    """
-    db, s = ctx
-    return {"embedded": await mem_embeddings.embed_pending(db, s.owner_id, limit=max(1, min(200, limit)))}
-
-
-@router.get("/memories-debug/actions")
-def debug_memory_actions(run_id: str | None = None, ctx=Depends(context)):
-    db, s = ctx
-    statement = select(MemoryActionEvent).where(MemoryActionEvent.owner_id == s.owner_id)
-    if run_id:
-        statement = statement.where(MemoryActionEvent.run_id == run_id)
-    return [
-        public(row) for row in db.scalars(statement.order_by(MemoryActionEvent.created_at.desc()).limit(200))
-    ]
-
-
-@router.post("/memories")
-async def add_memory(body: MemoryInput, ctx=Depends(context)):
-    db, s = ctx
-    try:
-        result = memory.change(db, s.owner_id, source_run="explicit-user-request", **body.model_dump())
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-    db.commit()
-    # Embedding is best-effort: a provider without an embeddings endpoint leaves
-    # the row un-vectored and recall simply ranks it lexically.
-    if await mem_embeddings.embed_memory(db, result["id"]):
-        db.commit()
-    return result
-
-
-@router.patch("/memories/{key}")
-async def edit_memory(key: str, body: MemoryInput, ctx=Depends(context)):
-    db, s = ctx
-    own(db, Memory, key, s.owner_id)
-    try:
-        result = memory.change(db, s.owner_id, memory_id=key, **body.model_dump())
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-    db.commit()
-    # `change` drops the vector when the content changed; re-embed the new text.
-    if await mem_embeddings.embed_memory(db, key):
-        db.commit()
-    return result
-
-
-@router.get("/memories/{key}/revisions")
-def memory_history(key: str, ctx=Depends(context)):
-    db, s = ctx
-    own(db, Memory, key, s.owner_id)
-    rows = db.scalars(
-        select(MemoryRevision)
-        .where(MemoryRevision.owner_id == s.owner_id, MemoryRevision.data["memory_id"].as_string() == key)
-        .order_by(MemoryRevision.created_at.desc())
-    )
-    return [public(r) for r in rows]
-
-
-@router.post("/memories/{key}/restore/{revision}")
-def restore_memory(key: str, revision: str, ctx=Depends(context)):
-    db, s = ctx
-    rev = own(db, MemoryRevision, revision, s.owner_id)
-    revision_data = rev.data if isinstance(rev.data, dict) else {}
-    if revision_data.get("memory_id") != key:
-        raise HTTPException(404)
-    previous = revision_data.get("previous")
-    content = previous.get("content") or previous.get("gist") if isinstance(previous, dict) else None
-    if not isinstance(content, str) or not content.strip():
-        raise HTTPException(404, "復元できるMemory revisionがありません")
-    row = db.get(Memory, key)
-    if row is not None and row.owner_id != s.owner_id:
-        raise HTTPException(404, "見つかりません")
-    if row is None:
-        try:
-            row, restored = memory.restore_deleted(db, s.owner_id, key, previous)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(404, "復元できるMemory revisionがありません") from exc
-    else:
-        restored = memory.restore(db, s.owner_id, row, previous)
-    db.commit()
-    return {
-        "id": row.id,
-        "data": {k: v for k, v in restored.items() if k != "id"},
-        "created_at": row.created_at.isoformat(),
-    }
 
 
 @router.get("/skills")

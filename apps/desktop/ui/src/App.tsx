@@ -12,6 +12,7 @@ import {
   Folder,
   FolderTree,
   GitCompareArrows,
+  Globe,
   PanelLeft,
   PanelRight,
   Search,
@@ -20,7 +21,7 @@ import {
 import { api } from "./lib/api";
 import { useUi, type View } from "./lib/ui";
 import { t, tf } from "./lib/i18n";
-import { chord } from "./lib/platform";
+import { chord, detectPlatformFromUa } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
 import {
   useConversations,
@@ -59,6 +60,11 @@ const SettingsPane = lazy(() =>
 const FileTreePane = lazy(() =>
   import("./features/files/FileTreePane").then((m) => ({
     default: m.FileTreePane,
+  })),
+);
+const BrowserPanel = lazy(() =>
+  import("./features/browser/BrowserPanel").then((m) => ({
+    default: m.BrowserPanel,
   })),
 );
 import { Sidebar } from "./features/shell/Sidebar";
@@ -228,6 +234,9 @@ export function App() {
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const rightPanel = useUi((s) => s.rightPanel);
   const setRightPanel = useUi((s) => s.setRightPanel);
+  const openBrowserPanel = useUi((s) => s.openBrowserPanel);
+  const dismissBrowserPanel = useUi((s) => s.dismissBrowserPanel);
+  const sidePanelMode = useUi((s) => s.sidePanelMode);
   const fileTreeOpen = useUi((s) => s.fileTreeOpen);
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
@@ -242,17 +251,16 @@ export function App() {
     // macOS でも "other" になって traffic light とボタンが重なる。
     // plugin-os が使える時はそちらを正とする。
     let cancelled = false;
-    const uaFallback = /Macintosh|Mac OS X/i.test(navigator.userAgent)
-      ? "macos"
-      : "other";
-    document.documentElement.dataset.platform = uaFallback;
+    document.documentElement.dataset.platform = detectPlatformFromUa(
+      navigator.userAgent,
+    );
     (async () => {
       try {
         const { platform } = await import("@tauri-apps/plugin-os");
         const os = await platform();
         if (!cancelled) {
           document.documentElement.dataset.platform =
-            os === "macos" ? "macos" : "other";
+            os === "macos" || os === "windows" || os === "linux" ? os : "other";
         }
       } catch {
         // ブラウザプレビュー等では plugin が無いので UA 判定のまま。
@@ -337,6 +345,13 @@ export function App() {
   }
 
   const agentSurface = surface === "desktop-agent";
+  // Codex-style full view: the browser replaces the chat column while the
+  // left sidebar stays. Splitting back is one click or ⌘⇧B.
+  const browserFull =
+    view === "chat" &&
+    agentSurface &&
+    rightPanel === "browser" &&
+    sidePanelMode === "full";
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-bg">
@@ -461,6 +476,28 @@ export function App() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() =>
+                  rightPanel === "browser"
+                    ? dismissBrowserPanel()
+                    : openBrowserPanel("user")
+                }
+                title={
+                  rightPanel === "browser"
+                    ? t("ブラウザを閉じる")
+                    : t("ブラウザを表示")
+                }
+                aria-label={
+                  rightPanel === "browser"
+                    ? t("ブラウザを閉じる")
+                    : t("ブラウザを表示")
+                }
+                aria-pressed={rightPanel === "browser"}
+              >
+                <Globe size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
                   setRightPanel(rightPanel === "none" ? "activity" : "none")
                 }
                 title={
@@ -500,13 +537,37 @@ export function App() {
           {/* The menu / shortcut path goes through `newThread` and creates the
               conversation on first send, so there is no request to fail here. */}
           <div className="flex min-h-0 flex-1 flex-row">
-            {view === "chat" && agentSurface && fileTreeOpen && (
-              <Suspense fallback={<PaneFallback />}>
-                <FileTreePane cap={panelCap} />
-              </Suspense>
-            )}
+            {view === "chat" &&
+              agentSurface &&
+              fileTreeOpen &&
+              !browserFull && (
+                <Suspense fallback={<PaneFallback />}>
+                  <FileTreePane cap={panelCap} />
+                </Suspense>
+              )}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {view === "chat" && <ChatPane />}
+              {/* Keep the chat mounted in full browser view: unmounting it
+                  discarded the composer draft and scroll position. */}
+              {view === "chat" && (
+                <div
+                  className={
+                    browserFull
+                      ? "hidden"
+                      : "flex min-h-0 min-w-0 flex-1 flex-col"
+                  }
+                >
+                  <ChatPane />
+                </div>
+              )}
+              {browserFull && (
+                <Suspense fallback={<PaneFallback />}>
+                  <PaneErrorBoundary name="BrowserPanel" resetKeys={[view]}>
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      <BrowserPanel />
+                    </div>
+                  </PaneErrorBoundary>
+                </Suspense>
+              )}
               {view !== "chat" && (
                 <Suspense fallback={<PaneFallback />}>
                   {view === "agents" && <AgentsPane />}
@@ -522,7 +583,7 @@ export function App() {
             </div>
           </div>
         </section>
-        {view === "chat" && agentSurface && (
+        {view === "chat" && agentSurface && !browserFull && (
           <PaneErrorBoundary name="RightPanel" resetKeys={[view, agentSurface]}>
             <RightPanel cap={panelCap} />
           </PaneErrorBoundary>

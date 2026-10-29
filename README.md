@@ -44,7 +44,7 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 | **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
 | **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
 | **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
-| **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等） | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
+| **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等）。任意で macOS `sandbox-exec` による書き込み制限 | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
 
 ---
 
@@ -84,14 +84,15 @@ Docker や複雑なサーバー設定なしで、OpenCode のようにローカ�
 Rust (1.82+)、Node.js (22+)、pnpm を使用します。
 
 ```sh
-# 依存関係のインストール
+# 依存関係のインストール（Web / Desktop はそれぞれ独立した lockfile を使います）
 pnpm install
+pnpm setup
 
 # デスクトップ版の起動（開発モード）
 pnpm desktop:dev
 
 # 現在の OS 向けインストーラーのローカルビルド
-# macOS: .dmg / Windows: NSIS + MSI
+# macOS: .dmg / Windows: NSIS + MSI / Linux: AppImage + deb
 pnpm desktop:build
 
 # macOS 向け .dmg のみをビルド
@@ -143,7 +144,7 @@ docker compose up -d --build
 ### 1. Chat / Thinking / Agent の 3 つのモード
 - **Chat**: 素早い対話と必要に応じた検索・作成。思考や Tool Calling が未対応のモデルでも通常対話が可能。
 - **Thinking**: Reasoning（思考）対応モデルの能力を引き出し、論理的な思考ステップを経てタスクを実行。
-- **Agent**: 長時間の作業を自律完遂するための実行ループ。チェックポイント保存、停滞検知と自己修復、厳格な検証ループ、予算動的調整を備えます。
+- **Agent**: 長時間の作業を自律完遂するための実行ループ。チェックポイント保存、停滞検知と自己修復、厳格な検証ループ、予算動的調整に加え、**編集後の自動整形（format_command）**、**実行中の追加指示（steering）**、**Run 単位の変更取り消し**、**読み取り専用ツールの並列実行**を備えます。
 
 ### 2. 52 種類の Provider 対応 & 自動能力判定
 - OpenAI、Anthropic、Gemini、OpenRouter、Groq、Mistral、DeepSeek、Cohere、Ollama、LM Studio などの主要 Provider プリセットを網羅。
@@ -187,6 +188,7 @@ docker compose up -d --build
 ```sh
 # 依存関係のインストール
 pnpm install
+pnpm setup
 
 # --- Desktop 版の開発 ---
 pnpm desktop:dev        # デスクトップアプリ起動

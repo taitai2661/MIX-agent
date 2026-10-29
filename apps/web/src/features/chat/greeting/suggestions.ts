@@ -35,7 +35,8 @@ function buildCandidates(signals: Signals): Candidate[] {
     candidates.push({
       id: "sg-tidy",
       label: "最近の会話を整理する",
-      prompt: "最近の会話を一覧して、タイトルと内容がずれているものを提案してください。",
+      prompt:
+        "最近の会話を一覧して、タイトルと内容がずれているものを提案してください。",
       weight: 4,
     });
 
@@ -43,7 +44,8 @@ function buildCandidates(signals: Signals): Candidate[] {
     candidates.push({
       id: "sg-review",
       label: "記録の抜けを洗い出す",
-      prompt: "最近の会話を一覧して、続きが途切れているものを洗い出してください。",
+      prompt:
+        "最近の会話を一覧して、続きが途切れているものを洗い出してください。",
       weight: 3,
     });
 
@@ -51,7 +53,8 @@ function buildCandidates(signals: Signals): Candidate[] {
     candidates.push({
       id: "sg-project",
       label: "プロジェクトの指示を見直す",
-      prompt: "プロジェクトの指示を一覧し、抜けや矛盾がないか確認してください。",
+      prompt:
+        "プロジェクトの指示を一覧し、抜けや矛盾がないか確認してください。",
       weight: 3,
     });
 
@@ -59,7 +62,8 @@ function buildCandidates(signals: Signals): Candidate[] {
     candidates.push({
       id: "sg-agent",
       label: "アシスタントを使い分ける",
-      prompt: "保存済みのアシスタントを一覧して、用途ごとの使い分けを提案してください。",
+      prompt:
+        "保存済みのアシスタントを一覧して、用途ごとの使い分けを提案してください。",
       weight: 2,
     });
 
@@ -80,7 +84,10 @@ function buildCandidates(signals: Signals): Candidate[] {
     });
 
   // 季節の提案も日本の暦に依存するため、日本語表示のときだけ出します。
-  if (getLanguage() === "ja" && (signals.holiday || signals.event || signals.solarTerm))
+  if (
+    getLanguage() === "ja" &&
+    (signals.holiday || signals.event || signals.solarTerm)
+  )
     candidates.push({
       id: "sg-season",
       label: "季節の予定を整理する",
@@ -130,10 +137,15 @@ export function suggestionsFor(
       random,
     ),
   ];
-  return order.slice(0, count).map((item) => ({ id: item.id, label: item.label, prompt: item.prompt }));
+  return order
+    .slice(0, count)
+    .map((item) => ({ id: item.id, label: item.label, prompt: item.prompt }));
 }
 
-function weightedOrder(pool: readonly Candidate[], random: () => number): Candidate[] {
+function weightedOrder(
+  pool: readonly Candidate[],
+  random: () => number,
+): Candidate[] {
   const remaining = [...pool];
   const ordered: Candidate[] = [];
   while (remaining.length) {

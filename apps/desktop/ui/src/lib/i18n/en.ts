@@ -282,8 +282,8 @@ export const en: Record<string, string> = {
   "GitHub Releasesを開く": "Open GitHub Releases",
   "macOSアプリはApple Developer ID署名・公証なし（ad-hoc署名のみ）です。初回起動時にGatekeeperの確認が必要です。":
     "The macOS app is not signed with an Apple Developer ID or notarized (ad-hoc signature only). Gatekeeper asks for confirmation on first launch.",
-  "アプリの改善のため匿名の診断情報を共有します":
-    "Share anonymous diagnostics to improve the app",
+  "Windowsインストーラーは未署名です。SmartScreenの警告が出る場合は「詳細情報」→「実行」を選択してください。":
+    "The Windows installer is unsigned. If SmartScreen warns you, choose “More info” → “Run anyway”.",
   "バックアップ": "Backup",
   "設定セクションを選択": "Select a settings section",
 
@@ -424,6 +424,27 @@ export const en: Record<string, string> = {
   "入力する": "Type",
   "ライブ表示を開始すると、ブラウザ画面をここで確認できます。":
     "Start live view to watch and control the browser from here.",
+  "ブラウザを表示": "Show browser",
+  "ブラウザを閉じる": "Close browser",
+  "進む": "Forward",
+  "アドレスバー": "Address bar",
+  "URL または localhost:3000": "URL or localhost:3000",
+  "システムのブラウザで開く": "Open in the system browser",
+  "エージェント操作中": "Agent is acting",
+  "エージェント使用時に自動表示": "Auto-open when the agent browses",
+  "エージェント使用時の自動表示をオフ":
+    "Turn off auto-open when the agent browses",
+  "フル表示": "Full view",
+  "スプリット表示に戻す": "Back to split view",
+  "ブラウザ設定を開く": "Open browser settings",
+  "ライブ表示を開始": "Start live view",
+  "ライブ表示を停止": "Stop live view",
+  "スレッドを開始するとブラウザを使えます。":
+    "Start a thread to use the browser.",
+  "インストール中…": "Installing…",
+  "Chromium をインストール": "Install Chromium",
+  "新しいタブ": "New tab",
+  "タブを閉じる": "Close tab",
   "スナップショットの ref（例: r12）": "Snapshot ref (e.g. r12)",
   "スナップショットの ref（任意・selectorより優先）":
     "Snapshot ref (optional; takes precedence over selector)",
@@ -559,8 +580,6 @@ export const en: Record<string, string> = {
   "Egress 許可リスト": "Egress allowlist",
   "未設定時は Tool がすべての公開ドメインへ到達可能。ワイルドカード (*) と完全一致ドメインを混在可。":
     "With no list, tools can reach any public domain. Wildcard (*) and exact hosts can be mixed.",
-  "匿名の利用統計を共有 (将来)":
-    "Share anonymous usage statistics (coming soon)",
 
   // Backup / restore, MCP OAuth, skills export, sidebar landmark
   "サイドバー": "Sidebar",
@@ -912,7 +931,6 @@ export const en: Record<string, string> = {
   "バックエンド": "Backend",
   "状態を更新": "Refresh status",
   "ヘッドレス": "headless",
-  "ヘッドあり": "headed",
   "プロファイル": "profiles",
   "成果物": "artifacts",
   "ワークスペースのプロファイル": "Workspace profile",
@@ -940,17 +958,17 @@ export const en: Record<string, string> = {
   "実行中のRun": "Active Runs",
   "データベースの暗号化": "Database Encryption",
   "保存時の暗号化": "At-rest encryption",
-  "ローカルデータベースの暗号化を有効にします。既定はオフ（Codex互換の平文SQLite）です。":
-    "Enable encryption for the local database. Defaults to off (Codex-compatible plain SQLite).",
+  "このビルドでは未対応です。データベースは平文SQLiteのため、OSのディスク暗号化（FileVault / BitLocker / LUKS）で保護してください。APIキーなどの秘密情報は別途OSのKeychainに暗号化して保存されます。":
+    "Not available in this build. The database is plain SQLite, so protect it with OS disk encryption (FileVault / BitLocker / LUKS). Secrets such as API keys are separately encrypted in the OS Keychain.",
+  "SQLCipher対応は今後のバージョンで提供予定です。":
+    "SQLCipher support is planned for a future release.",
   "保存時は暗号化済み": "Encrypted at rest",
-  "未暗号化（メモリ内 + Keychainのみ）":
-    "Not encrypted (in-memory + Keychain only)",
+  "未暗号化（平文SQLite）": "Not encrypted (plain SQLite)",
   "暗号化済み": "Encrypted",
-  "保留中": "Pending",
-  "マスターキーはOSのKeychainにあります":
-    "Master key is present in the OS Keychain",
-  "マスターキーは初回利用時に作成されます":
-    "Master key will be created on first use",
+  "未対応": "Unsupported",
+  "暗号化用キーはKeychainに準備済み（未使用）":
+    "Encryption key is staged in the Keychain (unused)",
+  "暗号化用キーは未作成": "Encryption key has not been created",
   "Keychainの状態は不明": "Keychain status unknown",
   "システム指示": "System instructions",
   "リソース": "resources",
@@ -1125,4 +1143,40 @@ export const en: Record<string, string> = {
   "プロジェクトを選択するとファイルをメンションできます":
     "Select a project to mention files",
   "外部リンクのみ開けます": "Only external links can be opened",
+
+  // Verification / formatting / sandbox / run steering
+  "モデル（任意）": "Model (optional)",
+  "空欄なら親の会話と同じモデルを使います。例: openai:gpt-5-mini":
+    "Empty uses the same model as the parent conversation. Example: openai:gpt-5-mini",
+  "検証と整形": "Verification and formatting",
+  "検証コマンド": "Verification command",
+  "編集後に実行する確認コマンドです。空欄の場合、検証ゲートは無効になります。":
+    "Command run after edits to verify the change. Empty disables the verification gate.",
+  "候補:": "Suggestions:",
+  "整形コマンド": "Formatting command",
+  "編集が入ったステップの後に自動実行する整形・lintコマンドです。":
+    "Formatter/lint command run automatically after a step that changed files.",
+  "検証と整形の既定値": "Verification and formatting defaults",
+  "プロジェクト固有の指定がないときに使う確認コマンドです。空欄なら検証ゲートは無効です。":
+    "Verification command used when a project has no override. Empty disables the gate.",
+  "編集後に自動実行する整形・lintコマンドです。":
+    "Formatter/lint command run automatically after edits.",
+  "ターミナルのサンドボックス": "Terminal sandbox",
+  "シェルをサンドボックス内で実行": "Run the shell in a sandbox",
+  "macOS では sandbox-exec を使い、ワークスペースと一時ディレクトリ以外への書き込みを拒否します。次に起動するシェルから適用されます（Linux / Windows では未対応）。":
+    "On macOS, sandbox-exec denies writes outside the workspace and temp directories. Applies to shells started afterwards (not supported on Linux or Windows).",
+  "この機能はmacOSでのみ利用できます。Windows / Linux では無効です。":
+    "This feature is available on macOS only; it is disabled on Windows and Linux.",
+  "実行中に追加指示を送る": "Send guidance while the run is working",
+  "このセッションで許可": "Allow for this session",
+  "実行の取り消し": "Revert this run",
+  "このRunが edit / files で変更したファイルを、実行前の内容に戻します。ターミナル経由の変更は対象外です。":
+    "Restores files this run changed through edit / files. Changes made through the terminal are not covered.",
+  "このRunの変更を取り消しますか？": "Revert this run's changes?",
+  "実行前の内容に上書きします。取り消し後に手で加えた変更も失われます。":
+    "Files are overwritten with their pre-run content. Manual changes made afterwards are lost too.",
+  "取り消す": "Revert",
+  "実行前の状態に戻す": "Restore pre-run state",
+  "{count} 件のファイルを実行前の内容に戻しました。":
+    "Restored {count} file(s) to their pre-run content.",
 };

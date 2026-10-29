@@ -3,7 +3,7 @@ import { api, setCSRF } from "@/app/api";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title } from "@/components/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 type LoginEvent = { successful: boolean; created_at: string };
@@ -35,13 +35,19 @@ export function Account({
       setError(new Error(t("新しいパスワードが一致しません")));
       return;
     }
-    setBusy(true); setError(null); setNotice("");
+    setBusy(true);
+    setError(null);
+    setNotice("");
     try {
-      const result = await api<{ csrf?: string; relogin_required: boolean }>("/auth/password", "POST", {
-        current_password: form.get("current_password"),
-        new_password: next,
-        revoke_all_sessions: form.get("revoke_all_sessions") === "on",
-      });
+      const result = await api<{ csrf?: string; relogin_required: boolean }>(
+        "/auth/password",
+        "POST",
+        {
+          current_password: form.get("current_password"),
+          new_password: next,
+          revoke_all_sessions: form.get("revoke_all_sessions") === "on",
+        },
+      );
       if (result.relogin_required) {
         onLogout();
         return;
@@ -49,58 +55,209 @@ export function Account({
       if (result.csrf) setCSRF(result.csrf);
       event.currentTarget.reset();
       setNotice(t("パスワードを変更しました"));
-    } catch (value) { setError(value); } finally { setBusy(false); }
+    } catch (value) {
+      setError(value);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitUsername(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    setBusy(true); setError(null); setNotice("");
+    setBusy(true);
+    setError(null);
+    setNotice("");
     try {
-      const result = await api<{ username: string; csrf: string }>("/auth/username", "POST", {
-        current_password: form.get("current_password"), username: form.get("username"),
-      });
+      const result = await api<{ username: string; csrf: string }>(
+        "/auth/username",
+        "POST",
+        {
+          current_password: form.get("current_password"),
+          username: form.get("username"),
+        },
+      );
       onUserChange(result);
       setNotice(t("ユーザー名を変更しました"));
-    } catch (value) { setError(value); } finally { setBusy(false); }
+    } catch (value) {
+      setError(value);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function revoke(scope: "others" | "all") {
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
-      const result = await api<{ relogin_required: boolean }>("/auth/sessions/revoke", "POST", { scope });
+      const result = await api<{ relogin_required: boolean }>(
+        "/auth/sessions/revoke",
+        "POST",
+        { scope },
+      );
       if (result.relogin_required) onLogout();
       else setNotice(t("ほかのログインをすべて終了しました"));
       setConfirming(null);
       qc.invalidateQueries({ queryKey: ["/auth/login-history"] });
-    } catch (value) { setError(value); } finally { setBusy(false); }
+    } catch (value) {
+      setError(value);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  return <>
-    <Title title={t("アカウント・安全性")} sub={t("ログイン情報と、アカウントの安全性を管理します。")} />
-    <ErrorBox error={error || history.error} />
-    {notice && <p className="success">{notice}</p>}
-    <form className="card" onSubmit={submitUsername}>
-      <h3>{t("ユーザー名を変更")}</h3><p>{t("ログインに使用するユーザー名を変更します。")}</p>
-      <Field label={t("新しいユーザー名")}><input name="username" required maxLength={100} defaultValue={user.username} autoComplete="username" /></Field>
-      <Field label={t("現在のパスワード")}><input name="current_password" type="password" required minLength={12} maxLength={256} autoComplete="current-password" /></Field>
-      <Button disabled={busy}>{t("ユーザー名を保存")}</Button>
-    </form>
-    <form className="card" onSubmit={submitPassword}>
-      <h3>{t("パスワードを変更")}</h3><p>{t("新しいパスワードは12文字以上で設定してください。")}</p>
-      <Field label={t("現在のパスワード")}><input name="current_password" type="password" required minLength={12} maxLength={256} autoComplete="current-password" /></Field>
-      <Field label={t("新しいパスワード")}><input name="new_password" type="password" required minLength={12} maxLength={256} autoComplete="new-password" /></Field>
-      <Field label={t("新しいパスワード（確認）")}><input name="confirm_password" type="password" required minLength={12} maxLength={256} autoComplete="new-password" /></Field>
-      <label className="check"><input name="revoke_all_sessions" type="checkbox" /><span>{t("変更後、すべての端末からログアウトする")}</span></label>
-      <div className="form-actions"><Button disabled={busy}>{t("パスワードを変更")}</Button></div>
-    </form>
-    <section className="card">
-      <h3>{t("ログイン中のセッション")}</h3><p>{t("この端末以外、またはすべてのログインを終了できます。")}</p>
-      {confirming ? <div className="notice"><ShieldCheck size={16} /><span>{confirming === "all" ? t("この端末も含め、すべての端末で再ログインが必要になります。") : t("この端末以外のログインを終了します。")}<span className="row-actions"><Button type="button" variant="destructive" disabled={busy} onClick={() => revoke(confirming)}>{t("実行する")}</Button><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirming(null)}>{t("キャンセル")}</Button></span></span></div> : <div className="row-actions"><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirming("others")}>{t("他の端末をログアウト")}</Button><Button type="button" variant="destructive" disabled={busy} onClick={() => setConfirming("all")}>{t("全端末をログアウト")}</Button></div>}
-    </section>
-    <section className="card">
-      <h3>{t("ログイン履歴")}</h3><p>{t("直近100件のログイン結果です。接続元IPは保存しますが、この画面には表示しません。")}</p>
-      <div className="login-history">{history.data?.length ? history.data.map((event, index) => <div className="revision" key={`${event.created_at}-${index}`}><span>{event.successful ? t("ログイン成功") : t("ログイン失敗")}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString(getLanguage() === "en" ? "en-US" : "ja-JP")}</time></div>) : <p>{t("まだログイン履歴はありません。")}</p>}</div>
-    </section>
-  </>;
+  return (
+    <>
+      <Title
+        title={t("アカウント・安全性")}
+        sub={t("ログイン情報と、アカウントの安全性を管理します。")}
+      />
+      <ErrorBox error={error || history.error} />
+      {notice && <p className="success">{notice}</p>}
+      <form className="card" onSubmit={submitUsername}>
+        <h3>{t("ユーザー名を変更")}</h3>
+        <p>{t("ログインに使用するユーザー名を変更します。")}</p>
+        <Field label={t("新しいユーザー名")}>
+          <input
+            name="username"
+            required
+            maxLength={100}
+            defaultValue={user.username}
+            autoComplete="username"
+          />
+        </Field>
+        <Field label={t("現在のパスワード")}>
+          <input
+            name="current_password"
+            type="password"
+            required
+            minLength={12}
+            maxLength={256}
+            autoComplete="current-password"
+          />
+        </Field>
+        <Button disabled={busy}>{t("ユーザー名を保存")}</Button>
+      </form>
+      <form className="card" onSubmit={submitPassword}>
+        <h3>{t("パスワードを変更")}</h3>
+        <p>{t("新しいパスワードは12文字以上で設定してください。")}</p>
+        <Field label={t("現在のパスワード")}>
+          <input
+            name="current_password"
+            type="password"
+            required
+            minLength={12}
+            maxLength={256}
+            autoComplete="current-password"
+          />
+        </Field>
+        <Field label={t("新しいパスワード")}>
+          <input
+            name="new_password"
+            type="password"
+            required
+            minLength={12}
+            maxLength={256}
+            autoComplete="new-password"
+          />
+        </Field>
+        <Field label={t("新しいパスワード（確認）")}>
+          <input
+            name="confirm_password"
+            type="password"
+            required
+            minLength={12}
+            maxLength={256}
+            autoComplete="new-password"
+          />
+        </Field>
+        <label className="check">
+          <input name="revoke_all_sessions" type="checkbox" />
+          <span>{t("変更後、すべての端末からログアウトする")}</span>
+        </label>
+        <div className="form-actions">
+          <Button disabled={busy}>{t("パスワードを変更")}</Button>
+        </div>
+      </form>
+      <section className="card">
+        <h3>{t("ログイン中のセッション")}</h3>
+        <p>{t("この端末以外、またはすべてのログインを終了できます。")}</p>
+        {confirming ? (
+          <div className="notice">
+            <ShieldCheck size={16} />
+            <span>
+              {confirming === "all"
+                ? t(
+                    "この端末も含め、すべての端末で再ログインが必要になります。",
+                  )
+                : t("この端末以外のログインを終了します。")}
+              <span className="row-actions">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => revoke(confirming)}
+                >
+                  {t("実行する")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setConfirming(null)}
+                >
+                  {t("キャンセル")}
+                </Button>
+              </span>
+            </span>
+          </div>
+        ) : (
+          <div className="row-actions">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setConfirming("others")}
+            >
+              {t("他の端末をログアウト")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => setConfirming("all")}
+            >
+              {t("全端末をログアウト")}
+            </Button>
+          </div>
+        )}
+      </section>
+      <section className="card">
+        <h3>{t("ログイン履歴")}</h3>
+        <p>
+          {t(
+            "直近100件のログイン結果です。接続元IPは保存しますが、この画面には表示しません。",
+          )}
+        </p>
+        <div className="login-history">
+          {history.data?.length ? (
+            history.data.map((event, index) => (
+              <div className="revision" key={`${event.created_at}-${index}`}>
+                <span>
+                  {event.successful ? t("ログイン成功") : t("ログイン失敗")}
+                </span>
+                <time dateTime={event.created_at}>
+                  {new Date(event.created_at).toLocaleString(
+                    getLanguage() === "en" ? "en-US" : "ja-JP",
+                  )}
+                </time>
+              </div>
+            ))
+          ) : (
+            <p>{t("まだログイン履歴はありません。")}</p>
+          )}
+        </div>
+      </section>
+    </>
+  );
 }

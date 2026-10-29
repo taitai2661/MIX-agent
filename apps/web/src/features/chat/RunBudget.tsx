@@ -22,8 +22,12 @@ export function remainingSeconds(
   return Math.max(0, remaining - elapsed);
 }
 
-function ratio(used: number | null | undefined, limit: number | null | undefined): number | null {
-  if (typeof used !== "number" || typeof limit !== "number" || limit <= 0) return null;
+function ratio(
+  used: number | null | undefined,
+  limit: number | null | undefined,
+): number | null {
+  if (typeof used !== "number" || typeof limit !== "number" || limit <= 0)
+    return null;
   return Math.max(0, Math.min(1, 1 - used / limit));
 }
 
@@ -80,12 +84,18 @@ export function RunBudget({
       {(stepsRatio != null || callsRatio != null) && (
         <div className="run-budget-bars" aria-hidden>
           {stepsRatio != null && (
-            <div className="run-budget-bar" title={`${stepsRemaining}/${stepsTotal} ステップ`}>
+            <div
+              className="run-budget-bar"
+              title={`${stepsRemaining}/${stepsTotal} ステップ`}
+            >
               <span style={{ width: `${Math.round(stepsRatio * 100)}%` }} />
             </div>
           )}
           {callsRatio != null && (
-            <div className="run-budget-bar" title={`${callsRemaining}/${callsTotal} Tool Call`}>
+            <div
+              className="run-budget-bar"
+              title={`${callsRemaining}/${callsTotal} Tool Call`}
+            >
               <span style={{ width: `${Math.round(callsRatio * 100)}%` }} />
             </div>
           )}

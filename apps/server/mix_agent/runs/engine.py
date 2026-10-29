@@ -602,7 +602,7 @@ def finish(db, run, status, reason=None):
                 )
     db.commit()
     if run.data.get("temporary_mode"):
-        from mix_agent.api.routes import purge_temporary_run
+        from mix_agent.storage.cleanup import purge_temporary_run
 
         purge_temporary_run(db, run)
         db.commit()
@@ -2340,6 +2340,54 @@ async def drive(run_id):
             pass
 
 
+def _scheduler_maintenance(launch) -> float:
+    """Run the synchronous part of one scheduler tick.
+
+    Everything here uses the sync SQLAlchemy session, so the caller executes it
+    through ``asyncio.to_thread``. ``launch`` must therefore be a plain
+    callable (the caller passes ``list.append``); the real ``launch()`` creates
+    an asyncio task and has to run back on the event loop.
+    """
+    delay = 30.0
+    with SessionLocal() as db:
+        from mix_agent.auth.security import purge_expired_sessions
+        from mix_agent.schedules import tick
+        from mix_agent.storage.cleanup import (
+            purge_expired_conversations,
+            purge_old_run_history,
+        )
+
+        if purge_expired_sessions(db):
+            db.commit()
+        purge_old_run_history(db)
+        purge_expired_conversations(db)
+        tick(db, launch)
+        current = now()
+        # Cron is minute-granular, so wake exactly for its next boundary.
+        delay = max(0.05, 60 - current.second - current.microsecond / 1_000_000)
+        for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
+            if run.status == "queued":
+                launch(run.id)
+                continue
+            approval = db.scalar(
+                select(Approval).where(Approval.run_id == run.id, Approval.status == "pending")
+            )
+            if not approval or approval.expires.replace(tzinfo=UTC) < current:
+                launch(run.id)
+            else:
+                delay = min(
+                    delay,
+                    max(0.05, (approval.expires.replace(tzinfo=UTC) - current).total_seconds()),
+                )
+        for scheduled in db.scalars(select(ScheduledRun).where(ScheduledRun.status == "retrying")):
+            try:
+                retry_at = datetime.fromisoformat(scheduled.data.get("retry_at", ""))
+                delay = min(delay, max(0.05, (retry_at - current).total_seconds()))
+            except (TypeError, ValueError):
+                pass
+    return delay
+
+
 async def scheduler():
     interrupted_browser_runs = []
     with SessionLocal() as db:
@@ -2365,60 +2413,29 @@ async def scheduler():
             if backup.ACTIVE:
                 delay = 2.0
             else:
-                with SessionLocal() as db:
-                    from mix_agent.api.helpers.cleanup import (
-                        purge_expired_conversations,
-                        purge_old_run_history,
-                    )
-                    from mix_agent.auth.security import purge_expired_sessions
+                # The whole maintenance pass is synchronous DB work; run it in
+                # the threadpool so a slow query cannot stall every SSE stream
+                # in this single-process deployment. `launch` is collected as
+                # IDs and replayed on the loop, because it creates a task.
+                launched: list[str] = []
+                delay = await asyncio.to_thread(_scheduler_maintenance, launched.append)
+                for run_id in launched:
+                    launch(run_id)
+                # Confirm unknown/stale model capabilities in the background so
+                # Auto does not depend on a user-triggered check. A hard timeout
+                # keeps a slow provider from stalling the tick.
+                from mix_agent import config
+                from mix_agent.providers.probing import probe_due_models
 
-                    if purge_expired_sessions(db):
-                        db.commit()
-                    purge_old_run_history(db)
-                    purge_expired_conversations(db)
-                    from mix_agent.schedules import tick
-
-                    tick(db, launch)
-                    # Confirm unknown/stale model capabilities in the background so
-                    # Auto does not depend on a user-triggered check.  A hard
-                    # timeout keeps a slow provider from stalling the tick.
-                    try:
-                        from mix_agent import config
-                        from mix_agent.api.routes import probe_due_models
-
+                try:
+                    with SessionLocal() as db:
                         await asyncio.wait_for(
                             probe_due_models(db), timeout=config.PROBE_TICK_TIMEOUT_SECONDS
                         )
-                    except Exception:
-                        db.rollback()
-                        import logging
+                except Exception:
+                    import logging
 
-                        logging.getLogger(__name__).exception("capability probe pass failed")
-                    current = now()
-                    # Cron is minute-granular, so wake exactly for its next boundary.
-                    delay = max(0.05, 60 - current.second - current.microsecond / 1_000_000)
-                    for run in db.scalars(select(Run).where(Run.status.in_(["queued", "waiting_approval"]))):
-                        if run.status == "queued":
-                            launch(run.id)
-                            continue
-                        approval = db.scalar(
-                            select(Approval).where(Approval.run_id == run.id, Approval.status == "pending")
-                        )
-                        if not approval or approval.expires.replace(tzinfo=UTC) < current:
-                            launch(run.id)
-                        else:
-                            delay = min(
-                                delay,
-                                max(0.05, (approval.expires.replace(tzinfo=UTC) - current).total_seconds()),
-                            )
-                    for scheduled in db.scalars(
-                        select(ScheduledRun).where(ScheduledRun.status == "retrying")
-                    ):
-                        try:
-                            retry_at = datetime.fromisoformat(scheduled.data.get("retry_at", ""))
-                            delay = min(delay, max(0.05, (retry_at - current).total_seconds()))
-                        except (TypeError, ValueError):
-                            pass
+                    logging.getLogger(__name__).exception("capability probe pass failed")
         except Exception:
             delay = 30.0
             import logging

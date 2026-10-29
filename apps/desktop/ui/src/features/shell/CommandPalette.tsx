@@ -5,6 +5,7 @@ import {
   CornerDownLeft,
   FolderTree,
   GitCompareArrows,
+  Globe,
   Keyboard,
   MessageSquare,
   PanelLeft,
@@ -99,6 +100,7 @@ export function CommandPalette() {
   const setSurface = useUi((s) => s.setSurface);
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
   const setRightPanel = useUi((s) => s.setRightPanel);
+  const openBrowserPanel = useUi((s) => s.openBrowserPanel);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const locale = useUi((s) => s.locale);
@@ -233,6 +235,18 @@ export function CommandPalette() {
         },
       },
       {
+        id: "action:open-browser",
+        label: t("ブラウザを表示"),
+        keys: chord("Mod", "Shift", "B"),
+        icon: <Globe size={15} />,
+        kind: "action",
+        run: () => {
+          setSurface("desktop-agent");
+          setView("chat");
+          openBrowserPanel("user");
+        },
+      },
+      {
         id: "action:settings",
         label: t("設定を開く"),
         keys: chord("Mod", ","),
@@ -267,6 +281,7 @@ export function CommandPalette() {
     setSurface,
     setShortcutsOpen,
     setRightPanel,
+    openBrowserPanel,
     toggleSidebar,
     toggleFileTree,
     locale,

@@ -1,6 +1,6 @@
 import httpx
 import pytest
-from mix_agent.api import routes
+from mix_agent.api import routes_providers
 from mix_agent.db.models import Model, Provider, Settings, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers.adapters import Adapter
@@ -306,7 +306,7 @@ def test_provider_sync_excludes_known_special_purpose_models_from_auto(signed, m
         db.commit()
         provider = db.scalar(select(Provider))
         import asyncio
-        asyncio.run(routes.sync_provider_models(db, db.scalar(select(User.id)), provider))
+        asyncio.run(routes_providers.sync_provider_models(db, db.scalar(select(User.id)), provider))
         assert models["nvidia/nemotron-parse"].id not in settings.data["auto_model_ids"]
 
 
@@ -359,7 +359,7 @@ async def test_provider_sync_preserves_manual_context_override(signed, monkeypat
         db.add(model)
         db.flush()
         model_id = model.id
-        await routes.sync_provider_models(db, owner, provider)
+        await routes_providers.sync_provider_models(db, owner, provider)
         db.commit()
         refreshed = db.get(Model, model.id)
         assert refreshed.data["context_window"] == 16384
@@ -391,7 +391,7 @@ async def test_provider_sync_updates_existing_model_without_creating_a_duplicate
         db.flush()
         original_id = model.id
 
-        result = await routes.sync_provider_models(db, owner, provider)
+        result = await routes_providers.sync_provider_models(db, owner, provider)
         db.commit()
 
         models = [row for row in db.scalars(select(Model)) if row.data["provider_id"] == provider.id]

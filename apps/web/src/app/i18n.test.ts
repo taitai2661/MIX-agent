@@ -3,7 +3,10 @@ import { browserLanguage, getLanguage, setLanguage, t } from "./i18n";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Auth } from "@/features/auth/Auth";
-import { greetingText, suggestionPromptId } from "@/features/chat/greeting/translate";
+import {
+  greetingText,
+  suggestionPromptId,
+} from "@/features/chat/greeting/translate";
 
 afterEach(() => setLanguage("ja"));
 
@@ -37,7 +40,9 @@ describe("display language", () => {
 
   it("renders administrator creation in English", () => {
     setLanguage("en");
-    const html = renderToStaticMarkup(createElement(Auth, { setup: true, onDone: () => {} }));
+    const html = renderToStaticMarkup(
+      createElement(Auth, { setup: true, onDone: () => {} }),
+    );
     expect(html).toContain("Welcome to MIX agent.");
     expect(html).toContain("Create workspace");
     expect(html).toContain('value="en" selected=""');

@@ -1,14 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import { permissionInfo, resolvedPermission, riskLabel, toolCategories, toolCategory } from "./Tools";
+import {
+  permissionInfo,
+  resolvedPermission,
+  riskLabel,
+  toolCategories,
+  toolCategory,
+} from "./Tools";
 
 describe("Tools permission presentation", () => {
-  const tool = { id: "write_file", default_permission: "allow" };
+  const tool = { id: "write_file", default_permission: "allow" as const };
 
   it("uses the selected Agent's latest rule before the default permission", () => {
     const rules = [
-      { data: { agent_id: "agent-a", tool_id: "write_file", permission: "deny" } },
-      { data: { agent_id: "agent-b", tool_id: "write_file", permission: "allow" } },
+      {
+        data: {
+          agent_id: "agent-a",
+          tool_id: "write_file",
+          permission: "deny",
+        },
+      },
+      {
+        data: {
+          agent_id: "agent-b",
+          tool_id: "write_file",
+          permission: "allow",
+        },
+      },
     ];
     expect(resolvedPermission(tool, rules, "agent-a")).toBe("deny");
     expect(resolvedPermission(tool, rules, "agent-b")).toBe("allow");
@@ -16,7 +34,9 @@ describe("Tools permission presentation", () => {
   });
 
   it("defaults to allow when a tool carries no permission at all", () => {
-    expect(resolvedPermission({ id: "run_terminal" }, undefined, "")).toBe("allow");
+    expect(resolvedPermission({ id: "run_terminal" }, undefined, "")).toBe(
+      "allow",
+    );
   });
 
   it("keeps the three permission choices understandable in Japanese", () => {
@@ -33,7 +53,11 @@ describe("Tools permission presentation", () => {
 });
 
 describe("Tool category grouping", () => {
-  const tool = (id: string, extra: any = {}) => ({ id, source: "builtin", ...extra });
+  const tool = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    source: "builtin",
+    ...extra,
+  });
 
   it("groups built-in tools by their capability area", () => {
     expect(toolCategory(tool("web_search"))).toBe("web");
@@ -51,8 +75,12 @@ describe("Tool category grouping", () => {
   });
 
   it("routes MCP and custom tools to their own groups", () => {
-    expect(toolCategory(tool("mcp_github_issue", { source: "mcp" }))).toBe("mcp");
-    expect(toolCategory(tool("custom_api", { source: "custom" }))).toBe("custom");
+    expect(toolCategory(tool("mcp_github_issue", { source: "mcp" }))).toBe(
+      "mcp",
+    );
+    expect(toolCategory(tool("custom_api", { source: "custom" }))).toBe(
+      "custom",
+    );
   });
 
   it("provides a stable category catalog with unique keys", () => {

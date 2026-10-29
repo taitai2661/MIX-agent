@@ -28,7 +28,6 @@ pub struct SettingsView {
     /// `localhost:5173` to verify a dev server, but the user must say so
     /// explicitly. Link-local/metadata addresses stay blocked either way.
     pub browser_allow_local: bool,
-    pub telemetry_consent: bool,
     /// UI language override: `"ja" | "en"`; `None` follows the browser.
     pub language: Option<String>,
     /// UI theme: `"light" | "dark" | "system"`; `None` follows the OS.
@@ -72,7 +71,13 @@ pub struct SettingsView {
     /// replaces the stored document wholesale, so a key the struct does not
     /// carry would be dropped from the row the next time Settings was saved.
     pub memory_link_embedding_neighbors: bool,
-    /// Codex-compatible database encryption at rest. Defaults to `false` (plain SQLite).
+    /// Reserved for the future SQLCipher migration; **not available yet**.
+    ///
+    /// Kept in the document so the key survives a round trip and an older
+    /// client cannot erase it, but [`read_settings`] always answers `false`
+    /// and [`validate_settings`] rejects `true`. The database is plain SQLite
+    /// protected only by owner-only file permissions; OS disk encryption is
+    /// the actual at-rest boundary today.
     pub database_encryption: bool,
     /// Whether the first-run wizard has been finished or explicitly deferred.
     ///
@@ -127,7 +132,6 @@ impl Default for SettingsView {
             default_mode: None,
             egress_allowlist: Vec::new(),
             browser_allow_local: false,
-            telemetry_consent: false,
             language: None,
             theme: None,
             projects_root: None,
@@ -167,9 +171,6 @@ pub async fn update_settings(
     input: SettingsView,
 ) -> Result<SettingsView, String> {
     validate_settings(&input)?;
-    if input.database_encryption {
-        let _ = state.secrets.ensure_db_key().await;
-    }
     let view = write_settings(state.storage.pool(), input).await?;
     // Apply the browser opt-in immediately; waiting for a relaunch would make
     // the setting look broken.
@@ -185,11 +186,29 @@ pub async fn update_settings(
     // the egress list took effect only after an MCP connect or a browser
     // install, and the manual pane kept the startup copy until a relaunch.
     crate::refresh_registry(&state).await;
+    // New shells pick this up; a shell that is already running keeps the
+    // profile it was spawned with.
+    state
+        .engine
+        .set_terminal_sandbox(view.sandbox_terminal)
+        .await;
     Ok(view)
 }
 
 /// Reject empty, huge or malformed values before they reach the store.
 fn validate_settings(input: &SettingsView) -> Result<(), String> {
+    // At-rest encryption is staged but not wired (see `mixd_storage::db`):
+    // SQLCipher is not applied to the connection, so accepting `true` here
+    // would tell the user their database is encrypted while it stays plaintext.
+    // Keep the key in the document for forward compatibility, but only ever
+    // accept the honest value until the migration ships.
+    if input.database_encryption {
+        return Err(
+            "database encryption is not available in this build; keep the SQLite file behind \
+             disk-level encryption (FileVault / BitLocker / LUKS)"
+                .to_string(),
+        );
+    }
     if let Some(lang) = &input.language {
         match lang.as_str() {
             "ja" | "en" => {}
@@ -296,7 +315,14 @@ pub async fn read_settings(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<SettingsVi
             .map_err(crate::error::cmd_err)?;
     Ok(match row {
         Some((data,)) => match serde_json::from_str::<SettingsView>(&data) {
-            Ok(view) => view,
+            // Older builds exposed an at-rest encryption toggle that only
+            // staged a Keychain key; the database was never encrypted. Read
+            // such a row back as `false` so the UI and diagnostics cannot keep
+            // reporting a protection that does not exist.
+            Ok(mut view) => {
+                view.database_encryption = false;
+                view
+            }
             Err(err) => {
                 // A corrupt row must stay visible instead of silently
                 // resetting every preference to the defaults: log it and

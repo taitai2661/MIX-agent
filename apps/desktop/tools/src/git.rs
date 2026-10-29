@@ -3,6 +3,7 @@
 //! Provides first-class git discovery for the agent:
 //!  - `status`: Lists branch and working-tree changes (modified, untracked, deleted).
 //!  - `diff`: Retrieves unified diff of unstaged, staged, or single-file changes.
+//!  - `log` / `show` / `blame`: history, one commit, and line provenance.
 
 use std::path::Path;
 use std::time::Duration;
@@ -37,8 +38,9 @@ impl Tool for GitTool {
     }
 
     fn description(&self) -> &str {
-        "Inspect Git repository state. Use action: \"status\" to see branch name and modified/untracked files. \
-         Use action: \"diff\" to inspect unified diffs of unstaged or staged changes."
+        "Inspect Git repository state. \"status\" lists branch and working-tree changes; \
+         \"diff\" shows a unified diff; \"log\" lists recent commits; \"show\" displays one \
+         commit (default HEAD); \"blame\" shows line provenance for a file."
     }
 
     fn is_sensitive(&self, _args: &serde_json::Value) -> bool {
@@ -51,9 +53,9 @@ impl Tool for GitTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "diff"],
+                    "enum": ["status", "diff", "log", "show", "blame"],
                     "default": "status",
-                    "description": "status: check repo changes. diff: inspect unified diff."
+                    "description": "status: repo changes. diff: unified diff. log: recent commits. show: one commit. blame: line provenance."
                 },
                 "scope": {
                     "type": "string",
@@ -63,7 +65,16 @@ impl Tool for GitTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Optional file path to limit the diff to."
+                    "description": "Optional file path to limit the output to (diff, log, blame)."
+                },
+                "rev": {
+                    "type": "string",
+                    "description": "Revision for action \"show\" (default HEAD), e.g. HEAD~2 or a sha."
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "How many commits \"log\" returns (1-50)."
                 }
             }
         })
@@ -89,6 +100,27 @@ impl Tool for GitTool {
                     .unwrap_or("unstaged");
                 let path = args.get("path").and_then(|v| v.as_str());
                 run_git_diff(&workspace_root, scope, path).await
+            }
+            "log" => {
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(20)
+                    .clamp(1, 50);
+                let path = args.get("path").and_then(|v| v.as_str());
+                run_git_log(&workspace_root, limit, path).await
+            }
+            "show" => {
+                let rev = args.get("rev").and_then(|v| v.as_str()).unwrap_or("HEAD");
+                run_git_show(&workspace_root, rev).await
+            }
+            "blame" => {
+                let path = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .filter(|p| !p.trim().is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("path is required for action: blame"))?;
+                run_git_blame(&workspace_root, path).await
             }
             other => Ok(ToolResult {
                 ok: false,
@@ -204,6 +236,135 @@ async fn run_git_diff(
         }),
         error: None,
     })
+}
+
+/// Reject a revision that would be parsed as an option (`--help`, `-c ...`).
+fn safe_rev(rev: &str) -> anyhow::Result<&str> {
+    let rev = rev.trim();
+    if rev.is_empty() || rev.starts_with('-') {
+        anyhow::bail!("invalid revision: {rev:?}");
+    }
+    if !rev
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '~' | '^' | '-' | '_'))
+    {
+        anyhow::bail!("invalid revision: {rev:?}");
+    }
+    Ok(rev)
+}
+
+async fn run_git_log(
+    root: &Path,
+    limit: u64,
+    path_filter: Option<&str>,
+) -> anyhow::Result<ToolResult> {
+    let count = format!("-n{limit}");
+    let mut args: Vec<&str> = vec!["log", "--oneline", "--decorate", "--no-color", &count];
+    if let Some(path) = path_filter.filter(|p| !p.trim().is_empty()) {
+        FilesTool::safe_join(root, path)?;
+        args.push("--");
+        args.push(path);
+    }
+    let output = match exec_git(root, &args).await {
+        Ok(out) => out,
+        Err(err) => {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({ "available": false }),
+                error: Some(format!("git log failed: {err}")),
+            });
+        }
+    };
+    if !output.status.success() {
+        return Ok(ToolResult {
+            ok: false,
+            content: serde_json::json!({ "available": false }),
+            error: Some("not a git repository or git error".to_string()),
+        });
+    }
+    Ok(ToolResult {
+        ok: true,
+        content: serde_json::json!({
+            "available": true,
+            "log": clip(String::from_utf8_lossy(&output.stdout).to_string()),
+        }),
+        error: None,
+    })
+}
+
+async fn run_git_show(root: &Path, rev: &str) -> anyhow::Result<ToolResult> {
+    let rev = safe_rev(rev)?;
+    let output = match exec_git(root, &["show", "--no-color", "--stat", rev]).await {
+        Ok(out) => out,
+        Err(err) => {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({ "available": false }),
+                error: Some(format!("git show failed: {err}")),
+            });
+        }
+    };
+    if !output.status.success() {
+        return Ok(ToolResult {
+            ok: false,
+            content: serde_json::json!({ "available": true, "rev": rev }),
+            error: Some(String::from_utf8_lossy(&output.stderr).to_string()),
+        });
+    }
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(ToolResult {
+        ok: true,
+        content: serde_json::json!({
+            "available": true,
+            "rev": rev,
+            "commit": clip(text),
+        }),
+        error: None,
+    })
+}
+
+async fn run_git_blame(root: &Path, path: &str) -> anyhow::Result<ToolResult> {
+    FilesTool::safe_join(root, path)?;
+    let output = match exec_git(root, &["blame", "--no-color", "--date=short", path]).await {
+        Ok(out) => out,
+        Err(err) => {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({ "available": false }),
+                error: Some(format!("git blame failed: {err}")),
+            });
+        }
+    };
+    if !output.status.success() {
+        return Ok(ToolResult {
+            ok: false,
+            content: serde_json::json!({ "available": true, "path": path }),
+            error: Some(String::from_utf8_lossy(&output.stderr).to_string()),
+        });
+    }
+    Ok(ToolResult {
+        ok: true,
+        content: serde_json::json!({
+            "available": true,
+            "path": path,
+            "blame": clip(String::from_utf8_lossy(&output.stdout).to_string()),
+        }),
+        error: None,
+    })
+}
+
+/// Keep history output inside the same budget as a diff.
+fn clip(text: String) -> String {
+    if text.len() <= MAX_DIFF_BYTES {
+        return text;
+    }
+    let cut = text
+        .char_indices()
+        .take_while(|(index, _)| *index < MAX_DIFF_BYTES)
+        .last()
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    format!("{}… [truncated]", &text[..cut])
 }
 
 async fn exec_git(root: &Path, args: &[&str]) -> anyhow::Result<std::process::Output> {

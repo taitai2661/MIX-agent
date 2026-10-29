@@ -9,8 +9,10 @@
  * suggestion has no entry here, or when the two editions disagree.
  */
 export const greetingEn: Readonly<Record<string, string>> = {
-  "ac-1": "There are no conversations yet, so you can set things up from scratch.",
-  "ac-2": "There is no record yet, so the approach is entirely yours to choose.",
+  "ac-1":
+    "There are no conversations yet, so you can set things up from scratch.",
+  "ac-2":
+    "There is no record yet, so the approach is entirely yours to choose.",
   "ac-3": "The history is empty. Let's start with the first one.",
   "ae-1": "It has been a little while.",
   "ae-2": "Because the record is thin, rebuilding it from scratch is easier.",
@@ -34,7 +36,8 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "aw-2": "Last week's thread is still connected.",
   "aw-3": "Is there anything you left open for this week?",
   "ay-1": "Picking up from yesterday is the easiest way forward.",
-  "ay-2": "If you want to carry over what was left yesterday, now is that continuation.",
+  "ay-2":
+    "If you want to carry over what was left yesterday, now is that continuation.",
   "ay-3": "Yesterday's log is still here.",
   "compose-fallback": "Tell me what you would like to move forward.",
   "dk-1": "Hello. How was your day?",
@@ -188,29 +191,39 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "rt-5": "Welcome back. Good to be talking again.",
   "rt-6": "Welcome back. What shall we move forward today?",
   "sg-agent.label": "Put assistants to their best use",
-  "sg-agent.prompt": "List the saved assistants and suggest which to use for what.",
+  "sg-agent.prompt":
+    "List the saved assistants and suggest which to use for what.",
   "sg-daylog.label": "Summarise today's work log",
   "sg-daylog.prompt": "Summarise today's conversations into a work log.",
   "sg-first.label": "Start the first conversation",
-  "sg-first.prompt": "Show me how MIX agent works, using a realistic situation.",
+  "sg-first.prompt":
+    "Show me how MIX agent works, using a realistic situation.",
   "sg-memory.label": "Keep a preference as a memory",
-  "sg-memory.prompt": "Save the preference you picked up this time as a memory.",
+  "sg-memory.prompt":
+    "Save the preference you picked up this time as a memory.",
   "sg-pinned.label": "Bring pinned conversations together",
-  "sg-pinned.prompt": "List the pinned conversations and organise how they relate.",
+  "sg-pinned.prompt":
+    "List the pinned conversations and organise how they relate.",
   "sg-project.label": "Review the project instructions",
-  "sg-project.prompt": "List the project instructions and check for gaps or contradictions.",
+  "sg-project.prompt":
+    "List the project instructions and check for gaps or contradictions.",
   "sg-research.label": "Research the web and write a report",
   "sg-research.prompt": "Research the web and create a report with citations.",
   "sg-resume.label": "Continue from yesterday",
-  "sg-resume.prompt": "Review the previous conversation and continue from where it stopped.",
+  "sg-resume.prompt":
+    "Review the previous conversation and continue from where it stopped.",
   "sg-review.label": "Find the gaps in the record",
-  "sg-review.prompt": "List the recent conversations and identify where the thread breaks off.",
+  "sg-review.prompt":
+    "List the recent conversations and identify where the thread breaks off.",
   "sg-schedule.label": "Set up a scheduled run",
-  "sg-schedule.prompt": "Set up the work you want repeated daily as a scheduled run.",
+  "sg-schedule.prompt":
+    "Set up the work you want repeated daily as a scheduled run.",
   "sg-season.label": "Organise the seasonal schedule",
-  "sg-season.prompt": "Organise the seasonal events and plans, then suggest what to do next.",
+  "sg-season.prompt":
+    "Organise the seasonal events and plans, then suggest what to do next.",
   "sg-tidy.label": "Tidy up recent conversations",
-  "sg-tidy.prompt": "List the recent conversations and suggest where the title and the content disagree.",
+  "sg-tidy.prompt":
+    "List the recent conversations and suggest where the title and the content disagree.",
   "sm-1": "In the heat, short stretches are easier to keep up.",
   "sm-2": "Through summer, plans are easier when they stay light.",
   "sm-3": "The sun is strong at this hour.",
@@ -260,7 +273,8 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "wk-1": "There is nothing recorded yet, so it can be designed from scratch.",
   "wk-2": "With nothing here yet, the constraints are yours to set.",
   "wk-3": "The number of conversations is still modest.",
-  "wk-4": "There is a little history, so it looks like we can start right away.",
+  "wk-4":
+    "There is a little history, so it looks like we can start right away.",
   "wk-5": "Gaps can be picked out of the accumulated record.",
   "wk-6": "At this volume it can be tidied in one go.",
   "wk-7": "Records have built up.",
@@ -268,5 +282,6 @@ export const greetingEn: Readonly<Record<string, string>> = {
   "ye-1": "It is the end of the year.",
   "ye-2": "Settling on one thing to close the year makes it easier.",
   "ys-1": "The year is just getting going.",
-  "ys-2": "At the start of the year, shallow notes are easier to build on later.",
+  "ys-2":
+    "At the start of the year, shallow notes are easier to build on later.",
 };

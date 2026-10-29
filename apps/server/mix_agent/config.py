@@ -95,7 +95,7 @@ def _origin_ips(hostname):
     except socket.gaierror:
         infos = ()
     for _family, _type, _proto, _canonname, sockaddr in infos:
-        ip = sockaddr[0]
+        ip = str(sockaddr[0])
         if ":" in ip:
             ip = ip.split("%")[0]
         try:

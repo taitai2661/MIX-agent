@@ -274,6 +274,12 @@ impl mixd_tools::agent::AgentSource for DbAgentSource {
                         .cloned()
                         .and_then(|v| serde_json::from_value(v).ok())
                         .unwrap_or_default(),
+                    model_id: value
+                        .get("modelId")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(str::to_string),
                 })
             })
             .collect())
@@ -363,6 +369,14 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
                 fallback
             }
         };
+        // A profile may name its own model (a cheap read-only explorer vs. the
+        // parent's coding model). An unknown id falls back to the parent's
+        // provider resolution error rather than silently using another model.
+        let model_id = profile
+            .model_id
+            .clone()
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or(model_id);
         let specs: Vec<mixd_tools::ToolSpec> = engine
             .tool_specs()
             .await
@@ -605,14 +619,40 @@ pub async fn build_app_state(
     app_data: &std::path::Path,
     resource_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<AppState> {
-    // The browser runs headed on desktop builds so the user can watch and
-    // interact with what the agent is doing.
-    let headless = cfg!(debug_assertions);
+    // The browser is always headless: the in-app side panel is the only view,
+    // so a second visible Chromium window would just duplicate the page and
+    // keep an extra compositor alive.
     let browser = Arc::new(mixd_browser::BrowserOperator::with_resources(
         app_data,
         resource_dir,
-        headless,
     ));
+    // Forward CDP screencast frames to the WebView. Polling remains the
+    // fallback, so a failed screencast degrades instead of going blank.
+    let frame_app = app_handle.clone();
+    browser
+        .set_frame_sink(Arc::new(move |frame| {
+            let payload = crate::commands::browser::BrowserFrameEventPayload {
+                workspace_id: frame.workspace_id.to_string(),
+                data: format!("data:image/jpeg;base64,{}", frame.jpeg_base64),
+                width: frame.width,
+                height: frame.height,
+            };
+            let _ = frame_app.emit(crate::commands::browser::BROWSER_FRAME_EVENT, payload);
+        }))
+        .await;
+    // Free the hundreds of megabytes a parked Chromium keeps. The live view
+    // polls every 2 s, which refreshes `last_used`, so an open panel never
+    // expires.
+    let idle_browser = browser.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            ticker.tick().await;
+            idle_browser
+                .close_idle(mixd_browser::operator::idle_timeout())
+                .await;
+        }
+    });
     let chromium_installer = Arc::new(mixd_browser::ChromiumInstaller::new(app_data));
     chromium_installer.cleanup_stale().await;
     // Apply the persisted browser opt-in before the first run can call the
@@ -673,6 +713,14 @@ pub async fn build_app_state(
         secrets.clone(),
         tools,
     ));
+    // Apply the persisted terminal-sandbox opt-in before the first shell is
+    // spawned. A corrupt row leaves the safe default (off) in place.
+    match crate::commands::settings::read_settings(storage.pool()).await {
+        Ok(settings) => engine.set_terminal_sandbox(settings.sandbox_terminal).await,
+        Err(err) => {
+            tracing::warn!(%err, "could not read sandbox setting; terminal stays unsandboxed")
+        }
+    }
     // Close the cycle now that the engine exists.
     agent_runner.attach(&engine, &secrets, "");
     register_providers_from_storage(&engine.providers, &storage, &secrets).await?;
@@ -1212,6 +1260,8 @@ pub fn run() {
             commands::runs::list_runs,
             commands::runs::list_run_events,
             commands::runs::cancel_run,
+            commands::runs::steer_run,
+            commands::runs::revert_run,
             commands::runs::resume_run,
             commands::runs::budget_extension,
             commands::runs::list_checkpoints,
@@ -1241,6 +1291,10 @@ pub fn run() {
             commands::browser::browser_reset_profile,
             commands::browser::browser_artifact,
             commands::browser::browser_frame,
+            commands::browser::browser_keepalive,
+            commands::browser::browser_stop,
+            commands::browser::browser_screencast_start,
+            commands::browser::browser_screencast_stop,
             commands::memories::list_memories,
             commands::memories::create_memory,
             commands::memories::update_memory,

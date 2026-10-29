@@ -18,9 +18,14 @@ export function Models() {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return rows.data || [];
     return (rows.data || []).filter((row) => {
-      const providerName = providers.data?.find((provider) => provider.id === row.data.provider_id)?.data.name || "";
-      return [row.data.name, row.data.model_id, providerName]
-        .some((value) => String(value || "").toLocaleLowerCase().includes(needle));
+      const providerName =
+        providers.data?.find((provider) => provider.id === row.data.provider_id)
+          ?.data.name || "";
+      return [row.data.name, row.data.model_id, providerName].some((value) =>
+        String(value || "")
+          .toLocaleLowerCase()
+          .includes(needle),
+      );
     });
   }, [providers.data, query, rows.data]);
   async function update(row: Row, cap: string, value: string) {
@@ -51,24 +56,6 @@ export function Models() {
       });
       qc.invalidateQueries({ queryKey: ["/models"] });
       qc.invalidateQueries({ queryKey: ["/settings"] });
-    } catch (e) {
-      setError(e);
-    }
-  }
-  async function updatePricing(row: Row, field: string, raw: string) {
-    const previous = row.data.pricing_override || {};
-    const next: Record<string, number | null> = {
-      input: previous.input ?? null,
-      output: previous.output ?? null,
-      cache_read: previous.cache_read ?? null,
-    };
-    next[field] = raw.trim() ? Number(raw) : null;
-    try {
-      await api("/models/" + row.id, "PATCH", {
-        pricing_override: Object.values(next).some((value) => value != null) ? next : null,
-      });
-      qc.invalidateQueries({ queryKey: ["/models"] });
-      qc.invalidateQueries({ queryKey: ["/settings/usage"] });
     } catch (e) {
       setError(e);
     }
@@ -118,16 +105,32 @@ export function Models() {
             </select>
           </Field>
           <Field label={t("モデルID")}>
-            <input name="model_id" required placeholder={t("ProviderのモデルID")} />
+            <input
+              name="model_id"
+              required
+              placeholder={t("ProviderのモデルID")}
+            />
           </Field>
-          <Field label="Context Window" hint={t("不明なモデルをAutoで使う場合に設定します。")}>
-            <input name="context_window_override" type="number" min="1024" max="10000000" step="1" placeholder={t("例: 128000")} />
+          <Field
+            label="Context Window"
+            hint={t("不明なモデルをAutoで使う場合に設定します。")}
+          >
+            <input
+              name="context_window_override"
+              type="number"
+              min="1024"
+              max="10000000"
+              step="1"
+              placeholder={t("例: 128000")}
+            />
           </Field>
           <Button>{t("追加")}</Button>
         </form>
       )}
       <div className="notice">
-        {t("モデル一覧の取得だけでは、Tool CallingやVision対応は保証されません。確認した機能を「対応」に設定してください。")}
+        {t(
+          "モデル一覧の取得だけでは、Tool CallingやVision対応は保証されません。確認した機能を「対応」に設定してください。",
+        )}
       </div>
       <label className="tool-search models-search">
         <Search size={15} />
@@ -155,7 +158,10 @@ export function Models() {
                   ? row.data.context_window.toLocaleString() + " context"
                   : t("Context不明")}
                 {row.data.context_source
-                  ? " · " + (row.data.context_source === "models_dev" ? "models.dev" : row.data.context_source)
+                  ? " · " +
+                    (row.data.context_source === "models_dev"
+                      ? "models.dev"
+                      : row.data.context_source)
                   : ""}
               </small>
             </div>
@@ -193,11 +199,14 @@ export function Models() {
               hint={
                 row.data.context_source === "manual"
                   ? t("手動設定。空欄にして保存すると、API取得値に戻します。")
-                  : row.data.context_source === "models_dev" || row.data.context_source === "model_info"
+                  : row.data.context_source === "models_dev" ||
+                      row.data.context_source === "model_info"
                     ? t("models.devから補完されています。")
                     : row.data.context_window
                       ? t("Provider APIから取得しています。")
-                      : t("未設定のモデルは、安全のためAutoの候補から除外されます。")
+                      : t(
+                          "未設定のモデルは、安全のためAutoの候補から除外されます。",
+                        )
               }
             >
               <input
@@ -207,7 +216,11 @@ export function Models() {
                 max="10000000"
                 step="1"
                 defaultValue={row.data.context_window_override ?? ""}
-                placeholder={row.data.context_window ? String(row.data.context_window) : t("例: 128000")}
+                placeholder={
+                  row.data.context_window
+                    ? String(row.data.context_window)
+                    : t("例: 128000")
+                }
                 onBlur={(e) => updateContext(row, e.currentTarget.value)}
               />
             </Field>
@@ -215,20 +228,36 @@ export function Models() {
           {!!row.data.metadata && (
             <details className="model-metadata">
               <summary>{t("取得メタデータと根拠")}</summary>
-              <small>{t("信頼度:")} {row.data.context_confidence || "unknown"}</small>
-              <pre>{JSON.stringify({ metadata: row.data.metadata, provider_metadata: row.data.provider_metadata }, null, 2)}</pre>
+              <small>
+                {t("信頼度:")} {row.data.context_confidence || "unknown"}
+              </small>
+              <pre>
+                {JSON.stringify(
+                  {
+                    metadata: row.data.metadata,
+                    provider_metadata: row.data.provider_metadata,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
             </details>
           )}
           <div className="model-probe">
             <small>
               {t("自動確認:")}{" "}
-              {([
-                ["tools", "Tool Calling"],
-                ["vision", "Vision"],
-                ["reasoning", "Reasoning"],
-              ] as const)
+              {(
+                [
+                  ["tools", "Tool Calling"],
+                  ["vision", "Vision"],
+                  ["reasoning", "Reasoning"],
+                ] as const
+              )
                 .map(([key, label]) => {
-                  const status = key === "tools" ? row.data.tool_probe?.status : row.data.tool_probe?.[key];
+                  const status =
+                    key === "tools"
+                      ? row.data.tool_probe?.status
+                      : row.data.tool_probe?.[key];
                   const text =
                     status === "supported"
                       ? t("対応")
@@ -241,7 +270,9 @@ export function Models() {
                 })
                 .join("・")}
               {row.data.tool_probe?.checked_at
-                ? "（" + new Date(row.data.tool_probe.checked_at).toLocaleString() + "）"
+                ? "（" +
+                  new Date(row.data.tool_probe.checked_at).toLocaleString() +
+                  "）"
                 : ""}
             </small>
             <Button variant="outline" onClick={() => verifyTools(row)}>
@@ -252,7 +283,9 @@ export function Models() {
         </div>
       ))}
       {!rows.data?.length && (
-        <Empty>{t("Providerの「モデル取得」、または手動追加で登録できます。")}</Empty>
+        <Empty>
+          {t("Providerの「モデル取得」、または手動追加で登録できます。")}
+        </Empty>
       )}
       {!!rows.data?.length && !filteredRows.length && (
         <Empty>{t("該当するモデルがありません。")}</Empty>

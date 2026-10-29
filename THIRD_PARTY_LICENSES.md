@@ -5,8 +5,8 @@ This document lists third-party software components and dependencies used by MIX
 ## 1. Overview
 
 - **Rust Dependencies**: 743 crates
-- **Python Dependencies**: 78 packages
-- **Node.js / Web Dependencies**: 51 packages
+- **Python Dependencies**: 82 packages
+- **Node.js / Web Dependencies**: 52 packages
 
 ## 2. Special Notices & Disclosures
 
@@ -40,6 +40,7 @@ This document lists third-party software components and dependencies used by MIX
 | `charset-normalizer` | `3.5.1` | Python |
 | `click` | `8.5.0` | Python |
 | `colorama` | `0.4.6` | Python |
+| `coverage` | `7.17.0` | Python |
 | `cryptography` | `46.0.7` | Python |
 | `ddgs` | `9.16.0` | Python |
 | `distro` | `1.9.0` | Python |
@@ -62,6 +63,7 @@ This document lists third-party software components and dependencies used by MIX
 | `mako` | `1.4.1` | Python |
 | `markupsafe` | `3.0.3` | Python |
 | `mcp` | `1.29.1` | Python |
+| `nodeenv` | `1.11.0` | Python |
 | `openai` | `2.54.0` | Python |
 | `packaging` | `26.3` | Python |
 | `playwright` | `1.62.0` | Python |
@@ -79,8 +81,10 @@ This document lists third-party software components and dependencies used by MIX
 | `pygments` | `2.21.0` | Python |
 | `pyjwt` | `2.13.0` | Python |
 | `pypdf` | `6.16.2` | Python |
+| `pyright` | `1.1.414` | Python |
 | `pytest` | `9.1.1` | Python |
 | `pytest-asyncio` | `1.4.0` | Python |
+| `pytest-cov` | `7.1.0` | Python |
 | `python-dotenv` | `1.2.3` | Python |
 | `python-multipart` | `0.0.32` | Python |
 | `pywin32` | `312` | Python |
@@ -138,9 +142,10 @@ This document lists third-party software components and dependencies used by MIX
 | `@types/react` | `^19.1.0` | npm |
 | `@types/react-dom` | `^19.1.0` | npm |
 | `@vitejs/plugin-react` | `^4.4.1` | npm |
+| `@vitest/coverage-v8` | `^3.2.7` | npm |
 | `class-variance-authority` | `^0.7.1` | npm |
 | `clsx` | `^2.1.1` | npm |
-| `eslint` | `^9.18.0` | npm |
+| `eslint` | `^9.39.5` | npm |
 | `eslint-plugin-jsx-a11y` | `^6.10.2` | npm |
 | `eslint-plugin-react-hooks` | `^5.2.0` | npm |
 | `jsdom` | `^30.1.1` | npm |
@@ -156,7 +161,7 @@ This document lists third-party software components and dependencies used by MIX
 | `tailwind-merge` | `^3.2.0` | npm |
 | `tailwindcss` | `^4.1.7` | npm |
 | `typescript` | `~5.8.3` | npm |
-| `typescript-eslint` | `^8.70.1` | npm |
+| `typescript-eslint` | `^8.72.1` | npm |
 | `vite` | `^6.3.5` | npm |
 | `vitest` | `^3.1.4` | npm |
 | `zustand` | `^4.5.4` | npm |

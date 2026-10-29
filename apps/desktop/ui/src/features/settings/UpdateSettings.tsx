@@ -11,6 +11,11 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/dialog";
 import { useSettingsForm } from "@/lib/settings";
+import {
+  isLinuxPlatform,
+  isMacPlatform,
+  isWindowsPlatform,
+} from "@/lib/platform";
 import { UPDATE_QUERY_KEY, useUpdateCheck } from "@/lib/updates";
 import type { UpdateProgress } from "@/lib/types";
 
@@ -223,20 +228,13 @@ export function UpdateSettings() {
             />
           </div>
 
-          <div className="border-t border-line pt-3">
-            <ToggleRow
-              label={t("匿名の利用統計を共有 (将来)")}
-              hint={t("アプリの改善のため匿名の診断情報を共有します")}
-              checked={data.telemetry_consent}
-              onChange={(telemetry_consent) => patch({ telemetry_consent })}
-            />
-          </div>
-
-          <p className="m-0 text-xs text-muted">
-            {t(
-              "Linuxのdebパッケージはアプリ内更新の対象外です。debで導入した場合はGitHub Releasesから手動で更新してください（AppImageは自動更新できます）。",
-            )}
-          </p>
+          {isLinuxPlatform() && (
+            <p className="m-0 text-xs text-muted">
+              {t(
+                "Linuxのdebパッケージはアプリ内更新の対象外です。debで導入した場合はGitHub Releasesから手動で更新してください（AppImageは自動更新できます）。",
+              )}
+            </p>
+          )}
           <a
             href={RELEASES_URL}
             target="_blank"
@@ -246,11 +244,20 @@ export function UpdateSettings() {
             <Download size={14} aria-hidden="true" />
             {t("GitHub Releasesを開く")}
           </a>
-          <p className="m-0 text-xs text-muted">
-            {t(
-              "macOSアプリはApple Developer ID署名・公証なし（ad-hoc署名のみ）です。初回起動時にGatekeeperの確認が必要です。",
-            )}
-          </p>
+          {isMacPlatform() && (
+            <p className="m-0 text-xs text-muted">
+              {t(
+                "macOSアプリはApple Developer ID署名・公証なし（ad-hoc署名のみ）です。初回起動時にGatekeeperの確認が必要です。",
+              )}
+            </p>
+          )}
+          {isWindowsPlatform() && (
+            <p className="m-0 text-xs text-muted">
+              {t(
+                "Windowsインストーラーは未署名です。SmartScreenの警告が出る場合は「詳細情報」→「実行」を選択してください。",
+              )}
+            </p>
+          )}
         </div>
       </Card>
       {dialog}

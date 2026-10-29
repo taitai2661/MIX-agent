@@ -70,6 +70,11 @@ React (Web UI) ─► REST / SSE ─► FastAPI (apps/server)
 - **通信制御**: Runner からの外部接続はすべて `egress-proxy` を経由します。管理者が明示的に許可した公開ドメインへの接続のみを許可し、Private IP へのアクセスは自動的に遮断されます。
 - **Secret 保護**: API Key や秘密情報は AES-GCM で暗号化されて保存されます。
 
+### 6. エラー契約と可観測性
+- **エラーコード**: `HTTPException` のレスポンスは `{detail, code}` を返します。`detail` は日本語の正規メッセージ（ログ・既存クライアント用）、`code` は `auth.invalid_credentials` のような安定した識別子です。Web UI は `code` で英語表示を選ぶため、文言変更で翻訳が外れません。未知の動的エラーには `common.http_<status>` が付きます。
+- **メトリクス**: `/metrics` が Prometheus 形式のリクエスト件数・レイテンシ・稼働時間を返します。`app` の healthcheck はDB非依存の `/live` を使い、準備確認は `/health` が担います。
+- **整合性検査**: `scripts/check-error-i18n.py` が「発生しうるエラー」「コード表」「英語文言」の3つを照合します。
+
 ---
 
 ## Desktop 版との設計対比

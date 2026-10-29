@@ -37,3 +37,6 @@ apps/desktop/app/.data/
 # (they live in GitHub Actions Repository Secrets + an offline backup).
 *.key
 *.key.pub
+
+# Test coverage output (Vitest / pytest)
+**/coverage/

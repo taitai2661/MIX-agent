@@ -18,14 +18,42 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useDeferredValue, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useDeferredValue,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 
 import { CardSkeleton } from "@/components/loading";
 import { trapFocus, useModalDialog } from "@/components/modal";
 import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
 
+/** Shapes returned by the MCP registry proxy (the OpenAPI spec leaves these
+ *  endpoints as free-form JSON, so they are narrowed locally). */
+type MCPEnvironmentItem = {
+  name: string;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+};
+
+type MCPRegistryServer = {
+  registry_id: string;
+  title: string;
+  version: string;
+  description?: string;
+  selected?: {
+    kind?: string;
+    environment?: MCPEnvironmentItem[];
+  } | null;
+};
+
+type MCPRegistryResponse = { servers?: MCPRegistryServer[] };
+
 function InstallDialog({
-  installing,
+  installing: _installing,
   onClose,
   onSubmit,
   children,
@@ -42,20 +70,22 @@ function InstallDialog({
   return (
     <div
       className="mcp-install-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mcp-install-title"
+      role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) closeRef.current();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Tab" && panelRef.current)
+          trapFocus(panelRef.current, event);
       }}
     >
       <form
         ref={panelRef}
         className="card form-grid mcp-install-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcp-install-title"
         onSubmit={onSubmit}
-        onKeyDown={(event) => {
-          if (event.key === "Tab" && panelRef.current) trapFocus(panelRef.current, event);
-        }}
       >
         {children}
       </form>
@@ -73,19 +103,21 @@ export function MCP() {
     [notice, setNotice] = useState(""),
     [template, setTemplate] = useState(false),
     [query, setQuery] = useState(""),
-    [selected, setSelected] = useState<any>(null),
+    [selected, setSelected] = useState<MCPRegistryServer | null>(null),
     [networkCapability, setNetworkCapability] = useState("none"),
     [installing, setInstalling] = useState(false);
   const deferredQuery = useDeferredValue(query);
-  const catalog = useQuery({
+  const catalog = useQuery<MCPRegistryResponse>({
     queryKey: ["/mcp/registry", deferredQuery],
     queryFn: () =>
-      api<any>("/mcp/registry?q=" + encodeURIComponent(deferredQuery)),
+      api<MCPRegistryResponse>(
+        "/mcp/registry?q=" + encodeURIComponent(deferredQuery),
+      ),
   });
   const installed = new Set(
     rows.data?.map((row) => row.data.registry_id).filter(Boolean) || [],
   );
-  const selectForInstall = (server: any) => {
+  const selectForInstall = (server: MCPRegistryServer) => {
     setError(null);
     setNotice("");
     setNetworkCapability("none");
@@ -111,7 +143,11 @@ export function MCP() {
       />
       <ErrorBox
         error={error || rows.error || catalog.error}
-        onRetry={() => { setError(null); void rows.refetch(); void catalog.refetch(); }}
+        onRetry={() => {
+          setError(null);
+          void rows.refetch();
+          void catalog.refetch();
+        }}
       />
       {notice && (
         <p className="success">
@@ -125,7 +161,9 @@ export function MCP() {
             <p className="eyebrow">MCP STORE</p>
             <h2 id="mcp-store-title">{t("Toolを追加")}</h2>
             <p>
-              {t("公式Registryから選ぶだけ。ローカルMCPは専用コンテナで隔離されます。")}
+              {t(
+                "公式Registryから選ぶだけ。ローカルMCPは専用コンテナで隔離されます。",
+              )}
             </p>
           </div>
           <span className="mcp-safe-badge">
@@ -157,15 +195,17 @@ export function MCP() {
             {t("Registryを読み込んでいます")}
           </div>
         )}
-        {!catalog.isLoading && !catalog.isError && !catalog.data?.servers?.length && (
-          <div className="mcp-store-state">
-            <PackageOpen size={24} />
-            <strong>{t("該当するMCPがありません")}</strong>
-            <span>{t("別の名前やサービス名で検索してください。")}</span>
-          </div>
-        )}
+        {!catalog.isLoading &&
+          !catalog.isError &&
+          !catalog.data?.servers?.length && (
+            <div className="mcp-store-state">
+              <PackageOpen size={24} />
+              <strong>{t("該当するMCPがありません")}</strong>
+              <span>{t("別の名前やサービス名で検索してください。")}</span>
+            </div>
+          )}
         <div className="mcp-store-grid">
-          {catalog.data?.servers?.map((server: any) => (
+          {catalog.data?.servers?.map((server) => (
             <article
               className={
                 "card mcp-store-card" +
@@ -188,7 +228,9 @@ export function MCP() {
               </div>
               <p>{server.description || t("説明はありません")}</p>
               <div className="mcp-card-meta">
-                <span className="tag">{server.selected?.kind || t("未対応")}</span>
+                <span className="tag">
+                  {server.selected?.kind || t("未対応")}
+                </span>
                 {server.selected?.kind !== "remote" && server.selected && (
                   <span>
                     <ShieldCheck size={13} />
@@ -224,209 +266,218 @@ export function MCP() {
       {selected && (
         <InstallDialog
           installing={installing}
-          onClose={() => { if (!installing) setSelected(null); }}
+          onClose={() => {
+            if (!installing) setSelected(null);
+          }}
           onSubmit={async (event) => {
-              event.preventDefault();
-              const form = new FormData(event.currentTarget);
-              const domains = String(form.get("domains") || "")
-                .split("\n")
-                .map((value) => value.trim())
-                .filter(Boolean);
-              const secrets: Record<string, string> = {};
-              selected.selected?.environment
-                ?.filter((item: any) => item.secret)
-                .forEach((item: any) => {
-                  const value = String(form.get("secret:" + item.name) || "");
-                  if (value) secrets[item.name] = value;
-                });
-              setInstalling(true);
-              setError(null);
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const domains = String(form.get("domains") || "")
+              .split("\n")
+              .map((value) => value.trim())
+              .filter(Boolean);
+            const secrets: Record<string, string> = {};
+            selected.selected?.environment
+              ?.filter((item) => item.secret)
+              .forEach((item) => {
+                const value = String(form.get("secret:" + item.name) || "");
+                if (value) secrets[item.name] = value;
+              });
+            setInstalling(true);
+            setError(null);
+            try {
+              const connection = await api<{ id: string }>(
+                "/mcp/registry/install",
+                "POST",
+                {
+                  registry_id: selected.registry_id,
+                  version: selected.version,
+                  network_capability: form.get("network"),
+                  allowed_domains: domains,
+                  configuration: {},
+                  secrets: Object.keys(secrets).length ? secrets : null,
+                },
+              );
+              let toolCount: number | null = null;
               try {
-                const connection = await api<any>(
-                  "/mcp/registry/install",
+                const synced = await api<{ tools?: unknown[] }>(
+                  "/mcp/connections/" + connection.id + "/sync",
                   "POST",
-                  {
-                    registry_id: selected.registry_id,
-                    version: selected.version,
-                    network_capability: form.get("network"),
-                    allowed_domains: domains,
-                    configuration: {},
-                    secrets: Object.keys(secrets).length ? secrets : null,
-                  },
                 );
-                let toolCount: number | null = null;
-                try {
-                  const synced = await api<any>(
-                    "/mcp/connections/" + connection.id + "/sync",
-                    "POST",
-                  );
-                  toolCount = synced.tools?.length ?? 0;
-                } catch {
-                  /* 接続は導入済み一覧から再試行できる */
-                }
-                setSelected(null);
-                setNotice(
-                  toolCount === null
-                    ? t("導入しました。接続確認は導入済み一覧から再実行できます。")
-                    : `導入が完了し、${toolCount}件のToolを利用できるようになりました。`,
-                );
-                qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                qc.invalidateQueries({ queryKey: ["/tools"] });
-              } catch (caught) {
-                setError(caught);
-              } finally {
-                setInstalling(false);
+                toolCount = synced.tools?.length ?? 0;
+              } catch {
+                /* 接続は導入済み一覧から再試行できる */
               }
+              setSelected(null);
+              setNotice(
+                toolCount === null
+                  ? t(
+                      "導入しました。接続確認は導入済み一覧から再実行できます。",
+                    )
+                  : `導入が完了し、${toolCount}件のToolを利用できるようになりました。`,
+              );
+              qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+              qc.invalidateQueries({ queryKey: ["/tools"] });
+            } catch (caught) {
+              setError(caught);
+            } finally {
+              setInstalling(false);
+            }
           }}
         >
-            <div className="mcp-install-header">
-              <div className="mcp-install-icon">
-                {selected.selected?.kind === "remote" ? (
-                  <Globe size={24} />
-                ) : (
-                  <Box size={24} />
-                )}
-              </div>
-              <div>
-                <p className="eyebrow">INSTALL MCP</p>
-                <h2 id="mcp-install-title">{selected.title}</h2>
-                <p>
-                  {selected.registry_id} · v{selected.version}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={t("閉じる")}
-                disabled={installing}
-                onClick={() => setSelected(null)}
-              >
-                <X size={19} />
-              </button>
+          <div className="mcp-install-header">
+            <div className="mcp-install-icon">
+              {selected.selected?.kind === "remote" ? (
+                <Globe size={24} />
+              ) : (
+                <Box size={24} />
+              )}
             </div>
-            <p className="mcp-install-description">
-              {selected.description || t("説明はありません")}
-            </p>
-            <div className="mcp-install-summary">
-              <span>
-                <PackageOpen size={16} />
-                {selected.selected?.kind?.toUpperCase()}
-              </span>
-              <span>
-                <ShieldCheck size={16} />
-                {selected.selected?.kind === "remote"
-                  ? t("リクエスト単位で接続")
-                  : t("専用Dockerコンテナ")}
-              </span>
-              <span>
-                <KeyRound size={16} />
-                {t("Secretは実行時のみ注入")}
-              </span>
+            <div>
+              <p className="eyebrow">INSTALL MCP</p>
+              <h2 id="mcp-install-title">{selected.title}</h2>
+              <p>
+                {selected.registry_id} · v{selected.version}
+              </p>
             </div>
-            <fieldset className="mcp-network-options">
-              <legend>
-                <Network size={16} />
-                {t("実行時ネットワーク")}
-              </legend>
-              {[
-                {
-                  value: "none",
-                  title: "なし",
-                  description: "外部通信を許可しません（推奨）",
-                },
-                {
-                  value: "restricted",
-                  title: "指定ドメインのみ",
-                  description: "必要な接続先だけを許可します",
-                },
-                {
-                  value: "public_web",
-                  title: "公開Web",
-                  description: "公開IPのHTTP/HTTPSを許可します",
-                },
-              ].map((option) => (
-                <label
-                  key={option.value}
-                  className={
-                    networkCapability === option.value ? "is-selected" : ""
-                  }
-                >
-                  <input
-                    type="radio"
-                    name="network"
-                    value={option.value}
-                    checked={networkCapability === option.value}
-                    onChange={() => setNetworkCapability(option.value)}
-                  />
-                  <span>
-                    <strong>{t(option.title)}</strong>
-                    <small>{t(option.description)}</small>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-            {networkCapability === "restricted" && (
-              <Field
-                label={t("許可ドメイン")}
-                hint={t("1行に1ホスト。localhost、private、metadata宛は常に拒否されます。")}
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t("閉じる")}
+              disabled={installing}
+              onClick={() => setSelected(null)}
+            >
+              <X size={19} />
+            </button>
+          </div>
+          <p className="mcp-install-description">
+            {selected.description || t("説明はありません")}
+          </p>
+          <div className="mcp-install-summary">
+            <span>
+              <PackageOpen size={16} />
+              {selected.selected?.kind?.toUpperCase()}
+            </span>
+            <span>
+              <ShieldCheck size={16} />
+              {selected.selected?.kind === "remote"
+                ? t("リクエスト単位で接続")
+                : t("専用Dockerコンテナ")}
+            </span>
+            <span>
+              <KeyRound size={16} />
+              {t("Secretは実行時のみ注入")}
+            </span>
+          </div>
+          <fieldset className="mcp-network-options">
+            <legend>
+              <Network size={16} />
+              {t("実行時ネットワーク")}
+            </legend>
+            {[
+              {
+                value: "none",
+                title: "なし",
+                description: "外部通信を許可しません（推奨）",
+              },
+              {
+                value: "restricted",
+                title: "指定ドメインのみ",
+                description: "必要な接続先だけを許可します",
+              },
+              {
+                value: "public_web",
+                title: "公開Web",
+                description: "公開IPのHTTP/HTTPSを許可します",
+              },
+            ].map((option) => (
+              <label
+                key={option.value}
+                className={
+                  networkCapability === option.value ? "is-selected" : ""
+                }
+                aria-label={t(option.title)}
               >
-                <textarea
-                  name="domains"
-                  required
-                  placeholder={"api.example.com\ncdn.example.com"}
+                <input
+                  type="radio"
+                  name="network"
+                  value={option.value}
+                  checked={networkCapability === option.value}
+                  onChange={() => setNetworkCapability(option.value)}
                 />
-              </Field>
-            )}
-            {selected.selected?.environment?.filter((item: any) => item.secret)
-              .length > 0 && (
-              <div className="mcp-secret-section">
-                <h3>
-                  <KeyRound size={16} />
-                  {t("必要なSecret")}
-                </h3>
-                <p>{t("暗号化してMCP単位で保存し、コンテナ起動時だけ注入します。")}</p>
-                {selected.selected.environment
-                  .filter((item: any) => item.secret)
-                  .map((item: any) => (
-                    <Field
-                      key={item.name}
-                      label={item.name}
-                      hint={item.description}
-                    >
-                      <input
-                        name={"secret:" + item.name}
-                        type="password"
-                        required={item.required}
-                        autoComplete="off"
-                        placeholder={item.required ? t("必須") : t("任意")}
-                      />
-                    </Field>
-                  ))}
-              </div>
-            )}
-            <div className="mcp-install-actions">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={installing}
-                onClick={() => setSelected(null)}
-              >
-                {t("キャンセル")}
-              </Button>
-              <Button disabled={installing}>
-                {installing ? (
-                  <>
-                    <LoaderCircle className="spin" size={16} />
-                    {t("安全にインストール中…")}
-                  </>
-                ) : (
-                  <>
-                    <Download size={16} />
-                    {t("インストール")}
-                  </>
-                )}
-              </Button>
+                <span>
+                  <strong>{t(option.title)}</strong>
+                  <small>{t(option.description)}</small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          {networkCapability === "restricted" && (
+            <Field
+              label={t("許可ドメイン")}
+              hint={t(
+                "1行に1ホスト。localhost、private、metadata宛は常に拒否されます。",
+              )}
+            >
+              <textarea
+                name="domains"
+                required
+                placeholder={"api.example.com\ncdn.example.com"}
+              />
+            </Field>
+          )}
+          {(selected.selected?.environment?.filter((item) => item.secret)
+            .length ?? 0) > 0 && (
+            <div className="mcp-secret-section">
+              <h3>
+                <KeyRound size={16} />
+                {t("必要なSecret")}
+              </h3>
+              <p>
+                {t("暗号化してMCP単位で保存し、コンテナ起動時だけ注入します。")}
+              </p>
+              {selected.selected?.environment
+                ?.filter((item) => item.secret)
+                .map((item) => (
+                  <Field
+                    key={item.name}
+                    label={item.name}
+                    hint={item.description}
+                  >
+                    <input
+                      name={"secret:" + item.name}
+                      type="password"
+                      required={item.required}
+                      autoComplete="off"
+                      placeholder={item.required ? t("必須") : t("任意")}
+                    />
+                  </Field>
+                ))}
             </div>
+          )}
+          <div className="mcp-install-actions">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={installing}
+              onClick={() => setSelected(null)}
+            >
+              {t("キャンセル")}
+            </Button>
+            <Button disabled={installing}>
+              {installing ? (
+                <>
+                  <LoaderCircle className="spin" size={16} />
+                  {t("安全にインストール中…")}
+                </>
+              ) : (
+                <>
+                  <Download size={16} />
+                  {t("インストール")}
+                </>
+              )}
+            </Button>
+          </div>
         </InstallDialog>
       )}
       <div className="template-row">
@@ -531,9 +582,9 @@ export function MCP() {
           )}
           <Field
             label="Secret（JSON）"
-            hint={
-              t("例: {\"headers\":{\"Authorization\":\"Bearer ...\"}} または {\"env\":{\"TOKEN\":\"...\"}}")
-            }
+            hint={t(
+              '例: {"headers":{"Authorization":"Bearer ..."}} または {"env":{"TOKEN":"..."}}',
+            )}
           >
             <textarea
               name="credentials"
@@ -556,141 +607,126 @@ export function MCP() {
       )}
       {rows.isLoading ? (
         <CardSkeleton />
-      ) : rows.isError ? null : rows.data?.map((r) => (
-        <div className="card" key={r.id}>
-          <h3>
-            <Globe size={18} />
-            {r.data.name}
-          </h3>
-          <p>
-            {r.data.transport} · {r.data.url || r.data.command}
-          </p>
-          <small>{r.data.enabled ? t("有効") : t("切断済み")}</small>
-          <div className="form-actions">
-            {!r.data.registry_id && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setEditing(r);
-                  setTemplate(false);
-                  setTransport(r.data.transport);
-                  setOpen(true);
-                }}
-              >
-                {t("編集")}
-              </Button>
-            )}
-            {r.data.command ===
-              "/packages/node_modules/.bin/mcp-server-filesystem" && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  setError(null);
-                  try {
-                    await api("/mcp/connections/" + r.id + "/install", "POST");
-                    setNotice(
-                      t("パッケージを導入しました。接続・Tool取得を実行してください。"),
-                    );
-                  } catch (e) {
-                    setError(e);
-                  }
-                }}
-              >
-                {t("パッケージを導入")}
-              </Button>
-            )}
-            {[
-              ["test", t("接続テスト")],
-              ["sync", t("接続・Tool取得")],
-              ["disconnect", t("切断")],
-            ].map(([a, label]) => (
-              <Button
-                key={a}
-                variant="outline"
-                onClick={async () => {
-                  setError(null);
-                  try {
-                    const result = await api(
-                      "/mcp/connections/" + r.id + "/" + a,
-                      "POST",
-                    );
-                    setNotice(
-                      result.tools
-                        ? `${result.tools.length} ${t("件のToolを確認しました")}`
-                        : t("切断しました"),
-                    );
-                    qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                    qc.invalidateQueries({ queryKey: ["/tools"] });
-                  } catch (e) {
-                    setError(e);
-                  }
-                }}
-              >
-                {label}
-              </Button>
-            ))}
-            {r.data.transport === "http" && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  try {
-                    const result = await api<any>(
-                      "/mcp/connections/" + r.id + "/oauth/start",
-                      "POST",
-                      { client_id: "", client_secret: "", scopes: [] },
-                    );
-                    window.location.assign(result.authorization_url);
-                  } catch (caught) {
-                    setError(caught);
-                  }
-                }}
-              >
-                {t("OAuthで認証")}
-              </Button>
-            )}
-            {r.data.registry_id && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  try {
-                    await api("/mcp/connections/" + r.id + "/update", "POST");
-                    setNotice("更新を確認しました");
-                    qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                  } catch (caught) {
-                    setError(caught);
-                  }
-                }}
-              >
-                {t("更新を確認")}
-              </Button>
-            )}
-            {r.data.state === "uninstalled_data_retained" && (
-              <Button
-                onClick={async () => {
-                  try {
-                    await api(
-                      "/mcp/connections/" + r.id + "/reinstall",
-                      "POST",
-                    );
-                    qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                  } catch (caught) {
-                    setError(caught);
-                  }
-                }}
-              >
-                {t("保持データから再導入")}
-              </Button>
-            )}
-            {r.data.runtime?.driver &&
-              r.data.runtime.driver !== "remote" &&
-              ["start", "stop", "restart"].map((action) => (
+      ) : rows.isError ? null : (
+        rows.data?.map((r) => (
+          <div className="card" key={r.id}>
+            <h3>
+              <Globe size={18} />
+              {r.data.name}
+            </h3>
+            <p>
+              {r.data.transport} · {r.data.url || r.data.command}
+            </p>
+            <small>{r.data.enabled ? t("有効") : t("切断済み")}</small>
+            <div className="form-actions">
+              {!r.data.registry_id && (
                 <Button
-                  key={action}
                   variant="ghost"
+                  onClick={() => {
+                    setEditing(r);
+                    setTemplate(false);
+                    setTransport(r.data.transport);
+                    setOpen(true);
+                  }}
+                >
+                  {t("編集")}
+                </Button>
+              )}
+              {r.data.command ===
+                "/packages/node_modules/.bin/mcp-server-filesystem" && (
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    setError(null);
+                    try {
+                      await api(
+                        "/mcp/connections/" + r.id + "/install",
+                        "POST",
+                      );
+                      setNotice(
+                        t(
+                          "パッケージを導入しました。接続・Tool取得を実行してください。",
+                        ),
+                      );
+                    } catch (e) {
+                      setError(e);
+                    }
+                  }}
+                >
+                  {t("パッケージを導入")}
+                </Button>
+              )}
+              {[
+                ["test", t("接続テスト")],
+                ["sync", t("接続・Tool取得")],
+                ["disconnect", t("切断")],
+              ].map(([a, label]) => (
+                <Button
+                  key={a}
+                  variant="outline"
+                  onClick={async () => {
+                    setError(null);
+                    try {
+                      const result = await api<{ tools?: unknown[] }>(
+                        "/mcp/connections/" + r.id + "/" + a,
+                        "POST",
+                      );
+                      setNotice(
+                        result.tools
+                          ? `${result.tools.length} ${t("件のToolを確認しました")}`
+                          : t("切断しました"),
+                      );
+                      qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+                      qc.invalidateQueries({ queryKey: ["/tools"] });
+                    } catch (e) {
+                      setError(e);
+                    }
+                  }}
+                >
+                  {label}
+                </Button>
+              ))}
+              {r.data.transport === "http" && (
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      const result = await api<{ authorization_url: string }>(
+                        "/mcp/connections/" + r.id + "/oauth/start",
+                        "POST",
+                        { client_id: "", client_secret: "", scopes: [] },
+                      );
+                      window.location.assign(result.authorization_url);
+                    } catch (caught) {
+                      setError(caught);
+                    }
+                  }}
+                >
+                  {t("OAuthで認証")}
+                </Button>
+              )}
+              {r.data.registry_id && (
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await api("/mcp/connections/" + r.id + "/update", "POST");
+                      setNotice("更新を確認しました");
+                      qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+                    } catch (caught) {
+                      setError(caught);
+                    }
+                  }}
+                >
+                  {t("更新を確認")}
+                </Button>
+              )}
+              {r.data.state === "uninstalled_data_retained" && (
+                <Button
                   onClick={async () => {
                     try {
                       await api(
-                        "/mcp/connections/" + r.id + "/runtime/" + action,
+                        "/mcp/connections/" + r.id + "/reinstall",
                         "POST",
                       );
                       qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
@@ -699,47 +735,81 @@ export function MCP() {
                     }
                   }}
                 >
-                  {action === "start"
-                    ? t("起動")
-                    : action === "stop"
-                      ? t("停止")
-                      : t("再起動")}
+                  {t("保持データから再導入")}
                 </Button>
-              ))}
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                const complete = window.confirm(
-                  "専用データvolumeも完全削除しますか？\nキャンセルするとデータを保持して接続だけ削除します。",
-                );
-                const volume = r.data.runtime?.volume || "";
-                if (
-                  complete &&
-                  !window.confirm(
-                    "完全削除すると復旧できません。続行しますか？\n" + volume,
+              )}
+              {r.data.runtime?.driver &&
+                r.data.runtime.driver !== "remote" &&
+                ["start", "stop", "restart"].map((action) => (
+                  <Button
+                    key={action}
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        await api(
+                          "/mcp/connections/" + r.id + "/runtime/" + action,
+                          "POST",
+                        );
+                        qc.invalidateQueries({
+                          queryKey: ["/mcp/connections"],
+                        });
+                      } catch (caught) {
+                        setError(caught);
+                      }
+                    }}
+                  >
+                    {action === "start"
+                      ? t("起動")
+                      : action === "stop"
+                        ? t("停止")
+                        : t("再起動")}
+                  </Button>
+                ))}
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  const complete = window.confirm(
+                    "専用データvolumeも完全削除しますか？\nキャンセルするとデータを保持して接続だけ削除します。",
+                  );
+                  const volume = r.data.runtime?.volume || "";
+                  if (
+                    complete &&
+                    !window.confirm(
+                      "完全削除すると復旧できません。続行しますか？\n" + volume,
+                    )
                   )
-                )
-                  return;
-                try {
-                  await api("/mcp/connections/" + r.id + "/uninstall", "POST", {
-                    delete_volume: complete,
-                    confirm_volume: complete ? volume : "",
-                  });
-                  qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                  qc.invalidateQueries({ queryKey: ["/tools"] });
-                } catch (caught) {
-                  setError(caught);
-                }
-              }}
-            >
-              {t("アンインストール")}
-            </Button>
+                    return;
+                  try {
+                    await api(
+                      "/mcp/connections/" + r.id + "/uninstall",
+                      "POST",
+                      {
+                        delete_volume: complete,
+                        confirm_volume: complete ? volume : "",
+                      },
+                    );
+                    qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+                    qc.invalidateQueries({ queryKey: ["/tools"] });
+                  } catch (caught) {
+                    setError(caught);
+                  }
+                }}
+              >
+                {t("アンインストール")}
+              </Button>
+            </div>
           </div>
-        </div>
-      ))}
-      {!error && !rows.isLoading && !rows.isError && !rows.data?.length && !open && (
-        <Empty>{t("MCP接続を追加すると、Tool Registryに登録できます。")}</Empty>
+        ))
       )}
+      {!error &&
+        !rows.isLoading &&
+        !rows.isError &&
+        !rows.data?.length &&
+        !open && (
+          <Empty>
+            {t("MCP接続を追加すると、Tool Registryに登録できます。")}
+          </Empty>
+        )}
     </>
   );
 }

@@ -10,6 +10,7 @@
 import { create } from "zustand";
 import { applyRunEvent, createTimeline, type RunTimeline } from "./runEvents";
 import type { RunEventPayload } from "./api";
+import { useUi } from "./ui";
 
 const FLUSH_MS = 60;
 
@@ -90,6 +91,16 @@ export const useRunEvents = create<RunStoreState>((set) => ({
   timeline: null,
   byConversation: EMPTY_ENTRIES,
   startRun: (runId, conversationId) => {
+    // The UI store tracks the run whose browser pane a manual close should
+    // suppress. It used to have no writer at all, so every dismissal was
+    // recorded as "manual" and the next browser tool call reopened the pane.
+    // Only a run in the thread the user is looking at may claim the marker;
+    // a background run in another thread must not make a close in this one
+    // look like it happened elsewhere.
+    const ui = useUi.getState();
+    if (!conversationId || ui.conversationId === conversationId) {
+      ui.setRunId(runId);
+    }
     if (timer !== null) {
       window.clearTimeout(timer);
       timer = null;
@@ -140,6 +151,7 @@ export const useRunEvents = create<RunStoreState>((set) => ({
       window.clearTimeout(timer);
       timer = null;
     }
+    useUi.getState().setRunId(null);
     set({
       liveRunId: null,
       conversationId: null,
@@ -150,6 +162,9 @@ export const useRunEvents = create<RunStoreState>((set) => ({
   clearRun: (runId) => {
     const key = keyByRun.get(runId);
     if (key === undefined) return;
+    // Only the most recently started run clears the UI's dismiss marker; an
+    // older run finishing must not clear the marker for the active one.
+    if (useUi.getState().runId === runId) useUi.getState().setRunId(null);
     // The conversation key is reused by the next run in the same thread. A
     // delayed clear for run A (1.5s after it finished) must not delete run B's
     // entry, which would silently stop B's stream from updating.

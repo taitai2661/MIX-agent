@@ -13,7 +13,7 @@ dependencies = [
   "mcp>=1.9,<2", "pypdf>=5,<7", "playwright>=1.51,<2", "pyyaml>=6,<7"
 ]
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-cov>=6,<8", "ruff>=0.11,<1", "pyright>=1.1.390,<2"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -22,6 +22,30 @@ asyncio_mode = "auto"
 testpaths = ["../../tests"]
 [tool.ruff]
 line-length = 110
+
+[tool.ruff.lint]
+select = [
+  "E4",    # import errors
+  "E7",    # statement errors
+  "E9",    # runtime errors
+  "F",     # pyflakes
+  "BLE",   # blind `except Exception`
+  "S",     # bandit-style security
+  "ASYNC", # async pitfalls (blocking calls, un-awaited tasks)
+]
+ignore = [
+  "S608",  # migrations build DDL from trusted literals
+]
+
+[tool.ruff.lint.per-file-ignores]
+"../../tests/**" = ["S101", "S105", "S106", "S108", "S311"]
+"../../experiments/**" = ["S101"]
+"mix_agent/tools/execute.py" = ["ASYNC109"]  # public tool API takes a timeout
+"mix_agent/tools/network.py" = ["ASYNC109"]
+"mix_agent/wakeups.py" = ["ASYNC109"]
+"mix_agent/api/routes.py" = ["E402"]  # conditional imports after helper defs
+"mix_agent/main.py" = ["E402", "ASYNC240"]  # tiny local stat in the SPA fallback
+"mix_agent/providers/catalog.py" = ["S101"]  # module-level catalog invariants
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI dependency-injection markers are idiomatic here and are treated as

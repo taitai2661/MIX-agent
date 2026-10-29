@@ -1,4 +1,4 @@
-import { api } from "@/app/api";
+import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -10,7 +10,7 @@ import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 
 export function General() {
   useLanguage();
-  const setting = useQuery({
+  const setting = useQuery<Row>({
       queryKey: ["/settings"],
       queryFn: () => api("/settings"),
     }),
@@ -28,7 +28,9 @@ export function General() {
       <section className="card theme-card">
         <div>
           <h3>{t("表示テーマ")}</h3>
-          <p>{t("ライト、ダーク、またはOSの設定に合わせて表示を切り替えます。")}</p>
+          <p>
+            {t("ライト、ダーク、またはOSの設定に合わせて表示を切り替えます。")}
+          </p>
         </div>
         <ThemeController />
       </section>
@@ -39,7 +41,35 @@ export function General() {
         </div>
         <AccentPicker />
       </section>
-      <section className="card theme-card"><div><h3>{t("表示言語")}</h3><p>{t("ブラウザーの言語から初期値を選びます。変更内容はアカウントに保存されます。")}</p></div><select aria-label={t("表示言語")} value={getLanguage()} onChange={async e => { const previous = getLanguage(); const value = e.target.value as "ja" | "en"; setLanguage(value); try { await api("/settings", "PUT", { ui_language: value }); await qc.invalidateQueries({ queryKey: ["/settings"] }); } catch (cause) { setLanguage(previous); setError(cause); } }}><option value="ja">{t("日本語")}</option><option value="en">English</option></select></section>
+      <section className="card theme-card">
+        <div>
+          <h3>{t("表示言語")}</h3>
+          <p>
+            {t(
+              "ブラウザーの言語から初期値を選びます。変更内容はアカウントに保存されます。",
+            )}
+          </p>
+        </div>
+        <select
+          aria-label={t("表示言語")}
+          value={getLanguage()}
+          onChange={async (e) => {
+            const previous = getLanguage();
+            const value = e.target.value as "ja" | "en";
+            setLanguage(value);
+            try {
+              await api("/settings", "PUT", { ui_language: value });
+              await qc.invalidateQueries({ queryKey: ["/settings"] });
+            } catch (cause) {
+              setLanguage(previous);
+              setError(cause);
+            }
+          }}
+        >
+          <option value="ja">{t("日本語")}</option>
+          <option value="en">English</option>
+        </select>
+      </section>
       {setting.data && (
         <form
           className="card"
@@ -74,7 +104,11 @@ export function General() {
               ))}
             </select>
           </Field>
-          <div className="notice">{t("外部サービスへの通信許可先は「通信とネットワーク」で設定します。")}</div>
+          <div className="notice">
+            {t(
+              "外部サービスへの通信許可先は「通信とネットワーク」で設定します。",
+            )}
+          </div>
           <Button>{t("保存")}</Button>
           {saved && <span className="success">{t("保存しました")}</span>}
         </form>

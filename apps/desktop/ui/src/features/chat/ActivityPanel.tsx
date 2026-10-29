@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   ChevronDown,
@@ -16,12 +16,13 @@ import {
   Search,
   ShieldAlert,
   Terminal,
+  Undo2,
   Wrench,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import { formatDuration, shortId } from "@/lib/format";
 import {
   describeToolCall,
@@ -37,6 +38,7 @@ import { Card, PanelHeader, PANEL_BODY } from "@/components/layout";
 import { useUi } from "@/lib/ui";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import {
   EmptyState,
@@ -287,6 +289,19 @@ export function ActivityPanel({
     staleTime: Infinity,
   });
 
+  const [revertNote, setRevertNote] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const revert = useMutation({
+    mutationFn: (id: string) => api.revertRun(id),
+    onSuccess: (count) => {
+      setRevertNote(
+        tf("{count} 件のファイルを実行前の内容に戻しました。", { count }),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["file_diff"] });
+      void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+    },
+    onError: (error) => setRevertNote(errorMessage(error) || t("エラー")),
+  });
   const checkpoints = useQuery({
     queryKey: ["checkpoints", runId],
     queryFn: () => api.listCheckpoints(runId!),
@@ -420,6 +435,45 @@ export function ActivityPanel({
                 </li>
               ))}
             </ul>
+          </Card>
+        )}
+
+        {runId && !isLive && (
+          <Card
+            title={t("実行の取り消し")}
+            icon={<Undo2 size={13} />}
+            bodyClassName="p-2.5"
+          >
+            <p className="m-0 text-xs text-muted">
+              {t(
+                "このRunが edit / files で変更したファイルを、実行前の内容に戻します。ターミナル経由の変更は対象外です。",
+              )}
+            </p>
+            <Button
+              variant="ghost-danger"
+              size="sm"
+              disabled={revert.isPending}
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: t("このRunの変更を取り消しますか？"),
+                    description: t(
+                      "実行前の内容に上書きします。取り消し後に手で加えた変更も失われます。",
+                    ),
+                    confirmLabel: t("取り消す"),
+                    tone: "danger",
+                  })
+                ) {
+                  revert.mutate(runId);
+                }
+              }}
+            >
+              <Undo2 size={12} /> {t("実行前の状態に戻す")}
+            </Button>
+            {revertNote && (
+              <p className="m-0 text-xs text-muted">{revertNote}</p>
+            )}
+            {dialog}
           </Card>
         )}
       </div>

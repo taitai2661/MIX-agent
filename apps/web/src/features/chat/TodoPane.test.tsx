@@ -34,7 +34,7 @@ describe("TodoPane", () => {
     );
     expect(html).toContain("is-completed");
     expect(html).toContain("2/2");
-    expect(html).toContain("style=\"width:100%\"");
+    expect(html).toContain('style="width:100%"');
   });
 
   it("hides the pane when there is no todo yet", () => {
@@ -46,7 +46,9 @@ describe("TodoPane", () => {
   it("drops malformed entries instead of failing", () => {
     expect(normalizeTodos("junk")).toEqual([]);
     expect(normalizeTodos([{ content: "x", status: "done" }])).toEqual([]);
-    expect(normalizeTodos([{ content: "  ", status: "pending" }, null, 7])).toEqual([]);
+    expect(
+      normalizeTodos([{ content: "  ", status: "pending" }, null, 7]),
+    ).toEqual([]);
     expect(normalizeTodos([{ content: "ok", status: "pending" }])).toEqual([
       { content: "ok", status: "pending" },
     ]);

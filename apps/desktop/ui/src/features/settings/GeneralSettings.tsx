@@ -9,7 +9,7 @@ import {
   Zap,
 } from "lucide-react";
 import { t, tf } from "@/lib/i18n";
-import { modKey } from "@/lib/platform";
+import { isMacPlatform, modKey } from "@/lib/platform";
 import { useUi } from "@/lib/ui";
 import { useOnboardingGate } from "@/features/onboarding/useOnboardingGate";
 import { Card, Field, Row, Section } from "@/components/layout";
@@ -37,6 +37,7 @@ export function GeneralSettings() {
   const modifierSendLabel = tf("{shortcut}+Enter で送信 (Enter で改行)", {
     shortcut: modKey(),
   });
+  const macPlatform = isMacPlatform();
 
   const clearHistory = async () => {
     if (historyCount === 0) return;
@@ -113,6 +114,55 @@ export function GeneralSettings() {
             </Select>
           </Field>
         </div>
+      </Card>
+
+      <Card title={t("検証と整形の既定値")} icon={<ServerCog size={13} />}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label={t("検証コマンド")}
+            hint={t(
+              "プロジェクト固有の指定がないときに使う確認コマンドです。空欄なら検証ゲートは無効です。",
+            )}
+          >
+            <Input
+              value={data.verify_command ?? ""}
+              placeholder="npm test"
+              onChange={(e) =>
+                patch({ verify_command: e.target.value || null })
+              }
+            />
+          </Field>
+          <Field
+            label={t("整形コマンド")}
+            hint={t("編集後に自動実行する整形・lintコマンドです。")}
+          >
+            <Input
+              value={data.format_command ?? ""}
+              placeholder="cargo fmt"
+              onChange={(e) =>
+                patch({ format_command: e.target.value || null })
+              }
+            />
+          </Field>
+        </div>
+      </Card>
+
+      <Card title={t("ターミナルのサンドボックス")} icon={<Lock size={13} />}>
+        <ToggleRow
+          label={t("シェルをサンドボックス内で実行")}
+          hint={
+            macPlatform
+              ? t(
+                  "macOS では sandbox-exec を使い、ワークスペースと一時ディレクトリ以外への書き込みを拒否します。次に起動するシェルから適用されます（Linux / Windows では未対応）。",
+                )
+              : t(
+                  "この機能はmacOSでのみ利用できます。Windows / Linux では無効です。",
+                )
+          }
+          checked={data.sandbox_terminal}
+          onChange={(next) => patch({ sandbox_terminal: next })}
+          disabled={!macPlatform}
+        />
       </Card>
 
       <Card title={t("メッセージ送信キー")} icon={<Keyboard size={13} />}>
@@ -267,13 +317,14 @@ export function GeneralSettings() {
         <ToggleRow
           label={t("保存時の暗号化")}
           hint={t(
-            "ローカルデータベースの暗号化を有効にします。既定はオフ（Codex互換の平文SQLite）です。",
+            "このビルドでは未対応です。データベースは平文SQLiteのため、OSのディスク暗号化（FileVault / BitLocker / LUKS）で保護してください。APIキーなどの秘密情報は別途OSのKeychainに暗号化して保存されます。",
           )}
-          checked={data.database_encryption}
-          onChange={(database_encryption) => patch({ database_encryption })}
+          checked={false}
+          disabled
+          onChange={() => {}}
         />
         <p className="m-0 text-xs text-muted">
-          {t("マスターキーはOSのKeychainにあります")}
+          {t("SQLCipher対応は今後のバージョンで提供予定です。")}
         </p>
       </Card>
       {dialog}

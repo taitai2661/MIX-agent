@@ -36,6 +36,38 @@ def make_run(tool_name="write_file", mode="agent"):
         return run.id, tool
 
 
+def test_purge_temporary_run_removes_local_records():
+    from mix_agent.storage.cleanup import purge_temporary_run
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        conversation = Conversation(owner_id=owner, data={"title": "Temporary"})
+        db.add(conversation)
+        db.flush()
+        run = Run(
+            owner_id=owner,
+            conversation_id=conversation.id,
+            request_key=uid(),
+            data={"temporary_mode": True, "temporary_conversation": True},
+        )
+        db.add(run)
+        db.flush()
+        db.add(
+            Message(
+                owner_id=owner,
+                conversation_id=conversation.id,
+                data={"run_id": run.id, "role": "user", "content": "hello"},
+            )
+        )
+        db.commit()
+
+        purge_temporary_run(db, run)
+        db.commit()
+
+        assert db.get(Run, run.id) is None
+        assert db.get(Conversation, conversation.id) is None
+
+
 def test_text_artifact_validation_and_metadata(tmp_path, monkeypatch):
     from mix_agent import config
 

@@ -18,7 +18,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 | **得意なタスク** | コード編集、テスト/lint 検証ループ、ローカル開発タスク | チャット会話、Web 調査、常時稼働バックグラウンド実行 |
 | **起動環境** | Docker 不要。`.dmg` / `.exe` / `.deb` インストーラーから即起動 | Docker Engine & Docker Compose が必要 |
 | **プロセス構成** | 単一デスクトップバイナリ（tokio in-proc タスク） | 5 つの Docker コンテナ（app, web, db, runner, proxy） |
-| **データ管理** | SQLite (WAL モード + FTS5 全文検索) | PostgreSQL (pg_trgm インデックス) |
+| **データ管理** | SQLite (WAL モード + FTS5 全文検索)。DB 本体は平文のため、保存時の保護は OS のディスク暗号化（FileVault / BitLocker / LUKS）に依存 | PostgreSQL (pg_trgm インデックス) |
 | **秘密情報保護** | **OS Keychain**（macOS Keychain / Windows Credential Manager / Linux Secret Service） | 暗号化 DB カラム (AES-GCM + scrypt) |
 | **ターミナル実行** | ローカルマシンの **永続 PTY シェル**（環境変数や `cd` が継続） | execution-runner コンテナ内の非 root シェル |
 | **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを tokio 子プロセスで直接制御 | execution-runner コンテナ内の Playwright |
@@ -79,6 +79,11 @@ node scripts/pin-chromium.mjs --verify             # 固定アーカイブを再
 Linuxの`.deb`はChromiumの実行時ライブラリを`depends`に含むが、AppImageはホスト側の
 ライブラリに依存する。
 
+Chromium は常にヘッドレスで起動し、チャット右側のブラウザパネル（Codex 風の
+ツールバー・複数タブ・フル/スプリット表示）から操作する。`⌘⇧B`（macOS）/ `Ctrl+Shift+B`（Windows / Linux）で開閉でき、
+エージェントが `browser` ツールを使うと自動で表示される。メモリ節約のため、
+同時に開くワークスペースは 2 個、15 分未使用のブラウザは自動終了する。
+
 ---
 
 ## 開発とクイックスタート
@@ -101,7 +106,7 @@ pnpm desktop:ui:dev
 pnpm desktop:ui:test
 
 # 現在の OS 向けインストーラーのビルド
-# macOS: .dmg / Windows: NSIS + MSI
+# macOS: .dmg / Windows: NSIS + MSI / Linux: AppImage + deb
 pnpm desktop:build
 
 # Windows 向け NSIS + MSI のみをビルド

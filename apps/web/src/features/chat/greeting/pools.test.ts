@@ -11,9 +11,14 @@ function fragments(value: unknown, out: { id: string; text: string }[] = []) {
     return out;
   }
   if (value && typeof value === "object" && "id" in value && "text" in value)
-    out.push({ id: String((value as { id: unknown }).id), text: String((value as { text: unknown }).text) });
+    out.push({
+      id: String((value as { id: unknown }).id),
+      text: String((value as { text: unknown }).text),
+    });
   else if (value && typeof value === "object")
-    Object.values(value as Record<string, unknown>).forEach((item) => fragments(item, out));
+    Object.values(value as Record<string, unknown>).forEach((item) =>
+      fragments(item, out),
+    );
   return out;
 }
 
@@ -24,9 +29,18 @@ function allFragments() {
       value.forEach(walk);
       return;
     }
-    if (value && typeof value === "object" && "id" in value && "form" in value) {
+    if (
+      value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "form" in value
+    ) {
       const fragment = value as { id: unknown; text: unknown; form: unknown };
-      out.push({ id: String(fragment.id), text: String(fragment.text), form: String(fragment.form) });
+      out.push({
+        id: String(fragment.id),
+        text: String(fragment.text),
+        form: String(fragment.form),
+      });
       return;
     }
     if (value && typeof value === "object")
@@ -59,13 +73,14 @@ describe("挨拶のパーツ", () => {
     }
   });
 
-it("日本語の文として妥当な文字だけを使う", () => {
+  it("日本語の文として妥当な文字だけを使う", () => {
     // 句読点・記号・漢字・かな・カタカナ・拉丁文字のみ。
     // 小書きの仮名と長音符は Unicode 上 Common 属するため個別に許します。
     // 生成の乱れで混入した他言語や記号を検出します。
     const allowed =
       /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ぁぃぅぇぉっゃゅょゔァィゥェォッャュョヵヶーA-Za-z0-9・、。？「」（）]+$/u;
-    for (const fragment of fragments(pools)) expect(fragment.text, fragment.id).toMatch(allowed);
+    for (const fragment of fragments(pools))
+      expect(fragment.text, fragment.id).toMatch(allowed);
   });
 
   it("ID と本文が重複しない", () => {
@@ -78,7 +93,9 @@ it("日本語の文として妥当な文字だけを使う", () => {
     // 合成の制約は form で判定するため、実文と食い違うと
     // 「？」「？」が連続しても弾けないことがあります。
     for (const fragment of allFragments()) {
-      const expected = fragment.text.endsWith("？") ? "question" : "declarative";
+      const expected = fragment.text.endsWith("？")
+        ? "question"
+        : "declarative";
       expect(fragment.form, fragment.id).toBe(expected);
     }
   });
@@ -90,8 +107,14 @@ it("日本語の文として妥当な文字だけを使う", () => {
     const suggestions = suggestionsFor(signals, [], 12, () => 0);
     expect(suggestions.length).toBeGreaterThanOrEqual(3);
     for (const suggestion of suggestions) {
-      expect(greetingEn[suggestionLabelId(suggestion.id)], suggestion.id).toBeTruthy();
-      expect(greetingEn[suggestionPromptId(suggestion.id)], suggestion.id).toBeTruthy();
+      expect(
+        greetingEn[suggestionLabelId(suggestion.id)],
+        suggestion.id,
+      ).toBeTruthy();
+      expect(
+        greetingEn[suggestionPromptId(suggestion.id)],
+        suggestion.id,
+      ).toBeTruthy();
     }
   });
 

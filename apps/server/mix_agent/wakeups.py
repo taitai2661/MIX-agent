@@ -12,7 +12,7 @@ import asyncio
 class Wakeup:
     def __init__(self):
         self.revision = 0
-        self.event: asyncio.Event | None = None
+        self.event: asyncio.Event = asyncio.Event()
 
     def bind(self):
         self.event = asyncio.Event()

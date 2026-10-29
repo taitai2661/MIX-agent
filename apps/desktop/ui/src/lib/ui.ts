@@ -56,7 +56,19 @@ export type SettingsTab =
   | "browser"
   | "diagnostics";
 
-export type RightPanel = "none" | "activity" | "diff" | "changes" | "file";
+export type RightPanel =
+  | "none"
+  | "activity"
+  | "diff"
+  | "changes"
+  | "file"
+  | "browser";
+
+/** How the thread side panel is presented. Codex calls these split/full view. */
+export type SidePanelMode = "split" | "full";
+
+/** Who opened the browser pane. Agent-opened panes must never steal focus. */
+export type BrowserOpenedBy = "agent" | "user";
 
 /** Key shortcut used to send a chat message in the Composer. */
 export type SendShortcut = "enter" | "modifier";
@@ -82,6 +94,15 @@ interface UiState {
   openSettings: (tab?: SettingsTab) => void;
   conversationId: string | null;
   setConversationId: (id: string | null) => void;
+  /** True while the user is composing a thread that has no row yet.
+   *
+   * A new chat deliberately keeps `conversationId` null and only creates the
+   * backend conversation on first send. This flag distinguishes that blank
+   * thread from "nothing selected yet" (boot, deleted thread), which otherwise
+   * makes the chat pane adopt the newest existing thread. */
+  newThreadDraft: boolean;
+  /** Open a blank thread. The conversation row is created on first send. */
+  startNewThread: () => void;
   chatConversationId: string | null;
   setChatConversationId: (id: string | null) => void;
   agentConversationId: string | null;
@@ -111,6 +132,20 @@ interface UiState {
   setActiveProjectId: (id: string | null) => void;
   rightPanel: RightPanel;
   setRightPanel: (panel: RightPanel) => void;
+  /** Split (chat + panel) or full view (panel takes the centre column). */
+  sidePanelMode: SidePanelMode;
+  setSidePanelMode: (mode: SidePanelMode) => void;
+  toggleSidePanelMode: () => void;
+  /** Open the browser pane and remember whether the agent or the user did it. */
+  openBrowserPanel: (by: BrowserOpenedBy) => void;
+  /** Close the browser pane and remember the run it was dismissed in. */
+  dismissBrowserPanel: () => void;
+  browserOpenedBy: BrowserOpenedBy | null;
+  /** Run whose browser auto-open the user dismissed (null = none). */
+  browserDismissedRunId: string | null;
+  /** Auto-open the browser pane when the agent first uses the browser tool. */
+  browserAutoOpen: boolean;
+  setBrowserAutoOpen: (value: boolean) => void;
   /** Run whose activity is shown in the right panel (live run or history). */
   activityRunId: string | null;
   setActivityRunId: (id: string | null) => void;
@@ -166,6 +201,8 @@ interface UiState {
 
 const SIDEBAR_KEY = "mix-agent-sidebar-open";
 const RIGHT_PANEL_KEY = "mix-agent-right-panel";
+const SIDE_PANEL_MODE_KEY = "mix-agent-side-panel-mode";
+const BROWSER_AUTO_OPEN_KEY = "mix-agent-browser-auto-open";
 const FILE_TREE_KEY = "mix-agent-file-tree-open";
 const ACTIVE_PROJECT_KEY = "mix-agent-active-project";
 const SETTINGS_TAB_KEY = "mix-agent-settings-tab";
@@ -220,7 +257,8 @@ function readRightPanel(): RightPanel {
     stored === "activity" ||
     stored === "diff" ||
     stored === "changes" ||
-    stored === "file"
+    stored === "file" ||
+    stored === "browser"
   ) {
     return stored;
   }
@@ -232,6 +270,10 @@ function readRightPanel(): RightPanel {
 
 function readRightPanelDocked(): boolean {
   return readBoolean(RIGHT_PANEL_DOCKED_KEY, true);
+}
+
+function readSidePanelMode(): SidePanelMode {
+  return getString(SIDE_PANEL_MODE_KEY) === "full" ? "full" : "split";
 }
 
 const SETTING_TABS: SettingsTab[] = [
@@ -307,12 +349,20 @@ function readStoredConversation(key: string): string | null {
 }
 
 function readRightPanelWidth(): number {
-  const stored = getString(RIGHT_PANEL_WIDTH_KEY);
+  return readPanelWidthValue(getString(RIGHT_PANEL_WIDTH_KEY));
+}
+
+function readPanelWidthValue(stored: string | null): number {
   if (stored) {
     const val = Number(stored);
     if (!Number.isNaN(val) && val >= 320 && val <= 900) return val;
   }
   return DEFAULT_RIGHT_PANEL_WIDTH;
+}
+
+/** Codex remembers the side-panel width per workspace; so do we. */
+function workspaceWidthKey(workspaceId: string): string {
+  return `${RIGHT_PANEL_WIDTH_KEY}:${workspaceId}`;
 }
 
 /**
@@ -377,19 +427,51 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: id,
           agentConversationId: id,
+          newThreadDraft: false,
           ...cleared,
         };
       } else {
         if (id) setString(CHAT_CONVERSATION_KEY, id);
         else removeKey(CHAT_CONVERSATION_KEY);
-        return { conversationId: id, chatConversationId: id, ...cleared };
+        return {
+          conversationId: id,
+          chatConversationId: id,
+          newThreadDraft: false,
+          ...cleared,
+        };
       }
+    }),
+  newThreadDraft: false,
+  startNewThread: () =>
+    set((state) => {
+      const cleared = {
+        activityRunId: null,
+        diffTarget: null,
+        filePreviewPath: null,
+      };
+      if (state.surface === "desktop-agent") {
+        removeKey(AGENT_CONVERSATION_KEY);
+        return {
+          conversationId: null,
+          agentConversationId: null,
+          newThreadDraft: true,
+          ...cleared,
+        };
+      }
+      removeKey(CHAT_CONVERSATION_KEY);
+      return {
+        conversationId: null,
+        chatConversationId: null,
+        newThreadDraft: true,
+        ...cleared,
+      };
     }),
   setChatConversationId: (id) => {
     if (id) setString(CHAT_CONVERSATION_KEY, id);
     else removeKey(CHAT_CONVERSATION_KEY);
     set((state) => ({
       chatConversationId: id,
+      newThreadDraft: false,
       conversationId: state.surface === "chat" ? id : state.conversationId,
     }));
   },
@@ -398,12 +480,22 @@ export const useUi = create<UiState>((set, get) => ({
     else removeKey(AGENT_CONVERSATION_KEY);
     set((state) => ({
       agentConversationId: id,
+      newThreadDraft: false,
       conversationId:
         state.surface === "desktop-agent" ? id : state.conversationId,
     }));
   },
   workspaceId: null,
-  setWorkspaceId: (workspaceId) => set({ workspaceId }),
+  setWorkspaceId: (workspaceId) =>
+    set(() => {
+      if (!workspaceId) return { workspaceId };
+      const stored = getString(workspaceWidthKey(workspaceId));
+      if (stored === null) return { workspaceId };
+      return {
+        workspaceId,
+        rightPanelWidth: readPanelWidthValue(stored),
+      };
+    }),
   runId: null,
   setRunId: (id) => set({ runId: id }),
   modelId: "",
@@ -436,6 +528,7 @@ export const useUi = create<UiState>((set, get) => ({
         surface,
         mode: nextMode,
         conversationId: targetConvId,
+        newThreadDraft: false,
         view: "chat",
         activityRunId: null,
         diffTarget: null,
@@ -471,7 +564,52 @@ export const useUi = create<UiState>((set, get) => ({
   rightPanel: readRightPanel(),
   setRightPanel: (rightPanel) => {
     setString(RIGHT_PANEL_KEY, rightPanel);
-    set({ rightPanel });
+    set((state) => ({
+      rightPanel,
+      // Full view only makes sense while a pane is actually visible.
+      sidePanelMode: rightPanel === "none" ? "split" : state.sidePanelMode,
+    }));
+  },
+  sidePanelMode: readSidePanelMode(),
+  setSidePanelMode: (sidePanelMode) => {
+    setString(SIDE_PANEL_MODE_KEY, sidePanelMode);
+    set({ sidePanelMode });
+  },
+  toggleSidePanelMode: () =>
+    set((state) => {
+      const sidePanelMode = state.sidePanelMode === "full" ? "split" : "full";
+      setString(SIDE_PANEL_MODE_KEY, sidePanelMode);
+      return { sidePanelMode };
+    }),
+  browserOpenedBy: null,
+  browserDismissedRunId: null,
+  openBrowserPanel: (browserOpenedBy) => {
+    setString(RIGHT_PANEL_KEY, "browser");
+    set((state) => ({
+      rightPanel: "browser",
+      browserOpenedBy,
+      browserDismissedRunId: null,
+      // Full view is a transient expansion of an already-open pane. Opening
+      // from closed (especially an agent auto-open) starts in split view so
+      // the chat does not disappear.
+      sidePanelMode:
+        state.rightPanel === "none" ? "split" : state.sidePanelMode,
+    }));
+  },
+  dismissBrowserPanel: () => {
+    setString(RIGHT_PANEL_KEY, "none");
+    set((state) => ({
+      rightPanel: "none",
+      // A manual close is respected for the rest of this run. The next run has
+      // a different id and may auto-open again; "manual" means no run was
+      // active, so a later run is free to auto-open.
+      browserDismissedRunId: state.runId ?? "manual",
+    }));
+  },
+  browserAutoOpen: readBoolean(BROWSER_AUTO_OPEN_KEY, true),
+  setBrowserAutoOpen: (browserAutoOpen) => {
+    setBoolean(BROWSER_AUTO_OPEN_KEY, browserAutoOpen);
+    set({ browserAutoOpen });
   },
   activityRunId: null,
   setActivityRunId: (activityRunId) => set({ activityRunId }),
@@ -501,17 +639,20 @@ export const useUi = create<UiState>((set, get) => ({
   rightPanelWidth: readRightPanelWidth(),
   setRightPanelWidth: (rightPanelWidth) => {
     setString(RIGHT_PANEL_WIDTH_KEY, String(rightPanelWidth));
+    const workspaceId = get().workspaceId;
+    if (workspaceId) {
+      setString(workspaceWidthKey(workspaceId), String(rightPanelWidth));
+    }
     set({ rightPanelWidth });
   },
-  toggleRightPanelWidth: () =>
-    set((state) => {
-      const next =
-        state.rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH
-          ? DEFAULT_RIGHT_PANEL_WIDTH
-          : WIDE_RIGHT_PANEL_WIDTH;
-      setString(RIGHT_PANEL_WIDTH_KEY, String(next));
-      return { rightPanelWidth: next };
-    }),
+  toggleRightPanelWidth: () => {
+    const state = get();
+    state.setRightPanelWidth(
+      state.rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH
+        ? DEFAULT_RIGHT_PANEL_WIDTH
+        : WIDE_RIGHT_PANEL_WIDTH,
+    );
+  },
   locale: getLanguage(),
   setLocale: (locale) => {
     setLanguage(locale);
@@ -634,6 +775,16 @@ if (typeof window !== "undefined") {
       case RIGHT_PANEL_KEY: {
         const next = readRightPanel();
         if (next !== state.rightPanel) state.setRightPanel(next);
+        break;
+      }
+      case SIDE_PANEL_MODE_KEY: {
+        const next = readSidePanelMode();
+        if (next !== state.sidePanelMode) state.setSidePanelMode(next);
+        break;
+      }
+      case BROWSER_AUTO_OPEN_KEY: {
+        const next = readBoolean(BROWSER_AUTO_OPEN_KEY, true);
+        if (next !== state.browserAutoOpen) state.setBrowserAutoOpen(next);
         break;
       }
       case ACTIVE_PROJECT_KEY: {

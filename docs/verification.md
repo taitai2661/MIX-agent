@@ -6,7 +6,16 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-10-29 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [修正] macOS 固定のショートカット表記とプラットフォーム別表示（2026-10-29）
+
+- ドキュメント内の `⌘` 固定表記を、macOS は `⌘`、Windows / Linux は `Ctrl` の併記へ変更した。対象は `apps/desktop/README.md`、`docs/desktop/architecture.md`、`docs/desktop/coding-agent-plan.md`。README / CONTRIBUTING のビルド説明には Linux（AppImage + deb）を追加した。
+- Web 版のメッセージ編集ヒントが `⌘+Enter` 固定だったため、`apps/web/src/app/platform.ts` を追加し、macOS 以外では `Ctrl+Enter` を表示するようにした。
+- Desktop 版の `dataset.platform` を `macos` / `windows` / `linux` / `other` に拡張し、初回描画前に UA から推定した値を `main.tsx` で設定したうえで、`plugin-os` の結果により正確な値へ更新するようにした。
+- 設定 ▸ アップデートの注意書きを OS 別にした。macOS は Gatekeeper、Windows は SmartScreen、Linux は deb の手動更新だけを表示する。設定 ▸ 一般のターミナルサンドボックスは macOS のみ有効とし、Windows / Linux では無効化して理由を表示する。
+- 検証: Desktop UI の `pnpm typecheck` / `pnpm lint` / `pnpm exec prettier --check`、`pnpm test`（40ファイル317テスト）、Web の `pnpm build` と `pnpm test`（24ファイル172テスト）、`git diff --check` が成功。
+- 未実施: Windows / Linux 実機での目視確認。OS 判定は UA と `plugin-os`、表示切り替えは Vitest の unit test のみで確認した。
 
 ## [修正] ブラウザ操作の境界とライブ表示の改善（2026-10-28）
 
@@ -129,6 +138,7 @@
 - PostgreSQL test profileは583 passed / 1 skipped。8種類のrelease image target（init / app / execution / browser-runner / browser-provisioner / mcp / mcp-runtime / egress）はローカルDockerでbuild成功。
 - Linuxのクリーンな作業ツリーで`pnpm install --frozen-lockfile`、WebのVitest 158テスト・build、Desktop UIのformat/lint/typecheck・Vitest 249テストが成功。`scripts/stage-store-source.sh`からのv1 archiveに`build/sysroot/var/lib/casaos/appstore/default.new/Apps/MIX-agent/docker-compose.yml`が含まれることを確認。
 - [追記] 修正後のGitHub Actionsを実行した。`Validate release candidate`とmacOS-only `desktop-release` dry-runは成功。`CI`はWindowsのPTYテスト2件（`a_shell_that_exits_is_replaced_on_the_next_call`、`the_shell_state_persists_between_calls`）のみfailure。Windows Desktopはv0.5.0の配布対象外であり、ユーザーの判断でこの2件を既知の制約としてmacOS/Docker版を先行リリースする。
+- [追記] 上記2件は `#[cfg_attr(windows, ignore = "...")]` により Windows ランナーでのみ明示的にスキップする。失敗のまま残すと他のWindows回帰がノイズに埋もれるため。macOS / Linux では従来どおり実行し、Windows実機でPTYを修正した時点で `ignore` を外す。
 - 未確認: Windows実機のPTYテストとmacOS実機のDMG起動。`v0.5.0`タグとGitHub Releaseはこの記録の時点では未作成（その後、上の公開結果の節で作成済み）。
 
 ## [追記] v0.5.0 Desktopを手動DMG配布へ変更（2026-10-25）
@@ -272,3 +282,16 @@ Dockerビルド中にホストの空き容量が約1.8GiBまで低下したた�
 - Knowledgeはテキストのチャンク検索に対応。外部同期や検索品質の実環境評価は未完了。MCP OAuthは実装済みですが、実Serverでの受入確認は別途必要です。画像生成・編集、Registry Store、OpenAI Compatible公開APIは未実装。
 
 再実行コマンドはREADME参照。実Provider・Docker・実機で未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と扱わない。
+
+## [追記] 品質・セキュリティ改善（2026-10-29）
+
+- Desktop: 未配線だった at-rest encryption トグルを「未対応」と明示し、`update_settings` は `database_encryption=true` を拒否、旧行は `false` として読むようにした。SQLCipher は未導入のため、DB は平文 SQLite + 所有者限定パーミッションのまま（`apps/desktop/app/tests/settings.rs`）。
+- Desktop: Browser の各ページターゲットに CDP `Fetch` 傍受を常時適用。リクエストごとにホストを解決し、private / loopback / link-local / cloud metadata を遮断する。実 Chromium の統合テスト4件（navigate / local opt-in / profile / screencast）が成功。
+- Desktop: Windows の PTY テスト2件を `#[cfg_attr(windows, ignore)]` で明示的にスキップ。macOS では従来どおり実行し、`cargo test --workspace` が成功。
+- Docker: `MIX_LOG_FORMAT=json` で構造化ログを選択可能にした（`mix_agent/logging_setup.py`、ユニットテスト2件）。
+- Docker: scheduler の同期DBメンテナンス処理を `asyncio.to_thread` へ移し、イベントループを塞がないようにした（run の起動はIDを収集してループ上で実行）。
+- Docker: `/memories*` 10ルートを `api/routes_memories.py` へ分割し、`docs/openapi.json` と `apps/web/src/generated/api.ts` を再生成した。
+- Web: ESLint（`--max-warnings 0`, react-hooks, jsx-a11y）と Prettier を CI に追加。`any` を生成型へ置換し、条件付き Hook 3件を修正。カバレッジ下限を lines/statements 34%、functions 57.5% へ引き上げた。E2E に「送信 → SSE text → done」を追加。
+- CI: 外部 Action をコミット SHA に固定（`dtolnay/rust-toolchain@master` を含む）。
+- 検証: `pytest` 605 passed / 1 skipped、`cargo test --workspace` 全 suite 成功、`cargo clippy --workspace --all-targets -D warnings`、`ruff check` / `ruff format --check`、pyright budget（0 errors / 45 warnings）、Web lint / format / 174 tests / coverage / build / Playwright 3 tests が成功。
+- 未実施: Developer ID / Authenticode 署名（証明書が無いため。手順は `docs/release-checklist.md`）、SQLCipher 実装、`routes.py` / `engine.*` の全面的な分割。

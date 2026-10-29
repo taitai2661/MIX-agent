@@ -10,7 +10,7 @@ import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
 export function Agents() {
   const rows = useRows("/agents"),
     models = useRows("/models"),
-    tools = useQuery<any[]>({
+    tools = useQuery<{ id: string; model_name?: string; source?: string }[]>({
       queryKey: ["/tools"],
       queryFn: () => api("/tools"),
     }),
@@ -66,7 +66,8 @@ export function Agents() {
                             "skill_update",
                           ]
                         : []),
-                    ])),
+                    ]),
+                  ),
                   memory_scopes: f.has("memory") ? ["user"] : [],
                   skill_ids: f.getAll("skills"),
                   auto_learn: f.has("auto_learn"),
@@ -108,7 +109,11 @@ export function Agents() {
                 <option value="thinking">thinking</option>
                 <option value="agent">agent</option>
               </select>
-              <small>{t("chat と thinking は固定予算です。下の実行予算は agent で使用します。")}</small>
+              <small>
+                {t(
+                  "chat と thinking は固定予算です。下の実行予算は agent で使用します。",
+                )}
+              </small>
             </Field>
             <Field label={t("最大モデル呼び出し回数")}>
               <input
@@ -180,7 +185,13 @@ export function Agents() {
             {t("ユーザーMemoryを使用する")}
           </label>
           <label className="check">
-            <input name="auto_learn" type="checkbox" defaultChecked={editing ? editing.data.auto_learn !== false : true} />
+            <input
+              name="auto_learn"
+              type="checkbox"
+              defaultChecked={
+                editing ? editing.data.auto_learn !== false : true
+              }
+            />
             {t("会話からMemory・Skillを自動で学習する")}
           </label>
           <h3>{t("使用可能Tool")}</h3>
@@ -204,8 +215,18 @@ export function Agents() {
           <div className="tool-checks">
             {skills.data?.map((skill) => (
               <label className="check" key={skill.id}>
-                <input name="skills" value={skill.id} type="checkbox" defaultChecked={editing?.data.skill_ids?.includes(skill.id)} />
-                <span>{skill.data.name}<small>{skill.data.description || t("再利用可能な手順")}</small></span>
+                <input
+                  name="skills"
+                  value={skill.id}
+                  type="checkbox"
+                  defaultChecked={editing?.data.skill_ids?.includes(skill.id)}
+                />
+                <span>
+                  {skill.data.name}
+                  <small>
+                    {skill.data.description || t("再利用可能な手順")}
+                  </small>
+                </span>
               </label>
             ))}
           </div>
@@ -245,7 +266,9 @@ export function Agents() {
       </div>
       {!rows.data?.length && !open && (
         <Empty>
-          {t("用途別のアシスタント設定を作成できます。標準のAgentモードは設定を作成せずに利用できます。")}
+          {t(
+            "用途別のアシスタント設定を作成できます。標準のAgentモードは設定を作成せずに利用できます。",
+          )}
         </Empty>
       )}
     </section>

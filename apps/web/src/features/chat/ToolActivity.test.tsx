@@ -6,7 +6,14 @@ import { ToolActivity } from "./ToolActivity";
 describe("ToolActivity", () => {
   it("shows the live search phrase without source links", () => {
     const html = renderToStaticMarkup(
-      <ToolActivity running activity={{ icon: "search", label: "Webを検索中", detail: "AIニュース" }} />,
+      <ToolActivity
+        running
+        activity={{
+          icon: "search",
+          label: "Webを検索中",
+          detail: "AIニュース",
+        }}
+      />,
     );
     expect(html).toContain("AIニュース を検索中");
     expect(html).not.toContain("href=");

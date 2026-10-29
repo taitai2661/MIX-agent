@@ -1,6 +1,12 @@
 import { t } from "@/app/i18n";
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, Circle, ListTodo, Loader2 } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Circle,
+  ListTodo,
+  Loader2,
+} from "lucide-react";
 
 type Status = "pending" | "in_progress" | "completed";
 type TodoItem = { content: string; status: Status };
@@ -18,9 +24,16 @@ export function normalizeTodos(raw: unknown): TodoItem[] {
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
     const value = entry as { content?: unknown; status?: unknown };
-    const content = typeof value.content === "string" ? value.content.trim() : "";
+    const content =
+      typeof value.content === "string" ? value.content.trim() : "";
     const status = value.status;
-    if (!content || (status !== "pending" && status !== "in_progress" && status !== "completed")) continue;
+    if (
+      !content ||
+      (status !== "pending" &&
+        status !== "in_progress" &&
+        status !== "completed")
+    )
+      continue;
     // `phase:<name>` markers are internal planning scaffolding, not user text.
     items.push({ content: content.replace(/^phase:\s*/i, ""), status });
   }
@@ -28,6 +41,7 @@ export function normalizeTodos(raw: unknown): TodoItem[] {
 }
 
 export function TodoPane({ items }: { items?: unknown }) {
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const list = normalizeTodos(items);
   if (!list.length) return null;
   const done = list.filter((item) => item.status === "completed").length;
@@ -36,7 +50,6 @@ export function TodoPane({ items }: { items?: unknown }) {
     list.find((item) => item.status === "in_progress") ??
     list.find((item) => item.status === "pending");
   const progressPercent = Math.round((done / list.length) * 100);
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const detailsOpen = userOpen ?? !allCompleted;
 
   return (
@@ -44,11 +57,19 @@ export function TodoPane({ items }: { items?: unknown }) {
       className={`todo-panel${allCompleted ? " is-completed" : ""}`}
       aria-label={t("この会話のTodo")}
     >
-      <details className="todo-panel-details" open={detailsOpen} onToggle={(e) => setUserOpen(e.currentTarget.open)}>
+      <details
+        className="todo-panel-details"
+        open={detailsOpen}
+        onToggle={(e) => setUserOpen(e.currentTarget.open)}
+      >
         <summary className="todo-panel-heading">
           <div className="todo-panel-summary-left">
             <span className="todo-panel-icon">
-              {allCompleted ? <CheckCircle2 size={15} /> : <ListTodo size={15} />}
+              {allCompleted ? (
+                <CheckCircle2 size={15} />
+              ) : (
+                <ListTodo size={15} />
+              )}
             </span>
             <strong className="todo-panel-title">{t("Todo")}</strong>
             <span className="todo-panel-badge">

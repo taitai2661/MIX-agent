@@ -45,8 +45,9 @@ pub use interface::{
     is_forbidden_ip, is_private_ip, reject_private_navigate_url,
     reject_private_navigate_url_resolved, reject_private_navigate_url_resolved_with,
     reject_private_navigate_url_with, validate_evaluate_script, BrowserAction, BrowserCall,
-    BrowserResponse, BrowserTool, WaitCondition, BROWSER_CONTRACT_JSON, MAX_DOM_CHARS,
-    MAX_EXTRACT_ITEMS, MAX_SCREENSHOT_BYTES, MAX_SNAPSHOT_NODES, MAX_TEXT_CHARS,
+    BrowserFrame, BrowserResponse, BrowserTool, FrameSink, ScreencastFrame, WaitCondition,
+    BROWSER_CONTRACT_JSON, MAX_DOM_CHARS, MAX_EXTRACT_ITEMS, MAX_SCREENSHOT_BYTES,
+    MAX_SNAPSHOT_NODES, MAX_TEXT_CHARS,
 };
 pub use operator::{BrowserBackend, BrowserOperator, BrowserSource};
 pub use profile::{

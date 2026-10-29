@@ -1,12 +1,21 @@
 import { t } from "@/app/i18n";
-import { api } from "@/app/api";
+import { api, type Row } from "@/app/api";
 import { Button } from "@/components/button";
 import { CardSkeleton } from "@/components/loading";
 import { ConfirmButton } from "@/components/modal";
 import { ErrorBox, Field, Title } from "@/components/shared";
 import { useToast } from "@/components/toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, GitMerge, History, Link2, ListChecks, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  Brain,
+  GitMerge,
+  History,
+  Link2,
+  ListChecks,
+  RefreshCw,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { AssociationsView } from "./AssociationsView";
 import { TraceView, type TraceProbe } from "./TraceView";
@@ -57,27 +66,42 @@ export function Memories() {
   const [probe, setProbe] = useState<TraceProbe | null>(null);
   const [editing, setEditing] = useState<MemoryRow | null>(null);
   const [rememberOpen, setRememberOpen] = useState(false);
-  const [panel, setPanel] = useState<{ id: string; kind: "associations" | "revisions" | "resolve" } | null>(null);
+  const [panel, setPanel] = useState<{
+    id: string;
+    kind: "associations" | "revisions" | "resolve";
+  } | null>(null);
 
   const list = useQuery<MemoryRow[]>({
     queryKey: ["/memories", q],
     queryFn: () => api(`/memories?q=${encodeURIComponent(q)}`),
   });
-  const settings = useQuery<any>({ queryKey: ["/settings"], queryFn: () => api("/settings") });
+  const settings = useQuery<Row>({
+    queryKey: ["/settings"],
+    queryFn: () => api("/settings"),
+  });
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["/memories"] });
   };
 
-  const togglePanel = (id: string, kind: "associations" | "revisions" | "resolve") => {
-    setPanel((current) => (current && current.id === id && current.kind === kind ? null : { id, kind }));
+  const togglePanel = (
+    id: string,
+    kind: "associations" | "revisions" | "resolve",
+  ) => {
+    setPanel((current) =>
+      current && current.id === id && current.kind === kind
+        ? null
+        : { id, kind },
+    );
   };
 
   const runProbe = async (raw: string) => {
     const query = raw.trim();
     if (!query) return;
     try {
-      const result = await api<TraceProbe>(`/memories-debug/search?q=${encodeURIComponent(query)}`);
+      const result = await api<TraceProbe>(
+        `/memories-debug/search?q=${encodeURIComponent(query)}`,
+      );
       setProbe(result);
     } catch {
       setProbe({ memories: [] });
@@ -91,41 +115,68 @@ export function Memories() {
 
   return (
     <section className="page memory-mind-view">
-      <Title title="記憶" sub={t("ChatGPTのように、ユーザーについての短い事実を1件ずつ保存します。")} />
+      <Title
+        title="記憶"
+        sub={t(
+          "ChatGPTのように、ユーザーについての短い事実を1件ずつ保存します。",
+        )}
+      />
 
       <ErrorBox
         error={list.error || settings.error}
-        onRetry={() => { void list.refetch(); void settings.refetch(); }}
+        onRetry={() => {
+          void list.refetch();
+          void settings.refetch();
+        }}
       />
 
       {settings.data && (
-        <form className="card memory-settings" onSubmit={async (e) => {
-          e.preventDefault();
-          const form = new FormData(e.currentTarget);
-          try {
-            const { has_secret_id, has_brave_secret_id, has_tavily_secret_id, has_exa_secret_id, has_serper_secret_id, ...rest } = settings.data.data;
-            await api("/settings", "PUT", {
-              ...rest,
-              memory_auto_formation: form.get("auto") === "on",
-              memory_link_embedding_neighbors: form.get("neighbors") === "on",
-              brave_api_key: null,
-              tavily_api_key: null,
-              exa_api_key: null,
-              serper_api_key: null,
-            });
-            await qc.invalidateQueries({ queryKey: ["/settings"] });
-            addToast({ type: "success", title: t("設定を保存しました") });
-          } catch (reason) {
-            addToast({
-              type: "error",
-              title: t("設定を保存できませんでした"),
-              message: reason instanceof Error ? reason.message : String(reason),
-            });
-          }
-        }}>
+        <form
+          className="card memory-settings"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const form = new FormData(e.currentTarget);
+            try {
+              // The `has_*` flags are server-computed; drop them so the PUT cannot
+              // echo secret-presence metadata back as settings.
+              const {
+                has_secret_id: _has_secret_id,
+                has_brave_secret_id: _has_brave_secret_id,
+                has_tavily_secret_id: _has_tavily_secret_id,
+                has_exa_secret_id: _has_exa_secret_id,
+                has_serper_secret_id: _has_serper_secret_id,
+                ...rest
+              } = settings.data.data;
+              await api("/settings", "PUT", {
+                ...rest,
+                memory_auto_formation: form.get("auto") === "on",
+                memory_link_embedding_neighbors: form.get("neighbors") === "on",
+                brave_api_key: null,
+                tavily_api_key: null,
+                exa_api_key: null,
+                serper_api_key: null,
+              });
+              await qc.invalidateQueries({ queryKey: ["/settings"] });
+              addToast({ type: "success", title: t("設定を保存しました") });
+            } catch (reason) {
+              addToast({
+                type: "error",
+                title: t("設定を保存できませんでした"),
+                message:
+                  reason instanceof Error ? reason.message : String(reason),
+              });
+            }
+          }}
+        >
           <h3>{t("自動記憶")}</h3>
           <label className="check">
-            <input name="auto" type="checkbox" defaultChecked={settings.data.data.memory_auto_formation !== false} />
+            <input
+              name="auto"
+              type="checkbox"
+              defaultChecked={
+                settings.data.data.memory_auto_formation !== false
+              }
+            />
             {t("回答後にユーザー facts を自動抽出する")}
           </label>
           {/* §4 source (3), the one generation source that is off by default:
@@ -135,7 +186,9 @@ export function Memories() {
             <input
               name="neighbors"
               type="checkbox"
-              defaultChecked={settings.data.data.memory_link_embedding_neighbors === true}
+              defaultChecked={
+                settings.data.data.memory_link_embedding_neighbors === true
+              }
             />
             {t("埋め込み近傍からリンクを張る（既定オフ）")}
           </label>
@@ -154,7 +207,9 @@ export function Memories() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <Button onClick={refresh}><RefreshCw size={14} /> {t("更新")}</Button>
+            <Button onClick={refresh}>
+              <RefreshCw size={14} /> {t("更新")}
+            </Button>
           </div>
           <div className="memory-toolbar-right">
             <Button onClick={() => setRememberOpen(true)}>
@@ -166,7 +221,10 @@ export function Memories() {
 
       <section className="card memory-mind-section">
         <header>
-          <h3><Brain size={16} /> {t("保存された記憶")} <small>{list.data?.length ?? 0}</small></h3>
+          <h3>
+            <Brain size={16} /> {t("保存された記憶")}{" "}
+            <small>{list.data?.length ?? 0}</small>
+          </h3>
         </header>
         {list.isLoading ? (
           <div className="memory-grid" aria-busy="true">
@@ -174,7 +232,13 @@ export function Memories() {
             <CardSkeleton />
           </div>
         ) : list.isError ? null : !list.data?.length ? (
-          settings.error ? null : <p>{t("まだ記憶がありません。「覚える」から追加するか、「○○を覚えて」と話しかけてください。")}</p>
+          settings.error ? null : (
+            <p>
+              {t(
+                "まだ記憶がありません。「覚える」から追加するか、「○○を覚えて」と話しかけてください。",
+              )}
+            </p>
+          )
         ) : (
           <ul className="memory-grid">
             {list.data.map((mem) => {
@@ -182,12 +246,20 @@ export function Memories() {
               const retired = RETIRED_STATES.includes(state);
               const open = panel && panel.id === mem.id ? panel.kind : null;
               return (
-                <li key={mem.id} className="card memory-card" data-role={mem.data.role || "fact"}>
+                <li
+                  key={mem.id}
+                  className="card memory-card"
+                  data-role={mem.data.role || "fact"}
+                >
                   <div className="memory-card-header">
-                    <span className={`memory-role-badge memory-role-${mem.data.role || "fact"}`}>
+                    <span
+                      className={`memory-role-badge memory-role-${mem.data.role || "fact"}`}
+                    >
                       {mem.data.role || "fact"}
                     </span>
-                    <span className="memory-scope">{mem.data.scope || "user"}</span>
+                    <span className="memory-scope">
+                      {mem.data.scope || "user"}
+                    </span>
                     {/* §1's `lifecycle_state`, always shown once: the retired
                         states get the emphatic badge, the retrievable ones the
                         quiet chip. No state is ever hidden. */}
@@ -196,11 +268,16 @@ export function Memories() {
                     ) : (
                       <span className="memory-lifecycle">{state}</span>
                     )}
-                    <span className="memory-lifecycle">{mem.data.source_kind || "agent"}</span>
                     <span className="memory-lifecycle">
-                      {t("信頼度")} {Number(mem.data.confidence ?? 0.7).toFixed(2)}
+                      {mem.data.source_kind || "agent"}
                     </span>
-                    {mem.data.pinned ? <span className="memory-lifecycle">{t("固定")}</span> : null}
+                    <span className="memory-lifecycle">
+                      {t("信頼度")}{" "}
+                      {Number(mem.data.confidence ?? 0.7).toFixed(2)}
+                    </span>
+                    {mem.data.pinned ? (
+                      <span className="memory-lifecycle">{t("固定")}</span>
+                    ) : null}
                     {mem.data.link_count ? (
                       <span className="memory-lifecycle">
                         {t("関連")} {mem.data.link_count}
@@ -211,25 +288,40 @@ export function Memories() {
                   <div className="memory-metrics">
                     {mem.data.source ? <span>{mem.data.source}</span> : null}
                     {mem.data.superseded_by_id ? (
-                      <span className="memory-superseded">→ {short(mem.data.superseded_by_id)}</span>
+                      <span className="memory-superseded">
+                        → {short(mem.data.superseded_by_id)}
+                      </span>
                     ) : null}
                     {mem.data.disputed_by_id ? (
-                      <span className="memory-disputed">↔ {short(mem.data.disputed_by_id)}</span>
+                      <span className="memory-disputed">
+                        ↔ {short(mem.data.disputed_by_id)}
+                      </span>
                     ) : null}
                   </div>
                   <div className="form-actions">
-                    <Button variant="ghost" onClick={() => togglePanel(mem.id, "associations")}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => togglePanel(mem.id, "associations")}
+                    >
                       <Link2 size={14} /> {t("関連")}
                     </Button>
-                    <Button variant="ghost" onClick={() => togglePanel(mem.id, "revisions")}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => togglePanel(mem.id, "revisions")}
+                    >
                       <History size={14} /> {t("履歴")}
                     </Button>
                     {state === "disputed" && (
-                      <Button variant="ghost" onClick={() => togglePanel(mem.id, "resolve")}>
+                      <Button
+                        variant="ghost"
+                        onClick={() => togglePanel(mem.id, "resolve")}
+                      >
                         <GitMerge size={14} /> {t("矛盾を解決")}
                       </Button>
                     )}
-                    <Button variant="ghost" onClick={() => setEditing(mem)}>{t("編集")}</Button>
+                    <Button variant="ghost" onClick={() => setEditing(mem)}>
+                      {t("編集")}
+                    </Button>
                     <ConfirmButton
                       variant="ghost"
                       title={t("記憶を忘れる")}
@@ -238,12 +330,18 @@ export function Memories() {
                       onConfirm={async () => {
                         try {
                           await removeOne(mem.id);
-                          addToast({ type: "success", title: t("記憶を削除しました") });
+                          addToast({
+                            type: "success",
+                            title: t("記憶を削除しました"),
+                          });
                         } catch (reason) {
                           addToast({
                             type: "error",
                             title: t("記憶を削除できませんでした"),
-                            message: reason instanceof Error ? reason.message : String(reason),
+                            message:
+                              reason instanceof Error
+                                ? reason.message
+                                : String(reason),
                           });
                         }
                       }}
@@ -252,13 +350,19 @@ export function Memories() {
                     </ConfirmButton>
                   </div>
                   {open === "associations" && (
-                    <AssociationsView memoryId={mem.id} onClose={() => setPanel(null)} />
+                    <AssociationsView
+                      memoryId={mem.id}
+                      onClose={() => setPanel(null)}
+                    />
                   )}
                   {open === "revisions" && (
                     <RevisionsPanel
                       row={mem}
                       onClose={() => setPanel(null)}
-                      onRestored={() => { setPanel(null); refresh(); }}
+                      onRestored={() => {
+                        setPanel(null);
+                        refresh();
+                      }}
                     />
                   )}
                   {open === "resolve" && (
@@ -266,7 +370,10 @@ export function Memories() {
                       row={mem}
                       rows={list.data || []}
                       onClose={() => setPanel(null)}
-                      onResolved={() => { setPanel(null); refresh(); }}
+                      onResolved={() => {
+                        setPanel(null);
+                        refresh();
+                      }}
                     />
                   )}
                 </li>
@@ -280,26 +387,52 @@ export function Memories() {
         <EditForm
           row={editing}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); refresh(); }}
+          onSaved={() => {
+            setEditing(null);
+            refresh();
+          }}
         />
       )}
 
       {rememberOpen && (
         <RememberForm
           onClose={() => setRememberOpen(false)}
-          onSaved={() => { setRememberOpen(false); refresh(); }}
+          onSaved={() => {
+            setRememberOpen(false);
+            refresh();
+          }}
         />
       )}
 
       <section className="card memory-debug">
-        <header><h3>{t("想起プローブ")}</h3></header>
-        <form onSubmit={async (e) => { e.preventDefault(); await runProbe(probeQuery); }}>
+        <header>
+          <h3>{t("想起プローブ")}</h3>
+        </header>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await runProbe(probeQuery);
+          }}
+        >
           <Field label={t("クエリを入力して一致を確認")}>
-            <input required value={probeQuery} onChange={(e) => setProbeQuery(e.target.value)} placeholder={t("例: 日本語")} />
+            <input
+              required
+              value={probeQuery}
+              onChange={(e) => setProbeQuery(e.target.value)}
+              placeholder={t("例: 日本語")}
+            />
           </Field>
-          <div className="form-actions"><Button>{t("想起を実行")}</Button></div>
+          <div className="form-actions">
+            <Button>{t("想起を実行")}</Button>
+          </div>
         </form>
-        {probe && <TraceView probe={probe} query={probeQuery} onClose={() => setProbe(null)} />}
+        {probe && (
+          <TraceView
+            probe={probe}
+            query={probeQuery}
+            onClose={() => setProbe(null)}
+          />
+        )}
       </section>
     </section>
   );
@@ -335,21 +468,32 @@ function RevisionsPanel({
   return (
     <div className="memory-detail">
       <div className="memory-detail-header">
-        <h4><History size={13} /> {t("履歴")}</h4>
-        <Button variant="ghost" onClick={onClose}>{t("閉じる")}</Button>
+        <h4>
+          <History size={13} /> {t("履歴")}
+        </h4>
+        <Button variant="ghost" onClick={onClose}>
+          {t("閉じる")}
+        </Button>
       </div>
       <ErrorBox error={revisions.error || error} />
       {!revisions.data?.length ? (
-        <p className="memory-empty">{t("このMemoryの履歴はまだありません。")}</p>
+        <p className="memory-empty">
+          {t("このMemoryの履歴はまだありません。")}
+        </p>
       ) : (
         <ul className="memory-score-list">
           {revisions.data.map((rev) => {
-            const previous = (rev.data?.previous || {}) as { content?: string; lifecycle_state?: string };
+            const previous = (rev.data?.previous || {}) as {
+              content?: string;
+              lifecycle_state?: string;
+            };
             return (
               <li key={rev.id}>
                 <span>
                   {rev.created_at}
-                  {previous.lifecycle_state ? ` · ${previous.lifecycle_state}` : ""}
+                  {previous.lifecycle_state
+                    ? ` · ${previous.lifecycle_state}`
+                    : ""}
                   {" — "}
                   {String(previous.content || "").slice(0, 60)}
                 </span>
@@ -361,7 +505,9 @@ function RevisionsPanel({
           })}
         </ul>
       )}
-      <p className="memory-auto-note">{t("復元しても過去の改訂は残ります。")}</p>
+      <p className="memory-auto-note">
+        {t("復元しても過去の改訂は残ります。")}
+      </p>
     </div>
   );
 }
@@ -419,21 +565,40 @@ function ResolvePanel({
         </div>
         <div className="memory-conflict-actions">
           <p className="memory-auto-note">
-            {t("既定は保存済み側（disputed_by_id の相手）が勝ち、却下した側は superseded になります。両側に改訂が残ります。")}
+            {t(
+              "既定は保存済み側（disputed_by_id の相手）が勝ち、却下した側は superseded になります。両側に改訂が残ります。",
+            )}
           </p>
           <div className="memory-conflict-buttons">
-            <Button onClick={() => settle({ resolution: "resolved" })} disabled={busy}>
+            <Button
+              onClick={() => settle({ resolution: "resolved" })}
+              disabled={busy}
+            >
               {t("既定どおり採用")}
             </Button>
-            <Button variant="ghost" onClick={() => settle({ resolution: "resolved", prefer: row.id })} disabled={busy}>
+            <Button
+              variant="ghost"
+              onClick={() => settle({ resolution: "resolved", prefer: row.id })}
+              disabled={busy}
+            >
               {t("この Memory を採用")}
             </Button>
             {otherId && (
-              <Button variant="ghost" onClick={() => settle({ resolution: "resolved", prefer: otherId })} disabled={busy}>
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  settle({ resolution: "resolved", prefer: otherId })
+                }
+                disabled={busy}
+              >
                 {t("相手を採用")}
               </Button>
             )}
-            <Button variant="ghost" onClick={() => settle({ resolution: "dismiss" })} disabled={busy}>
+            <Button
+              variant="ghost"
+              onClick={() => settle({ resolution: "dismiss" })}
+              disabled={busy}
+            >
               {t("失効させる")}
             </Button>
           </div>
@@ -441,66 +606,118 @@ function ResolvePanel({
         </div>
       </div>
       <div className="form-actions">
-        <Button variant="ghost" onClick={onClose}>{t("閉じる")}</Button>
+        <Button variant="ghost" onClick={onClose}>
+          {t("閉じる")}
+        </Button>
       </div>
     </div>
   );
 }
 
-function RememberForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function RememberForm({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const [content, setContent] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   return (
     <div className="card memory-remember-form">
-      <header><h3><ListChecks size={16} /> {t("記憶を追加")}</h3></header>
-      <p className="memory-auto-note">{t("短い事実を1件ずつ保存します（200字以内推奨）。重複は自動で無視されます。")}</p>
+      <header>
+        <h3>
+          <ListChecks size={16} /> {t("記憶を追加")}
+        </h3>
+      </header>
+      <p className="memory-auto-note">
+        {t(
+          "短い事実を1件ずつ保存します（200字以内推奨）。重複は自動で無視されます。",
+        )}
+      </p>
       {error ? <ErrorBox error={error} /> : null}
       <Field label={t("内容")}>
-        <textarea required value={content} onChange={(e) => setContent(e.target.value)} rows={3} maxLength={1000} />
+        <textarea
+          required
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={3}
+          maxLength={1000}
+        />
       </Field>
       <div className="form-actions">
-        <Button onClick={async () => {
-          setSaving(true);
-          try {
-            await api("/memories", "POST", { content });
-            onSaved();
-          } catch (reason) {
-            setError(reason);
-          } finally {
-            setSaving(false);
-          }
-        }} disabled={saving || !content.trim()}>{t("保存")}</Button>
-        <Button variant="ghost" onClick={onClose}>{t("キャンセル")}</Button>
+        <Button
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await api("/memories", "POST", { content });
+              onSaved();
+            } catch (reason) {
+              setError(reason);
+            } finally {
+              setSaving(false);
+            }
+          }}
+          disabled={saving || !content.trim()}
+        >
+          {t("保存")}
+        </Button>
+        <Button variant="ghost" onClick={onClose}>
+          {t("キャンセル")}
+        </Button>
       </div>
     </div>
   );
 }
 
-function EditForm({ row, onClose, onSaved }: { row: MemoryRow; onClose: () => void; onSaved: () => void }) {
+function EditForm({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row: MemoryRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const [content, setContent] = useState(contentOf(row));
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   return (
     <div className="card memory-remember-form">
-      <header><h3>{t("記憶を編集")}</h3></header>
+      <header>
+        <h3>{t("記憶を編集")}</h3>
+      </header>
       {error ? <ErrorBox error={error} /> : null}
       <Field label={t("内容")}>
-        <textarea required value={content} onChange={(e) => setContent(e.target.value)} rows={3} maxLength={1000} />
+        <textarea
+          required
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={3}
+          maxLength={1000}
+        />
       </Field>
       <div className="form-actions">
-        <Button onClick={async () => {
-          setSaving(true);
-          try {
-            await api(`/memories/${row.id}`, "PATCH", { content });
-            onSaved();
-          } catch (reason) {
-            setError(reason);
-          } finally {
-            setSaving(false);
-          }
-        }} disabled={saving || !content.trim()}>{t("保存")}</Button>
-        <Button variant="ghost" onClick={onClose}>{t("キャンセル")}</Button>
+        <Button
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await api(`/memories/${row.id}`, "PATCH", { content });
+              onSaved();
+            } catch (reason) {
+              setError(reason);
+            } finally {
+              setSaving(false);
+            }
+          }}
+          disabled={saving || !content.trim()}
+        >
+          {t("保存")}
+        </Button>
+        <Button variant="ghost" onClick={onClose}>
+          {t("キャンセル")}
+        </Button>
       </div>
     </div>
   );

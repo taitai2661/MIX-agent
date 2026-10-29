@@ -33,18 +33,33 @@ function short(id: string): string {
  * `kind` and the column names are shown verbatim: they are §2/§4 vocabulary,
  * and a translated label would no longer match what the server stored.
  */
-export function AssociationList({ memoryId, edges }: { memoryId: string; edges: AssociationEdge[] }) {
+export function AssociationList({
+  memoryId,
+  edges,
+}: {
+  memoryId: string;
+  edges: AssociationEdge[];
+}) {
   if (!edges.length) {
-    return <p className="memory-network-empty">{t("この記憶に繋がりはまだありません。")}</p>;
+    return (
+      <p className="memory-network-empty">
+        {t("この記憶に繋がりはまだありません。")}
+      </p>
+    );
   }
   return (
     <div className="memory-connections">
-      <p className="memory-network-empty">{t("target が列を持つ行、source がその列が指す Memory。")}</p>
+      <p className="memory-network-empty">
+        {t("target が列を持つ行、source がその列が指す Memory。")}
+      </p>
       <ol className="memory-network-list">
         {edges.map((edge, index) => (
           <li
             className="memory-network-edge"
-            key={edge.id || `${edge.source_memory_id}-${edge.target_memory_id}-${index}`}
+            key={
+              edge.id ||
+              `${edge.source_memory_id}-${edge.target_memory_id}-${index}`
+            }
           >
             <span className="memory-network-link">
               <span className="memory-network-line" aria-hidden="true" />
@@ -52,17 +67,22 @@ export function AssociationList({ memoryId, edges }: { memoryId: string; edges: 
             </span>
             <div className="memory-network-node">
               <span>
-                <code>{short(edge.source_memory_id)}</code> → <code>{short(edge.target_memory_id)}</code>
+                <code>{short(edge.source_memory_id)}</code> →{" "}
+                <code>{short(edge.target_memory_id)}</code>
               </span>
               <small>
                 source {t("（列が指す側）")}
-                {edge.source_memory_id === memoryId ? ` · ${t("この Memory")}` : ""} / target{" "}
-                {t("（列を持つ側）")}
-                {edge.target_memory_id === memoryId ? ` · ${t("この Memory")}` : ""}
+                {edge.source_memory_id === memoryId
+                  ? ` · ${t("この Memory")}`
+                  : ""}{" "}
+                / target {t("（列を持つ側）")}
+                {edge.target_memory_id === memoryId
+                  ? ` · ${t("この Memory")}`
+                  : ""}
               </small>
               <small>
-                weight {Number(edge.weight ?? 0).toFixed(2)} · coactivation_count{" "}
-                {Number(edge.coactivation_count ?? 0)}
+                weight {Number(edge.weight ?? 0).toFixed(2)} ·
+                coactivation_count {Number(edge.coactivation_count ?? 0)}
               </small>
             </div>
           </li>
@@ -82,7 +102,8 @@ export function AssociationsView({
 }) {
   const links = useQuery<AssociationEdge[]>({
     queryKey: ["/memories", memoryId, "associations"],
-    queryFn: () => api(`/memories/${encodeURIComponent(memoryId)}/associations`),
+    queryFn: () =>
+      api(`/memories/${encodeURIComponent(memoryId)}/associations`),
   });
   return (
     <div className="memory-detail">
@@ -98,8 +119,12 @@ export function AssociationsView({
         )}
       </div>
       <ErrorBox error={links.error} />
-      {links.isFetching && !links.data ? <p className="memory-network-empty">{t("読み込み中…")}</p> : null}
-      {links.data ? <AssociationList memoryId={memoryId} edges={links.data} /> : null}
+      {links.isFetching && !links.data ? (
+        <p className="memory-network-empty">{t("読み込み中…")}</p>
+      ) : null}
+      {links.data ? (
+        <AssociationList memoryId={memoryId} edges={links.data} />
+      ) : null}
     </div>
   );
 }

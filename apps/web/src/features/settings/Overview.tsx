@@ -1,8 +1,21 @@
 import { t } from "@/app/i18n";
-import { api } from "@/app/api";
+import { api, type Row } from "@/app/api";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowRight, BarChart3, Brain, Coins, Database, Globe, Network, Server, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  BarChart3,
+  Brain,
+  Coins,
+  Database,
+  Globe,
+  Network,
+  Server,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 
 const groups = [
@@ -26,9 +39,7 @@ const groups = [
   },
   {
     label: "基本設定",
-    cards: [
-      ["general", "一般", "表示テーマ・言語・既定モデル", Settings2],
-    ],
+    cards: [["general", "一般", "表示テーマ・言語・既定モデル", Settings2]],
   },
   {
     label: "セキュリティとデータ",
@@ -51,9 +62,15 @@ const groups = [
 export function SettingsOverview() {
   const providers = useRows("/providers");
   const models = useRows("/models");
-  const tools = useQuery<any[]>({ queryKey: ["/tools"], queryFn: () => api("/tools") });
+  const tools = useQuery<Row[]>({
+    queryKey: ["/tools"],
+    queryFn: () => api("/tools"),
+  });
   const mcp = useRows("/mcp/connections");
-  const settings = useQuery<any>({ queryKey: ["/settings"], queryFn: () => api("/settings") });
+  const settings = useQuery<Row>({
+    queryKey: ["/settings"],
+    queryFn: () => api("/settings"),
+  });
   const domains = settings.data?.data.allowed_domains?.length || 0;
   const counts: Record<string, string> = {
     providers: `${providers.data?.length || 0} 件`,
@@ -72,25 +89,67 @@ export function SettingsOverview() {
     statistics: "30日間",
     diagnostics: "状態を確認",
   };
-  const defaultModel = models.data?.find((row) => row.id === settings.data?.data.default_model_id);
-  return <div className="settings-overview">
-    <Title title={t("設定の概要")} sub={t("AIの接続、使い方、安全性をここから管理できます。")} />
-    <section className="settings-hero">
-      <div><p className="eyebrow">YOUR WORKSPACE</p><h2>{t("いつでも、あなたの使い方に。")}</h2><p>{t("接続したAIと権限はこの環境だけで管理されます。")}</p></div>
-      <Link to="/settings/providers" className="button btn-primary">{t("Providerを追加")} <ArrowRight size={16} /></Link>
-    </section>
-    <section className="settings-summary" aria-label={t("現在の設定")}>
-      <div><span>{t("既定モデル")}</span><b>{defaultModel?.data.name || defaultModel?.data.model_id || t("未設定")}</b></div>
-      <div><span>{t("接続状態")}</span><b>{providers.data?.length ? t("準備完了") : t("Providerを追加")}</b></div>
-      <div><span>{t("テーマ")}</span><b>{t("表示設定で変更")}</b></div>
-    </section>
-    {groups.map((group) => <section key={group.label} className="settings-overview-section">
-      <h3 className="settings-overview-label">{t(group.label)}</h3>
-      <div className="settings-overview-grid">
-        {group.cards.map(([path, title, description, Icon]) => <Link key={path} to={"/settings/" + path} className="settings-overview-card">
-          <span className="settings-card-icon"><Icon size={20} /></span><span className="settings-card-copy"><b>{t(title)}</b><small>{t(description)}</small></span><strong>{t(counts[path])}</strong><ArrowRight size={17} />
-        </Link>)}
-      </div>
-    </section>)}
-  </div>;
+  const defaultModel = models.data?.find(
+    (row) => row.id === settings.data?.data.default_model_id,
+  );
+  return (
+    <div className="settings-overview">
+      <Title
+        title={t("設定の概要")}
+        sub={t("AIの接続、使い方、安全性をここから管理できます。")}
+      />
+      <section className="settings-hero">
+        <div>
+          <p className="eyebrow">YOUR WORKSPACE</p>
+          <h2>{t("いつでも、あなたの使い方に。")}</h2>
+          <p>{t("接続したAIと権限はこの環境だけで管理されます。")}</p>
+        </div>
+        <Link to="/settings/providers" className="button btn-primary">
+          {t("Providerを追加")} <ArrowRight size={16} />
+        </Link>
+      </section>
+      <section className="settings-summary" aria-label={t("現在の設定")}>
+        <div>
+          <span>{t("既定モデル")}</span>
+          <b>
+            {defaultModel?.data.name ||
+              defaultModel?.data.model_id ||
+              t("未設定")}
+          </b>
+        </div>
+        <div>
+          <span>{t("接続状態")}</span>
+          <b>{providers.data?.length ? t("準備完了") : t("Providerを追加")}</b>
+        </div>
+        <div>
+          <span>{t("テーマ")}</span>
+          <b>{t("表示設定で変更")}</b>
+        </div>
+      </section>
+      {groups.map((group) => (
+        <section key={group.label} className="settings-overview-section">
+          <h3 className="settings-overview-label">{t(group.label)}</h3>
+          <div className="settings-overview-grid">
+            {group.cards.map(([path, title, description, Icon]) => (
+              <Link
+                key={path}
+                to={"/settings/" + path}
+                className="settings-overview-card"
+              >
+                <span className="settings-card-icon">
+                  <Icon size={20} />
+                </span>
+                <span className="settings-card-copy">
+                  <b>{t(title)}</b>
+                  <small>{t(description)}</small>
+                </span>
+                <strong>{t(counts[path])}</strong>
+                <ArrowRight size={17} />
+              </Link>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
 }

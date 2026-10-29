@@ -161,6 +161,32 @@ Browser Operator (mixd-browser::operator)   ← Workspace Profile 保持
 Browser 実装の差し替えが可能で、`BrowserBackend` は 3 状態
 （`Chromium` / `SystemChromium` / `Disabled`）を持ちます。
 
+Chromium は **常に new headless** で起動します。以前は release だけ
+`with_head()` で可視ウィンドウを出していましたが、アプリ内のサイドパネルと
+二重表示になり、余分なコンポジタも残るため廃止しました。表示は
+チャット右側のブラウザパネル（スプリット / フルビュー）だけです。
+
+サイドパネルは Codex 風の構成です。
+
+- 上部ツールバー: 戻る / 進む / 再読み込み・停止 / アドレスバー /
+  セキュリティ表示 / システムブラウザで開く
+- ブラウザタブ: 既存の `tabs` / `new_tab` / `switch_tab` / `close_tab` を UI 化
+- ライブ画面: CDP screencast（`Page.startScreencast`）を Tauri イベント
+  `browser://frame` で受信し、失敗時は 2 秒ポーリングへフォールバック
+- `⌘⇧B`（macOS）/ `Ctrl+Shift+B`（Windows / Linux）で表示/非表示、
+  `⌘L` / `Ctrl+L` アドレスバー、`⌘T` / `Ctrl+T` 新規タブ、
+  `⌘R` / `Ctrl+R` 再読み込み
+- エージェントの `browser` ツール開始時に自動表示（`browserAutoOpen`、既定 ON）。
+  エージェント起因のオープンはフォーカスを奪いません。
+
+Chromium のメモリ対策として、同時に開くワークスペースは 2 個まで（LRU で
+退避）、15 分間ブラウザ呼び出しとライブ取得が無ければプロセスを閉じます。
+パネルを開いている間は 60 秒ごとの軽量 keepalive が LRU を更新するため、
+ライブ表示を一時停止していても閉じられません。プロファイルはディスクに残るため、
+次回オープン時に Cookie / ログインは復元されます。上限は
+`MIX_BROWSER_MAX_OPEN`（既定 2）と `MIX_BROWSER_IDLE_SECS`（既定 900 秒、
+30 秒未満は無視）で調整できます。
+
 アクション語彙は `packages/tool_contracts/browser.json` が正です。Desktop は
 `browser` 1 ツール、Docker は `browser_*` 15 ツールをこの語彙へマップし、
 未対応アクションは `unsupported` として明示します。`scripts/check-browser-parity.py`
@@ -173,6 +199,15 @@ ULA へ到達できます。169.254.0.0/16（cloud metadata）と link-local は
 loopback / private 宛先だけを免除し、公開ホストには引き続き許可リストが必要です。
 `update_settings` は許可リスト変更時に `refresh_registry` を呼ぶため、再起動なしで
 エージェントと手動パネルの両方へ反映されます。
+
+ナビゲーション時の事前チェックに加えて、各ページターゲットには CDP の
+`Fetch` リクエスト傍受を常時インストールします（`ensure_egress_guard`）。
+ページ内の `fetch()` やサブリソース、DNS 再解決後のリダイレクトも含めて
+ホスト名を解決し、非 opt-in 時の private / loopback、常時 link-local・
+cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURLs`
+で metadata リテラルも二重に塞ぎます。これにより `evaluate` の文字列フィルタを
+迂回されてもネットワーク層で止まります（DNS 解決と実際の接続の間の TOCTOU は
+残るため、OS sandbox の代替ではありません）。
 
 ナビゲーションは `http` / `https` と `about:blank` だけを許可します。
 `file:` / `data:` / `javascript:` / `chrome:` は `navigate` と `new_tab` の両方で
@@ -191,6 +226,11 @@ loopback / private 宛先だけを免除し、公開ホストには引き続き�
   `hiddenTitle` + `trafficLightPosition` が macOS の private API を使うための要件です
   （無効化するとカスタムタイトルバーが正しく描画されません）。`Cargo.toml` の
   `tauri` 依存の `macos-private-api` feature と対になっています。
+  Windows / Linux はネイティブのタイトルバーを無効化し（`app/tauri.windows.conf.json`
+  と `app/tauri.linux.conf.json` の `decorations: false`）、`WindowControls.tsx` の
+  カスタムタイトルバーだけを表示します。ネイティブ装飾を残すと OS のボタンと
+  アプリ内のボタンが二重に表示されます。プラットフォーム別設定は配列ごと
+  置き換わるため、ウィンドウ設定はすべての項目を両ファイルにも記載します。
 - **OS プロセス sandbox**: **未実装**。macOS `sandbox-exec` / Windows Job Object / Linux landlock + bubblewrap のいずれもコードに存在しません。`terminal` tool はユーザーの権限で任意のプロセスを起動でき、`browser` tool も外部 Chromium を無制限に操作できます。敵対的なコードを安全に実行する用途には使わないでください。
 
 ## Managed Chromium（初回インストール方式）
@@ -269,11 +309,17 @@ Chrome for Testing の `.app` は ad-hoc / linker-signed で、上流の zip で
 
 ### ライブ表示と成果物
 
-- ライブ表示は 1.5 秒ごとに非永続の JPEG フレームを取得する。PNG ではなく
-  JPEG（品質 70、`optimize_for_speed`）にし、ウィンドウが非表示の間は
-  ポーリングを止める。エージェント操作と同じ workspace ロックは `try_lock`
+- ライブ表示は CDP screencast（JPEG quality 60、everyNthFrame 2）を基本にし、
+  失敗時は 2 秒ごとの非永続 JPEG フレーム取得へフォールバックする。ウィンドウが
+  非表示の間は停止する。エージェント操作と同じ workspace ロックは `try_lock`
   で取り、操作中はフレームを諦めて前回の画像を残す（スクリーンショット待ちで
   クリックを遅らせない）。
+- ライブフレームは CSS ビューポートの 0.5 倍でキャプチャする。パネル表示幅は
+  380–560px なので十分な解像度を保ちつつ、JPEG エンコード・IPC・WebView の
+  デコードを約 1/4 に抑える。返す `width` / `height` は CSS サイズで、クリック
+  座標変換は解像度に依存しない。成果物の PNG はフル解像度のまま。
+- `browser_frame` は現在 URL・タイトル・戻る/進む可否も返し、ツールバーが
+  追加のキャプチャ無しで状態を更新できる。
 - ライブ画面のクリックは `object-contain` の letterbox を考慮し、描画矩形の
   中央・拡大率からページ座標へ変換する。描画矩形の外側はクリックしない。
 - スクリーンショットのインデックスは 500 件で上限。退避したエントリの PNG は
@@ -484,6 +530,10 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 - Memory の自動生成（Run 後の抽出）は Phase 2 で実装済みだが、抽出品質の改善は継続課題（[`../memory-roadmap.md`](../memory-roadmap.md) Phase 2 参照）。
 - シグナル / PTY ベースの対話 terminal（現在は上限付きの実行のみ）。
 - OS プロセス sandbox（macOS / Windows / Linux とも未実装）。
+- Database at-rest encryption（SQLCipher）は未配線。設定に互換用の
+  `database_encryption` キーは残るが、常に `false` として読み書きし、UI でも
+  「未対応」と表示する。実データは平文 SQLite + 所有者限定パーミッションのみ
+  なので、OS のディスク暗号化（FileVault / BitLocker / LUKS）を前提とする。
 - Provider プリセットは Docker 版の 52 件中 50 件（`cloudflare` と
   `azure-ai-foundry` が未移植）。
 

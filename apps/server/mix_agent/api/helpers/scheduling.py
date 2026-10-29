@@ -33,8 +33,8 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
         _model_window_info,
         effective_tool_ids,
         own,
-        tool_capability,
     )
+    from mix_agent.providers.probing import tool_capability
 
     data = job.data
     if data["target_type"] == "conversation":

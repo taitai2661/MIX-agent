@@ -93,7 +93,7 @@ export const InlineToolItem = memo(function InlineToolItem({
   const activeRoot = useActiveRoot();
   const setRightPanel = useUi((s) => s.setRightPanel);
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
-  const openSettings = useUi((s) => s.openSettings);
+  const openBrowserPanel = useUi((s) => s.openBrowserPanel);
   const [busy, setBusy] = useState(false);
 
   const handleOpenInChanges = (path: string) => {
@@ -183,7 +183,7 @@ export const InlineToolItem = memo(function InlineToolItem({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => openSettings("browser")}
+                onClick={() => openBrowserPanel("user")}
                 className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover hover:text-fg"
                 title={t("ブラウザ画面を開く")}
               >

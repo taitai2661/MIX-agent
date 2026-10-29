@@ -19,7 +19,6 @@ fn full_settings() -> SettingsView {
         default_mode: Some("agent".into()),
         egress_allowlist: vec!["https://api.example.com".into()],
         browser_allow_local: true,
-        telemetry_consent: true,
         language: Some("ja".into()),
         theme: Some("dark".into()),
         projects_root: Some("/tmp/projects".into()),
@@ -32,7 +31,9 @@ fn full_settings() -> SettingsView {
         // Non-default on purpose: `true` is what proves the round trip carried
         // the key rather than re-deriving §4's `false`.
         memory_link_embedding_neighbors: true,
-        database_encryption: true,
+        // Not available yet: only `false` is accepted, so the round trip must
+        // carry the honest value rather than re-deriving it.
+        database_encryption: false,
         onboarding_completed: Some(true),
         auto_check_updates: false,
         local_scan_on_start: false,
@@ -101,6 +102,28 @@ async fn a_row_without_the_onboarding_key_reads_back_as_never_onboarded() {
         !read.database_encryption,
         "a legacy row must not silently enable database encryption"
     );
+}
+
+/// Older builds wrote `database_encryption: true` even though the connection
+/// never applied a SQLCipher passphrase. That row must read back as `false` so
+/// the UI and diagnostics cannot keep claiming an at-rest protection that does
+/// not exist.
+#[tokio::test]
+async fn a_legacy_encryption_flag_reads_back_as_unencrypted() {
+    let storage = temp_storage().await;
+    sqlx::query("INSERT INTO app_settings (id, owner_id, data) VALUES ('singleton', ?, ?)")
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(r#"{"database_encryption":true,"theme":"dark"}"#)
+        .execute(storage.pool())
+        .await
+        .expect("insert legacy row");
+
+    let read = read_settings(storage.pool()).await.expect("read");
+    assert!(
+        !read.database_encryption,
+        "the staged encryption flag must not outlive the unimplemented wiring"
+    );
+    assert_eq!(read.theme.as_deref(), Some("dark"));
 }
 
 #[tokio::test]

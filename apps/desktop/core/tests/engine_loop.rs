@@ -1606,6 +1606,9 @@ async fn plan_mode_allows_the_tools_the_plan_prompt_asks_for() {
     ])
     .await;
     std::fs::write(harness.workspace.join("a.rs"), "fn main() {}\n").unwrap();
+    // `user_plan` is the approval gate now: approving it is what lifts plan
+    // mode. A stored allow rule is the programmatic equivalent of clicking it.
+    allow_tool(&harness, "user_plan").await;
     let _drain = spawn_event_drain(&harness.engine);
     let mut request = harness.request().await;
     request.mode = Mode::Plan;
@@ -1758,4 +1761,225 @@ async fn no_configured_check_leaves_a_change_unencumbered() {
             "no check is configured, so none may be demanded: {repair}"
         );
     }
+}
+
+/// Two reads in one turn run concurrently, but the transcript must still pair
+/// each result with the call that asked for it, and `files read` must return
+/// line numbers so the model can address a region without counting.
+#[tokio::test]
+async fn parallel_reads_keep_call_order_and_line_numbers() {
+    let harness = Harness::new(vec![
+        {
+            let mut events = tool_turn("a", "files", r#"{"action":"read","path":"a.txt"}"#);
+            events.retain(|e| !matches!(e, StreamEvent::Finished { .. }));
+            events.extend(
+                tool_turn("b", "files", r#"{"action":"read","path":"b.txt"}"#)
+                    .into_iter()
+                    .filter(|e| !matches!(e, StreamEvent::Finished { .. })),
+            );
+            events.push(StreamEvent::Finished {
+                finish_reason: "tool_calls".to_string(),
+                usage: None,
+            });
+            events
+        },
+        text_turn("read both"),
+    ])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    std::fs::write(harness.workspace.join("a.txt"), "alpha\n").unwrap();
+    std::fs::write(harness.workspace.join("b.txt"), "beta\n").unwrap();
+
+    let outcome = harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(tool_names(&outcome.tool_calls), vec!["files", "files"]);
+
+    let requests = harness.provider.requests();
+    let second = &requests[1];
+    let tool_messages: Vec<&str> = second
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool")
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(
+        tool_messages.len(),
+        2,
+        "both reads must be in the transcript"
+    );
+    assert!(
+        tool_messages[0].contains("alpha") && tool_messages[0].contains(r#""     1\talpha""#),
+        "the first result must be numbered and belong to a.txt: {}",
+        tool_messages[0]
+    );
+    assert!(
+        tool_messages[1].contains("beta") && tool_messages[1].contains(r#""     1\tbeta""#),
+        "the second result must be numbered and belong to b.txt: {}",
+        tool_messages[1]
+    );
+}
+
+/// A configured formatter runs after a step that changed a file. It was
+/// previously only mentioned in a prompt hint and never executed.
+#[tokio::test]
+async fn the_formatter_runs_after_a_mutation() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "w",
+            "files",
+            r#"{"action":"write","path":"out.txt","content":"hello"}"#,
+        ),
+        text_turn("wrote it"),
+    ])
+    .await;
+    allow_tool(&harness, "files").await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.format_command = Some("touch formatted.marker".to_string());
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert!(
+        harness.workspace.join("formatted.marker").exists(),
+        "the configured formatter must actually run"
+    );
+}
+
+/// Reverting a Run restores the content it started from.
+#[tokio::test]
+async fn revert_run_restores_the_pre_run_content() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "e",
+            "edit",
+            r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
+        ),
+        text_turn("edited"),
+    ])
+    .await;
+    allow_tool(&harness, "edit").await;
+    let _drain = spawn_event_drain(&harness.engine);
+    std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
+
+    let request = harness.request().await;
+    let run_id = request.run_id;
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    let edited = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
+    assert!(
+        edited.contains("after"),
+        "the edit must have landed: {edited}"
+    );
+
+    let restored = harness.engine.revert_run(run_id).await.expect("revert");
+    assert_eq!(restored, 1);
+    let reverted = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
+    assert_eq!(reverted, "before\n", "the pre-Run content must be back");
+}
+
+/// Approving `user_plan` lifts plan mode for the rest of the Run, so the very
+/// next turn can make the change the plan described.
+#[tokio::test]
+async fn an_approved_plan_lifts_plan_mode_for_the_next_turn() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "p",
+            "user_plan",
+            r#"{"title":"Edit it","steps":["edit a.txt"]}"#,
+        ),
+        tool_turn(
+            "e",
+            "edit",
+            r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
+        ),
+        text_turn("implemented"),
+    ])
+    .await;
+    allow_tool(&harness, "user_plan").await;
+    allow_tool(&harness, "edit").await;
+    std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.mode = Mode::Plan;
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(tool_names(&outcome.tool_calls), vec!["user_plan", "edit"]);
+    let edit = &outcome.tool_calls[1];
+    assert!(
+        edit.error.is_none(),
+        "the edit must run after approval; got {:?}",
+        edit.error
+    );
+    let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
+    assert!(text.contains("after"), "the edit must have landed: {text}");
+}
+
+/// An edit whose anchor still matches but whose file changed after the read is
+/// refused, because the model is working from stale content.
+#[tokio::test]
+async fn an_edit_to_a_file_changed_after_the_read_is_refused() {
+    let harness = Harness::new(vec![
+        tool_turn("r", "files", r#"{"action":"read","path":"a.txt"}"#),
+        tool_turn("t", "terminal", r#"{"command":"echo extra >> a.txt"}"#),
+        tool_turn(
+            "e",
+            "edit",
+            r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
+        ),
+        text_turn("done"),
+    ])
+    .await;
+    allow_tool(&harness, "terminal").await;
+    allow_tool(&harness, "edit").await;
+    let _drain = spawn_event_drain(&harness.engine);
+    std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
+
+    let outcome = harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+    let edit = outcome
+        .tool_calls
+        .iter()
+        .find(|call| call.name == "edit")
+        .expect("edit call");
+    let error = edit.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("changed on disk"),
+        "the stale edit must be refused with a readable reason; got {error:?}"
+    );
+    let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
+    assert!(
+        text.contains("before"),
+        "the edit must not have applied: {text}"
+    );
+}
+
+/// A malformed argument blob is reported as such instead of being dispatched
+/// with `null` and surfacing as a confusing "path required".
+#[tokio::test]
+async fn malformed_tool_arguments_are_reported_clearly() {
+    let harness = Harness::new(vec![
+        tool_turn("x", "files", r#"{"action":"read""#),
+        text_turn("done"),
+    ])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let outcome = harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+    let call = &outcome.tool_calls[0];
+    let error = call.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("not valid JSON"),
+        "the parse failure must be named; got {error:?}"
+    );
 }

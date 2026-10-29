@@ -62,6 +62,8 @@ export function ProjectsPane() {
     null,
   );
   const [sourceDraft, setSourceDraft] = useState("");
+  const [verifyDraft, setVerifyDraft] = useState<string | null>(null);
+  const [formatDraft, setFormatDraft] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
 
   const list = projects.data ?? [];
@@ -76,6 +78,18 @@ export function ProjectsPane() {
   const linked = selected
     ? (conversations.data ?? []).filter((c) => c.project_id === selected.id)
     : [];
+
+  // Keep the command drafts in step with the saved project. Keyed on the saved
+  // values rather than every render, so typing is not overwritten by a refetch
+  // that carries the same data.
+  const savedVerify = selected?.verifyCommand ?? "";
+  const savedFormat = selected?.formatCommand ?? "";
+  useEffect(() => {
+    setVerifyDraft(savedVerify);
+  }, [selectedId, savedVerify]);
+  useEffect(() => {
+    setFormatDraft(savedFormat);
+  }, [selectedId, savedFormat]);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
@@ -223,6 +237,69 @@ export function ProjectsPane() {
             />{" "}
             AGENTS.md / CLAUDE.md {t("を検出すると自動で読み込みます")}
           </p>
+        </Card>
+
+        <Card title={t("検証と整形")}>
+          <Field
+            label={t("検証コマンド")}
+            hint={t(
+              "編集後に実行する確認コマンドです。空欄の場合、検証ゲートは無効になります。",
+            )}
+          >
+            <Input
+              value={verifyDraft ?? ""}
+              placeholder="npm test"
+              onChange={(e) => setVerifyDraft(e.target.value)}
+            />
+          </Field>
+          {selected.verifyCandidates.length > 0 && (
+            <Row className="flex-wrap gap-1">
+              <span className="text-xs text-faint">{t("候補:")}</span>
+              {selected.verifyCandidates.map((candidate) => (
+                <Button
+                  key={candidate}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setVerifyDraft(candidate);
+                    update.mutate({ verifyCommand: candidate });
+                  }}
+                >
+                  {candidate}
+                </Button>
+              ))}
+            </Row>
+          )}
+          <Field
+            label={t("整形コマンド")}
+            hint={t(
+              "編集が入ったステップの後に自動実行する整形・lintコマンドです。",
+            )}
+          >
+            <Input
+              value={formatDraft ?? ""}
+              placeholder="cargo fmt"
+              onChange={(e) => setFormatDraft(e.target.value)}
+            />
+          </Field>
+          <Row>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={
+                (verifyDraft ?? "") === savedVerify &&
+                (formatDraft ?? "") === savedFormat
+              }
+              onClick={() =>
+                update.mutate({
+                  verifyCommand: verifyDraft ?? "",
+                  formatCommand: formatDraft ?? "",
+                })
+              }
+            >
+              {t("保存")}
+            </Button>
+          </Row>
         </Card>
 
         <Card title={t("指示")}>

@@ -1,7 +1,7 @@
-import asyncio
 import base64
 import hashlib
 import secrets
+import threading
 import time as _time
 from collections import defaultdict, deque
 from datetime import UTC, timedelta
@@ -26,7 +26,7 @@ LOGIN_IP_LIMIT = 20
 ACCOUNT_CHANGE_LIMIT = 5
 ACCOUNT_CHANGE_WINDOW_SECONDS = 300
 
-_attempt_lock = asyncio.Lock()
+_attempt_lock = threading.Lock()
 _failed_attempts: defaultdict[str, deque] = defaultdict(deque)
 
 _dummy_hash: str | None = None
@@ -51,18 +51,24 @@ def _prune_empty(now):
             _failed_attempts.pop(key, None)
 
 
-async def throttle_attempt(key, limit, window_seconds):
-    """Raise 429 when the sliding failure window is exhausted for a key."""
+def throttle_attempt(key, limit, window_seconds):
+    """Raise 429 when the sliding failure window is exhausted for a key.
+
+    The critical section is a few dictionary operations, so a thread lock is
+    enough; keeping this synchronous lets auth endpoints stay ``def`` and run
+    their password hashing and DB work in FastAPI's threadpool instead of
+    blocking the event loop.
+    """
     now = _time.monotonic()
-    async with _attempt_lock:
+    with _attempt_lock:
         _prune_empty(now)
         if len(_timed_out(key, window_seconds, now)) >= limit:
             raise HTTPException(429, "試行回数が多すぎます。しばらく待ってから再試行してください。")
 
 
-async def record_failed_attempt(key, window_seconds):
+def record_failed_attempt(key, window_seconds):
     now = _time.monotonic()
-    async with _attempt_lock:
+    with _attempt_lock:
         _prune_empty(now)
         _failed_attempts[key].append(now)
 

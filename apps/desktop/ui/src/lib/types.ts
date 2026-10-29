@@ -222,7 +222,6 @@ export interface SettingsView {
   egress_allowlist: string[];
   /** Browser-only opt-in for loopback / private-network navigation. */
   browser_allow_local: boolean;
-  telemetry_consent: boolean;
   language: string | null;
   theme: string | null;
   projects_root: string | null;
@@ -245,7 +244,11 @@ export interface SettingsView {
   format_command: string | null;
   /** Refuse shell commands that write outside the workspace. */
   sandbox_terminal: boolean;
-  /** Codex-compatible database encryption at rest. Defaults to false. */
+  /**
+   * Reserved for the future SQLCipher migration; always `false` today.
+   * The database is plain SQLite, so the UI must not present this as an
+   * available protection.
+   */
   database_encryption: boolean;
   onboarding_completed: boolean | null;
   /** Check GitHub Releases for a newer build once per launch. Ships enabled. */
@@ -390,6 +393,12 @@ export interface ProjectView {
   /** Read-only extra folders the agent may read from (Codex `--add-dir`). */
   additionalPaths: string[];
   sources: string[];
+  /** The project's own check; falls back to the app-wide default. */
+  verifyCommand: string | null;
+  /** Formatter/lint command applied after edits. */
+  formatCommand: string | null;
+  /** Commands the backend detected for this folder, offered as suggestions. */
+  verifyCandidates: string[];
   created_at: string;
   updated_at: string;
 }
@@ -412,6 +421,8 @@ export interface AgentView {
   name: string;
   instructions: string;
   tool_ids: string[];
+  /** Optional `provider:model` override; empty means the parent's model. */
+  modelId: string | null;
   updated_at: string;
 }
 
@@ -485,10 +496,29 @@ export interface RunView {
   error: string | null;
 }
 
+/** A snapshot frame. Page metadata (URL, title, history) comes from the much
+ *  cheaper `info` call, so a 2 s poll does not also pay three extra CDP
+ *  round-trips just to draw the toolbar. */
 export interface BrowserFrameView {
   data: string;
   width: number;
   height: number;
+}
+
+/** One CDP screencast frame pushed by the backend (`browser://frame`). */
+export interface BrowserScreencastFrame {
+  workspace_id: string;
+  data: string;
+  width: number;
+  height: number;
+}
+
+/** One Chromium page in the browser tab strip. */
+export interface BrowserTabView {
+  id: string;
+  url: string | null;
+  title: string | null;
+  active: boolean;
 }
 
 export type BrowserInstallStatus =
@@ -514,7 +544,6 @@ export interface BrowserInstallState {
 export interface BrowserStatus {
   backend: string;
   source: "installed" | "bundled" | "system" | "override" | "none";
-  headless: boolean;
   executable: string | null;
   installed_version: string | null;
   pinned_version: string;

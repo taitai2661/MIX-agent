@@ -5,16 +5,34 @@ import type { Fragment, PartOfDay, Season, Tone } from "./types";
  * 合成の制約は文形のタグで判定するため、ここで直接指定すると
  * タグと実文が食い違い、「？」「？」が連続しても弾けなくなります。
  */
-export function sentence(id: string, text: string, tone: Tone = "polite", weight?: number): Fragment {
-  return { id, text, tone, form: text.endsWith("？") ? "question" : "declarative", weight };
+export function sentence(
+  id: string,
+  text: string,
+  tone: Tone = "polite",
+  weight?: number,
+): Fragment {
+  return {
+    id,
+    text,
+    tone,
+    form: text.endsWith("？") ? "question" : "declarative",
+    weight,
+  };
 }
 
 // 1. 挨拶。時間帯ごとに語彙を分けるため約 48 文。
 export const openings: Record<PartOfDay, readonly Fragment[]> = {
   earlyMorning: [
     sentence("em-1", "おはようございます。今日はどんな一日になりそうですか？"),
-    sentence("em-2", "おはようございます。朝のうちに決めると、あとで軽くなります。"),
-    sentence("em-3", "おはようございます。一日のうちで最も静かな時間ですね。", "calm"),
+    sentence(
+      "em-2",
+      "おはようございます。朝のうちに決めると、あとで軽くなります。",
+    ),
+    sentence(
+      "em-3",
+      "おはようございます。一日のうちで最も静かな時間ですね。",
+      "calm",
+    ),
     sentence("em-4", "おはようございます。何から手をつきましょうか？"),
     sentence("em-5", "おはようございます。眠気は大丈夫ですか？"),
     sentence("em-6", "おはようございます。今は準備の時間ですかね？", "casual"),
@@ -25,12 +43,20 @@ export const openings: Record<PartOfDay, readonly Fragment[]> = {
     sentence("mo-3", "おはようございます。一日が動き出す時間ですね。", "calm"),
     sentence("mo-4", "おはようございます。今あるものを整理して始めますか？"),
     sentence("mo-5", "おはようございます。今日の段取りを一緒に組みましょう。"),
-    sentence("mo-6", "おはようございます。何から手を入れましょうか？", "casual"),
+    sentence(
+      "mo-6",
+      "おはようございます。何から手を入れましょうか？",
+      "casual",
+    ),
   ],
   lateMorning: [
     sentence("lm-1", "おはようございます。今はどのあたりまで進んでいますか？"),
     sentence("lm-2", "おはようございます。仕事の速度を上げられる時間です。"),
-    sentence("lm-3", "おはようございます。一番、判断が効く時間ですね。", "calm"),
+    sentence(
+      "lm-3",
+      "おはようございます。一番、判断が効く時間ですね。",
+      "calm",
+    ),
     sentence("lm-4", "おはようございます。今日中のゴールをどこにしますか？"),
     sentence("lm-5", "おはようございます。手を動かすのに十分な時間ですね。"),
     sentence("lm-6", "おはようございます。手を動かしますか？", "casual"),
@@ -68,9 +94,16 @@ export const openings: Record<PartOfDay, readonly Fragment[]> = {
     sentence("ev-6", "こんばんは。もう一息つけますか？", "casual"),
   ],
   lateNight: [
-    sentence("ln-1", "こんばんは。遅くまでお疲れさまです。何をお手伝いしましょうか？"),
+    sentence(
+      "ln-1",
+      "こんばんは。遅くまでお疲れさまです。何をお手伝いしましょうか？",
+    ),
     sentence("ln-2", "こんばんは。夜は判断よりも、記録に向いています。"),
-    sentence("ln-3", "こんばんは。夜更けの作業は、慎重に進めるのが安全です。", "calm"),
+    sentence(
+      "ln-3",
+      "こんばんは。夜更けの作業は、慎重に進めるのが安全です。",
+      "calm",
+    ),
     sentence("ln-4", "こんばんは。明日に持ち越すものはありますか？"),
     sentence("ln-5", "こんばんは。眠気より優先したいことはありますか？"),
     sentence("ln-6", "こんばんは。静かなうちに片づけましょう。", "casual"),
@@ -82,7 +115,10 @@ export const returningOpenings: readonly Fragment[] = [
   sentence("rt-1", "おかえりなさい。何から続けましょうか？"),
   sentence("rt-2", "おかえりなさい。続きから進めます。"),
   sentence("rt-3", "おかえりなさい。前回どこまでやっていましたか？"),
-  sentence("rt-4", "おかえりなさい。そのあいだに考えが変わったなら、そのまま教えてください。"),
+  sentence(
+    "rt-4",
+    "おかえりなさい。そのあいだに考えが変わったなら、そのまま教えてください。",
+  ),
   sentence("rt-5", "おかえりなさい。また話せたのがうれしいです。", "casual"),
   sentence("rt-6", "おかえりなさい。今日は何を進めますか？"),
 ];
@@ -136,7 +172,11 @@ export const morningEdgeContexts: readonly Fragment[] = [
 
 export const middayContexts: readonly Fragment[] = [
   sentence("ny-1", "昼のあいだは、区切りをつけやすい時間です。"),
-  sentence("ny-2", "目の前にあるのを片づけておくと、午後の作業が楽になります。", "calm"),
+  sentence(
+    "ny-2",
+    "目の前にあるのを片づけておくと、午後の作業が楽になります。",
+    "calm",
+  ),
   sentence("ny-3", "一息ついたところで、どこまで進めるか決めましょう。"),
 ];
 
@@ -156,7 +196,11 @@ export const seasonContexts: Record<Season, readonly Fragment[]> = {
   spring: [
     sentence("sp-1", "春の気配です。"),
     sentence("sp-2", "芽が出る時期なので、揃えにくい作業です。"),
-    sentence("sp-3", "春のうちに決めておくと、あとで動きやすくなります。", "calm"),
+    sentence(
+      "sp-3",
+      "春のうちに決めておくと、あとで動きやすくなります。",
+      "calm",
+    ),
   ],
   summer: [
     sentence("sm-1", "暑い時期なので、短い区切りで進めると無理がありません。"),
@@ -245,7 +289,10 @@ export const eventContexts: Record<string, Fragment> = {
 
 export const yearStartContexts: readonly Fragment[] = [
   sentence("ys-1", "年の出だしです。"),
-  sentence("ys-2", "年の初めなので、記録を浅く残しておくと、あとで作りやすいです。"),
+  sentence(
+    "ys-2",
+    "年の初めなので、記録を浅く残しておくと、あとで作りやすいです。",
+  ),
 ];
 
 export const yearEndContexts: readonly Fragment[] = [
@@ -282,7 +329,11 @@ export const activityContexts: Record<string, readonly Fragment[]> = {
   ],
   earlier: [
     sentence("ae-1", "少し久しぶりの時間ですね。"),
-    sentence("ae-2", "記録が薄いぶん、はじめから組み直すほうが楽です。", "calm"),
+    sentence(
+      "ae-2",
+      "記録が薄いぶん、はじめから組み直すほうが楽です。",
+      "calm",
+    ),
     sentence("ae-3", "前の記録は、あとから読み返せます。"),
   ],
 };

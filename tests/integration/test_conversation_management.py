@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from mix_agent.api.helpers.cleanup import purge_expired_conversations
+from mix_agent.storage.cleanup import purge_expired_conversations
 from mix_agent.db.models import Conversation, Message, now
 from mix_agent.db.session import SessionLocal
 

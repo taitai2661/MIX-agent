@@ -17,6 +17,8 @@
 13. GitHub ReleaseからApple Silicon／IntelのDMGをmacOS実機（可能なら両アーキテクチャ）へダウンロードし、`SHA256SUMS`と照合したうえで手動インストール・初回起動を確認する。macOSアプリはad-hoc署名のみで公証されていないため、Gatekeeperの「このまま開く」確認が出ること、および確認後に起動できることを実機で確かめる。続けて旧バージョンから「設定 ▸ アップデート」で新バージョンを検出し、署名検証付きでダウンロード・インストール・再起動できることを確認する。
 14. Windows 10/11 x64 実機で、NSISインストーラーを標準ユーザーとして導入し、初回起動、WebView2、SmartScreen警告、Windows Credential Manager、ターミナル（Git Bashあり／なし）、Chromiumの初回インストール、日本語ユーザー名のワークスペース、アンインストールを確認する。MSIは英語版であることを確認する。
 15. Windows実機で`SHA256SUMS`と`-Windows-x64-Setup.exe`／`-Windows-x64.msi`のチェックサムを照合する。
+16. Linux x64 実機で AppImage と deb を導入し、初回起動、OS Keychain（Secret Service）、ターミナル、Chromiumの初回インストール、デスクトップエントリ、アンインストールを確認する。AppImageではアプリ内更新、debではGitHub Releasesからの手動更新を確認する。
+17. Linux実機で`SHA256SUMS`と`-Linux-x64.AppImage`／`-Linux-x64.deb`のチェックサムを照合する。
 
 公開前にチェックする点:
 
@@ -28,6 +30,18 @@
 - Desktop版は署名付き自動更新を提供する。秘密鍵はRepository Secretsの`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`のみに置き、リポジトリや生成物へ含めない。公開鍵は`tauri.conf.json`に埋め込む。鍵のオフラインバックアップをリポジトリ外に保管する。
 - `latest.json`の4プラットフォーム（`darwin-aarch64` / `darwin-x86_64` / `windows-x86_64` / `linux-x86_64`）すべてにURLと`.sig`の内容が入っていることを確認する。1つでも欠けるとTauriはマニフェスト全体を無効とみなす。
 - `desktop-release`の`Verify tag matches app version`が成功し、タグと各manifestのバージョンが一致している。
-- `desktop-rust (windows-latest)`と`desktop-package-windows`が成功し、WindowsのPTYテスト（終了コード・cwd marker）とNSIS/MSIのビルドが通っている。
+- `desktop-rust (windows-latest)`と`desktop-package-windows`が成功し、NSIS/MSIのビルドが通っている。WindowsのPTYテスト2件は既知のConPTY制約として`#[cfg_attr(windows, ignore)]`でスキップされるため、Windows実機で手動確認する（`docs/verification.md`参照）。
 - `apps/desktop/browser/src/chromium-manifest.json` の `version` / `sha256` / `size` が、実際に配布する Chrome for Testing の zip と一致している。`pnpm chromium:pin` の差分をレビューし、リリース前に各プラットフォームで初回インストールを確認する。`desktop-release` の `verify-chromium-pin` が成功していること。
 - 初回インストールが失敗した場合に、システムの Chromium / Chrome / Edge へフォールバックできる。オフライン環境向けの手動配置手順がリリースノートにある。
+
+### Developer ID / Authenticode 署名を有効化する場合（未実施）
+
+現状は macOS が ad-hoc 署名のみ、Windows が未署名です。証明書を用意できた時点で、以下を一度に切り替えます。証明書・パスワードは Repository Secrets のみに置き、リポジトリへコミットしないでください。
+
+1. Apple Developer Program に加入し、Developer ID Application 証明書と App Store Connect API キー（または Apple ID の app-specific password）を用意する。
+2. Secrets に `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` を登録する。
+3. `desktop-release` の macOS ビルドで `APPLE_*` を渡し、`codesign --verify --deep --strict` の後段に `xcrun notarytool submit --wait` と `xcrun stapler staple` を追加する。現在の `Signature=adhoc` を要求する検証は Developer ID の検証へ置き換える。
+4. Windows は Authenticode 証明書（EV 推奨）を Secrets に登録し、Tauri の `certificateThumbprint` / `digestAlgorithm` / `timestampUrl` を設定して NSIS/MSI に署名する。署名後に `signtool verify /pa /v` を実行する。
+5. 署名済み成果物で Gatekeeper / SmartScreen の警告が出ないこと、自動更新の `.sig` が壊れていないことを実機で確認する。
+
+証明書が無い間は、リリースノートに「ad-hoc 署名 / 未署名」と初回確認手順を明記する運用を続けます。

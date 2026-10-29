@@ -18,6 +18,14 @@ permissions = [
   # `data-tauri-drag-region` header invokes. Without it the ACL rejects the
   # call and the window cannot be moved from the title bar.
   "core:window:allow-start-dragging",
+  # Windows / Linux use the custom `WindowControls` header (the native
+  # decorations are disabled in `tauri.windows.conf.json` / `tauri.linux.conf.json`
+  # so the OS buttons do not appear twice). These calls are made from the
+  # WebView, so they need an explicit grant; `core:window:default` only allows
+  # the read-only queries such as `is_maximized`.
+  "core:window:allow-minimize",
+  "core:window:allow-toggle-maximize",
+  "core:window:allow-close",
   "core:webview:default",
   "core:event:default",
   "core:app:default",

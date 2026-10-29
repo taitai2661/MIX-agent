@@ -10,7 +10,12 @@ const badgeVariants = cva(
   {
     variants: {
       tone: {
-        neutral: "border-line bg-inset text-muted",
+        // `border-line` (8% ink) all but disappears on `bg-surface` in light
+        // mode: the chip and the card behind it are the same near-white. The
+        // stronger hairline is what keeps a neutral chip reading as a shape
+        // instead of a smudge of text. Tones that carry a soft fill already
+        // have their own edge and keep the normal one.
+        neutral: "border-line-strong bg-inset text-muted",
         brand: "border-transparent bg-brand-soft text-brand",
         success: "border-transparent bg-success-soft text-success",
         warning: "border-transparent bg-warning-soft text-warning",

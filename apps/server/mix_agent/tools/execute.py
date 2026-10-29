@@ -296,6 +296,25 @@ async def runner_request(kind, path, payload, timeout=120):
         return response.json()
 
 
+def safe_upload_name(raw):
+    """Reduce a browser-supplied filename to a single, header-safe name.
+
+    Uploads used to store ``file.filename`` verbatim, which let a name contain
+    path separators, control characters (CR/LF break the ``Content-Disposition``
+    header on download) or characters Starlette cannot encode as latin-1.  The
+    name is only used for display and the download filename, so normalising it
+    here is safe and keeps the artifact key (a UUID) untouched.
+    """
+    name = re.split(r"[\\/]", (raw or "").strip())[-1]
+    name = "".join(ch for ch in name if ch.isprintable() and ch not in '"\r\n\t')
+    name = name.strip().strip(".")
+    # Keep the extension visible while bounding the stored value.
+    if len(name) > 200:
+        stem, dot, suffix = name.rpartition(".")
+        name = (stem[: 200 - len(suffix) - 1] + dot + suffix) if dot and len(suffix) <= 16 else name[:200]
+    return name or "attachment"
+
+
 def save_artifact(db, owner, content, name, mime="text/plain", kind="user-created"):
     from mix_agent.db.models import uid
 

@@ -19,9 +19,14 @@ pub struct PendingApproval {
 /// The user's answer to a pending approval prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalOutcome {
-    /// Run the Tool once. `remember` mirrors "Always Allow".
+    /// Run the Tool once.
     Approve {
+        /// Persist the rule to disk ("Always Allow").
         remember: bool,
+        /// Allow the same tool/target until the app exits. Neither a one-off
+        /// approval nor a durable rule: useful for a run that needs the same
+        /// command several times without granting it forever.
+        remember_session: bool,
     },
     Deny,
 }

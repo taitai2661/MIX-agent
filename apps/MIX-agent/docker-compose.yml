@@ -61,6 +61,8 @@ services:
       MIX_KEYS: /keys
       RUNNER_KEYS: /runner-keys
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      MIX_LOG_FORMAT: ${MIX_LOG_FORMAT:-text}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       MIX_PROJECT_MOUNT: /project
       MIX_MODELS_DEV_URL: ${MIX_MODELS_DEV_URL:-https://models.dev/api.json}
     volumes:
@@ -89,6 +91,17 @@ services:
     - host.docker.internal:host-gateway
     mem_limit: 1g
     cpus: 2
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=3).status
+        == 200 else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       db:
         condition: service_healthy

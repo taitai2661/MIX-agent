@@ -44,6 +44,8 @@ function ChatPaneBody() {
   // transcript and composer on every unrelated UI change.
   const conversationId = useUi((s) => s.conversationId);
   const setConversationId = useUi((s) => s.setConversationId);
+  const startNewThread = useUi((s) => s.startNewThread);
+  const newThreadDraft = useUi((s) => s.newThreadDraft);
   const mode = useUi((s) => s.mode);
   const modelId = useUi((s) => s.modelId);
   const setModelId = useUi((s) => s.setModelId);
@@ -93,8 +95,13 @@ function ChatPaneBody() {
   );
 
   const activeModelId = modelId || "auto";
-  const activeConversationId =
-    conversationId ?? surfaceConversations[0]?.id ?? null;
+  // A new chat stays blank until its first send, even though the surface has
+  // older threads. Falling back to `surfaceConversations[0]` here made the
+  // composer show (and send into) the newest existing thread, so the new chat
+  // was never created.
+  const activeConversationId = newThreadDraft
+    ? null
+    : (conversationId ?? surfaceConversations[0]?.id ?? null);
   // Read this thread's own timeline. A run started in another thread stays
   // tracked (and keeps streaming) instead of being wiped by the next send.
   const liveEntry = useRunEvents((s) =>
@@ -130,6 +137,10 @@ function ChatPaneBody() {
 
   useEffect(() => {
     if (!conversations.data) return;
+    // A new chat is deliberately blank until its first send. Without this
+    // guard the auto-select below immediately persisted the newest existing
+    // thread and the draft's first message landed in that thread.
+    if (newThreadDraft) return;
     const currentConv = conversations.data.find((c) => c.id === conversationId);
     if (
       !conversationId ||
@@ -140,7 +151,13 @@ function ChatPaneBody() {
       );
       setConversationId(match ? match.id : null);
     }
-  }, [conversationId, conversations.data, surface, setConversationId]);
+  }, [
+    conversationId,
+    conversations.data,
+    surface,
+    setConversationId,
+    newThreadDraft,
+  ]);
 
   // Opening a project-scoped thread moves the file tree / diff scope with it.
   const activeConversation = useMemo(
@@ -250,8 +267,13 @@ function ChatPaneBody() {
         // retried without cluttering history.
         retryNeedsNewConversation.current = createdId !== null;
         if (createdId) {
+          // Return to a blank draft, not to "no selection": clearing the id
+          // alone ends draft mode and the auto-select effect adopts the newest
+          // existing thread, so the retry would visibly jump threads. Do this
+          // before the delete round-trip so the composer never shows the
+          // already-failed thread while the request is in flight.
+          startNewThread();
           await api.deleteConversation(createdId).catch(() => undefined);
-          setConversationId(null);
           void queryClient.invalidateQueries({
             queryKey: CONVERSATIONS_QUERY_KEY,
           });
@@ -397,6 +419,30 @@ function ChatPaneBody() {
     if (liveRunId) cancel.mutate(liveRunId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveRunId, cancel.mutate]);
+  // Send text to the running agent. `steer_run` returns false when the Run has
+  // already finished, in which case the text becomes an ordinary new turn
+  // rather than disappearing into a queue nobody will drain.
+  const onSteer = useCallback(
+    async (content: string) => {
+      if (liveRunId) {
+        const accepted = await api.steerRun(liveRunId, content);
+        if (accepted) {
+          if (activeConversationId) {
+            // The engine folds it in at the next turn boundary and persists it
+            // then; refresh once so the transcript shows the user turn.
+            window.setTimeout(() => {
+              void queryClient.invalidateQueries({
+                queryKey: ["messages", activeConversationId],
+              });
+            }, 1500);
+          }
+          return;
+        }
+      }
+      await onSend(content, [], { temporaryMode: false, allowTools: true });
+    },
+    [liveRunId, activeConversationId, onSend, queryClient],
+  );
   // Retry a failed run by regenerating from the last user turn. The backend
   // removes that turn and everything after it, so re-editing with identical
   // content is exactly a retry — no new prop drilling into MessageItem needed
@@ -515,6 +561,7 @@ function ChatPaneBody() {
             busy={busy}
             onSend={onSend}
             onStop={onStop}
+            onSteer={onSteer}
             draftKey={activeConversationId ?? "none"}
           />
         </PaneErrorBoundary>

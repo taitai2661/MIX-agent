@@ -1,8 +1,12 @@
 import type { components } from "../generated/api";
 import { ja } from "./strings";
-import { t } from "./i18n";
+import { getLanguage, t } from "./i18n";
+import { errorCodeText } from "./errorCodes";
 import { uuid } from "./uuid";
 export type Row = Omit<components["schemas"]["RecordView"], "data"> & {
+  // Row payloads are per-endpoint JSON objects; the generated RecordView models
+  // them as an open map, so the concrete shape is only known at each call site.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic row payload, narrowed per feature
   data: Record<string, any>;
 };
 let csrf = "";
@@ -75,9 +79,24 @@ export class HttpError extends Error {
   }
 }
 
-type ErrorDetail = Array<{ loc?: unknown[]; msg?: string }> | string | undefined;
+type ErrorDetail =
+  | Array<{ loc?: unknown[]; msg?: string }>
+  | string
+  | undefined;
+type ApiErrorBody = { detail?: ErrorDetail; code?: string };
 
-function errorMessage(detail: ErrorDetail): string {
+function errorMessage(body: ApiErrorBody, status: number): string {
+  const { detail, code } = body;
+  // Prefer the stable code: it survives wording changes and does not depend on
+  // the server's sentence being present in the i18n table. Japanese keeps the
+  // server's canonical message; English uses the code table, then a generic
+  // status message, so an untranslated code never leaks Japanese.
+  if (getLanguage() === "en") {
+    const text = errorCodeText(code) ?? errorCodeText(`common.http_${status}`);
+    if (text) return text;
+  }
+  if (code && typeof detail === "string" && getLanguage() === "ja")
+    return detail;
   if (typeof detail === "string") return t(detail);
   if (Array.isArray(detail)) {
     const fields = detail
@@ -95,7 +114,12 @@ function errorMessage(detail: ErrorDetail): string {
 
 function canRetry(method: string, options: ApiOptions): boolean {
   const verb = method.toUpperCase();
-  return verb === "GET" || verb === "HEAD" || verb === "OPTIONS" || options.retryUnsafe === true;
+  return (
+    verb === "GET" ||
+    verb === "HEAD" ||
+    verb === "OPTIONS" ||
+    options.retryUnsafe === true
+  );
 }
 
 function notifyUnauthorized(path: string, status?: number) {
@@ -129,7 +153,7 @@ function pipeTimeout(
   };
 }
 
-export async function api<T = any>(
+export async function api<T = unknown>(
   path: string,
   method = "GET",
   body?: unknown,
@@ -177,7 +201,7 @@ export async function api<T = any>(
           .catch(() => ({ detail: t(ja.communicationFailed) }));
         cleanup();
         notifyUnauthorized(path, response.status);
-        throw new HttpError(errorMessage(error.detail), response.status);
+        throw new HttpError(errorMessage(error, response.status));
       }
       cleanup();
       return await response.json();
@@ -242,17 +266,21 @@ export async function binary(
           await sleep(delay, options.signal);
           continue;
         }
-        const e = await r.json().catch(() => ({ detail: t(ja.operationFailed) }));
+        const e = await r
+          .json()
+          .catch(() => ({ detail: t(ja.operationFailed) }));
         cleanup();
         notifyUnauthorized(path, r.status);
-        throw new HttpError(errorMessage(e.detail), r.status);
+        throw new HttpError(errorMessage(e, r.status));
       }
       cleanup();
       return r;
     } catch (error) {
       cleanup();
       if (options.signal?.aborted) {
-        throw new Error(t(timedOut() ? ja.requestTimeout : ja.requestInterrupted));
+        throw new Error(
+          t(timedOut() ? ja.requestTimeout : ja.requestInterrupted),
+        );
       }
       if (timedOut()) {
         throw new Error(t(ja.requestTimeout));

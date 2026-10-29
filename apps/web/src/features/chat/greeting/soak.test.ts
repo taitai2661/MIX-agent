@@ -43,7 +43,9 @@ describe("全日程を通した合成", () => {
         expect(title).not.toMatch(/？{2,}/);
         expect(title.split("？").length).toBeLessThanOrEqual(2);
         expect(welcome.suggestions).toHaveLength(3);
-        expect(new Set(welcome.suggestions.map((item) => item.id)).size).toBe(3);
+        expect(new Set(welcome.suggestions.map((item) => item.id)).size).toBe(
+          3,
+        );
       }
     }
     console.log("組合せ:", combinations, " 異なる見出し:", titles.size);
@@ -60,8 +62,13 @@ describe("全日程を通した合成", () => {
     };
     for (let day = 0; day < 365; day++) {
       for (const hour of [9, 20]) {
-        const welcome = welcomeFrom(signalsFor(new Date(2026, 0, 1 + day, hour, 3)), [], random);
-        for (const id of welcome.titleIds) expect(greetingEn[id], id).toBeTruthy();
+        const welcome = welcomeFrom(
+          signalsFor(new Date(2026, 0, 1 + day, hour, 3)),
+          [],
+          random,
+        );
+        for (const id of welcome.titleIds)
+          expect(greetingEn[id], id).toBeTruthy();
         expect(greetingEn[welcome.noteId], welcome.noteId).toBeTruthy();
       }
     }

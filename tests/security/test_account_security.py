@@ -1,10 +1,47 @@
 from fastapi.testclient import TestClient
-from mix_agent.api.routes import record_login
+from mix_agent.api.common import record_login
 from mix_agent.auth.security import passwords
 from mix_agent.db.models import Session, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.main import app
 from sqlalchemy import select
+
+
+def test_http_errors_carry_stable_codes(signed):
+    # Known message: the code is the stable contract, the detail stays Japanese.
+    bad_password = signed.post(
+        "/api/v1/auth/password",
+        json={"current_password": "wrong-password-123", "new_password": "new-password-12345"},
+    )
+    assert bad_password.status_code == 401
+    assert bad_password.json()["code"] == "auth.current_password_invalid"
+    assert bad_password.json()["detail"] == "現在のパスワードが違います"
+
+    # Unauthenticated request uses a different known code. (`signed` is the
+    # same TestClient as `client`, so drop the session cookie explicitly.)
+    signed.cookies.clear()
+    anonymous = signed.get("/api/v1/auth/me")
+    assert anonymous.status_code == 401
+    assert anonymous.json()["code"] == "auth.login_required"
+
+
+def test_unknown_http_error_uses_status_fallback():
+    from mix_agent.main import http_error
+    from starlette.exceptions import HTTPException
+
+    import asyncio
+
+    class _Request:
+        pass
+
+    response = asyncio.run(http_error(_Request(), HTTPException(422, "validator said no")))
+    assert response.status_code == 422
+    import json
+
+    assert json.loads(response.body) == {
+        "detail": "validator said no",
+        "code": "common.http_422",
+    }
 
 
 def test_password_change_requires_current_password_and_rotates_csrf(signed):
