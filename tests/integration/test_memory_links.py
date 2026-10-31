@@ -85,8 +85,7 @@ def test_the_unique_constraint_holds_at_the_database_and_in_the_upsert(signed):
         # (2) migration 0025 put the rule in the table, not only in the code.
         constraints = inspect(db.get_bind()).get_unique_constraints("memory_links")
         assert any(
-            set(constraint["column_names"])
-            == {"owner_id", "source_memory_id", "target_memory_id", "kind"}
+            set(constraint["column_names"]) == {"owner_id", "source_memory_id", "target_memory_id", "kind"}
             for constraint in constraints
         )
 
@@ -109,7 +108,9 @@ def test_supersede_writes_the_column_and_its_mirror_with_the_same_direction(sign
     with SessionLocal() as db:
         owner = owner_id(db)
         old = mem_service.change(db, owner, "古い説明は五段階で採点する", source_run="explicit-user-request")
-        new = mem_service.change(db, owner, "新しい説明は七段階で採点する", source_run="explicit-user-request")
+        new = mem_service.change(
+            db, owner, "新しい説明は七段階で採点する", source_run="explicit-user-request"
+        )
         db.flush()
 
         mem_runtime.supersede(db, owner, old_id=old["id"], new_id=new["id"], reason="採点方式が変わった")
@@ -129,8 +130,7 @@ def test_supersede_writes_the_column_and_its_mirror_with_the_same_direction(sign
         # Clearing the column (an older revision) clears the edge, and
         # restoring it brings the edge back.
         pre_supersede = next(
-            item for item in db.scalars(select(MemoryRevision))
-            if item.data.get("memory_id") == old["id"]
+            item for item in db.scalars(select(MemoryRevision)) if item.data.get("memory_id") == old["id"]
         )
         mem_service.restore(db, owner, retired, pre_supersede.data["previous"])
         db.flush()
@@ -148,7 +148,9 @@ def test_dispute_and_resolve_keep_the_edges_in_step_with_both_columns(signed):
         challenge = mem_service.change(db, owner, "移動手段は電車", source_run="explicit-user-request")
         db.flush()
 
-        mem_runtime.dispute(db, owner, memory_id=challenge["id"], conflicting_id=stored["id"], reason="どちらが最新か")
+        mem_runtime.dispute(
+            db, owner, memory_id=challenge["id"], conflicting_id=stored["id"], reason="どちらが最新か"
+        )
         db.flush()
 
         row = db.get(Memory, challenge["id"])
@@ -174,7 +176,10 @@ def test_dispute_and_resolve_keep_the_edges_in_step_with_both_columns(signed):
         assert _edges(db, "contradicts") == []
         superseding = _edges(db, "supersedes")
         assert len(superseding) == 1
-        assert (superseding[0].source_memory_id, superseding[0].target_memory_id) == (stored["id"], challenge["id"])
+        assert (superseding[0].source_memory_id, superseding[0].target_memory_id) == (
+            stored["id"],
+            challenge["id"],
+        )
         assert _link_count(db) == 1
 
 
@@ -190,8 +195,7 @@ def test_revision_restore_follows_the_pointers_it_restores(signed):
         mem_runtime.dispute(db, owner, memory_id=stored["id"], conflicting_id=challenge["id"])
         db.flush()
         pre_dispute = next(
-            item for item in db.scalars(select(MemoryRevision))
-            if item.data.get("memory_id") == stored["id"]
+            item for item in db.scalars(select(MemoryRevision)) if item.data.get("memory_id") == stored["id"]
         )
         row = db.get(Memory, stored["id"])
         assert row.disputed_by_id == challenge["id"]
@@ -240,7 +244,10 @@ def test_expansion_follows_exactly_one_hop_and_says_so_in_debug(signed):
         assert ids[0] == seed["id"]  # the seed stays the answer, not a link
         assert hop_one["id"] in ids
         assert hop_two["id"] not in ids, "a linked row's own neighbour is two hops away"
-        assert next(item for item in found["memories"] if item["id"] == hop_one["id"])["selection_reason"] == "リンクから"
+        assert (
+            next(item for item in found["memories"] if item["id"] == hop_one["id"])["selection_reason"]
+            == "リンクから"
+        )
         # TraceView's key keeps its shape: {source, target, activation}.
         assert debug["association_expansion"] == [
             {"source": seed["id"], "target": hop_one["id"], "activation": 0.2, "kind": "relates_to"}
@@ -258,10 +265,7 @@ def test_the_degree_cap_stops_a_walk_before_the_expansion_cap_would(signed):
         seed = mem_service.change(db, owner, "高次数の種ノード", source_run="explicit-user-request")
         # The query words live only in the seed: a neighbour that shared them
         # would be a *seed* by §5.2 and could never prove the degree cap.
-        neighbours = [
-            mem_service.change(db, owner, f"近傍その{index} は素数を数える")
-            for index in range(20)
-        ]
+        neighbours = [mem_service.change(db, owner, f"近傍その{index} は素数を数える") for index in range(20)]
         db.flush()
         for neighbour in neighbours:
             mem_service.link(db, owner, seed["id"], neighbour["id"], "relates_to")
@@ -466,16 +470,25 @@ def test_extraction_proposes_links_to_the_rows_it_agrees_with(signed):
     with SessionLocal() as db:
         owner = owner_id(db)
         stored = mem_service.change(
-            db, owner, "formal_language_source では要約を省く", source_run="explicit-user-request",
+            db,
+            owner,
+            "formal_language_source では要約を省く",
+            source_run="explicit-user-request",
         )
         db.flush()
 
         job = SimpleNamespace(owner_id=owner, run_id=None)
-        touched = mem_jobs._apply(db, job, [{
-            "content": "formal_language_source では箇条書きを三行に収める",
-            "action": "CREATE",
-            "role": "preference",
-        }])
+        touched = mem_jobs._apply(
+            db,
+            job,
+            [
+                {
+                    "content": "formal_language_source では箇条書きを三行に収める",
+                    "action": "CREATE",
+                    "role": "preference",
+                }
+            ],
+        )
         db.flush()
 
         assert len(touched) == 1 and touched[0] != stored["id"]

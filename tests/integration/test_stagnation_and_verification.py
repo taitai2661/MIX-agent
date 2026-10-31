@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from mix_agent.runs import stagnation
 from mix_agent.runs import verification
-from mix_agent.runs.engine import agent_completion_issue
+from mix_agent.runs.engine_support import agent_completion_issue
 
 
 def _run(plan=None, mode="agent"):
@@ -34,6 +34,7 @@ def test_stagnation_detects_repeated_tool_failures():
         _call("read_file", risk="read", result={"error": "fail"}),
     ]
     rows = list(reversed(calls))  # type: ignore
+
     # The detector reads from the DB, so feed an in-memory shim.
     class _DB:
         def scalar(self, _stmt):

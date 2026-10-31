@@ -74,6 +74,11 @@ pub struct RunView {
     /// explain why a Run stopped instead of leaving a silent spinner.
     #[serde(default)]
     pub error: Option<String>,
+    /// True when the persisted event log exceeds
+    /// `crate::runs::events::MAX_REPLAY_EVENTS`. The transcript list can warn
+    /// without loading the whole event window first.
+    #[serde(default)]
+    pub replay_truncated: bool,
 }
 
 pub type RunState = RunView;

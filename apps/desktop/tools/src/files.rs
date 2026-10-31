@@ -199,6 +199,10 @@ pub struct FilePage {
     pub has_more: bool,
     /// True when the file was too large to inline at all.
     pub truncated: bool,
+    /// Stable-within-process fingerprint of the whole file, so the engine can
+    /// notice that the content changed between the read and a later edit.
+    /// `0` means "not computed" (the file was too large).
+    pub fingerprint: u64,
 }
 
 /// Read a slice of `path`, paging by 1-based line numbers.
@@ -216,9 +220,11 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
             total_lines: 0,
             has_more: false,
             truncated: true,
+            fingerprint: 0,
         });
     }
     let full = std::fs::read_to_string(path)?;
+    let fingerprint = fingerprint_of(full.as_bytes());
     let all: Vec<&str> = full.lines().collect();
     let total_lines = all.len();
     let start_line = args
@@ -239,7 +245,19 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
     let slice = if total_lines == 0 || start_line > total_lines {
         String::new()
     } else {
-        all[start_line - 1..end_line].join("\n")
+        // Prefix every line with its 1-based number. Without it the model has
+        // to count lines to use `offset`/`limit`, and a line number quoted from
+        // `symbols` could not be turned into a read window at all. The format
+        // matches what other coding agents emit, so anchors copied back into
+        // `edit` are recognised (see `edit::strip_line_number_prefixes`).
+        let mut out = String::new();
+        for (offset, line) in all[start_line - 1..end_line].iter().enumerate() {
+            if offset > 0 {
+                out.push('\n');
+            }
+            out.push_str(&format!("{:>6}\t{}", start_line + offset, line));
+        }
+        out
     };
     Ok(FilePage {
         path: display.to_string(),
@@ -249,7 +267,17 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
         total_lines,
         has_more: end_line < total_lines,
         truncated: false,
+        fingerprint,
     })
+}
+
+/// 64-bit SipHash of the file bytes. Only ever compared with another value from
+/// this process, so a stable cryptographic hash would be overkill.
+pub fn fingerprint_of(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A unique sibling of `target` used as the staging file for an atomic write.
@@ -284,7 +312,8 @@ impl Tool for FilesTool {
     fn description(&self) -> &str {
         "Read, write, list, search and delete files inside the workspace root. Use `edit` \
          instead of `write` for changes to existing files; `write` replaces a whole file. \
-         `read` supports `offset` / `limit` (1-based line numbers) for large files."
+         `read` returns each line prefixed with its 1-based line number and supports \
+         `offset` / `limit` (1-based line numbers) for large files."
     }
     /// Reading is free; changing the workspace is not. Deciding per action
     /// rather than per tool is what lets an agent look at a repository without
@@ -597,5 +626,49 @@ mod tests {
     fn resolve_context_root_requires_an_existing_folder() {
         assert!(FilesTool::resolve_context_root(None).is_ok());
         assert!(FilesTool::resolve_context_root(Some("/definitely/not/a/dir")).is_err());
+    }
+
+    #[test]
+    fn read_prefixes_every_line_with_its_number() {
+        let root = temp_root("read-numbered");
+        let file = root.join("sample.txt");
+        std::fs::write(&file, "alpha\nbeta\ngamma\n").unwrap();
+
+        let page = read_page(&file, &serde_json::json!({}), "sample.txt").unwrap();
+        assert_eq!(page.content, "     1\talpha\n     2\tbeta\n     3\tgamma");
+        assert_eq!(page.start_line, 1);
+        assert_eq!(page.end_line, 3);
+        assert_eq!(page.total_lines, 3);
+        assert!(!page.has_more);
+    }
+
+    #[test]
+    fn read_offset_keeps_the_original_line_numbers() {
+        let root = temp_root("read-offset");
+        let file = root.join("sample.txt");
+        std::fs::write(&file, "one\ntwo\nthree\nfour\n").unwrap();
+
+        let page = read_page(
+            &file,
+            &serde_json::json!({ "offset": 2, "limit": 2 }),
+            "sample.txt",
+        )
+        .unwrap();
+        assert_eq!(page.content, "     2\ttwo\n     3\tthree");
+        assert_eq!(page.start_line, 2);
+        assert_eq!(page.end_line, 3);
+        assert!(page.has_more);
+    }
+
+    #[test]
+    fn read_of_an_empty_file_reports_no_lines() {
+        let root = temp_root("read-empty");
+        let file = root.join("empty.txt");
+        std::fs::write(&file, "").unwrap();
+
+        let page = read_page(&file, &serde_json::json!({}), "empty.txt").unwrap();
+        assert_eq!(page.content, "");
+        assert_eq!(page.total_lines, 0);
+        assert_eq!(page.start_line, 0);
     }
 }

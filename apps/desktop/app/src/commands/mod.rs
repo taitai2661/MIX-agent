@@ -4,6 +4,7 @@
 //! core. Every operation the UI can trigger is implemented here, and the WebView
 //! is denied direct access to `fs`, `shell`, and `http` plugins.
 
+pub mod access;
 pub mod agents;
 pub mod approvals;
 pub mod auto;
@@ -19,6 +20,7 @@ pub mod local_runtime;
 pub mod mcp;
 pub mod memories;
 pub mod models;
+pub mod picker;
 pub mod projects;
 pub mod providers;
 pub mod runs;

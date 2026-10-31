@@ -200,7 +200,7 @@ pub fn is_mutating(name: &str, args: &serde_json::Value) -> bool {
             args.get("action")
                 .and_then(|v| v.as_str())
                 .unwrap_or("status"),
-            "status" | "diff"
+            "status" | "diff" | "log" | "show" | "blame"
         ),
         // `memory` reads with `recall`/`search` and writes with
         // `remember`/`forget`. `knowledge` reads with `search` only.
@@ -241,7 +241,7 @@ pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
             args.get("action")
                 .and_then(|v| v.as_str())
                 .unwrap_or("status"),
-            "status" | "diff"
+            "status" | "diff" | "log" | "show" | "blame"
         ),
         "glob" | "grep" | "symbols" | "web_fetch" | "web_fetch_pdf" | "web_search"
         | "image_vision" | "network" | "workspace_check" => true,

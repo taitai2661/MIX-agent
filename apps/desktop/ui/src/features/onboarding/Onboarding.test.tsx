@@ -15,6 +15,7 @@ vi.mock("@/lib/api", () => ({
     providerPresets: vi.fn(async () => []),
     listProjects: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
+    pickFolder: vi.fn(async () => "/tmp/demo"),
     getSettings: vi.fn(async () => ({ ...DEFAULT_SETTINGS })),
     updateSettings: vi.fn(async (input: SettingsView) => input),
     createProvider: vi.fn(async () => ({
@@ -37,6 +38,9 @@ vi.mock("@/lib/api", () => ({
       rootPath: "/tmp/demo",
       additionalPaths: [],
       sources: [],
+      verifyCommand: null,
+      formatCommand: null,
+      verifyCandidates: [],
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     })),
@@ -66,10 +70,6 @@ vi.mock("@/lib/api", () => ({
       throw new Error("not under test");
     }),
   },
-}));
-
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(async () => "/tmp/demo"),
 }));
 
 const mockedApi = vi.mocked(api);
@@ -300,6 +300,9 @@ describe("Onboarding", () => {
         rootPath: "/tmp/demo",
         additionalPaths: [],
         sources: [],
+        verifyCommand: null,
+        formatCommand: null,
+        verifyCandidates: [],
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
       },

@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Providers, visibleProviderFields, type ProviderPreset } from "./Providers";
+import {
+  Providers,
+  visibleProviderFields,
+  type ProviderPreset,
+} from "./Providers";
 
 const openai: ProviderPreset = {
   id: "openai",
@@ -61,11 +65,15 @@ it("asks for name, URL, and connection type on custom providers", () => {
 });
 
 it("shows popular connections instead of the advanced form", () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   client.setQueryData(["/providers"], []);
   client.setQueryData(["/provider-presets"], [openai, ollama, custom]);
   const html = renderToStaticMarkup(
-    <QueryClientProvider client={client}><Providers /></QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <Providers />
+    </QueryClientProvider>,
   );
   expect(html).toContain("よく使う接続");
   expect(html).toContain("OpenAI");

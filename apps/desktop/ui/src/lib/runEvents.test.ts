@@ -395,6 +395,26 @@ describe("isBusy", () => {
   });
 });
 
+describe("replay truncation", () => {
+  it("marks a timeline when the backend cut the replay window", () => {
+    const next = applyRunEvent(
+      createTimeline("run-1"),
+      event("replay_truncated", { limit: 50_000, omitted: 1_234 }),
+    );
+    expect(next.replayTruncated).toBe(true);
+    expect(next.replayOmitted).toBe(1_234);
+  });
+
+  it("keeps the flag when an older backend omits the count", () => {
+    const next = applyRunEvent(
+      createTimeline("run-1"),
+      event("replay_truncated", { limit: 50_000 }),
+    );
+    expect(next.replayTruncated).toBe(true);
+    expect(next.replayOmitted).toBeNull();
+  });
+});
+
 describe("isFileWrite", () => {
   it("detects files write with path and content", () => {
     expect(

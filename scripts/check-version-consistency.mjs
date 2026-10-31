@@ -55,8 +55,38 @@ function readRegexVersion(relativePath, pattern, label) {
   return match[1];
 }
 
+/**
+ * The ZimaOS store Compose is generated from `compose.yaml`, so it carries two
+ * version surfaces the manifests above do not: the GHCR image tags and the
+ * dashboard metadata `version`. Both drifted silently before (v0.5.2 assets
+ * next to a v0.5.4 app), so they are checked here rather than trusted.
+ */
+function readStoreCompose(relativePath) {
+  const text = readFileSync(join(root, relativePath), "utf8");
+  const images = [...text.matchAll(/image:\s*ghcr\.io\/[^:\s]+-[a-z-]+:v(\d+\.\d+\.\d+)/g)].map(
+    (match) => match[1],
+  );
+  const metadata = text.match(/^\s*version:\s*(\d+\.\d+\.\d+)\s*$/m);
+  if (images.length === 0) {
+    throw new Error(`${relativePath} has no GHCR image tags`);
+  }
+  if (!metadata) {
+    throw new Error(`${relativePath} has no store metadata version`);
+  }
+  return { images, metadata: metadata[1] };
+}
+
+const storeCompose = readStoreCompose("apps/MIX-agent/docker-compose.yml");
+const storeMetaKeys = [
+  ...readFileSync(join(root, "scripts/render_zimaos_compose.py"), "utf8").matchAll(
+    /^\s{4}"v(\d+\.\d+\.\d+)":\s*\{/gm,
+  ),
+].map((match) => match[1]);
+
+const expected = readJson("package.json").version;
+
 const versions = [
-  ["package.json", readJson("package.json").version],
+  ["package.json", expected],
   ["apps/web/package.json", readJson("apps/web/package.json").version],
   ["apps/desktop/package.json", readJson("apps/desktop/package.json").version],
   ["apps/desktop/ui/package.json", readJson("apps/desktop/ui/package.json").version],
@@ -91,9 +121,17 @@ const versions = [
       "MCP clientInfo version",
     ),
   ],
+  ["apps/MIX-agent/docker-compose.yml", storeCompose.metadata],
+  ...storeCompose.images.map((version, index) => [
+    `apps/MIX-agent/docker-compose.yml (image ${index + 1})`,
+    version,
+  ]),
+  [
+    "scripts/render_zimaos_compose.py (RELEASE_META)",
+    storeMetaKeys.includes(expected) ? expected : `missing v${expected} entry [${storeMetaKeys.join(", ")}]`,
+  ],
 ];
 
-const expected = versions[0][1];
 let failed = false;
 
 for (const [file, version] of versions) {

@@ -14,7 +14,12 @@ from sqlalchemy import select
 
 @pytest.fixture
 def fake_runners(monkeypatch):
-    state = {"execution": {"files": {"hello.txt": "aGVsbG8="}}, "mcp": {"files": {}}, "manager": {"volumes": {}}}
+    state = {
+        "execution": {"files": {"hello.txt": "aGVsbG8="}},
+        "mcp": {"files": {}},
+        "manager": {"volumes": {}},
+    }
+
     async def request(kind, path, payload, **kwargs):
         if path == "/snapshot":
             return copy.deepcopy(state[kind])
@@ -29,8 +34,10 @@ def fake_runners(monkeypatch):
             state[kind] = copy.deepcopy(payload)
             return {"ok": True}
         raise AssertionError(path)
+
     monkeypatch.setattr(backup, "runner_request", request)
     return state
+
 
 async def test_complete_backup_restores_db_key_files(signed, fake_runners):
     with SessionLocal() as db:
@@ -53,6 +60,7 @@ async def test_complete_backup_restores_db_key_files(signed, fake_runners):
         assert (config.ARTIFACTS / artifact["artifact_id"]).read_bytes() == b"artifact"
     assert fake_runners["execution"]["files"]["hello.txt"] == "aGVsbG8="
 
+
 async def test_restore_invalid_password_leaves_current_state(signed, fake_runners):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
@@ -63,15 +71,18 @@ async def test_restore_invalid_password_leaves_current_state(signed, fake_runner
             await backup.restore(db, raw, "incorrect-password")
         assert db.scalar(select(Memory)).data["content"] == "keep this"
 
+
 async def test_database_failure_compensates_workspace(signed, fake_runners, monkeypatch):
     with SessionLocal() as db:
         raw = await backup.create(db, "test-backup-password")
         fake_runners["execution"] = {"files": {"current.txt": "bmV3"}}
         from contextlib import contextmanager
+
         @contextmanager
         def fail():
             raise RuntimeError("simulated database failure")
             yield
+
         monkeypatch.setattr(backup.engine, "begin", fail)
         with pytest.raises(RuntimeError):
             await backup.restore(db, raw, "test-backup-password")

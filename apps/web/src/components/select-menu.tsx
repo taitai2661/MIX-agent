@@ -64,7 +64,11 @@ export function SelectMenu({
       return;
     }
     if (!open) {
-      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
         event.preventDefault();
         setOpen(true);
       }
@@ -85,7 +89,10 @@ export function SelectMenu({
   }
 
   return (
-    <div className={"select-menu" + (className ? " " + className : "")} ref={root} onKeyDown={keyboard}>
+    <div
+      className={"select-menu" + (className ? " " + className : "")}
+      ref={root}
+    >
       <button
         ref={trigger}
         type="button"
@@ -95,6 +102,7 @@ export function SelectMenu({
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => setOpen((shown) => !shown)}
+        onKeyDown={keyboard}
       >
         {icon}
         <span>{selected?.label || placeholder || t("選択")}</span>
@@ -112,7 +120,9 @@ export function SelectMenu({
               onMouseEnter={() => setActive(index)}
               onClick={() => choose(option)}
             >
-              {option.icon && <span className="select-option-icon">{option.icon}</span>}
+              {option.icon && (
+                <span className="select-option-icon">{option.icon}</span>
+              )}
               <span className="select-option-text">
                 <b>{option.label}</b>
                 {option.description && <small>{option.description}</small>}

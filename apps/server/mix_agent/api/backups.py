@@ -45,7 +45,7 @@ async def restore(
     )
 
     key = "restore-passphrase:" + ctx[1].owner_id
-    await throttle_attempt(key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
+    throttle_attempt(key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
     raw = await file.read(backup.MAX_SIZE + 1)
     if backup.LOCK.locked():
         raise HTTPException(409)
@@ -56,7 +56,7 @@ async def restore(
             clear_attempts(key)
             return result
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-            await record_failed_attempt(key, ACCOUNT_CHANGE_WINDOW_SECONDS)
+            record_failed_attempt(key, ACCOUNT_CHANGE_WINDOW_SECONDS)
             raise HTTPException(
                 422,
                 "復元に失敗しました。パスフレーズ、形式、Runner接続を確認してください。退避データは保持されます。",

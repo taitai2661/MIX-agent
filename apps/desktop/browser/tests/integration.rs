@@ -119,6 +119,14 @@ fn serve_fixture() -> String {
 }
 
 fn backend(dir: &Path, executable: &Path) -> mixd_browser::ChromiumBackend {
+    backend_with_sink(dir, executable, None)
+}
+
+fn backend_with_sink(
+    dir: &Path,
+    executable: &Path,
+    sink: Option<mixd_browser::FrameSink>,
+) -> mixd_browser::ChromiumBackend {
     let profile = dir.join("profile");
     let artifacts = dir.join("artifacts");
     std::fs::create_dir_all(&profile).expect("profile dir");
@@ -127,7 +135,8 @@ fn backend(dir: &Path, executable: &Path) -> mixd_browser::ChromiumBackend {
         Some(executable.to_path_buf()),
         Some(profile),
         artifacts,
-        true,
+        uuid::Uuid::nil(),
+        sink,
     )
 }
 
@@ -280,9 +289,12 @@ async fn navigate_click_type_and_tabs_use_the_active_page() {
         "screenshot is not a PNG"
     );
 
-    let (frame, width, height) = backend.capture_frame(false).await.expect("live frame");
-    assert!(!frame.is_empty());
-    assert!(width > 0 && height > 0, "live frame has no CSS viewport");
+    let frame = backend.capture_frame(false).await.expect("live frame");
+    assert!(!frame.jpeg.is_empty());
+    assert!(
+        frame.width > 0 && frame.height > 0,
+        "live frame has no CSS viewport"
+    );
 
     let response = invoke(&backend, workspace, BrowserAction::Tabs).await;
     assert!(response.ok, "tabs failed: {:?}", response.error);
@@ -388,7 +400,7 @@ async fn profiles_survive_a_new_operator_instance() {
     let dir = temp_dir("profiles");
     let workspace = uuid::Uuid::new_v4();
     {
-        let operator = BrowserOperator::with_resources(&dir, None, true);
+        let operator = BrowserOperator::with_resources(&dir, None);
         operator
             .ensure_workspace(workspace, "default")
             .await
@@ -399,7 +411,7 @@ async fn profiles_survive_a_new_operator_instance() {
             .iter()
             .any(|profile| profile.workspace_id == workspace));
     }
-    let operator = BrowserOperator::with_resources(&dir, None, true);
+    let operator = BrowserOperator::with_resources(&dir, None);
     assert!(
         operator
             .list_profiles()
@@ -408,5 +420,62 @@ async fn profiles_survive_a_new_operator_instance() {
             .any(|profile| profile.workspace_id == workspace),
         "a restart must not forget profiles that are still on disk"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn screencast_emits_frames_when_a_sink_is_installed() {
+    let _serial = serial().await;
+    let Some(executable) = chromium() else {
+        if std::env::var("MIX_REQUIRE_BROWSER_TEST").is_ok() {
+            panic!("no Chromium available for the screencast integration test");
+        }
+        return;
+    };
+    let dir = temp_dir("screencast");
+    let workspace = uuid::Uuid::new_v4();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let backend = backend_with_sink(
+        &dir,
+        &executable,
+        Some(std::sync::Arc::new(move |frame| {
+            let _ = tx.send(frame);
+        })),
+    );
+    backend.set_allow_local(true);
+    let url = serve_fixture();
+    let response = invoke(&backend, workspace, BrowserAction::Navigate { url }).await;
+    assert!(response.ok, "navigate failed: {:?}", response.error);
+    backend.start_screencast().await.expect("start screencast");
+    // Static pages may not repaint on their own, so keep toggling a colour
+    // until at least one screencast frame arrives. Real agent actions produce
+    // the same repaints; the UI also has a snapshot fallback for a quiet page.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let frame = loop {
+        if let Ok(frame) = rx.try_recv() {
+            break frame;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "screencast produced no frame within 10s"
+        );
+        let changed = invoke(
+            &backend,
+            workspace,
+            BrowserAction::Evaluate {
+                script: "document.body.style.background = document.body.style.background === 'red' ? 'blue' : 'red'; true".into(),
+            },
+        )
+        .await;
+        assert!(changed.ok, "repaint failed: {:?}", changed.error);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    assert!(!frame.jpeg_base64.is_empty(), "screencast frame is empty");
+    assert!(
+        frame.width > 0 && frame.height > 0,
+        "screencast frame has no CSS viewport"
+    );
+    backend.stop_screencast().await;
+    let _ = invoke(&backend, workspace, BrowserAction::Close).await;
     let _ = std::fs::remove_dir_all(&dir);
 }

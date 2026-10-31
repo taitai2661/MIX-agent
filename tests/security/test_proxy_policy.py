@@ -1,8 +1,46 @@
-from deploy.egress.proxy import host_allowed
+from deploy.egress.proxy import host_allowed, host_permitted, resolve_policy
 
 
 def test_empty_domain_policy_allows_public_hosts():
     assert host_allowed("example.com", [])
+
+
+def test_host_permitted_follows_the_resolved_mode():
+    assert host_permitted("public_web", "anything.example", [])
+    assert host_permitted("restricted", "example.com", ["example.com"])
+    assert not host_permitted("restricted", "sub.example.com", ["example.com"])
+    # The important case: a restricted policy with an empty list must deny,
+    # not fall back to "unrestricted public egress".
+    assert not host_permitted("restricted", "example.com", [])
+    assert not host_permitted("none", "example.com", ["example.com"])
+
+
+def test_policy_without_mode_keeps_legacy_behaviour():
+    assert resolve_policy({"allowed_domains": []}) == ("public_web", [])
+    assert resolve_policy({"allowed_domains": ["example.com"]}) == ("restricted", ["example.com"])
+
+
+def test_explicit_restricted_mode_denies_empty_allow_list():
+    assert resolve_policy({"mode": "restricted", "allowed_domains": []}) == ("restricted", [])
+
+
+def test_explicit_none_mode_denies_everything():
+    assert resolve_policy({"mode": "none", "allowed_domains": ["example.com"]})[0] == "none"
+
+
+def test_source_policy_overrides_global_policy():
+    policy = {"mode": "restricted", "allowed_domains": ["example.com"]}
+    source = {"mode": "none", "allowed_domains": []}
+    assert resolve_policy(policy, source) == ("none", [])
+    # A source override without a mode inherits the global explicit mode.
+    assert resolve_policy(policy, {"allowed_domains": ["cdn.example.com"]}) == (
+        "restricted",
+        ["cdn.example.com"],
+    )
+
+
+def test_domains_are_normalised():
+    assert resolve_policy({"mode": "restricted", "allowed_domains": ["Example.COM."]})[1] == ["example.com"]
 
 
 def test_domain_policy_requires_exact_match():
@@ -58,5 +96,6 @@ async def test_public_address_rejects_private_and_mixed_dns(monkeypatch):
 
     monkeypatch.setattr("asyncio.BaseEventLoop.getaddrinfo", addresses)
     import pytest
+
     with pytest.raises(ValueError):
         await public_address("example.com", 443)

@@ -6,12 +6,20 @@ x-restricted: &restricted
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   pids_limit: 128
+  # A 24/7 home server otherwise fills its disk with the default unbounded
+  # json-file log. 10 MiB x 3 per service is enough to investigate an incident
+  # without keeping months of request lines.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
   tmpfs:
     - /tmp:size=256m,mode=1777
 
 services:
   init:
-    image: python:3.12.11-slim-bookworm
+    image: python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
     entrypoint: [python, /bootstrap.py]
     network_mode: none
     volumes:
@@ -30,8 +38,14 @@ services:
       - packages:/packages
       - mcp-shared:/shared
   db:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     restart: unless-stopped
+    # Same bound as x-restricted: PostgreSQL logs are verbose during recovery.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
@@ -55,6 +69,15 @@ services:
       MIX_KEYS: /keys
       RUNNER_KEYS: /runner-keys
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+      # `text` (default) or `json`; see docs/operations.md.
+      MIX_LOG_FORMAT: "${MIX_LOG_FORMAT:-text}"
+      # Optional: require `Authorization: Bearer <token>` on /metrics. When
+      # unset, /metrics only answers loopback/private-network clients; set
+      # MIX_METRICS_PUBLIC=1 to publish it to any client.
+      METRICS_TOKEN: "${METRICS_TOKEN:-}"
+      MIX_METRICS_PUBLIC: "${MIX_METRICS_PUBLIC:-}"
+      # Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is trusted.
+      MIX_TRUSTED_PROXIES: "${MIX_TRUSTED_PROXIES:-}"
       # Read-only view of one host folder, used for AGENTS.md / CLAUDE.md and
       # for skills discovered under .mix/skills (then .claude/skills, then
       # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
@@ -85,6 +108,21 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     mem_limit: 1g
     cpus: 2
+    healthcheck:
+      # `/live` is dependency-free, so a DB hiccup does not restart a healthy
+      # app (the ready probe at `/health` would). The start period covers
+      # `alembic upgrade head` on a fresh volume.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=3).status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       db: {condition: service_healthy}
   execution-runner:
@@ -213,13 +251,16 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
   postgres-test:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     profiles: [test]
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
-      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
-    secrets: [test-db-password]
+      # The database is thrown away with the container (tmpfs) and is only
+      # reachable on the internal `database` network.  `trust` keeps the value
+      # out of the repository instead of committing a shared placeholder
+      # password; nothing outside this throwaway instance can use it.
+      POSTGRES_HOST_AUTH_METHOD: trust
     tmpfs: [/var/lib/postgresql/data]
     networks: [database]
     healthcheck:
@@ -231,7 +272,7 @@ services:
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
     profiles: [test]
     environment:
-      DATABASE_URL: postgresql+psycopg://mix:test-only-password@postgres-test/mix
+      DATABASE_URL: postgresql+psycopg://mix@postgres-test/mix
       MIX_DATA: /tmp/mix-tests
       MIX_KEYS: /tmp/mix-tests/keys
       PUBLIC_ORIGIN: http://testserver
@@ -242,13 +283,12 @@ services:
     depends_on:
       postgres-test: {condition: service_healthy}
   preview-db:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     profiles: [preview]
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
-      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
-    secrets: [test-db-password]
+      POSTGRES_HOST_AUTH_METHOD: trust
     tmpfs: [/var/lib/postgresql/data]
     networks: [database]
     healthcheck:
@@ -261,7 +301,7 @@ services:
     profiles: [preview]
     ports: ["127.0.0.1:18080:18080"]
     environment:
-      DATABASE_URL: postgresql+psycopg://mix:test-only-password@preview-db/mix
+      DATABASE_URL: postgresql+psycopg://mix@preview-db/mix
       MIX_DATA: /tmp/mix-chat-preview
       MIX_KEYS: /tmp/mix-chat-preview/keys
       PUBLIC_ORIGIN: http://127.0.0.1:18080
@@ -294,6 +334,3 @@ volumes:
   browser-provisioner-token:
   browser-data:
 
-secrets:
-  test-db-password:
-    file: ./deploy/docker/test-db-password

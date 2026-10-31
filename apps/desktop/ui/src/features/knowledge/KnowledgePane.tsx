@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { open } from "@tauri-apps/plugin-dialog";
 import { BookOpen, FileText, Search, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -75,8 +74,7 @@ export function KnowledgePane() {
           />
           <Button
             onClick={async () => {
-              const picked = await open({
-                multiple: false,
+              const picked = await api.pickOpenFile({
                 filters: [
                   {
                     name: "Text",
@@ -84,7 +82,7 @@ export function KnowledgePane() {
                   },
                 ],
               });
-              if (typeof picked === "string") fromFile.mutate(picked);
+              if (picked.length > 0) fromFile.mutate(picked[0]);
             }}
           >
             <Upload size={12} /> {t("ファイルから")}

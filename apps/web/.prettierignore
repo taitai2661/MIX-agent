@@ -1,0 +1,4 @@
+src/generated/
+dist/
+coverage/
+test-results/

@@ -3,12 +3,15 @@ import { Minus, Square, Copy, X } from "lucide-react";
 import { t } from "../../lib/i18n";
 
 export function WindowControls() {
+  // Start hidden: on macOS the OS traffic lights are used, and a Tauri WebView
+  // can report a Windows-ish UA before `plugin-os` resolves. Showing our own
+  // buttons first would overlap the traffic lights.
   const [isMac, setIsMac] = useState(true);
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
     // macOS では OS の Traffic Light ボタン（Overlay）を使うため表示しない。
-    // Windows / Linux では dataset.platform が "other" になる。
+    // Windows / Linux では dataset.platform が "windows" / "linux" になる。
     const platform = document.documentElement.dataset.platform;
     setIsMac(platform === "macos");
 

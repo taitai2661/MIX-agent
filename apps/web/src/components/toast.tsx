@@ -1,4 +1,10 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useState,
+  type ReactNode,
+} from "react";
 import { CheckCircle2, AlertTriangle, Info, X, XCircle } from "lucide-react";
 
 export type ToastType = "success" | "error" | "warning" | "info";
@@ -25,7 +31,10 @@ export function useToast() {
   return context;
 }
 
-const toastConfig: Record<ToastType, { icon: typeof CheckCircle2; className: string }> = {
+const toastConfig: Record<
+  ToastType,
+  { icon: typeof CheckCircle2; className: string }
+> = {
   success: { icon: CheckCircle2, className: "toast-success" },
   error: { icon: XCircle, className: "toast-error" },
   warning: { icon: AlertTriangle, className: "toast-warning" },
@@ -39,12 +48,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const addToast = useCallback((toast: Omit<Toast, "id">) => {
-    const id = crypto.randomUUID();
-    const duration = toast.duration ?? (toast.type === "error" ? 7000 : 3000);
-    setToasts((prev) => [...prev, { ...toast, id }]);
-    setTimeout(() => removeToast(id), duration);
-  }, [removeToast]);
+  const addToast = useCallback(
+    (toast: Omit<Toast, "id">) => {
+      const id = crypto.randomUUID();
+      const duration = toast.duration ?? (toast.type === "error" ? 7000 : 3000);
+      setToasts((prev) => [...prev, { ...toast, id }]);
+      setTimeout(() => removeToast(id), duration);
+    },
+    [removeToast],
+  );
 
   return (
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
@@ -54,7 +66,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           const config = toastConfig[toast.type];
           const Icon = config.icon;
           return (
-            <div key={toast.id} className={`toast ${config.className}`} role="alert">
+            <div
+              key={toast.id}
+              className={`toast ${config.className}`}
+              role="alert"
+            >
               <Icon size={18} />
               <div className="toast-content">
                 <b>{toast.title}</b>

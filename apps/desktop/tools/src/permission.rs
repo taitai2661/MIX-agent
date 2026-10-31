@@ -30,6 +30,8 @@ pub enum RuleScope {
     Global,
     #[default]
     Workspace,
+    /// Lives in memory until the app exits. Never written to the database.
+    Session,
 }
 
 impl RuleScope {
@@ -37,6 +39,7 @@ impl RuleScope {
     pub fn parse(value: &str) -> Self {
         match value {
             "global" | "always" => RuleScope::Global,
+            "session" => RuleScope::Session,
             _ => RuleScope::Workspace,
         }
     }
@@ -45,6 +48,7 @@ impl RuleScope {
         match self {
             RuleScope::Global => "global",
             RuleScope::Workspace => "workspace",
+            RuleScope::Session => "session",
         }
     }
 }
@@ -75,10 +79,12 @@ impl PermissionRule {
     /// caller falls back to `updated_at` / id order.
     pub fn precedence_bucket(&self) -> u8 {
         match (self.scope, self.pattern.is_some()) {
-            (RuleScope::Workspace, true) => 0,
-            (RuleScope::Workspace, false) => 1,
-            (RuleScope::Global, true) => 2,
-            (RuleScope::Global, false) => 3,
+            (RuleScope::Session, true) => 0,
+            (RuleScope::Session, false) => 1,
+            (RuleScope::Workspace, true) => 2,
+            (RuleScope::Workspace, false) => 3,
+            (RuleScope::Global, true) => 4,
+            (RuleScope::Global, false) => 5,
         }
     }
 }

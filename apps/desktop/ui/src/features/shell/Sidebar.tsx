@@ -1,6 +1,5 @@
 import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   Bot,
   Check,
@@ -209,8 +208,8 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     setExportError(null);
     try {
       const safe = conversation.title.replace(/[\\/:*?"<>|]/g, "_");
-      const path = await saveDialog({
-        defaultPath: `${safe}.md`,
+      const path = await api.pickSaveFile({
+        defaultName: `${safe}.md`,
         filters: [{ name: "Markdown", extensions: ["md"] }],
       });
       if (!path) return;

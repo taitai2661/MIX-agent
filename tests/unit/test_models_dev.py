@@ -96,7 +96,10 @@ def test_normalize_falls_back_to_the_input_limit():
 def test_normalize_maps_capabilities_onto_wire_keys():
     facts = normalize(row("gpt-4o", tool_call=True, reasoning=True, structured_output=False))
     assert facts["capabilities"] == {
-        "tools": True, "vision": False, "reasoning": True, "structured_output": False,
+        "tools": True,
+        "vision": False,
+        "reasoning": True,
+        "structured_output": False,
     }
 
 
@@ -108,8 +111,7 @@ def test_normalize_infers_vision_from_image_input():
 
 
 def test_normalize_leaves_undocumented_capabilities_unknown():
-    facts = normalize(row("gpt-4o", tool_call=None, reasoning=None,
-                          structured_output=None, modalities=None))
+    facts = normalize(row("gpt-4o", tool_call=None, reasoning=None, structured_output=None, modalities=None))
     assert facts["capabilities"] is None
 
 
@@ -121,11 +123,15 @@ def test_normalize_leaves_missing_pricing_unknown():
 async def test_lookup_reads_a_local_catalog(tmp_path, monkeypatch):
     target = tmp_path / "v1"
     target.mkdir()
-    (target / "api.json").write_text(json.dumps(payload(
-        "openai",
-        row("gpt-4o"),
-        row("gpt-4.1", limit={"context": 1_047_576, "output": 32_768}),
-    )))
+    (target / "api.json").write_text(
+        json.dumps(
+            payload(
+                "openai",
+                row("gpt-4o"),
+                row("gpt-4.1", limit={"context": 1_047_576, "output": 32_768}),
+            )
+        )
+    )
     monkeypatch.setattr(config, "MODELS_DEV_URL", str(target))
 
     facts = await models_dev.lookup(("openai",), "gpt-4o")
@@ -137,10 +143,14 @@ async def test_lookup_reads_a_local_catalog(tmp_path, monkeypatch):
 
 async def test_lookup_tries_each_registered_provider_in_order(tmp_path, monkeypatch):
     target = tmp_path / "api.json"
-    target.write_text(json.dumps({
-        **payload("nvidia"),
-        **payload("openrouter", row("deepseek/deepseek-v4-pro")),
-    }))
+    target.write_text(
+        json.dumps(
+            {
+                **payload("nvidia"),
+                **payload("openrouter", row("deepseek/deepseek-v4-pro")),
+            }
+        )
+    )
     monkeypatch.setattr(config, "MODELS_DEV_URL", str(target))
 
     facts = await models_dev.lookup(("nvidia", "openrouter"), "deepseek-ai/deepseek-v4-pro")
@@ -163,7 +173,8 @@ async def test_lookup_returns_nothing_when_the_catalog_is_unreachable(monkeypatc
 
 async def test_a_failed_refresh_serves_the_stale_catalog(monkeypatch):
     models_dev._catalog_cache["catalog"] = {
-        "value": {"openai": rows(row("gpt-4o"))}, "fetched_at": 0.0,
+        "value": {"openai": rows(row("gpt-4o"))},
+        "fetched_at": 0.0,
     }
 
     def unreachable(**kwargs):
@@ -182,8 +193,9 @@ async def test_the_http_catalog_is_downloaded_once_per_ttl(monkeypatch):
         calls.append(str(request.url))
         return httpx.Response(200, json=payload("openai", row("gpt-4o")))
 
-    monkeypatch.setattr(httpx, "AsyncClient",
-                        lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw)
+    )
     monkeypatch.setattr(config, "MODELS_DEV_URL", "https://example.test/api.json")
 
     first = await models_dev.lookup(("openai",), "gpt-4o")

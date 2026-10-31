@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setLanguage } from "@/app/i18n";
 import { pickWelcome, welcomeTitle, welcomeFrom } from "./index";
 import { buildSignals } from "./signals";
-import { emptyHistory, readHistory, remember, writeHistory, type WelcomeHistory } from "./history";
+import {
+  emptyHistory,
+  readHistory,
+  remember,
+  writeHistory,
+  type WelcomeHistory,
+} from "./history";
 
 afterEach(() => setLanguage("ja"));
 
@@ -39,7 +45,12 @@ function fakeStorage(value: string | null = null, fail = false): Storage {
 
 describe("訪問履歴の保存", () => {
   it("空の状態を既定にする", () => {
-    expect(readHistory(fakeStorage())).toEqual({ visits: 0, lastVisitAt: 0, firstSeenTodayAt: 0, recent: [] });
+    expect(readHistory(fakeStorage())).toEqual({
+      visits: 0,
+      lastVisitAt: 0,
+      firstSeenTodayAt: 0,
+      recent: [],
+    });
     expect(readHistory(null)).toEqual(emptyHistory());
   });
 
@@ -50,7 +61,12 @@ describe("訪問履歴の保存", () => {
 
   it("保存と読み出しが一致する", () => {
     const store = fakeStorage();
-    const history: WelcomeHistory = { visits: 3, lastVisitAt: 100, firstSeenTodayAt: 50, recent: ["a", "b"] };
+    const history: WelcomeHistory = {
+      visits: 3,
+      lastVisitAt: 100,
+      firstSeenTodayAt: 50,
+      recent: ["a", "b"],
+    };
     writeHistory(history, store);
     expect(readHistory(store)).toEqual(history);
   });
@@ -63,9 +79,19 @@ describe("訪問履歴の保存", () => {
 
   it("不正な型を安全に捨てる", () => {
     const store = fakeStorage(
-      JSON.stringify({ visits: "many", lastVisitAt: null, firstSeenTodayAt: [], recent: ["ok", 3, null] }),
+      JSON.stringify({
+        visits: "many",
+        lastVisitAt: null,
+        firstSeenTodayAt: [],
+        recent: ["ok", 3, null],
+      }),
     );
-    expect(readHistory(store)).toEqual({ visits: 0, lastVisitAt: 0, firstSeenTodayAt: 0, recent: ["ok"] });
+    expect(readHistory(store)).toEqual({
+      visits: 0,
+      lastVisitAt: 0,
+      firstSeenTodayAt: 0,
+      recent: ["ok"],
+    });
   });
 
   it("使うたびに先頭に足し、長さ 24 で頭打ちにする", () => {
@@ -96,7 +122,12 @@ describe("文面の組み立て", () => {
 
   it("履歴の部品を避けて別の文面を作る", () => {
     const first = pickWelcome(workspace, { recent: [] }, () => 0.5, now);
-    const second = pickWelcome(workspace, { recent: first.used }, () => 0.5, now);
+    const second = pickWelcome(
+      workspace,
+      { recent: first.used },
+      () => 0.5,
+      now,
+    );
     expect(second.id).not.toBe(first.id);
     expect(second.used.filter((id) => first.used.includes(id))).toEqual([]);
   });
@@ -104,7 +135,11 @@ describe("文面の組み立て", () => {
   it("履歴が無い場合は作り続けられる", () => {
     const first = pickWelcome(workspace, { recent: [] }, () => 0.5, now);
     let recent = first.used;
-    for (let i = 0; i < 30; i++) recent = [...pickWelcome(workspace, { recent }, () => 0.5, now).used, ...recent];
+    for (let i = 0; i < 30; i++)
+      recent = [
+        ...pickWelcome(workspace, { recent }, () => 0.5, now).used,
+        ...recent,
+      ];
     const welcome = pickWelcome(workspace, { recent }, () => 0.5, now);
     expect(welcome.title.length).toBeGreaterThanOrEqual(2);
     expect(welcome.suggestions).toHaveLength(3);
@@ -112,7 +147,12 @@ describe("文面の組み立て", () => {
 
   it("見出しは日本語の文として終る", () => {
     for (let i = 0; i < 200; i++) {
-      const welcome = pickWelcome(workspace, { recent: [] }, () => i / 200, now);
+      const welcome = pickWelcome(
+        workspace,
+        { recent: [] },
+        () => i / 200,
+        now,
+      );
       expect(welcome.title.join("")).toMatch(/[。？]$/);
       expect(welcome.title.join("")).not.toMatch(/？{2,}/);
     }
@@ -173,7 +213,8 @@ describe("言語ごとの結合", () => {
     expect(joined).toContain(" ");
     expect(joined).not.toContain(welcome.title[0]);
     expect(joined.split(/[.?!] /).length).toBeGreaterThanOrEqual(2);
-    for (const sentence of joined.split(/(?<=[.?!]) /)) expect(sentence).toMatch(/[.?!]$/);
+    for (const sentence of joined.split(/(?<=[.?!]) /))
+      expect(sentence).toMatch(/[.?!]$/);
   });
 
   it("言語を切り替えると見出しだけが変わり、部品は同じ", () => {

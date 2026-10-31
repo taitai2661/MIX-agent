@@ -34,6 +34,7 @@ const GROUPS: ShortcutGroup[] = [
       { keys: ["Mod", "B"], label: "サイドバー切り替え" },
       { keys: ["Mod", ","], label: "設定を開く" },
       { keys: ["Mod", "Shift", "E"], label: "ファイルツリー" },
+      { keys: ["Mod", "Shift", "B"], label: "ブラウザ" },
       { keys: ["Mod", "Shift", "C"], label: "チャットに切り替え" },
       { keys: ["Mod", "Shift", "D"], label: "エージェントに切り替え" },
       { keys: ["?"], label: "この一覧を表示" },

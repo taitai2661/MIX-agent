@@ -89,32 +89,58 @@ def test_payload_defaults_missing_role_and_action_to_fact_create():
     items = jobs._parse_payload(
         '{"memories": [{"content": "OSSを優先する", "role": "Preference", "action": "create", "reason": "stated"}]}'
     )
-    assert items[0] == {"action": "CREATE", "role": "preference", "content": "OSSを優先する", "reason": "stated"}
+    assert items[0] == {
+        "action": "CREATE",
+        "role": "preference",
+        "content": "OSSを優先する",
+        "reason": "stated",
+    }
 
 
 def test_unsafe_extraction_items_are_no_op_not_errors():
     """§6/§8: secret, >200 chars, out-of-vocabulary role/action -> NO_OP."""
-    items = jobs._parse_payload(json.dumps({"memories": [
-        {"content": "ユーザーは Vegan", "role": "preference", "action": "CREATE"},
-        {"content": "api_key=sk-not-a-memory", "role": "fact", "action": "CREATE"},
-        {"content": "あ" * 201, "role": "fact", "action": "CREATE"},
-    ]}, ensure_ascii=False))
+    items = jobs._parse_payload(
+        json.dumps(
+            {
+                "memories": [
+                    {"content": "ユーザーは Vegan", "role": "preference", "action": "CREATE"},
+                    {"content": "api_key=sk-not-a-memory", "role": "fact", "action": "CREATE"},
+                    {"content": "あ" * 201, "role": "fact", "action": "CREATE"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
     assert [item["action"] for item in items] == ["CREATE", "NO_OP", "NO_OP"]
 
-    items = jobs._parse_payload(json.dumps({"memories": [
-        {"content": "語彙外のロール", "role": "opinion", "action": "CREATE"},
-        {"content": "未知のアクション", "role": "fact", "action": "UPDATE"},
-        {"content": "明示的に捨てる", "role": "fact", "action": "NO_OP"},
-    ]}, ensure_ascii=False))
+    items = jobs._parse_payload(
+        json.dumps(
+            {
+                "memories": [
+                    {"content": "語彙外のロール", "role": "opinion", "action": "CREATE"},
+                    {"content": "未知のアクション", "role": "fact", "action": "UPDATE"},
+                    {"content": "明示的に捨てる", "role": "fact", "action": "NO_OP"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
     assert [item["action"] for item in items] == ["NO_OP", "NO_OP", "NO_OP"]
 
 
 def test_no_op_items_are_never_persisted(signed):
     """A NO_OP candidate costs nothing: no row, and the good item still lands."""
-    items = jobs._parse_payload(json.dumps({"memories": [
-        {"content": "ユーザーは Vegan", "role": "preference", "action": "CREATE"},
-        {"content": "api_key=sk-not-a-memory", "role": "fact", "action": "CREATE"},
-    ]}, ensure_ascii=False))
+    items = jobs._parse_payload(
+        json.dumps(
+            {
+                "memories": [
+                    {"content": "ユーザーは Vegan", "role": "preference", "action": "CREATE"},
+                    {"content": "api_key=sk-not-a-memory", "role": "fact", "action": "CREATE"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+    )
     with SessionLocal() as db:
         owner = owner_id(db)
         job = SimpleNamespace(owner_id=owner, run_id=None)
@@ -143,12 +169,18 @@ def test_reinforce_refreshes_one_row_and_creates_nothing(signed):
         before = memory_count(db, owner)
 
         job = SimpleNamespace(owner_id=owner, run_id=None)
-        touched = jobs._apply(db, job, [{
-            "action": "REINFORCE",
-            "role": "fact",
-            "content": "Postgres のマイグレーションはDocker経由で実施する",
-            "reason": "said again",
-        }])
+        touched = jobs._apply(
+            db,
+            job,
+            [
+                {
+                    "action": "REINFORCE",
+                    "role": "fact",
+                    "content": "Postgres のマイグレーションはDocker経由で実施する",
+                    "reason": "said again",
+                }
+            ],
+        )
         db.commit()
         assert touched == [created["id"]]
         assert memory_count(db, owner) == before
@@ -156,12 +188,18 @@ def test_reinforce_refreshes_one_row_and_creates_nothing(signed):
         assert refreshed.updated_at > stale
 
         # A REINFORCE that matches nothing must not fall back to CREATE.
-        touched = jobs._apply(db, job, [{
-            "action": "REINFORCE",
-            "role": "fact",
-            "content": "zorkmids are fictional",
-            "reason": "hallucinated repeat",
-        }])
+        touched = jobs._apply(
+            db,
+            job,
+            [
+                {
+                    "action": "REINFORCE",
+                    "role": "fact",
+                    "content": "zorkmids are fictional",
+                    "reason": "hallucinated repeat",
+                }
+            ],
+        )
         db.commit()
         assert touched == []
         assert memory_count(db, owner) == before
@@ -177,10 +215,18 @@ def test_reinforce_picks_the_lexically_matching_row_not_the_newest(signed):
         db.commit()
 
         job = SimpleNamespace(owner_id=owner, run_id=None)
-        touched = jobs._apply(db, job, [{
-            "action": "REINFORCE", "role": "fact",
-            "content": "日本語で回答する", "reason": "repeat",
-        }])
+        touched = jobs._apply(
+            db,
+            job,
+            [
+                {
+                    "action": "REINFORCE",
+                    "role": "fact",
+                    "content": "日本語で回答する",
+                    "reason": "repeat",
+                }
+            ],
+        )
         db.commit()
         assert touched == [target["id"]]
 
@@ -196,12 +242,19 @@ async def test_extraction_payload_carries_existing_top10(signed, monkeypatch):
         async def stream(self, model, messages, tools, mode, settings):
             captured["model"] = model
             captured["messages"] = messages
-            body = json.dumps({"memories": [{
-                "content": "ユーザーは Vegan",
-                "role": "preference",
-                "action": "CREATE",
-                "reason": "stated preference",
-            }]}, ensure_ascii=False)
+            body = json.dumps(
+                {
+                    "memories": [
+                        {
+                            "content": "ユーザーは Vegan",
+                            "role": "preference",
+                            "action": "CREATE",
+                            "reason": "stated preference",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
             yield {"kind": "response", "message": {"role": "assistant", "content": body}}
 
     monkeypatch.setattr("mix_agent.providers.adapters.Adapter", RecordingAdapter)
@@ -210,7 +263,9 @@ async def test_extraction_payload_carries_existing_top10(signed, monkeypatch):
         owner = owner_id(db)
         service.change(db, owner, "回答は日本語にする", source_run="explicit-user-request")
         service.change(db, owner, "MIX Providerの設計", source_run="explicit-user-request")
-        provider = Provider(owner_id=owner, data={"kind": "compatible", "base_url": "https://example.invalid/v1"})
+        provider = Provider(
+            owner_id=owner, data={"kind": "compatible", "base_url": "https://example.invalid/v1"}
+        )
         conversation = Conversation(owner_id=owner, data={"title": "extraction"})
         db.add_all([provider, conversation])
         db.flush()
@@ -257,7 +312,11 @@ async def test_extraction_payload_carries_existing_top10(signed, monkeypatch):
         job = db.get(MemoryProcessingJob, job_id)
         assert job.status == "completed", job.data.get("error")
         owner = owner_id(db)
-        rows = [row for row in db.scalars(select(Memory).where(Memory.owner_id == owner)) if "Vegan" in row.content]
+        rows = [
+            row
+            for row in db.scalars(select(Memory).where(Memory.owner_id == owner))
+            if "Vegan" in row.content
+        ]
         assert len(rows) == 1
         assert rows[0].data.get("role") == "preference"
 
@@ -269,7 +328,9 @@ def test_explicit_candidates_cover_politeness_language_and_punctuation():
     assert service.explicit_candidate("これを覚えて") is None
     assert service.explicit_candidate("覚えて: api_key=private") is None
     # 敬語・命令形の揺れ (prefix needs a separator: 「覚えてる？」 is not a command).
-    assert service.explicit_candidate("覚えておいてください：明日の天気は東京で聞く") == "明日の天気は東京で聞く"
+    assert (
+        service.explicit_candidate("覚えておいてください：明日の天気は東京で聞く") == "明日の天気は東京で聞く"
+    )
     assert service.explicit_candidate("覚えといて：プロジェクト名はMIX-agent") == "プロジェクト名はMIX-agent"
     assert service.explicit_candidate("メモして：接続先はVPN") == "接続先はVPN"
     assert service.explicit_candidate("回答は日本語で覚えてください。") == "回答は日本語で"

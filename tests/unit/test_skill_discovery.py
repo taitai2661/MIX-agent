@@ -11,9 +11,7 @@ from pathlib import Path
 from mix_agent.skills import discovery
 
 
-def write_skill(
-    root: Path, folder: str, name: str, description: str = "does a thing"
-) -> Path:
+def write_skill(root: Path, folder: str, name: str, description: str = "does a thing") -> Path:
     skill_dir = root / folder / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
@@ -64,9 +62,7 @@ def test_a_malformed_skill_is_reported_not_dropped(tmp_path):
 def test_a_name_the_rule_rejects_is_a_failure(tmp_path):
     bad = tmp_path / ".mix/skills" / "Bad Name"
     bad.mkdir(parents=True)
-    (bad / "SKILL.md").write_text(
-        "---\nname: Bad Name\ndescription: nope\n---\nbody", encoding="utf-8"
-    )
+    (bad / "SKILL.md").write_text("---\nname: Bad Name\ndescription: nope\n---\nbody", encoding="utf-8")
     packages, failures = discovery.discover(tmp_path)
     assert packages == []
     assert len(failures) == 1

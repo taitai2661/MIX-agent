@@ -340,6 +340,10 @@ async def process_one(job_id):
         candidates = await _evaluate(job, run, provider, key, existing)
         with SessionLocal() as db:
             current = db.get(MemoryProcessingJob, job_id)
+            if current is None:
+                # The job row was deleted while the provider call ran; there
+                # is nowhere to write the result.
+                return
             touched = _apply(db, current, candidates)
             current.status, current.updated_at = "completed", now()
             current.data = {

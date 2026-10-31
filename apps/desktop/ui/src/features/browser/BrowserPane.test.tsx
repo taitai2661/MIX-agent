@@ -12,7 +12,6 @@ vi.mock("@/lib/api", () => ({
     browserStatus: vi.fn(async () => ({
       backend: "chromium",
       source: "installed",
-      headless: true,
       executable: "/tmp/chromium",
       installed_version: "156.0.8078.73",
       pinned_version: "156.0.8078.73",
@@ -55,7 +54,16 @@ vi.mock("@/lib/api", () => ({
       data: "data:image/png;base64,AA==",
       width: 1280,
       height: 900,
+      url: "https://example.com/",
+      title: "Example",
+      can_go_back: false,
+      can_go_forward: false,
     })),
+    browserStop: vi.fn(async () => undefined),
+    browserKeepalive: vi.fn(async () => undefined),
+    browserScreencastStart: vi.fn(async () => undefined),
+    browserScreencastStop: vi.fn(async () => undefined),
+    browserFrameEvent: vi.fn(async () => () => undefined),
   },
 }));
 
@@ -121,7 +129,6 @@ describe("BrowserPane", () => {
     mockedApi.browserStatus.mockResolvedValueOnce({
       backend: "disabled",
       source: "none",
-      headless: true,
       executable: null,
       installed_version: null,
       pinned_version: "156.0.8078.73",
@@ -153,7 +160,6 @@ describe("BrowserPane", () => {
     mockedApi.browserStatus.mockResolvedValueOnce({
       backend: "disabled",
       source: "none",
-      headless: true,
       executable: null,
       installed_version: null,
       pinned_version: "156.0.8078.73",

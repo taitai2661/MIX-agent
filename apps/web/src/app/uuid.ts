@@ -2,7 +2,8 @@ let fallbackSequence = 0;
 
 export function uuid(): string {
   const webCrypto = globalThis.crypto;
-  if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
+  if (typeof webCrypto?.randomUUID === "function")
+    return webCrypto.randomUUID();
 
   const bytes = new Uint8Array(16);
   if (typeof webCrypto?.getRandomValues === "function") {
@@ -12,7 +13,8 @@ export function uuid(): string {
     // Keep HTTP/LAN and older browser sessions usable without Web Crypto.
     const seed = Date.now() + fallbackSequence++;
     for (let index = 0; index < bytes.length; index++) {
-      bytes[index] = Math.floor(Math.random() * 256) ^ ((seed >> ((index % 6) * 8)) & 0xff);
+      bytes[index] =
+        Math.floor(Math.random() * 256) ^ ((seed >> ((index % 6) * 8)) & 0xff);
     }
   }
   bytes[6] = (bytes[6] & 0x0f) | 0x40;

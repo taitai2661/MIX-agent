@@ -6,7 +6,16 @@ import { suggestionsFor } from "./suggestions";
 import { greetingText } from "./translate";
 import type { Signals, Welcome } from "./types";
 
-export { activityOf, buildSignals, dayKind, dayOfYear, gapOf, partOfDay, seasonOf, workloadOf } from "./signals";
+export {
+  activityOf,
+  buildSignals,
+  dayKind,
+  dayOfYear,
+  gapOf,
+  partOfDay,
+  seasonOf,
+  workloadOf,
+} from "./signals";
 export {
   calendarDate,
   dayNumber,
@@ -15,10 +24,20 @@ export {
   solarTermOf,
   upcomingSolarTerm,
 } from "./calendar";
-export { emptyHistory, readHistory, writeHistory, remember, type WelcomeHistory } from "./history";
+export {
+  emptyHistory,
+  readHistory,
+  writeHistory,
+  remember,
+  type WelcomeHistory,
+} from "./history";
 export { compatible, pickFragment } from "./compose";
 export { suggestionsFor } from "./suggestions";
-export { greetingText, suggestionLabelId, suggestionPromptId } from "./translate";
+export {
+  greetingText,
+  suggestionLabelId,
+  suggestionPromptId,
+} from "./translate";
 export type {
   Activity,
   DayKind,
@@ -73,7 +92,12 @@ export function welcomeFrom(
 ): Welcome {
   const composed = compose(signals, recent, random);
   // 見出しで使った部品は提案側でも再利用しないよう、同じ除外集合を渡します。
-  const suggestions = suggestionsFor(signals, [...recent, ...composed.used], 3, random);
+  const suggestions = suggestionsFor(
+    signals,
+    [...recent, ...composed.used],
+    3,
+    random,
+  );
   return {
     id: composed.used.join("/"),
     title: composed.title,
@@ -114,7 +138,11 @@ export function nextVisit(
   now: Date = new Date(),
 ): VisitResult {
   const history = readHistory();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const midnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
   const signals = buildSignals({
     now,
     conversationCount: workspace.conversationCount,
@@ -131,7 +159,10 @@ export function nextVisit(
     {
       visits: history.visits + 1,
       lastVisitAt: now.getTime(),
-      firstSeenTodayAt: history.firstSeenTodayAt < midnight ? now.getTime() : history.firstSeenTodayAt,
+      firstSeenTodayAt:
+        history.firstSeenTodayAt < midnight
+          ? now.getTime()
+          : history.firstSeenTodayAt,
       recent: history.recent,
     },
     welcome.used,

@@ -1263,7 +1263,7 @@ impl LocalRuntimeManager {
         // A stopped-but-installed runtime is probed every third tick (30 s):
         // often enough to notice the user starting it from a terminal, without
         // fetching nine model lists every 10 seconds.
-        let include_stopped = tick % 3 == 0;
+        let include_stopped = tick.is_multiple_of(3);
         let targets: Vec<(String, String, bool)> = {
             let records = self.records.read().await;
             records

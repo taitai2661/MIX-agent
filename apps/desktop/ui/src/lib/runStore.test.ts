@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useRunEvents } from "./runStore";
+import { useUi } from "./ui";
 import type { RunEventPayload } from "./api";
 
 function event(
@@ -42,6 +43,24 @@ describe("useRunEvents flush timer", () => {
     expect(state.liveRunId).toBe("run-1");
     expect(state.conversationId).toBe("conv-1");
     expect(state.timeline?.text).toBe("");
+  });
+
+  it("mirrors the live run into the UI store for browser dismissal", () => {
+    // `dismissBrowserPanel` suppresses auto-open for `ui.runId`; without this
+    // writer the marker was always "manual" and the pane reopened immediately.
+    useUi.setState({ conversationId: "conv-1" });
+    useUi.getState().setRunId(null);
+    useRunEvents.getState().startRun("run-1", "conv-1");
+    expect(useUi.getState().runId).toBe("run-1");
+    useRunEvents.getState().clearRun("run-1");
+    expect(useUi.getState().runId).toBeNull();
+  });
+
+  it("does not let a run in another thread claim the dismissal marker", () => {
+    useUi.setState({ conversationId: "conv-1" });
+    useUi.getState().setRunId(null);
+    useRunEvents.getState().startRun("run-2", "conv-2");
+    expect(useUi.getState().runId).toBeNull();
   });
 
   it("buffers pushes and applies them when the flush timer fires", () => {

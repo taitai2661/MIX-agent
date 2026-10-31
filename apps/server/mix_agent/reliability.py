@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import email.utils
 import math
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -23,6 +24,10 @@ PROVIDER_WINDOW = timedelta(minutes=5)
 MODEL_COOLDOWN = timedelta(minutes=15)
 PROVIDER_COOLDOWN = timedelta(minutes=15)
 MAX_COOLDOWN = timedelta(minutes=60)
+
+# A route profile is either one legacy key or the hierarchy set produced by
+# `routing._RouteProfile.accepted` (a frozenset of every matching level).
+Profile = Collection[str] | None
 
 
 def usage_scope(mode: str, tools_required: bool) -> str:
@@ -147,7 +152,7 @@ def _events(db, owner_id: str, current: datetime):
     ).copy()
 
 
-def _matches_profile(profile, value) -> bool:
+def _matches_profile(profile: Profile, value) -> bool:
     """Whether an event's stored profile applies to the requested route.
 
     ``profile`` may be a single key (legacy) or a hierarchy set, and ``None``
@@ -185,7 +190,7 @@ def speed(
     provider_id: str,
     scope: str,
     current: datetime | None = None,
-    profile: str | None = None,
+    profile: Profile = None,
     events: list | None = None,
 ) -> dict:
     """Return decayed, privacy-minimal speed evidence for one Auto route."""
@@ -349,7 +354,7 @@ def reliability(
     provider_id: str,
     scope: str,
     current: datetime | None = None,
-    profile: str | None = None,
+    profile: Profile = None,
     events: list | None = None,
 ) -> dict:
     current = current or now()

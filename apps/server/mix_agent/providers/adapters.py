@@ -9,13 +9,13 @@ from google import genai
 from google.genai import types
 from openai import AsyncOpenAI, BadRequestError, UnprocessableEntityError
 
-PROVIDER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
-
 from mix_agent.providers.capability_probe import VISION_DATA_URL
 from mix_agent.providers.catalog import get_preset
 from mix_agent.providers.metadata import context_limit, resolve
 from mix_agent.providers.model_roles import chat_capability
 from mix_agent.providers.reasoning import request_options, show_summary
+
+PROVIDER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 LOGGER = logging.getLogger(__name__)
 

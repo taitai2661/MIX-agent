@@ -31,10 +31,21 @@ async def _install() -> list[str]:
         if kind == "npm":
             command = ["npm", "install", "--prefix", str(ROOT), "--save-exact", f"{identifier}@{version}"]
         elif kind == "pypi":
-            command = ["python", "-m", "pip", "install", "--no-cache-dir", "--prefix", str(ROOT), f"{identifier}=={version}"]
+            command = [
+                "python",
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                "--prefix",
+                str(ROOT),
+                f"{identifier}=={version}",
+            ]
         else:
             raise ValueError("Unsupported generic runtime package")
-        process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        process = await asyncio.create_subprocess_exec(
+            *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
         if await asyncio.wait_for(process.wait(), 300):
             raise ValueError("MCP package installation failed")
         marker.write_text(json.dumps(wanted, sort_keys=True))
@@ -70,9 +81,26 @@ async def _session(credentials: dict, arguments: list[str]):
         SESSION = None
         STACK = None
     executable = await _install()
-    env = {key: value for key, value in os.environ.items() if key in ("PATH", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")}
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in ("PATH", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+    }
     custom = credentials.get("env", {})
-    if any(key in custom for key in ("PATH", "HOME", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy")):
+    if any(
+        key in custom
+        for key in (
+            "PATH",
+            "HOME",
+            "TMPDIR",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        )
+    ):
         raise ValueError("Reserved runtime environment variable")
     env.update(custom)
     env.update(HOME="/data", TMPDIR="/tmp")
@@ -95,7 +123,11 @@ async def discover(body: dict):
         try:
             session = await _session(body.get("credentials", {}), body.get("arguments", []))
             result = await asyncio.wait_for(session.list_tools(), 30)
-            return {"tools": [tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in result.tools]}
+            return {
+                "tools": [
+                    tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in result.tools
+                ]
+            }
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             raise HTTPException(502, "MCP discovery failed")
 
@@ -105,7 +137,9 @@ async def call(body: dict):
     async with LOCK:
         try:
             session = await _session(body.get("credentials", {}), body.get("arguments", []))
-            result = await asyncio.wait_for(session.call_tool(body["tool"], body.get("arguments_value", {})), 110)
+            result = await asyncio.wait_for(
+                session.call_tool(body["tool"], body.get("arguments_value", {})), 110
+            )
             return result.model_dump(mode="json", by_alias=True, exclude_none=True)
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             raise HTTPException(502, "MCP call failed")

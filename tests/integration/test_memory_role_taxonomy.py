@@ -53,9 +53,13 @@ def test_forget_deletes_row(signed):
 def test_recall_debug_shape(signed):
     with SessionLocal() as db:
         owner = owner_id(db)
-        mem_tools.remember(db, owner, content="Postgres のマイグレーションはDocker経由で実施する", explicit_user=True)
+        mem_tools.remember(
+            db, owner, content="Postgres のマイグレーションはDocker経由で実施する", explicit_user=True
+        )
         db.commit()
-        debug = mem_runtime.recall(db, owner, {"text": "マイグレーションを実行したい", "kind": "test"}, debug=True)
+        debug = mem_runtime.recall(
+            db, owner, {"text": "マイグレーションを実行したい", "kind": "test"}, debug=True
+        )
         assert "memories" in debug and debug["memories"]
         assert debug["debug"]["weights"]["lexical"] >= 0.0
 

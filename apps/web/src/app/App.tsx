@@ -1,4 +1,5 @@
 import { api, setCSRF, type Row } from "@/app/api";
+import { queryKeys } from "@/lib/queries";
 import { BrowserInstallNotifier } from "@/app/browser-install-notifier";
 import { ja } from "@/app/strings";
 import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
@@ -51,10 +52,9 @@ import { ToastProvider } from "@/components/toast";
 import { Tour } from "@/components/tour";
 import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
-import { Chat } from "@/features/chat/Chat";
 import { Conversations } from "@/features/chat/Conversations";
 import type { WorkspaceSnapshot } from "@/features/chat/greeting";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useCallback } from "react";
 
 const Skills = lazy(() =>
   import("@/features/skills/Skills").then((m) => ({ default: m.Skills })),
@@ -73,6 +73,12 @@ const Schedules = lazy(() =>
 const Projects = lazy(() =>
   import("@/features/projects/Projects").then((m) => ({ default: m.Projects })),
 );
+// The chat view pulls in the Markdown pipeline (react-markdown + remark), so
+// keeping it out of the boot chunk lets the shell and the auth screen paint
+// before the transcript parser is fetched.
+const Chat = lazy(() =>
+  import("@/features/chat/Chat").then((m) => ({ default: m.Chat })),
+);
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(
@@ -89,6 +95,10 @@ function useMediaQuery(query: string) {
 }
 
 type Me = { username: string; csrf: string };
+type SetupInfo = { needs_admin: boolean };
+type SettingsInfo = {
+  data: { ui_language?: string; setup_complete?: boolean };
+};
 
 /** Keyed wrapper so switching conversations remounts the composer. That lets
  *  the per-conversation draft survive a session-expiry round trip through the
@@ -138,6 +148,17 @@ export function App() {
   const [renameTarget, setRenameTarget] = useState<Row | null>(null);
   const [trashTarget, setTrashTarget] = useState<Row | null>(null);
   const [showTour, setShowTour] = useState(false);
+  const updateConversation = useCallback(
+    async (id: string, data: object) => {
+      await api(`/conversations/${id}/state`, "PATCH", data);
+      setOpenConversationMenu(null);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["/conversations"] }),
+        qc.invalidateQueries({ queryKey: ["/conversation-folders"] }),
+      ]);
+    },
+    [qc],
+  );
   const folders = useQuery<Row[]>({
     queryKey: ["/conversation-folders"],
     queryFn: () => api("/conversation-folders"),
@@ -204,11 +225,40 @@ export function App() {
       .catch(() => {
         // Keep the previous banner state; the page itself still works.
       });
-    void qc.invalidateQueries({ queryKey: ["/settings"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.settings });
     return () => {
       cancelled = true;
     };
   }, [location.pathname, qc, user]);
+  useEffect(() => {
+    Promise.all([
+      api<SetupInfo>("/setup"),
+      api<Me>("/auth/me").catch(() => null),
+    ])
+      .then(async ([setup, me]) => {
+        setNeedsAdmin(setup.needs_admin);
+        if (me) {
+          setCSRF(me.csrf);
+          const settings = await api<SettingsInfo>("/settings");
+          setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
+          setSetupComplete(
+            settings.data.setup_complete === false ? false : true,
+          );
+          setUser(me);
+        }
+        setReady(true);
+        // 初回ログイン時にツアーを表示
+        if (me && !localStorage.getItem("mix-agent-tour-done")) {
+          setShowTour(true);
+        }
+      })
+      .catch(setError);
+  }, []);
+  const conversations = useQuery<Row[]>({
+    queryKey: ["/conversations"],
+    queryFn: () => api("/conversations?state=active"),
+    enabled: !!user,
+  });
   useEffect(() => {
     if (!openConversationMenu) return;
     const close = (event: MouseEvent) => {
@@ -246,33 +296,7 @@ export function App() {
       document.removeEventListener("click", close);
       document.removeEventListener("keydown", keydown);
     };
-  }, [openConversationMenu]);
-  useEffect(() => {
-    Promise.all([api("/setup"), api("/auth/me").catch(() => null)])
-      .then(async ([setup, me]) => {
-        setNeedsAdmin(setup.needs_admin);
-        if (me) {
-          setCSRF(me.csrf);
-          const settings = await api("/settings");
-          setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
-          setSetupComplete(
-            settings.data.setup_complete === false ? false : true,
-          );
-          setUser(me);
-        }
-        setReady(true);
-        // 初回ログイン時にツアーを表示
-        if (me && !localStorage.getItem("mix-agent-tour-done")) {
-          setShowTour(true);
-        }
-      })
-      .catch(setError);
-  }, []);
-  const conversations = useQuery<Row[]>({
-    queryKey: ["/conversations"],
-    queryFn: () => api("/conversations?state=active"),
-    enabled: !!user,
-  });
+  }, [openConversationMenu, conversations.data, updateConversation]);
   useEffect(() => {
     // A session can expire while the tab is open.  The API client emits this
     // event instead of surfacing a generic network error, so drop the cached
@@ -281,10 +305,15 @@ export function App() {
       setCSRF("");
       setSessionExpired(true);
       setUser(null);
+      // Dropping the identity is not enough: React Query still holds the
+      // previous account's conversations, so a shared browser would show them
+      // for a moment after the next login. Clearing the cache here matches an
+      // explicit logout.
+      qc.clear();
     };
     window.addEventListener("mix:unauthorized", unauthorized);
     return () => window.removeEventListener("mix:unauthorized", unauthorized);
-  }, []);
+  }, [qc]);
   useEffect(() => {
     const path = location.pathname;
     const label =
@@ -335,6 +364,7 @@ export function App() {
     if (!isMobile || !sidebar) return;
     const el = sidebarRef.current;
     const returnFocus = document.activeElement as HTMLElement | null;
+    const sidebarToggle = sidebarToggleRef.current;
     sidebarCloseRef.current?.focus();
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -362,7 +392,7 @@ export function App() {
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      (returnFocus ?? sidebarToggleRef.current)?.focus();
+      (returnFocus ?? sidebarToggle)?.focus();
     };
   }, [isMobile, sidebar]);
   // 新しいチャット画面の挨拶に使う、ワークスペースの状況だけを渡す。
@@ -389,14 +419,14 @@ export function App() {
     try {
       if (needsAdmin)
         await api("/settings", "PUT", { ui_language: getLanguage() });
-      const settings = await api("/settings");
+      const settings = await api<SettingsInfo>("/settings");
       setLanguage(settings.data.ui_language === "en" ? "en" : "ja");
       setSetupComplete(settings.data.setup_complete === false ? false : true);
     } catch (cause) {
       setError(cause);
       return;
     }
-    if (needsAdmin) navigate("/setup");
+    if (needsAdmin) void navigate("/setup");
     setNeedsAdmin(false);
   }
   if (error)
@@ -418,16 +448,8 @@ export function App() {
       />
     );
   async function newChat() {
-    navigate("/");
+    void navigate("/");
     setSidebar(false);
-  }
-  async function updateConversation(id: string, data: object) {
-    await api(`/conversations/${id}/state`, "PATCH", data);
-    setOpenConversationMenu(null);
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ["/conversations"] }),
-      qc.invalidateQueries({ queryKey: ["/conversation-folders"] }),
-    ]);
   }
   async function renameConversation(conversation: Row) {
     setRenameTarget(conversation);
@@ -459,7 +481,31 @@ export function App() {
           <MoreVertical size={17} />
         </button>
         {menuOpen && (
-          <div className="conversation-sidebar-menu" role="menu">
+          <div
+            className="conversation-sidebar-menu"
+            role="menu"
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              const items = Array.from(
+                event.currentTarget.querySelectorAll<HTMLElement>(
+                  '[role="menuitem"]',
+                ),
+              );
+              const index = items.indexOf(
+                document.activeElement as HTMLElement,
+              );
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                items[(index + 1) % items.length]?.focus();
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                items[(index - 1 + items.length) % items.length]?.focus();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setOpenConversationMenu(null);
+              }
+            }}
+          >
             <button
               role="menuitem"
               onClick={() =>
@@ -733,7 +779,7 @@ export function App() {
                     // Local dismissal still signs out the UI; the revoked
                     // session cookie makes any subsequent request 401.
                   }
-                  qc.cancelQueries();
+                  void qc.cancelQueries();
                   qc.clear();
                   setUser(null);
                 }}
@@ -751,6 +797,9 @@ export function App() {
             onClick={() => setSidebar(false)}
           />
         )}
+        {/* Focusable window splitter (ARIA APG): separator is interactive when
+            it controls a resize. */}
+        {/* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- focusable separator is a splitter widget */}
         <div
           className="sidebar-resizer"
           role="separator"
@@ -763,6 +812,7 @@ export function App() {
           onPointerDown={resizeSidebar}
           onKeyDown={resizeSidebarWithKeyboard}
         />
+        {/* eslint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
         <main id="main-content" className="main" tabIndex={-1}>
           <header className="topbar">
             {isMobile || collapsed ? (
@@ -885,11 +935,22 @@ export function App() {
                 if (!title.trim() || title.trim() === renameTarget.data.title)
                   return;
                 void (async () => {
-                  await api(`/conversations/${renameTarget.id}`, "PATCH", {
-                    title: title.trim(),
-                  });
-                  setOpenConversationMenu(null);
-                  await qc.invalidateQueries({ queryKey: ["/conversations"] });
+                  try {
+                    await api(`/conversations/${renameTarget.id}`, "PATCH", {
+                      title: title.trim(),
+                    });
+                    setOpenConversationMenu(null);
+                    await qc.invalidateQueries({
+                      queryKey: ["/conversations"],
+                    });
+                  } catch (cause) {
+                    // A failed rename used to be an unhandled rejection: the
+                    // dialog closed and the old title stayed with no
+                    // explanation. Surface the server's message instead.
+                    window.alert(
+                      cause instanceof Error ? cause.message : String(cause),
+                    );
+                  }
                 })();
               }}
               onCancel={() => setRenameTarget(null)}
@@ -905,9 +966,17 @@ export function App() {
                 const id = trashTarget.id;
                 setTrashTarget(null);
                 void (async () => {
-                  await api(`/conversations/${id}`, "DELETE");
-                  setOpenConversationMenu(null);
-                  await qc.invalidateQueries({ queryKey: ["/conversations"] });
+                  try {
+                    await api(`/conversations/${id}`, "DELETE");
+                    setOpenConversationMenu(null);
+                    await qc.invalidateQueries({
+                      queryKey: ["/conversations"],
+                    });
+                  } catch (cause) {
+                    window.alert(
+                      cause instanceof Error ? cause.message : String(cause),
+                    );
+                  }
                 })();
               }}
               onCancel={() => setTrashTarget(null)}

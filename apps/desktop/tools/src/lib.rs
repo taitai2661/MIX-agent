@@ -21,6 +21,7 @@ pub mod memory;
 pub mod network;
 pub mod pdf;
 pub mod permission;
+pub mod redact;
 pub mod registry;
 pub mod search;
 pub mod skill;

@@ -29,7 +29,10 @@ def test_settings_user_tunable_keys(signed):
     with SessionLocal() as db:
         row = db.scalar(select(Settings).where(Settings.id == "settings", Settings.owner_id == owner_id(db)))
         assert "memory_max_depth" not in (row.data or {})
-    assert signed.put("/api/v1/settings", json={"memory_seed_limit": 12, "memory_result_limit": 5}).status_code == 200
+    assert (
+        signed.put("/api/v1/settings", json={"memory_seed_limit": 12, "memory_result_limit": 5}).status_code
+        == 200
+    )
 
 
 def test_debug_search_endpoint(signed):

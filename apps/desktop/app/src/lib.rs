@@ -8,6 +8,7 @@ pub mod error;
 pub mod http;
 pub mod local_runtime;
 pub mod menu;
+pub mod path_grants;
 pub mod push;
 pub mod run_events;
 pub mod scheduler;
@@ -274,6 +275,12 @@ impl mixd_tools::agent::AgentSource for DbAgentSource {
                         .cloned()
                         .and_then(|v| serde_json::from_value(v).ok())
                         .unwrap_or_default(),
+                    model_id: value
+                        .get("modelId")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(str::to_string),
                 })
             })
             .collect())
@@ -363,6 +370,14 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
                 fallback
             }
         };
+        // A profile may name its own model (a cheap read-only explorer vs. the
+        // parent's coding model). An unknown id falls back to the parent's
+        // provider resolution error rather than silently using another model.
+        let model_id = profile
+            .model_id
+            .clone()
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or(model_id);
         let specs: Vec<mixd_tools::ToolSpec> = engine
             .tool_specs()
             .await
@@ -508,6 +523,11 @@ pub struct AppState {
     /// the whole process so the WebView, the health loop and shutdown all see
     /// the same process ownership.
     pub local_runtime: Arc<local_runtime::LocalRuntimeManager>,
+    /// Paths the user has explicitly handed to a native picker (or confirmed
+    /// in a dialog). File commands consult this instead of trusting the path
+    /// string the WebView sent, so a compromised renderer cannot read or write
+    /// arbitrary files without a visible prompt.
+    pub grants: Arc<path_grants::PathGrants>,
 }
 
 /// Rebuild the engine's Tool Registry from the live parts.
@@ -605,14 +625,40 @@ pub async fn build_app_state(
     app_data: &std::path::Path,
     resource_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<AppState> {
-    // The browser runs headed on desktop builds so the user can watch and
-    // interact with what the agent is doing.
-    let headless = cfg!(debug_assertions);
+    // The browser is always headless: the in-app side panel is the only view,
+    // so a second visible Chromium window would just duplicate the page and
+    // keep an extra compositor alive.
     let browser = Arc::new(mixd_browser::BrowserOperator::with_resources(
         app_data,
         resource_dir,
-        headless,
     ));
+    // Forward CDP screencast frames to the WebView. Polling remains the
+    // fallback, so a failed screencast degrades instead of going blank.
+    let frame_app = app_handle.clone();
+    browser
+        .set_frame_sink(Arc::new(move |frame| {
+            let payload = crate::commands::browser::BrowserFrameEventPayload {
+                workspace_id: frame.workspace_id.to_string(),
+                data: format!("data:image/jpeg;base64,{}", frame.jpeg_base64),
+                width: frame.width,
+                height: frame.height,
+            };
+            let _ = frame_app.emit(crate::commands::browser::BROWSER_FRAME_EVENT, payload);
+        }))
+        .await;
+    // Free the hundreds of megabytes a parked Chromium keeps. The live view
+    // polls every 2 s, which refreshes `last_used`, so an open panel never
+    // expires.
+    let idle_browser = browser.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            ticker.tick().await;
+            idle_browser
+                .close_idle(mixd_browser::operator::idle_timeout())
+                .await;
+        }
+    });
     let chromium_installer = Arc::new(mixd_browser::ChromiumInstaller::new(app_data));
     chromium_installer.cleanup_stale().await;
     // Apply the persisted browser opt-in before the first run can call the
@@ -673,6 +719,14 @@ pub async fn build_app_state(
         secrets.clone(),
         tools,
     ));
+    // Apply the persisted terminal-sandbox opt-in before the first shell is
+    // spawned. A corrupt row leaves the safe default (off) in place.
+    match crate::commands::settings::read_settings(storage.pool()).await {
+        Ok(settings) => engine.set_terminal_sandbox(settings.sandbox_terminal).await,
+        Err(err) => {
+            tracing::warn!(%err, "could not read sandbox setting; terminal stays unsandboxed")
+        }
+    }
     // Close the cycle now that the engine exists.
     agent_runner.attach(&engine, &secrets, "");
     register_providers_from_storage(&engine.providers, &storage, &secrets).await?;
@@ -711,6 +765,11 @@ pub async fn build_app_state(
         });
     }
     let local_runtime = local_runtime::LocalRuntimeManager::new(app_handle, storage.clone());
+    // Existing projects were chosen through a dialog on an earlier launch, so
+    // their roots are trusted without a fresh prompt. Ad-hoc paths still go
+    // through the picker or the native confirmation.
+    let grants = Arc::new(path_grants::PathGrants::default());
+    seed_project_grants(storage.as_ref(), grants.as_ref()).await;
     Ok(AppState {
         storage,
         secrets,
@@ -722,7 +781,34 @@ pub async fn build_app_state(
         embeddings,
         egress,
         local_runtime,
+        grants,
     })
+}
+
+/// Seed the grant store with project roots (and their read-only companions)
+/// that are already persisted. A corrupt row is skipped: it must not stop the
+/// app from launching, and a missing grant only means one extra prompt.
+async fn seed_project_grants(storage: &Storage, grants: &path_grants::PathGrants) {
+    let rows: Result<Vec<(String,)>, _> =
+        sqlx::query_as("SELECT json_extract(data, '$') FROM projects")
+            .fetch_all(storage.pool())
+            .await;
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(%err, "could not read project roots for the path grant store");
+            return;
+        }
+    };
+    for (json,) in rows {
+        let Ok(project) = serde_json::from_str::<mixd_storage::records::ProjectData>(&json) else {
+            continue;
+        };
+        grants.grant_permanent(std::path::Path::new(&project.root_path));
+        for extra in project.additional_paths {
+            grants.grant_permanent(std::path::Path::new(&extra));
+        }
+    }
 }
 
 /// Read the egress allowlist out of `app_settings`.
@@ -1053,13 +1139,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_http::init())
+        // `store`, `process`, `shell` and `http` used to be registered even
+        // though no command or UI module called them. Their capabilities were
+        // already denied, but not registering them removes the IPC surface
+        // entirely rather than relying on the ACL as the only gate.
         // Signed, verified updates. The WebView reaches this only through
         // `commands::update`, so no `updater:*` capability is granted.
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1212,6 +1298,8 @@ pub fn run() {
             commands::runs::list_runs,
             commands::runs::list_run_events,
             commands::runs::cancel_run,
+            commands::runs::steer_run,
+            commands::runs::revert_run,
             commands::runs::resume_run,
             commands::runs::budget_extension,
             commands::runs::list_checkpoints,
@@ -1221,6 +1309,9 @@ pub fn run() {
             commands::fs::open_external,
             commands::fs::save_text_file,
             commands::fs::save_base64_file,
+            commands::picker::pick_open_file,
+            commands::picker::pick_folder,
+            commands::picker::pick_save_file,
             commands::approvals::decide_approval,
             commands::tools::list_tools,
             commands::tools::set_permission_rule,
@@ -1241,6 +1332,10 @@ pub fn run() {
             commands::browser::browser_reset_profile,
             commands::browser::browser_artifact,
             commands::browser::browser_frame,
+            commands::browser::browser_keepalive,
+            commands::browser::browser_stop,
+            commands::browser::browser_screencast_start,
+            commands::browser::browser_screencast_stop,
             commands::memories::list_memories,
             commands::memories::create_memory,
             commands::memories::update_memory,

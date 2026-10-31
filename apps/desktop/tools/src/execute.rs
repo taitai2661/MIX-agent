@@ -16,7 +16,12 @@ use uuid::Uuid;
 
 /// How long an approval prompt stays answerable before the Run resumes and the
 /// Tool is treated as denied.
-const APPROVAL_TTL_SECS: i64 = 300;
+///
+/// Fifteen minutes, not five: a coding agent's prompt is often answered after
+/// the user reads the diff or steps away for coffee, and a five-minute window
+/// turned "I was thinking" into a denied Tool that the model then reported as a
+/// failure. The prompt still auto-denies, so an abandoned Run cannot hang.
+const APPROVAL_TTL_SECS: i64 = 900;
 
 /// A paused Run's wake-up channel, kept together with the prompt's deadline.
 ///
@@ -36,6 +41,9 @@ pub struct ToolExecutor {
     pub pending: Arc<Mutex<Vec<PendingApproval>>>,
     /// Wakes the paused Run when the user answers a prompt.
     waiters: Arc<Mutex<HashMap<String, Waiter>>>,
+    /// "Allow for this session" rules. Deliberately in memory: a session grant
+    /// must not survive a restart or leak into another workspace.
+    session_rules: Arc<Mutex<Vec<PermissionRule>>>,
 }
 
 /// The information [`ToolExecutor::resolve_permission`] needs to evaluate a
@@ -95,6 +103,18 @@ fn parse_rule(data: &serde_json::Value) -> Option<PermissionRule> {
 /// calls bound to the same workspace id.
 fn rule_matches(rule: &PermissionRule, ctx: &PermissionContext<'_>) -> bool {
     match rule.scope {
+        RuleScope::Session => {
+            // A session grant without a workspace (an ad-hoc chat) applies
+            // everywhere; one with a workspace is confined to it.
+            if let Some(raw) = rule.workspace_id.as_deref() {
+                let Some(call_workspace) = ctx.workspace_id else {
+                    return false;
+                };
+                if Uuid::parse_str(raw).ok() != Some(call_workspace) {
+                    return false;
+                }
+            }
+        }
         RuleScope::Workspace => {
             let Some(call_workspace) = ctx.workspace_id else {
                 return false;
@@ -140,6 +160,7 @@ impl ToolExecutor {
             secrets,
             pending: Arc::new(Mutex::new(Vec::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
+            session_rules: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -148,10 +169,12 @@ impl ToolExecutor {
     /// Precedence (most specific first, ties broken by `updatedAt` desc, then
     /// by id asc):
     ///
-    /// 1. `workspace` scope + `pattern`
-    /// 2. `workspace` scope, no pattern
-    /// 3. `global` scope + `pattern`
-    /// 4. `global` scope, no pattern
+    /// 1. `session` scope + `pattern`
+    /// 2. `session` scope, no pattern
+    /// 3. `workspace` scope + `pattern`
+    /// 4. `workspace` scope, no pattern
+    /// 5. `global` scope + `pattern`
+    /// 6. `global` scope, no pattern
     ///
     /// Within those buckets the caller is `tool_name`, so two rules on the
     /// same tool compete only when their scope/pattern combination differs.
@@ -164,7 +187,15 @@ impl ToolExecutor {
         ctx: &PermissionContext<'_>,
         default: PermissionDecision,
     ) -> PermissionDecision {
-        let rules = match self.load_rules(tool_id).await {
+        let mut rules = {
+            let guard = self.session_rules.lock().await;
+            guard
+                .iter()
+                .filter(|rule| rule.tool_id == tool_id)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let stored = match self.load_rules(tool_id).await {
             Ok(rules) => rules,
             Err(err) => {
                 // Fail-closed: a storage failure must never silently grant a
@@ -175,6 +206,7 @@ impl ToolExecutor {
                 return PermissionDecision::Ask;
             }
         };
+        rules.extend(stored);
         if rules.is_empty() {
             return default;
         }
@@ -291,10 +323,17 @@ impl ToolExecutor {
             ApprovalOutcome::Approve { .. } => PermissionDecision::Allow,
             ApprovalOutcome::Deny => PermissionDecision::Deny,
         };
-        let remember = matches!(outcome, ApprovalOutcome::Approve { remember: true });
+        let remember = matches!(outcome, ApprovalOutcome::Approve { remember: true, .. });
+        let remember_session = matches!(
+            outcome,
+            ApprovalOutcome::Approve {
+                remember_session: true,
+                ..
+            }
+        );
         let approved = matches!(outcome, ApprovalOutcome::Approve { .. });
+        let (workspace_id, pattern) = self.approval_scope(approval_id).await;
         if remember {
-            let (workspace_id, pattern) = self.approval_scope(approval_id).await;
             let scope = if workspace_id.is_some() {
                 RuleScope::Workspace
             } else {
@@ -302,6 +341,10 @@ impl ToolExecutor {
             };
             self.remember_rule(tool_id, decision, scope, workspace_id, pattern.as_deref())
                 .await?;
+        }
+        if remember_session {
+            self.remember_session_rule(tool_id, decision, workspace_id, pattern.as_deref())
+                .await;
         }
         sqlx::query(
             "UPDATE approvals SET status = ?1, data = json_set(data, '$.grantedAt', ?2) \
@@ -384,6 +427,34 @@ impl ToolExecutor {
         .execute(self.storage.pool())
         .await?;
         Ok(())
+    }
+
+    /// Record an in-memory allow/deny for the rest of the process.
+    ///
+    /// Scoped to the tool, the workspace and the same pattern target as a
+    /// durable rule, but never written to SQLite: closing the app forgets it.
+    async fn remember_session_rule(
+        &self,
+        tool_id: &str,
+        decision: PermissionDecision,
+        workspace_id: Option<Uuid>,
+        pattern: Option<&str>,
+    ) {
+        let pattern = pattern.map(str::trim).filter(|p| !p.is_empty());
+        let mut rules = self.session_rules.lock().await;
+        rules.retain(|rule| {
+            !(rule.tool_id == tool_id
+                && rule.workspace_id == workspace_id.map(|id| id.to_string())
+                && rule.pattern.as_deref() == pattern)
+        });
+        rules.push(PermissionRule {
+            tool_id: tool_id.to_string(),
+            scope: RuleScope::Session,
+            decision,
+            pattern: pattern.map(str::to_string),
+            workspace_id: workspace_id.map(|id| id.to_string()),
+            updated_at: Some(Utc::now()),
+        });
     }
 
     /// The workspace and pattern target a prompt was opened for, read from the

@@ -13,7 +13,7 @@ from pathlib import Path
 root = Path("/tmp/mix-chat-preview")
 os.environ["MIX_DATA"] = str(root)
 os.environ["MIX_KEYS"] = str(root / "keys")
-os.environ["DATABASE_URL"] = "postgresql+psycopg://mix:test-only-password@preview-db/mix"
+os.environ["DATABASE_URL"] = "postgresql+psycopg://mix@preview-db/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://127.0.0.1:18080"
 
 from fastapi import FastAPI
@@ -30,9 +30,7 @@ Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 with SessionLocal() as db:
-    user = User(
-        username="preview", password_hash=passwords.hash("preview-only-password")
-    )
+    user = User(username="preview", password_hash=passwords.hash("preview-only-password"))
     db.add(user)
     db.flush()
     provider = Provider(
@@ -136,9 +134,7 @@ async def responses(body: dict):
                 }
             ]
         else:
-            text = "検証用の回答です。" + (
-                "ツールの結果を確認しました。" if followup else ""
-            )
+            text = "検証用の回答です。" + ("ツールの結果を確認しました。" if followup else "")
             yield (
                 "data: "
                 + json.dumps(
@@ -153,9 +149,7 @@ async def responses(body: dict):
                     "id": "msg",
                     "role": "assistant",
                     "status": "completed",
-                    "content": [
-                        {"type": "output_text", "text": text, "annotations": []}
-                    ],
+                    "content": [{"type": "output_text", "text": text, "annotations": []}],
                 }
             ]
         yield (

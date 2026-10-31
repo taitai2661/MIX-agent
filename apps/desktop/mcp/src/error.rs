@@ -83,4 +83,8 @@ pub enum McpError {
     /// Raw `reqwest::Error` text, same reasoning as [`McpError::Io`].
     #[error("{0}")]
     Http(#[from] reqwest::Error),
+
+    /// The shared HTTP client could not be initialised (TLS backend).
+    #[error("{0}")]
+    Transport(String),
 }

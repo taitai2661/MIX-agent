@@ -207,7 +207,11 @@ def python_numbers(path: Path, wanted: dict[str, str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for key, name in wanted.items():
         node = found.get(name)
-        if not isinstance(node, ast.Constant) or not isinstance(node.value, (int, float)) or isinstance(node.value, bool):
+        if (
+            not isinstance(node, ast.Constant)
+            or not isinstance(node.value, (int, float))
+            or isinstance(node.value, bool)
+        ):
             raise SystemExit(f"FAIL: {path.name} does not define {name} as a numeric literal")
         out[key] = float(node.value)
     return out
@@ -278,7 +282,9 @@ def rust_numbers(path: Path, wanted: dict[str, str]) -> dict[str, float]:
     text = path.read_text(encoding="utf-8")
     out: dict[str, float] = {}
     for key, name in wanted.items():
-        pattern = re.compile(rf"pub\s+const\s+{re.escape(name)}\s*:\s*(?:f64|usize|u32)\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;")
+        pattern = re.compile(
+            rf"pub\s+const\s+{re.escape(name)}\s*:\s*(?:f64|usize|u32)\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;"
+        )
         match = pattern.search(text)
         if not match:
             raise SystemExit(f"FAIL: {path.name} does not define {name} as a numeric constant")
@@ -296,7 +302,9 @@ def spec_extraction_prompt(text: str) -> str:
 def python_extraction_prompt(path: Path) -> str:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "EXTRACTION_PROMPT" for t in node.targets):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "EXTRACTION_PROMPT" for t in node.targets
+        ):
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 return node.value.value.strip()
     raise SystemExit(f"FAIL: {path.name} does not define EXTRACTION_PROMPT as a string literal")
@@ -306,7 +314,7 @@ def rust_extraction_prompt(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
     match = re.search(r'pub\s+const\s+EXTRACTION_PROMPT\s*:\s*&str\s*=\s*r#"(.*?)"#\s*;', text, re.DOTALL)
     if not match:
-        raise SystemExit(f"FAIL: {path.name} does not define EXTRACTION_PROMPT as a r#\"...\"# literal")
+        raise SystemExit(f'FAIL: {path.name} does not define EXTRACTION_PROMPT as a r#"..."# literal')
     return match.group(1).strip()
 
 
@@ -317,7 +325,9 @@ def check_extraction_prompt(expected: str, edition: str, actual: str, errors: li
     actual_lines = actual.splitlines()
     for index, (left, right) in enumerate(zip(expected_lines, actual_lines), start=1):
         if left != right:
-            errors.append(f"{edition} extraction prompt diverges from spec §6 at line {index}: {left!r} != {right!r}")
+            errors.append(
+                f"{edition} extraction prompt diverges from spec §6 at line {index}: {left!r} != {right!r}"
+            )
             break
     else:
         errors.append(

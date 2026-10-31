@@ -23,7 +23,10 @@ import { Account } from "@/features/settings/Account";
 import { General } from "@/features/settings/General";
 import { Auto } from "@/features/settings/Auto";
 import { Tools } from "@/features/tools/Tools";
-import { BrowserSettings, WebSearchSettings } from "@/features/settings/ToolSettings";
+import {
+  BrowserSettings,
+  WebSearchSettings,
+} from "@/features/settings/ToolSettings";
 import { SettingsOverview } from "@/features/settings/Overview";
 import { Statistics } from "@/features/settings/Statistics";
 import { Usage } from "@/features/settings/Usage";
@@ -77,35 +80,62 @@ export function Settings({
   onLogout,
 }: {
   user: { username: string };
-  onUserChange: (user: any) => void;
+  onUserChange: (user: { username: string; csrf: string }) => void;
   onLogout: () => void;
 }) {
   useLanguage();
   const [query, setQuery] = useState("");
-  const filteredGroups = groups.map((group) => ({
-    ...group,
-    items: group.items.filter(([_, label]) =>
-      String(label).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
-    ),
-  })).filter((group) => group.items.length > 0);
+  const filteredGroups = groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(([_, label]) =>
+        String(label)
+          .toLocaleLowerCase()
+          .includes(query.trim().toLocaleLowerCase()),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <div className="settings-layout">
       <nav className="settings-nav">
-        <div className="settings-nav-heading"><h2>{t("設定")}</h2><p>{t("ワークスペースを管理")}</p></div>
-        <label className="settings-search" style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 10px", marginBottom: 12, border: "1px solid var(--line)", borderRadius: 8 }}>
+        <div className="settings-nav-heading">
+          <h2>{t("設定")}</h2>
+          <p>{t("ワークスペースを管理")}</p>
+        </div>
+        <label
+          className="settings-search"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "0 10px",
+            marginBottom: 12,
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+          }}
+        >
           <Search size={14} style={{ color: "var(--muted)" }} />
           <input
             type="search"
             placeholder={t("設定を検索")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            style={{ flex: 1, padding: "8px 0", border: 0, background: "transparent", fontSize: 12, outline: "none" }}
+            style={{
+              flex: 1,
+              padding: "8px 0",
+              border: 0,
+              background: "transparent",
+              fontSize: 12,
+              outline: "none",
+            }}
           />
         </label>
         {filteredGroups.map((group) => (
           <Fragment key={group.label ?? "home"}>
-            {group.label && <p className="settings-nav-label">{t(group.label)}</p>}
+            {group.label && (
+              <p className="settings-nav-label">{t(group.label)}</p>
+            )}
             {group.items.map(([path, label, Icon]) => (
               <NavLink
                 key={path || "overview"}
@@ -133,7 +163,16 @@ export function Settings({
           <Route path="network" element={<NetworkSettings />} />
           <Route path="mcp" element={<MCP />} />
           <Route path="general" element={<General />} />
-          <Route path="account" element={<Account user={user} onUserChange={onUserChange} onLogout={onLogout} />} />
+          <Route
+            path="account"
+            element={
+              <Account
+                user={user}
+                onUserChange={onUserChange}
+                onLogout={onLogout}
+              />
+            }
+          />
           <Route path="backups" element={<Backups />} />
           <Route path="usage" element={<Usage />} />
           <Route path="statistics" element={<Statistics />} />

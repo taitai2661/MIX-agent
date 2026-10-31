@@ -35,7 +35,10 @@ export function dayKind(date: Date): DayKind {
   return "weekday";
 }
 
-export function seasonOf(date: Date): { season: Season; seasonPhase: SeasonPhase } {
+export function seasonOf(date: Date): {
+  season: Season;
+  seasonPhase: SeasonPhase;
+} {
   const month = date.getMonth() + 1;
   const season: Season =
     month >= 3 && month <= 5
@@ -45,16 +48,28 @@ export function seasonOf(date: Date): { season: Season; seasonPhase: SeasonPhase
         : month >= 9 && month <= 11
           ? "autumn"
           : "winter";
-  const start = season === "spring" ? 3 : season === "summer" ? 6 : season === "autumn" ? 9 : 12;
-  const offset = ((month - start) + 12) % 12;
-  return { season, seasonPhase: offset === 0 ? "early" : offset === 1 ? "mid" : "late" };
+  const start =
+    season === "spring"
+      ? 3
+      : season === "summer"
+        ? 6
+        : season === "autumn"
+          ? 9
+          : 12;
+  const offset = (month - start + 12) % 12;
+  return {
+    season,
+    seasonPhase: offset === 0 ? "early" : offset === 1 ? "mid" : "late",
+  };
 }
 
 export function dayOfYear(date: Date): number {
   const { year, month, day } = calendarDate(date);
-  return Math.round(
-    (Date.UTC(year, month - 1, day) - Date.UTC(year, 0, 1)) / 86_400_000,
-  ) + 1;
+  return (
+    Math.round(
+      (Date.UTC(year, month - 1, day) - Date.UTC(year, 0, 1)) / 86_400_000,
+    ) + 1
+  );
 }
 
 export function workloadOf(conversationCount: number): Workload {
@@ -69,7 +84,11 @@ export function activityOf(lastMessageAt: number | null, now: Date): Activity {
   if (lastMessageAt === null) return "none";
   const elapsed = now.getTime() - lastMessageAt;
   if (elapsed < 45 * MINUTE) return "justNow";
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
   if (lastMessageAt >= today) return "today";
   if (lastMessageAt >= today - DAY) return "yesterday";
   if (lastMessageAt >= today - 7 * DAY) return "thisWeek";
@@ -80,7 +99,11 @@ export function gapOf(now: Date, lastVisitAt: number): Gap {
   if (!lastVisitAt) return "first";
   const elapsed = now.getTime() - lastVisitAt;
   if (elapsed < 5 * MINUTE) return "reload";
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
   if (lastVisitAt >= today) return "sameDay";
   if (lastVisitAt >= today - DAY) return "overnight";
   if (elapsed < 7 * DAY) return "fewDays";
@@ -88,8 +111,15 @@ export function gapOf(now: Date, lastVisitAt: number): Gap {
   return "farAway";
 }
 
-export function isFirstVisitOfDay(now: Date, firstSeenTodayAt: number): boolean {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+export function isFirstVisitOfDay(
+  now: Date,
+  firstSeenTodayAt: number,
+): boolean {
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
   return firstSeenTodayAt < today;
 }
 

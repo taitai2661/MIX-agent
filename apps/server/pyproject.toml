@@ -1,6 +1,6 @@
 [project]
 name = "mix-agent"
-version = "0.5.4"
+version = "0.5.5"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 
@@ -13,28 +13,14 @@ dependencies = [
   "mcp>=1.9,<2", "pypdf>=5,<7", "playwright>=1.51,<2", "pyyaml>=6,<7"
 ]
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-cov>=6,<8", "ruff>=0.11,<1", "pyright>=1.1.390,<2"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 [tool.pytest.ini_options]
+# Mirrors the repository-root `pytest.ini`. The Docker test image runs
+# `pytest -c /app/pyproject.toml` because the checkout is mounted at /workspace,
+# so the root config is not discoverable from /app; keep both in sync.
 asyncio_mode = "auto"
 testpaths = ["../../tests"]
-[tool.ruff]
-line-length = 110
 
-[tool.ruff.lint.flake8-bugbear]
-# FastAPI dependency-injection markers are idiomatic here and are treated as
-# immutable just like the broader community does; genuine mutable defaults in
-# other call sites stay flagged by B008.
-extend-immutable-calls = [
-  "fastapi.Depends",
-  "fastapi.File",
-  "fastapi.Form",
-  "fastapi.Query",
-  "fastapi.Path",
-  "fastapi.Header",
-  "fastapi.Cookie",
-  "fastapi.Body",
-  "fastapi.Security",
-]

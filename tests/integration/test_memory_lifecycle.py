@@ -154,10 +154,12 @@ def test_migration_0024_restores_the_eight_columns_and_is_rerunnable(scratch_dat
     # §3's retrieval gate reads the restored column: superseded leaves recall,
     # pinned stays findable even once archived, and review shows everything.
     with scratch_database.begin() as conn:
-        conn.execute(text(
-            "UPDATE memories SET lifecycle_state = 'superseded', superseded_by_id = 'm-explicit' "
-            "WHERE id = 'm-auto'"
-        ))
+        conn.execute(
+            text(
+                "UPDATE memories SET lifecycle_state = 'superseded', superseded_by_id = 'm-explicit' "
+                "WHERE id = 'm-auto'"
+            )
+        )
         conn.execute(text("UPDATE memories SET lifecycle_state = 'archived' WHERE id = 'm-pinned'"))
 
     with sessionmaker(scratch_database)() as db:
@@ -188,7 +190,9 @@ def test_supersede_keeps_the_row_writes_a_revision_and_hides_it_from_recall(sign
         assert row.superseded_by_id == new["id"]
 
         # §1: the pre-transition state is on disk before the transition.
-        revisions = [item for item in db.scalars(select(MemoryRevision)) if item.data.get("memory_id") == old["id"]]
+        revisions = [
+            item for item in db.scalars(select(MemoryRevision)) if item.data.get("memory_id") == old["id"]
+        ]
         assert len(revisions) == 1
         assert revisions[0].data["previous"]["lifecycle_state"] == "established"
 
@@ -197,7 +201,9 @@ def test_supersede_keeps_the_row_writes_a_revision_and_hides_it_from_recall(sign
         assert old["id"] not in hits and new["id"] in hits
         assert old["id"] in {item["id"] for item in mem_service.list_traces(db, owner)}
 
-        events = [item for item in db.scalars(select(MemoryActionEvent)) if item.data.get("action") == "SUPERSEDE"]
+        events = [
+            item for item in db.scalars(select(MemoryActionEvent)) if item.data.get("action") == "SUPERSEDE"
+        ]
         assert len(events) == 1
         assert events[0].data["related_memory_id"] == new["id"]
 
@@ -216,7 +222,9 @@ def test_dispute_marks_one_side_and_resolve_settles_the_pair(signed):
         challenge = mem_service.change(db, owner, "大阪に五年暮らしている")
         db.flush()
 
-        marked = mem_runtime.dispute(db, owner, memory_id=challenge["id"], conflicting_id=stored["id"], reason="矛盾を検出")
+        marked = mem_runtime.dispute(
+            db, owner, memory_id=challenge["id"], conflicting_id=stored["id"], reason="矛盾を検出"
+        )
         db.flush()
 
         # Only the named row is marked: an open conflict cannot hide the stored fact.
@@ -226,12 +234,20 @@ def test_dispute_marks_one_side_and_resolve_settles_the_pair(signed):
         assert (other.lifecycle_state, other.disputed_by_id) == ("established", None)
         pair = {item["id"] for item in mem_service.search(db, owner, "暮らしている")}
         assert stored["id"] in pair and challenge["id"] not in pair
-        dispute_revisions = [item for item in db.scalars(select(MemoryRevision)) if item.data.get("memory_id") == challenge["id"]]
+        dispute_revisions = [
+            item
+            for item in db.scalars(select(MemoryRevision))
+            if item.data.get("memory_id") == challenge["id"]
+        ]
         assert len(dispute_revisions) == 1
         assert dispute_revisions[0].data["previous"]["lifecycle_state"] == "candidate"
 
         resolved = mem_runtime.resolve_conflict(
-            db, owner, conflict_id=challenge["id"], resolution="resolved", prefer=challenge["id"],
+            db,
+            owner,
+            conflict_id=challenge["id"],
+            resolution="resolved",
+            prefer=challenge["id"],
         )
         db.flush()
 
@@ -245,7 +261,9 @@ def test_dispute_marks_one_side_and_resolve_settles_the_pair(signed):
         pair = {item["id"] for item in mem_service.search(db, owner, "暮らしている")}
         assert pair == {challenge["id"]}
 
-        events = [item for item in db.scalars(select(MemoryActionEvent)) if item.data.get("action") == "RESOLVE"]
+        events = [
+            item for item in db.scalars(select(MemoryActionEvent)) if item.data.get("action") == "RESOLVE"
+        ]
         assert len(events) == 1
         assert events[0].data["memory_id"] == stored["id"]  # the rejected side
         assert events[0].data["related_memory_id"] == challenge["id"]  # the adopted side
@@ -261,7 +279,9 @@ def test_resolve_without_a_preference_does_not_let_the_challenger_win(signed):
         db.flush()
 
         with pytest.raises(ValueError):
-            mem_runtime.resolve_conflict(db, owner, conflict_id=challenge["id"], resolution="resolved", prefer="someone-else")
+            mem_runtime.resolve_conflict(
+                db, owner, conflict_id=challenge["id"], resolution="resolved", prefer="someone-else"
+            )
 
         resolved = mem_runtime.resolve_conflict(db, owner, conflict_id=challenge["id"], resolution="resolved")
         db.flush()
@@ -325,13 +345,16 @@ def test_resolve_route_settles_what_the_list_shows(signed):
         assert winner.lifecycle_state == "active" and winner.disputed_by_id is None
         assert loser.lifecycle_state == "superseded" and loser.superseded_by_id == stored["id"]
         revisions = [
-            item for item in db.scalars(select(MemoryRevision))
+            item
+            for item in db.scalars(select(MemoryRevision))
             if item.data.get("memory_id") in (stored["id"], challenge["id"])
         ]
         # 1 revision the dispute wrote + 2 the settlement wrote: §3 keeps a
         # pre-resolution snapshot of *both* rows, not just the rejected one.
         assert len(revisions) == 3
-        states = {(item.data["memory_id"], item.data["previous"].get("lifecycle_state")) for item in revisions}
+        states = {
+            (item.data["memory_id"], item.data["previous"].get("lifecycle_state")) for item in revisions
+        }
         assert (stored["id"], "established") in states  # the adopted side, as it was
         assert (challenge["id"], "disputed") in states  # the rejected side, as it was
 
@@ -427,7 +450,10 @@ def test_daily_decay_weakens_idle_rows_once_and_archives_at_the_floor(signed, mo
         for row_id, days in ((idle["id"], 30), (ancient["id"], 500), (pinned["id"], 500)):
             db.get(Memory, row_id).updated_at = now() - datetime.timedelta(days=days)
         db.flush()
-        before = {row_id: db.get(Memory, row_id).updated_at for row_id in (idle["id"], ancient["id"], pinned["id"], fresh["id"])}
+        before = {
+            row_id: db.get(Memory, row_id).updated_at
+            for row_id in (idle["id"], ancient["id"], pinned["id"], fresh["id"])
+        }
 
         assert mem_jobs.daily_decay(db) == 2  # idle + ancient; pinned and fresh are skipped
 
@@ -444,7 +470,9 @@ def test_daily_decay_weakens_idle_rows_once_and_archives_at_the_floor(signed, mo
         assert {row_id: db.get(Memory, row_id).updated_at for row_id in before} == before
         # Scalar decay recomputes §1's own fields: no revision, one DECAY event.
         assert list(db.scalars(select(MemoryRevision))) == []
-        decay_events = [item for item in db.scalars(select(MemoryActionEvent)) if item.data.get("action") == "DECAY"]
+        decay_events = [
+            item for item in db.scalars(select(MemoryActionEvent)) if item.data.get("action") == "DECAY"
+        ]
         assert [item.data["memory_id"] for item in decay_events] == [ancient["id"]]
 
         # The daily marker: a second pass today does nothing.
@@ -454,14 +482,18 @@ def test_daily_decay_weakens_idle_rows_once_and_archives_at_the_floor(signed, mo
 def test_reinforce_moves_recency_and_the_strength_fields(signed):
     with SessionLocal() as db:
         owner = owner_id(db)
-        created = mem_service.change(db, owner, "会議は火曜の午後に決める", source_run="explicit-user-request")
+        created = mem_service.change(
+            db, owner, "会議は火曜の午後に決める", source_run="explicit-user-request"
+        )
         row = db.get(Memory, created["id"])
         stale = now() - datetime.timedelta(days=10)
         row.updated_at = stale
         db.flush()
 
         steps = mem_runtime.apply_plan(
-            db, owner, [{"action": "reinforce", "memory_id": row.id, "reason": "duplicate"}],
+            db,
+            owner,
+            [{"action": "reinforce", "memory_id": row.id, "reason": "duplicate"}],
         )
         db.flush()
 
@@ -497,7 +529,9 @@ def test_recall_only_sees_retrievable_lifecycles(signed):
         owner = owner_id(db)
         rows = {}
         for key, (state, pinned) in states.items():
-            created = mem_service.change(db, owner, f"Lifecyclegate {key} の記憶", pinned=pinned, source_run="explicit-user-request")
+            created = mem_service.change(
+                db, owner, f"Lifecyclegate {key} の記憶", pinned=pinned, source_run="explicit-user-request"
+            )
             row = db.get(Memory, created["id"])
             row.lifecycle_state = state
             rows[key] = row
@@ -505,18 +539,26 @@ def test_recall_only_sees_retrievable_lifecycles(signed):
 
         found = mem_service.search(db, owner, "Lifecyclegate", debug=True)
 
-        assert {item["id"] for item in found["memories"]} == {rows["m-established"].id, rows["m-pinned-archived"].id}
+        assert {item["id"] for item in found["memories"]} == {
+            rows["m-established"].id,
+            rows["m-pinned-archived"].id,
+        }
         assert found["debug"]["considered"] == 2
         assert found["debug"]["lifecycle_excluded"] == 4
         # Review keeps showing what recall hides (§3: hidden from recall, not from review).
-        assert {item["id"] for item in mem_service.list_traces(db, owner)} == {row.id for row in rows.values()}
+        assert {item["id"] for item in mem_service.list_traces(db, owner)} == {
+            row.id for row in rows.values()
+        }
         assert mem_service.retrievable(rows["m-pinned-archived"]) is True
         assert mem_service.retrievable(rows["m-archived"]) is False
 
         # The same gate holds in the pure ranking contract.
         ranked = mem_service.rank(
             {"lifecyclegate"},
-            [({"lifecyclegate"}, now(), None, rows["m-superseded"]), ({"lifecyclegate"}, now(), None, rows["m-established"])],
+            [
+                ({"lifecyclegate"}, now(), None, rows["m-superseded"]),
+                ({"lifecyclegate"}, now(), None, rows["m-established"]),
+            ],
         )
         assert [item["payload"].id for item in ranked] == [rows["m-established"].id]
 
@@ -524,12 +566,18 @@ def test_recall_only_sees_retrievable_lifecycles(signed):
 def test_render_and_trace_report_the_real_lifecycle(signed):
     with SessionLocal() as db:
         owner = owner_id(db)
-        explicit = mem_tools.remember(db, owner, content="MIX-agent のデフォルトは英語で話す", explicit_user=True)
+        explicit = mem_tools.remember(
+            db, owner, content="MIX-agent のデフォルトは英語で話す", explicit_user=True
+        )
         automatic = mem_tools.remember(db, owner, content="MIX-agent は Slack 連携に対応している")
         correction = mem_service.change(db, owner, "コーヒーはミルクを入れて飲む")
-        earlier = mem_service.change(db, owner, "コーヒーはブラックで飲む", source_run="explicit-user-request")
+        earlier = mem_service.change(
+            db, owner, "コーヒーはブラックで飲む", source_run="explicit-user-request"
+        )
         db.flush()
-        mem_runtime.supersede(db, owner, old_id=earlier["id"], new_id=correction["id"], reason="好みが変わった")
+        mem_runtime.supersede(
+            db, owner, old_id=earlier["id"], new_id=correction["id"], reason="好みが変わった"
+        )
         db.flush()
 
         explicit_row = db.get(Memory, explicit["applied"][0]["id"])

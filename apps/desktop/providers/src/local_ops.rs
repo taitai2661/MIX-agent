@@ -73,9 +73,9 @@ impl CancelToken {
 /// Every operation used to build its own `Client`, rebuilding the pool for a
 /// request that always goes to `127.0.0.1`. `no_proxy` is deliberate: a system
 /// proxy must not intercept a loopback model server.
-fn local_client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
+fn local_client() -> anyhow::Result<&'static reqwest::Client> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    let built = CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             // A total timeout would cut a long but healthy download at the
@@ -83,8 +83,9 @@ fn local_client() -> &'static reqwest::Client {
             .read_timeout(Duration::from_secs(600))
             .no_proxy()
             .build()
-            .expect("reqwest local client")
-    })
+            .map_err(|err| format!("could not initialise the local HTTP client: {err}"))
+    });
+    built.as_ref().map_err(|err| anyhow::anyhow!(err.clone()))
 }
 
 /// `POST /api/pull` on Ollama, forwarding each NDJSON line to `on_progress`.
@@ -102,7 +103,7 @@ pub async fn ollama_pull(
         return Err(simple("pull_cancelled"));
     }
     let url = format!("{}/api/pull", origin_of(origin));
-    let response = local_client()
+    let response = local_client()?
         .post(&url)
         .json(&serde_json::json!({ "name": model, "stream": true }))
         .send()
@@ -208,7 +209,7 @@ async fn ollama_json(
     body: serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
     let url = format!("{}{}", origin_of(origin), path);
-    let response = local_client()
+    let response = local_client()?
         .request(method, &url)
         .json(&body)
         .send()

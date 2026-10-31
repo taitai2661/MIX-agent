@@ -4,9 +4,9 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 743 crates
-- **Python Dependencies**: 78 packages
-- **Node.js / Web Dependencies**: 51 packages
+- **Rust Dependencies**: 722 crates
+- **Python Dependencies**: 82 packages
+- **Node.js / Web Dependencies**: 47 packages
 
 ## 2. Special Notices & Disclosures
 
@@ -40,6 +40,7 @@ This document lists third-party software components and dependencies used by MIX
 | `charset-normalizer` | `3.5.1` | Python |
 | `click` | `8.5.0` | Python |
 | `colorama` | `0.4.6` | Python |
+| `coverage` | `7.17.0` | Python |
 | `cryptography` | `46.0.7` | Python |
 | `ddgs` | `9.16.0` | Python |
 | `distro` | `1.9.0` | Python |
@@ -62,6 +63,7 @@ This document lists third-party software components and dependencies used by MIX
 | `mako` | `1.4.1` | Python |
 | `markupsafe` | `3.0.3` | Python |
 | `mcp` | `1.29.1` | Python |
+| `nodeenv` | `1.11.0` | Python |
 | `openai` | `2.54.0` | Python |
 | `packaging` | `26.3` | Python |
 | `playwright` | `1.62.0` | Python |
@@ -79,8 +81,10 @@ This document lists third-party software components and dependencies used by MIX
 | `pygments` | `2.21.0` | Python |
 | `pyjwt` | `2.13.0` | Python |
 | `pypdf` | `6.16.2` | Python |
+| `pyright` | `1.1.414` | Python |
 | `pytest` | `9.1.1` | Python |
 | `pytest-asyncio` | `1.4.0` | Python |
+| `pytest-cov` | `7.1.0` | Python |
 | `python-dotenv` | `1.2.3` | Python |
 | `python-multipart` | `0.0.32` | Python |
 | `pywin32` | `312` | Python |
@@ -123,13 +127,8 @@ This document lists third-party software components and dependencies used by MIX
 | `@tailwindcss/vite` | `^4.1.7` | npm |
 | `@tanstack/react-query` | `^5.80.0` | npm |
 | `@tauri-apps/api` | `^2.1.1` | npm |
-| `@tauri-apps/plugin-deep-link` | `^2.0.1` | npm |
-| `@tauri-apps/plugin-dialog` | `^2.0.1` | npm |
-| `@tauri-apps/plugin-http` | `^2.0.1` | npm |
 | `@tauri-apps/plugin-notification` | `^2.0.1` | npm |
 | `@tauri-apps/plugin-os` | `^2.0.0` | npm |
-| `@tauri-apps/plugin-process` | `^2.0.0` | npm |
-| `@tauri-apps/plugin-shell` | `^2.0.1` | npm |
 | `@tauri-apps/plugin-window-state` | `^2.0.1` | npm |
 | `@testing-library/jest-dom` | `^7.0.1` | npm |
 | `@testing-library/react` | `^16.3.3` | npm |
@@ -138,12 +137,13 @@ This document lists third-party software components and dependencies used by MIX
 | `@types/react` | `^19.1.0` | npm |
 | `@types/react-dom` | `^19.1.0` | npm |
 | `@vitejs/plugin-react` | `^4.4.1` | npm |
+| `@vitest/coverage-v8` | `^3.2.7` | npm |
 | `class-variance-authority` | `^0.7.1` | npm |
 | `clsx` | `^2.1.1` | npm |
-| `eslint` | `^9.18.0` | npm |
+| `eslint` | `^9.39.5` | npm |
 | `eslint-plugin-jsx-a11y` | `^6.10.2` | npm |
 | `eslint-plugin-react-hooks` | `^5.2.0` | npm |
-| `jsdom` | `^30.1.1` | npm |
+| `jsdom` | `30.1.3` | npm |
 | `lucide-react` | `^0.511.0` | npm |
 | `openapi-typescript` | `^7.8.0` | npm |
 | `prettier` | `3.5.3` | npm |
@@ -156,14 +156,14 @@ This document lists third-party software components and dependencies used by MIX
 | `tailwind-merge` | `^3.2.0` | npm |
 | `tailwindcss` | `^4.1.7` | npm |
 | `typescript` | `~5.8.3` | npm |
-| `typescript-eslint` | `^8.70.1` | npm |
+| `typescript-eslint` | `^8.72.1` | npm |
 | `vite` | `^6.3.5` | npm |
 | `vitest` | `^3.1.4` | npm |
 | `zustand` | `^4.5.4` | npm |
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 743 crates compiled into Desktop binaries.
+Total: 722 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -259,7 +259,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `const-random` | `0.1.18` | Rust |
 | `const-random-macro` | `0.1.16` | Rust |
 | `cookie` | `0.18.2` | Rust |
-| `cookie_store` | `0.22.1` | Rust |
 | `core_detect` | `1.0.0` | Rust |
 | `core-foundation` | `0.9.4` | Rust |
 | `core-foundation` | `0.10.1` | Rust |
@@ -286,7 +285,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `darling_core` | `0.24.1` | Rust |
 | `darling_macro` | `0.24.1` | Rust |
 | `data-encoding` | `2.11.1` | Rust |
-| `data-url` | `0.3.2` | Rust |
 | `dbus` | `0.9.12` | Rust |
 | `ddgs` | `0.1.0` | Rust |
 | `defmt` | `1.1.1` | Rust |
@@ -306,7 +304,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `dlopen2` | `0.8.2` | Rust |
 | `dlopen2_derive` | `0.4.3` | Rust |
 | `dlv-list` | `0.5.2` | Rust |
-| `document-features` | `0.2.12` | Rust |
 | `dom_query` | `0.28.0` | Rust |
 | `dotenvy` | `0.15.7` | Rust |
 | `downcast-rs` | `1.2.1` | Rust |
@@ -381,7 +378,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `gtk` | `0.18.2` | Rust |
 | `gtk-sys` | `0.18.2` | Rust |
 | `gtk3-macros` | `0.18.2` | Rust |
-| `h2` | `0.4.19` | Rust |
 | `hashbrown` | `0.12.3` | Rust |
 | `hashbrown` | `0.14.5` | Rust |
 | `hashbrown` | `0.15.5` | Rust |
@@ -458,7 +454,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `linux-keyutils` | `0.2.5` | Rust |
 | `linux-raw-sys` | `0.12.1` | Rust |
 | `litemap` | `0.8.3` | Rust |
-| `litrs` | `1.0.0` | Rust |
 | `lock_api` | `0.4.14` | Rust |
 | `log` | `0.4.34` | Rust |
 | `lopdf` | `0.32.0` | Rust |
@@ -523,7 +518,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `ordered-multimap` | `0.7.3` | Rust |
 | `ordered-stream` | `0.2.0` | Rust |
 | `os_info` | `3.15.0` | Rust |
-| `os_pipe` | `1.2.3` | Rust |
 | `osakit` | `0.3.1` | Rust |
 | `pango` | `0.18.3` | Rust |
 | `pango-sys` | `0.18.0` | Rust |
@@ -566,8 +560,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `proc-macro-error` | `1.0.4` | Rust |
 | `proc-macro-error-attr` | `1.0.4` | Rust |
 | `proc-macro2` | `1.0.107` | Rust |
-| `psl-types` | `2.0.11` | Rust |
-| `publicsuffix` | `2.3.0` | Rust |
 | `quick-xml` | `0.42.0` | Rust |
 | `quinn` | `0.11.12` | Rust |
 | `quinn-proto` | `0.11.18` | Rust |
@@ -647,12 +639,9 @@ Total: 743 crates compiled into Desktop binaries.
 | `sha1` | `0.10.7` | Rust |
 | `sha2` | `0.10.9` | Rust |
 | `sharded-slab` | `0.1.7` | Rust |
-| `shared_child` | `1.1.2` | Rust |
 | `shared_library` | `0.1.9` | Rust |
 | `shell-words` | `1.1.1` | Rust |
 | `shlex` | `2.0.1` | Rust |
-| `sigchld` | `0.2.5` | Rust |
-| `signal-hook` | `0.4.4` | Rust |
 | `signal-hook-registry` | `1.4.8` | Rust |
 | `signature` | `2.2.0` | Rust |
 | `simd_cesu8` | `1.2.0` | Rust |
@@ -704,13 +693,9 @@ Total: 743 crates compiled into Desktop binaries.
 | `tauri-plugin-deep-link` | `2.5.0` | Rust |
 | `tauri-plugin-dialog` | `2.8.0` | Rust |
 | `tauri-plugin-fs` | `2.6.0` | Rust |
-| `tauri-plugin-http` | `2.8.0` | Rust |
 | `tauri-plugin-notification` | `2.5.0` | Rust |
 | `tauri-plugin-os` | `2.4.0` | Rust |
-| `tauri-plugin-process` | `2.4.0` | Rust |
-| `tauri-plugin-shell` | `2.4.0` | Rust |
 | `tauri-plugin-single-instance` | `2.5.0` | Rust |
-| `tauri-plugin-store` | `2.5.0` | Rust |
 | `tauri-plugin-updater` | `2.13.1` | Rust |
 | `tauri-plugin-window-state` | `2.5.0` | Rust |
 | `tauri-runtime` | `2.12.0` | Rust |
@@ -763,11 +748,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `typeid` | `1.0.3` | Rust |
 | `typenum` | `1.20.1` | Rust |
 | `uds_windows` | `1.2.1` | Rust |
-| `unic-char-property` | `0.9.0` | Rust |
-| `unic-char-range` | `0.9.0` | Rust |
-| `unic-common` | `0.9.0` | Rust |
-| `unic-ucd-ident` | `0.9.0` | Rust |
-| `unic-ucd-version` | `0.9.0` | Rust |
 | `unicode-bidi` | `0.3.18` | Rust |
 | `unicode-ident` | `1.0.26` | Rust |
 | `unicode-normalization` | `0.1.25` | Rust |
@@ -776,7 +756,6 @@ Total: 743 crates compiled into Desktop binaries.
 | `universal-hash` | `0.5.1` | Rust |
 | `untrusted` | `0.9.0` | Rust |
 | `url` | `2.5.8` | Rust |
-| `urlpattern` | `0.3.0` | Rust |
 | `urlpattern` | `0.6.0` | Rust |
 | `utf-8` | `0.7.6` | Rust |
 | `utf8_iter` | `1.0.4` | Rust |

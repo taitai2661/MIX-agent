@@ -59,8 +59,12 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
   const expired = remaining === 0;
 
   const decide = useMutation({
-    mutationFn: (input: { id: string; grant: boolean; remember: boolean }) =>
-      api.decideApproval(input),
+    mutationFn: (input: {
+      id: string;
+      grant: boolean;
+      remember: boolean;
+      rememberSession?: boolean;
+    }) => api.decideApproval(input),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY }),
   });
@@ -148,6 +152,20 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
           }
         >
           <ShieldX size={12} /> {t("拒否")}
+        </Button>
+        <Button
+          size="sm"
+          disabled={disabled}
+          onClick={() =>
+            decide.mutate({
+              id: approval.approval_id,
+              grant: true,
+              remember: false,
+              rememberSession: true,
+            })
+          }
+        >
+          <ShieldCheck size={12} /> {t("このセッションで許可")}
         </Button>
         <Button
           size="sm"

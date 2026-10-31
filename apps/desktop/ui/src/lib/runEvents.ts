@@ -53,6 +53,10 @@ export interface RunTimeline {
   error: string | null;
   /** The agent's own checklist, most recent state. */
   todos: TodoItem[];
+  /** True when the backend stopped a replay at its event window. */
+  replayTruncated?: boolean;
+  /** How many middle events the replay window omitted. */
+  replayOmitted?: number | null;
 }
 
 export interface TodoItem {
@@ -283,6 +287,10 @@ export function applyRunEvent(
     case "verification_failed":
       next.verificationFailed =
         optString(d.reason) ?? "an unconfirmed change was left";
+      break;
+    case "replay_truncated":
+      next.replayTruncated = true;
+      next.replayOmitted = optNumber(d.omitted) ?? null;
       break;
     case "todo_list": {
       const items = Array.isArray(d.todos) ? d.todos : [];

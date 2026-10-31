@@ -6,6 +6,35 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
+/// Append a message to an active Run's next turn.
+///
+/// Returns `false` when the Run has already finished, so the UI can send the
+/// text as a normal new turn instead of losing it in a queue nobody drains.
+#[tauri::command]
+pub async fn steer_run(
+    state: State<'_, AppState>,
+    run_id: String,
+    content: String,
+) -> Result<bool, String> {
+    if content.trim().is_empty() {
+        return Err("message is empty".to_string());
+    }
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    Ok(state.engine.steer(id, content).await)
+}
+
+/// Restore every file the Run changed through `edit` / `files` to its
+/// pre-Run content. Terminal commands are out of scope.
+#[tauri::command]
+pub async fn revert_run(state: State<'_, AppState>, run_id: String) -> Result<usize, String> {
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    state
+        .engine
+        .revert_run(id)
+        .await
+        .map_err(crate::error::cmd_err)
+}
+
 #[tauri::command]
 pub async fn get_run(state: State<'_, AppState>, id: String) -> Result<RunView, String> {
     let run_id = Uuid::parse_str(&id).map_err(crate::error::cmd_err)?;
@@ -63,17 +92,15 @@ pub async fn fetch_run_events(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     run_id: &str,
 ) -> Result<Vec<RunEventView>, String> {
-    let rows: Vec<RunEventRow> = sqlx::query_as(
-        "SELECT run_id, sequence, kind, data, created_at \
-         FROM run_events WHERE run_id = ? ORDER BY sequence ASC",
-    )
-    .bind(run_id)
-    .fetch_all(pool)
-    .await
-    .map_err(crate::error::cmd_err)?;
+    let limit = mixd_core::runs::events::MAX_REPLAY_EVENTS;
+    let window = mixd_core::runs::events::load_replay_window(pool, run_id, limit)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    let omitted = window.omitted(limit);
     // `data` is a JSON string; a corrupt row is a warn + Null, never a silent
     // empty bubble — the caller cannot tell "no payload" from "unreadable".
-    Ok(rows
+    let mut events: Vec<RunEventView> = window
+        .rows
         .into_iter()
         .map(|(run_id, sequence, kind, data, created_at)| {
             let data = serde_json::from_str(&data).unwrap_or_else(|err| {
@@ -88,10 +115,21 @@ pub async fn fetch_run_events(
                 created_at,
             }
         })
-        .collect())
+        .collect();
+    if omitted > 0 {
+        // Never hide a cut transcript: the marker tells the reducer that the
+        // middle of the log is missing, including how many rows were dropped.
+        let sequence = events.last().map(|event| event.sequence + 1).unwrap_or(1);
+        events.push(RunEventView {
+            run_id: run_id.to_string(),
+            sequence,
+            kind: "replay_truncated".to_string(),
+            data: serde_json::json!({ "limit": limit, "omitted": omitted }),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+    Ok(events)
 }
-
-type RunEventRow = (String, i64, String, String, String);
 
 #[tauri::command]
 pub async fn cancel_run(state: State<'_, AppState>, id: String) -> Result<(), String> {

@@ -130,8 +130,8 @@ export function BrowserPane() {
           <Badge size="sm" className="font-mono">
             {status?.backend ?? (loading ? t("読み込み中…") : "—")}
           </Badge>
-          <Badge size="sm">
-            {status?.headless ? t("ヘッドレス") : t("ヘッドあり")}
+          <Badge size="sm" tone="neutral">
+            {t("ヘッドレス")}
           </Badge>
           <Badge size="sm">
             {status?.profiles ?? 0} {t("プロファイル")}

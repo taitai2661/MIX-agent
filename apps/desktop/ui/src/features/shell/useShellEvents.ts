@@ -19,10 +19,10 @@ import { t } from "@/lib/i18n";
  * 新規チャット three times no longer leaves three untitled rows behind.
  */
 export function useNewThread() {
-  const setConversationId = useUi((s) => s.setConversationId);
+  const startNewThread = useUi((s) => s.startNewThread);
   const setView = useUi((s) => s.setView);
   return () => {
-    setConversationId(null);
+    startNewThread();
     setView("chat");
   };
 }
@@ -96,6 +96,26 @@ export function useShellEvents(handlers: {
       listenRunEvents((evt) => {
         if (!active) return;
         pushEvent(evt);
+        // Codex-like: the browser pane appears when the agent starts browsing,
+        // without stealing focus. It never replaces another pane the user is
+        // reading, and a manual close is respected until the next run event.
+        if (evt.kind === "tool_started") {
+          const data = (evt.data ?? {}) as { name?: unknown };
+          if (data.name === "browser") {
+            const state = useUi.getState();
+            const conversation = conversationForRun(evt.run_id);
+            if (
+              state.browserAutoOpen &&
+              state.view === "chat" &&
+              state.surface === "desktop-agent" &&
+              state.rightPanel === "none" &&
+              state.browserDismissedRunId !== evt.run_id &&
+              conversation === state.conversationId
+            ) {
+              state.openBrowserPanel("agent");
+            }
+          }
+        }
         // Approval cards are pushed as run events, so the pending list can be
         // invalidated on the signal that actually changes it rather than only
         // re-read on a timer.
@@ -276,6 +296,55 @@ export function useAppShortcuts() {
         e.preventDefault();
         tree();
         return;
+      }
+      // ⌘⇧B — Codex's browser shortcut. It also brings the agent workspace
+      // into view, so the pane is actually rendered (the side panel only
+      // exists on the desktop-agent surface).
+      if (isMod && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        const state = useUi.getState();
+        if (state.surface !== "desktop-agent")
+          state.setSurface("desktop-agent");
+        if (state.view !== "chat") state.setView("chat");
+        if (state.rightPanel !== "browser") {
+          state.openBrowserPanel("user");
+        } else if (state.sidePanelMode === "full") {
+          state.setSidePanelMode("split");
+        } else {
+          state.setRightPanel("none");
+        }
+        return;
+      }
+      // Browser-focused shortcuts. They only fire while the browser pane is
+      // visible; otherwise ⌘T / ⌘L / ⌘R keep the platform's meaning. While
+      // the user is typing in the composer, those keys must stay with the
+      // editor unless focus is already inside the browser pane.
+      if (isMod && !e.shiftKey && !e.altKey) {
+        const state = useUi.getState();
+        const active = document.activeElement as HTMLElement | null;
+        const typing =
+          !!active &&
+          (active.tagName === "INPUT" ||
+            active.tagName === "TEXTAREA" ||
+            active.isContentEditable);
+        const insideBrowser = !!active?.closest("[data-browser-pane]");
+        const browserVisible =
+          state.rightPanel === "browser" && (!typing || insideBrowser);
+        if (browserVisible && e.key.toLowerCase() === "l") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("mix:browser-focus-address"));
+          return;
+        }
+        if (browserVisible && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("mix:browser-new-tab"));
+          return;
+        }
+        if (browserVisible && e.key.toLowerCase() === "r") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("mix:browser-reload"));
+          return;
+        }
       }
       // Surface shortcuts: ⌘⇧C → chat, ⌘⇧D → desktop-agent.
       if (isMod && e.shiftKey && !e.altKey) {

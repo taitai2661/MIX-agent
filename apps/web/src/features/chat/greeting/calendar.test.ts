@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { calendarDate, dayNumber, eventOfDay, holidayOf, solarTermOf, upcomingSolarTerm } from "./calendar";
+import {
+  calendarDate,
+  dayNumber,
+  eventOfDay,
+  holidayOf,
+  solarTermOf,
+  upcomingSolarTerm,
+} from "./calendar";
 
-const on = (year: number, month: number, day: number) => new Date(year, month - 1, day);
+const on = (year: number, month: number, day: number) =>
+  new Date(year, month - 1, day);
 
 describe("日本の祝日", () => {
   it("2026年の固定祝日を判定する", () => {
@@ -55,13 +63,35 @@ describe("二十四節気", () => {
   // 国立天文台「暦要項 令和8年(2026)」の中央標準時表記と一致することを確認した値。
   it("2026年の二十四節気すべてが官報値と一致する", () => {
     const expected: readonly (readonly [number, number, string])[] = [
-      [1, 5, "小寒"], [1, 20, "大寒"], [2, 4, "立春"], [2, 19, "雨水"], [3, 5, "啓蟄"],
-      [3, 20, "春分"], [4, 5, "清明"], [4, 20, "穀雨"], [5, 5, "立夏"], [5, 21, "小満"],
-      [6, 6, "芒種"], [6, 21, "夏至"], [7, 7, "小暑"], [7, 23, "大暑"], [8, 7, "立秋"],
-      [8, 23, "処暑"], [9, 7, "白露"], [9, 23, "秋分"], [10, 8, "寒露"], [10, 23, "霜降"],
-      [11, 7, "立冬"], [11, 22, "小雪"], [12, 7, "大雪"], [12, 22, "冬至"],
+      [1, 5, "小寒"],
+      [1, 20, "大寒"],
+      [2, 4, "立春"],
+      [2, 19, "雨水"],
+      [3, 5, "啓蟄"],
+      [3, 20, "春分"],
+      [4, 5, "清明"],
+      [4, 20, "穀雨"],
+      [5, 5, "立夏"],
+      [5, 21, "小満"],
+      [6, 6, "芒種"],
+      [6, 21, "夏至"],
+      [7, 7, "小暑"],
+      [7, 23, "大暑"],
+      [8, 7, "立秋"],
+      [8, 23, "処暑"],
+      [9, 7, "白露"],
+      [9, 23, "秋分"],
+      [10, 8, "寒露"],
+      [10, 23, "霜降"],
+      [11, 7, "立冬"],
+      [11, 22, "小雪"],
+      [12, 7, "大雪"],
+      [12, 22, "冬至"],
     ];
-    for (const [month, day, name] of expected) expect(solarTermOf(on(2026, month, day))?.name, `${month}/${day}`).toBe(name);
+    for (const [month, day, name] of expected)
+      expect(solarTermOf(on(2026, month, day))?.name, `${month}/${day}`).toBe(
+        name,
+      );
   });
 
   it("夜半を跨ぐ黄経の到達は当日と判定する", () => {
@@ -73,8 +103,14 @@ describe("二十四節気", () => {
   });
 
   it("次の節気を日数つきで返す", () => {
-    expect(upcomingSolarTerm(on(2026, 3, 21))).toEqual({ name: "清明", inDays: 15 });
-    expect(upcomingSolarTerm(on(2026, 10, 1))).toEqual({ name: "寒露", inDays: 7 });
+    expect(upcomingSolarTerm(on(2026, 3, 21))).toEqual({
+      name: "清明",
+      inDays: 15,
+    });
+    expect(upcomingSolarTerm(on(2026, 10, 1))).toEqual({
+      name: "寒露",
+      inDays: 7,
+    });
   });
 });
 
@@ -103,6 +139,10 @@ describe("日付の補助", () => {
   });
 
   it("Date からローカル年月日を取り出す", () => {
-    expect(calendarDate(on(2026, 2, 4))).toEqual({ year: 2026, month: 2, day: 4 });
+    expect(calendarDate(on(2026, 2, 4))).toEqual({
+      year: 2026,
+      month: 2,
+      day: 4,
+    });
   });
 });

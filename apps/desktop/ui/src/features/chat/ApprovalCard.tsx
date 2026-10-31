@@ -32,13 +32,17 @@ export const ApprovalCard = memo(function ApprovalCard({
   // so screen-reader users must learn about it, but taking focus would pull
   // sighted keyboard users out of the composer mid-typing.
   if (!approval) return null;
-  const decide = async (grant: boolean, remember: boolean) => {
+  const decide = async (
+    grant: boolean,
+    remember: boolean,
+    rememberSession = false,
+  ) => {
     const id = approval.approvalId;
     if (!id) return;
     setBusy(true);
     setError(null);
     try {
-      await api.decideApproval({ id, grant, remember });
+      await api.decideApproval({ id, grant, remember, rememberSession });
     } catch (err) {
       // Without this a failed approval re-enabled the card silently while the
       // run stayed blocked waiting for an answer that would never arrive.
@@ -107,6 +111,13 @@ export const ApprovalCard = memo(function ApprovalCard({
           onClick={() => void decide(true, true)}
         >
           {t("常に許可")}
+        </Button>
+        <Button
+          size="sm"
+          disabled={busy || !approval.approvalId || expired}
+          onClick={() => void decide(true, false, true)}
+        >
+          {t("このセッションで許可")}
         </Button>
         <Button
           variant="primary"

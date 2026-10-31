@@ -28,3 +28,26 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+  - package-ecosystem: "docker"
+    directory: "/deploy/docker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+  # The monorepo root has its own lockfile (pnpm itself + the Tauri CLI) and
+  # `apps/desktop/ui` has a separate one; neither was covered before, so both
+  # could drift without a review request.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+  - package-ecosystem: "npm"
+    directory: "/apps/desktop/ui"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3

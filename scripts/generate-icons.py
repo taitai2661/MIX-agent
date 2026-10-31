@@ -27,8 +27,16 @@ def create_icon(square_background: bool = False) -> Image.Image:
     def box(coords: tuple[float, float, float, float]) -> tuple[int, int, int, int]:
         return tuple(round(value * SCALE) for value in coords)
 
-    def rounded(coords: tuple[float, float, float, float], radius: int, fill: tuple[int, ...], outline: tuple[int, ...] | None = None, width: int = 1) -> None:
-        draw.rounded_rectangle(box(coords), radius=radius * SCALE, fill=fill, outline=outline, width=width * SCALE)
+    def rounded(
+        coords: tuple[float, float, float, float],
+        radius: int,
+        fill: tuple[int, ...],
+        outline: tuple[int, ...] | None = None,
+        width: int = 1,
+    ) -> None:
+        draw.rounded_rectangle(
+            box(coords), radius=radius * SCALE, fill=fill, outline=outline, width=width * SCALE
+        )
 
     # A minimal antenna, side pieces, and a friendly face remain clear at 32px.
     draw.line((128 * SCALE, 86 * SCALE, 128 * SCALE, 72 * SCALE), fill=(255, 255, 255, 255), width=8 * SCALE)
@@ -73,7 +81,9 @@ def main() -> None:
         save_png(icon, WEB / f"icon-{size}.png", size)
     save_png(create_icon(square_background=True), WEB / "icon-maskable-512.png", 512)
     save_png(icon, WEB / "apple-touch-icon.png", 180)
-    icon.resize((1024, 1024), Image.Resampling.LANCZOS).save(WEB / "favicon.ico", format="ICO", sizes=[(16, 16), (32, 32), (48, 48)])
+    icon.resize((1024, 1024), Image.Resampling.LANCZOS).save(
+        WEB / "favicon.ico", format="ICO", sizes=[(16, 16), (32, 32), (48, 48)]
+    )
 
     for name, size in {
         "icon-32.png": 32,

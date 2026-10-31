@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   ChevronRight,
   Download,
@@ -112,8 +111,8 @@ export function SkillsPane() {
 
   const exportZip = useMutation({
     mutationFn: async (name: string) => {
-      const target = await save({
-        defaultPath: `${name}.skill.zip`,
+      const target = await api.pickSaveFile({
+        defaultName: `${name}.skill.zip`,
         filters: [{ name: "Skill archive", extensions: ["zip"] }],
       });
       if (!target) return;
@@ -174,11 +173,10 @@ export function SkillsPane() {
             <Button
               variant="primary"
               onClick={async () => {
-                const picked = await open({
-                  multiple: false,
+                const picked = await api.pickOpenFile({
                   filters: [{ name: "Skill archive", extensions: ["zip"] }],
                 });
-                if (typeof picked === "string") importZip.mutate(picked);
+                if (picked.length > 0) importZip.mutate(picked[0]);
               }}
             >
               <Upload size={12} /> {t(".skill.zip を選択")}
@@ -201,8 +199,8 @@ export function SkillsPane() {
             />
             <Button
               onClick={async () => {
-                const picked = await open({ directory: true, multiple: false });
-                if (typeof picked === "string") setDirectory(picked);
+                const picked = await api.pickFolder();
+                if (picked) setDirectory(picked);
               }}
             >
               {t("選択")}

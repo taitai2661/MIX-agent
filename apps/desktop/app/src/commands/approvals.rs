@@ -9,7 +9,11 @@ pub struct ApprovalDecision {
     pub id: String,
     pub grant: bool,
     /// "Always Allow": persist a permission rule so later calls skip the prompt.
+    #[serde(default)]
     pub remember: bool,
+    /// "Allow for this session": an in-memory rule that dies with the app.
+    #[serde(default)]
+    pub remember_session: bool,
 }
 
 #[tauri::command]
@@ -28,6 +32,7 @@ pub async fn decide_approval(
     let outcome = if input.grant {
         ApprovalOutcome::Approve {
             remember: input.remember,
+            remember_session: input.remember_session,
         }
     } else {
         ApprovalOutcome::Deny

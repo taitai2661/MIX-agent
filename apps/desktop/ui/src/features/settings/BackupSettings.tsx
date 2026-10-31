@@ -1,8 +1,4 @@
 import { useState } from "react";
-import {
-  open as openDialog,
-  save as saveDialog,
-} from "@tauri-apps/plugin-dialog";
 import { Archive, Download, FolderOpen, RefreshCw, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -23,6 +19,12 @@ export function BackupSettings() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
+  // Keep this in sync with MIN_PASSWORD_CHARS in the Rust storage crate. The
+  // backend is authoritative; this only stops a predictable rejection.
+  const passwordReady = [...password].length >= 12;
+  // Restore also accepts archives created before the 12-character policy, so
+  // only an empty field is predictably wrong here.
+  const restoreReady = password.length > 0;
 
   const requestRestore = async () => {
     const ok = await confirm({
@@ -60,8 +62,8 @@ export function BackupSettings() {
         // field silently had no effect. Honour it when present.
         const picked = path.trim()
           ? path.trim()
-          : await saveDialog({
-              defaultPath: "mix-agent.mixbak",
+          : await api.pickSaveFile({
+              defaultName: "mix-agent.mixbak",
               filters: [{ name: "Backup", extensions: ["mixbak"] }],
             });
         if (!picked) return;
@@ -106,7 +108,7 @@ export function BackupSettings() {
         <Input
           type="password"
           aria-label={t("バックアップパスワード")}
-          placeholder={t("バックアップパスワード")}
+          placeholder={t("バックアップパスワード（12文字以上）")}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
@@ -120,7 +122,7 @@ export function BackupSettings() {
           />
           <Button
             variant="primary"
-            disabled={busy || !password}
+            disabled={busy || !passwordReady}
             onClick={() => void run("create")}
             title={t("暗号化バックアップを作成")}
           >
@@ -139,17 +141,16 @@ export function BackupSettings() {
             disabled={busy}
             title={t("ファイルを選択")}
             onClick={async () => {
-              const picked = await openDialog({
-                multiple: false,
+              const picked = await api.pickOpenFile({
                 filters: [{ name: "Backup", extensions: ["mixbak"] }],
               });
-              if (typeof picked === "string") setRestorePath(picked);
+              if (picked.length > 0) setRestorePath(picked[0]);
             }}
           >
             <FolderOpen size={12} /> {t("参照")}
           </Button>
           <Button
-            disabled={busy || !restorePath || !password}
+            disabled={busy || !restorePath || !restoreReady}
             onClick={() => void requestRestore()}
             title={t("バックアップを検証し、再起動時に復元")}
           >

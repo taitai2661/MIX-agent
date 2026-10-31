@@ -11,38 +11,71 @@ export function ModeStatus({
   mode: string;
   model?: Row;
   agent?: Row;
-  budget?: { max_seconds?: number | null; max_steps?: number | null; max_tool_calls?: number | null };
+  budget?: {
+    max_seconds?: number | null;
+    max_steps?: number | null;
+    max_tool_calls?: number | null;
+  };
 }) {
   const caps = { ...model?.data.capabilities, ...model?.data.overrides };
   const canThink = caps.reasoning === true && !!model?.data.reasoning_control;
   const probe = model?.data.tool_probe;
   const toolsSupported =
-    caps.tools === true || (caps.tools == null && probe?.status === "supported");
+    caps.tools === true ||
+    (caps.tools == null && probe?.status === "supported");
   const noTools =
     Array.isArray(agent?.data.tool_ids) && agent.data.tool_ids.length === 0;
-  const policy = mode === "chat"
-    ? { seconds: 1200, steps: 12, calls: 12 }
-    : mode === "thinking"
-      ? { seconds: 2700, steps: 24, calls: 24 }
-      : { seconds: 5400, steps: 300, calls: 750 };
-  const agentData = agent?.data as { max_seconds?: number; max_steps?: number; max_tool_calls?: number } | undefined;
-  const seconds = runBudget?.max_seconds ?? (mode === "agent" ? agentData?.max_seconds ?? policy.seconds : policy.seconds);
-  const steps = runBudget?.max_steps ?? (mode === "agent" ? agentData?.max_steps ?? policy.steps : policy.steps);
-  const calls = runBudget?.max_tool_calls ?? (mode === "agent" ? agentData?.max_tool_calls ?? policy.calls : policy.calls);
+  const policy =
+    mode === "chat"
+      ? { seconds: 1200, steps: 12, calls: 12 }
+      : mode === "thinking"
+        ? { seconds: 2700, steps: 24, calls: 24 }
+        : { seconds: 5400, steps: 300, calls: 750 };
+  const agentData = agent?.data as
+    | { max_seconds?: number; max_steps?: number; max_tool_calls?: number }
+    | undefined;
+  const seconds =
+    runBudget?.max_seconds ??
+    (mode === "agent"
+      ? (agentData?.max_seconds ?? policy.seconds)
+      : policy.seconds);
+  const steps =
+    runBudget?.max_steps ??
+    (mode === "agent" ? (agentData?.max_steps ?? policy.steps) : policy.steps);
+  const calls =
+    runBudget?.max_tool_calls ??
+    (mode === "agent"
+      ? (agentData?.max_tool_calls ?? policy.calls)
+      : policy.calls);
   const budget = `${seconds / 60}分・${steps}ステップ・${calls} Tool Call`;
   return (
     <p className="mode-status" role="status">
       {mode === "chat"
         ? t("会話の文脈に合わせて答え、必要な調査や小さな作業を進めます。")
         : mode === "thinking"
-          ? t("前提・別案・見落としを深く検討し、重要な結論を確認してから答えます。")
-          : t("計画・実行・検証・修正を繰り返し、成果を確認できた場合に完了します。")}
-      <span>{t("実行予算:")} {budget}{t("。選択したモードは実行中に変わりません。")}</span>
-      {mode !== "agent" && <span>{t("計画・バックグラウンド処理・再開・自動Skill学習は agent 専用です。")}</span>}
+          ? t(
+              "前提・別案・見落としを深く検討し、重要な結論を確認してから答えます。",
+            )
+          : t(
+              "計画・実行・検証・修正を繰り返し、成果を確認できた場合に完了します。",
+            )}
+      <span>
+        {t("実行予算:")} {budget}
+        {t("。選択したモードは実行中に変わりません。")}
+      </span>
+      {mode !== "agent" && (
+        <span>
+          {t(
+            "計画・バックグラウンド処理・再開・自動Skill学習は agent 専用です。",
+          )}
+        </span>
+      )}
       {model && mode !== "agent" && !canThink && (
         <span>
           {mode === "thinking"
-            ? t("通常推論で thinking を実行します。Provider固有の思考設定は送信しません。")
+            ? t(
+                "通常推論で thinking を実行します。Provider固有の思考設定は送信しません。",
+              )
             : t("思考制御は未対応・未確認のため、思考設定を送信しません。")}
         </span>
       )}
@@ -54,10 +87,16 @@ export function ModeStatus({
           !toolsSupported && (
             <span>
               {mode === "thinking" && probe?.status === "unknown"
-                ? t("Tool Callingは未確認です。初回に安全な互換性確認を行い、確認できるまではツールなしで実行します。")
+                ? t(
+                    "Tool Callingは未確認です。初回に安全な互換性確認を行い、確認できるまではツールなしで実行します。",
+                  )
                 : caps.tools === false || probe?.status === "unsupported"
-                  ? t("このモデルはTool Calling非対応のため、ツールなしで実行します。")
-                : t("検索・作成・実行にはモデルのTool Calling対応確認が必要です。")}
+                  ? t(
+                      "このモデルはTool Calling非対応のため、ツールなしで実行します。",
+                    )
+                  : t(
+                      "検索・作成・実行にはモデルのTool Calling対応確認が必要です。",
+                    )}
             </span>
           )
         ))}

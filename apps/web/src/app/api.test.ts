@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { api, binary, setCSRF } from "./api";
+import { api, binary, HttpError, setCSRF } from "./api";
+import { setLanguage } from "./i18n";
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -57,6 +58,54 @@ describe("authenticated mutations", () => {
     await binary("/files/import", {});
     expect(fetch.mock.calls[0][1].credentials).toBe("same-origin");
   });
+  it("uses the stable error code for the English UI", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        json: async () => ({
+          detail: "承認は決定済みです",
+          code: "approval.already_decided",
+        }),
+      }),
+    );
+    setLanguage("en");
+    await expect(
+      api("/approvals/x/decision", "POST", { decision: "once" }),
+    ).rejects.toThrow("This approval has already been decided.");
+    setLanguage("ja");
+  });
+  it("falls back to a status message when an English code is unknown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ detail: "未来のエラー", code: "future.code" }),
+      }),
+    );
+    setLanguage("en");
+    await expect(api("/future", "POST", {})).rejects.toThrow(
+      "The request conflicts with the current state.",
+    );
+    setLanguage("ja");
+  });
+  it("keeps the HTTP status on the thrown error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          detail: "競合",
+          code: "request.idempotency_conflict",
+        }),
+      }),
+    );
+    const error = await api("/conflict", "POST", {}).catch((err) => err);
+    expect(error).toBeInstanceOf(HttpError);
+    expect((error as HttpError).status).toBe(409);
+  });
   it("surfaces actionable server errors", async () => {
     vi.stubGlobal(
       "fetch",
@@ -73,9 +122,9 @@ describe("authenticated mutations", () => {
 describe("timeouts and cancellation", () => {
   function abortingFetch() {
     return vi.fn(
-      (_url: string, init: any) =>
+      (_url: string, init: RequestInit) =>
         new Promise((_, reject) => {
-          init.signal.addEventListener("abort", () =>
+          init.signal?.addEventListener("abort", () =>
             reject(new DOMException("Aborted", "AbortError")),
           );
         }),
@@ -92,7 +141,7 @@ describe("timeouts and cancellation", () => {
       expect(promise).rejects.toThrow("リクエストがタイムアウトしました");
     await vi.advanceTimersByTimeAsync(5);
     await assertion;
-    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
   it("early-aborts when the caller's signal is cancelled", async () => {
     const controller = new AbortController();
@@ -113,7 +162,7 @@ describe("timeouts and cancellation", () => {
     await vi.advanceTimersByTimeAsync(5);
     await assertion;
     expect(fetch.mock.calls[0][1].credentials).toBe("same-origin");
-    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 });
 
@@ -254,7 +303,9 @@ describe("automatic 4-retry mechanism", () => {
     });
     vi.stubGlobal("fetch", fetch);
 
-    const promise = api("/providers", "POST", { name: "p" }, "key", { retryDelayMs: 10 });
+    const promise = api("/providers", "POST", { name: "p" }, "key", {
+      retryDelayMs: 10,
+    });
     await expect(promise).rejects.toThrow("Service Unavailable");
     expect(callCount).toBe(1);
   });
@@ -340,11 +391,35 @@ describe("automatic 4-retry mechanism", () => {
     });
     vi.stubGlobal("fetch", fetch);
 
-    const promise = binary("/upload", {}, { retryDelayMs: 10, retryUnsafe: true });
+    const promise = binary(
+      "/upload",
+      {},
+      { retryDelayMs: 10, retryUnsafe: true },
+    );
     await vi.advanceTimersByTimeAsync(100);
     const result = await promise;
 
     expect(result.ok).toBe(true);
     expect(callCount).toBe(2);
+  });
+});
+
+describe("success bodies", () => {
+  it("returns undefined for a 204 without trying to parse JSON", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 204, text: async () => "" });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api("/conversations/abc", "DELETE")).resolves.toBeUndefined();
+  });
+
+  it("accepts an empty 200 body", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api("/settings", "PUT", {})).resolves.toBeUndefined();
   });
 });

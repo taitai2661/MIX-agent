@@ -182,7 +182,7 @@ fn every_action_serialises_to_a_kind_the_spec_advertises() {
 #[test]
 fn the_selected_backend_agrees_with_the_executable_it_would_use() {
     let dir = temp_root("resolve");
-    let operator = BrowserOperator::new(&dir, true);
+    let operator = BrowserOperator::new(&dir);
     let (backend, executable) = operator.resolve_executable();
     match backend {
         BrowserBackend::Disabled => assert!(

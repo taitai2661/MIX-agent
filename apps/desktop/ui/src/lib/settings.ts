@@ -19,7 +19,6 @@ export const DEFAULT_SETTINGS: SettingsView = {
   egress_allowlist: [],
   // Local dev servers stay unreachable until the user explicitly opts in.
   browser_allow_local: false,
-  telemetry_consent: false,
   language: null,
   theme: null,
   projects_root: null,
@@ -35,7 +34,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   verify_command: null,
   format_command: null,
   sandbox_terminal: false,
-  // Codex parity: database encryption defaults to false.
+  // SQLCipher is not wired yet; the only honest value is `false`.
   database_encryption: false,
   onboarding_completed: null,
   // The backend defaults this to `true` too: auto-check is one manifest

@@ -10,12 +10,21 @@ use tauri::{AppHandle, Emitter, State};
 /// Progress/completion event for the settings pane. The command also returns
 /// the initial state so a caller never races the first event.
 pub const BROWSER_INSTALL_EVENT: &str = "browser://install";
+/// Live CDP screencast frame. Payload: [`BrowserFrameEventPayload`].
+pub const BROWSER_FRAME_EVENT: &str = "browser://frame";
+
+#[derive(Clone, Serialize)]
+pub struct BrowserFrameEventPayload {
+    pub workspace_id: String,
+    pub data: String,
+    pub width: u32,
+    pub height: u32,
+}
 
 #[derive(Serialize)]
 pub struct BrowserStatus {
     pub backend: String,
     pub source: String,
-    pub headless: bool,
     pub executable: Option<String>,
     pub installed_version: Option<String>,
     pub pinned_version: String,
@@ -35,7 +44,6 @@ pub async fn browser_status(state: State<'_, AppState>) -> Result<BrowserStatus,
     Ok(BrowserStatus {
         backend: format!("{:?}", backend).to_lowercase(),
         source: format!("{:?}", source).to_lowercase(),
-        headless: cfg!(debug_assertions),
         executable: executable.map(|p| p.to_string_lossy().to_string()),
         installed_version: update.installed_version,
         pinned_version: update.pinned_version,
@@ -380,6 +388,8 @@ async fn gate_navigation(
 /// Deliberately separate from `browser_artifact`: polling must not create a
 /// new artifact every 1.5 s. `None` means the workspace was busy with an agent
 /// action; the UI keeps the previous frame rather than blocking that action.
+/// Page metadata comes from `browser_invoke`'s `info` action, so this payload
+/// stays image-only.
 #[derive(Serialize)]
 pub struct BrowserFrameOutput {
     pub data: String,
@@ -395,7 +405,7 @@ pub async fn browser_frame(
 ) -> Result<Option<BrowserFrameOutput>, String> {
     use base64::Engine as _;
     let id = uuid::Uuid::parse_str(&workspace_id).map_err(crate::error::cmd_err)?;
-    let Some((bytes, width, height)) = state
+    let Some(frame) = state
         .browser
         .capture_frame(id, full_page.unwrap_or(false))
         .await
@@ -403,10 +413,56 @@ pub async fn browser_frame(
     else {
         return Ok(None);
     };
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(frame.jpeg);
     Ok(Some(BrowserFrameOutput {
         data: format!("data:image/jpeg;base64,{}", encoded),
-        width,
-        height,
+        width: frame.width,
+        height: frame.height,
     }))
+}
+
+/// Keep an open panel's workspace out of the idle LRU without launching it.
+#[tauri::command]
+pub async fn browser_keepalive(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    let id = uuid::Uuid::parse_str(&workspace_id).map_err(crate::error::cmd_err)?;
+    state.browser.touch_workspace(id).await;
+    Ok(())
+}
+
+/// Stop loading the active tab from the side-panel toolbar.
+#[tauri::command]
+pub async fn browser_stop(state: State<'_, AppState>, workspace_id: String) -> Result<(), String> {
+    let id = uuid::Uuid::parse_str(&workspace_id).map_err(crate::error::cmd_err)?;
+    state
+        .browser
+        .stop_loading(id)
+        .await
+        .map_err(crate::error::cmd_err)
+}
+
+/// Start pushing CDP screencast frames (`browser://frame`) for a workspace.
+#[tauri::command]
+pub async fn browser_screencast_start(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    let id = uuid::Uuid::parse_str(&workspace_id).map_err(crate::error::cmd_err)?;
+    state
+        .browser
+        .start_screencast(id)
+        .await
+        .map_err(crate::error::cmd_err)
+}
+
+#[tauri::command]
+pub async fn browser_screencast_stop(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<(), String> {
+    let id = uuid::Uuid::parse_str(&workspace_id).map_err(crate::error::cmd_err)?;
+    state.browser.stop_screencast(id).await;
+    Ok(())
 }

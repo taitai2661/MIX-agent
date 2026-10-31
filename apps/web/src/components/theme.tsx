@@ -18,7 +18,8 @@ export function ThemeController() {
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const resolved: ResolvedTheme = theme === "system" ? (query.matches ? "dark" : "light") : theme;
+      const resolved: ResolvedTheme =
+        theme === "system" ? (query.matches ? "dark" : "light") : theme;
       document.documentElement.dataset.theme = resolved;
       applyAccent(resolved);
     };
@@ -29,14 +30,21 @@ export function ThemeController() {
     return () => query.removeEventListener("change", apply);
   }, [theme]);
   useEffect(() => {
-    const sync = (event: Event) => setTheme((event as CustomEvent<Theme>).detail);
+    const sync = (event: Event) =>
+      setTheme((event as CustomEvent<Theme>).detail);
     window.addEventListener("mix-agent-theme", sync);
     return () => window.removeEventListener("mix-agent-theme", sync);
   }, []);
   return <ThemeToggle theme={theme} onChange={setTheme} />;
 }
 
-function ThemeToggle({ theme, onChange }: { theme: Theme; onChange: (theme: Theme) => void }) {
+function ThemeToggle({
+  theme,
+  onChange,
+}: {
+  theme: Theme;
+  onChange: (theme: Theme) => void;
+}) {
   const options: [Theme, typeof Sun, string][] = [
     ["light", Sun, "ライト"],
     ["dark", Moon, "ダーク"],

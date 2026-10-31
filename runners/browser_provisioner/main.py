@@ -1,4 +1,5 @@
 """Authenticated, single-flight Playwright Chromium installer."""
+
 import asyncio
 import json
 import logging
@@ -25,11 +26,18 @@ def current():
     try:
         value = json.loads(STATE.read_text())
         if isinstance(value, dict) and value.get("status") in {
-            "not_installed", "installing", "ready", "failed"
+            "not_installed",
+            "installing",
+            "ready",
+            "failed",
         }:
             if value["status"] == "installing" and (TASK is None or TASK.done()):
-                value = {"status": "failed", "failure": "install_interrupted",
-                         "progress": None, "stage": None}
+                value = {
+                    "status": "failed",
+                    "failure": "install_interrupted",
+                    "progress": None,
+                    "stage": None,
+                }
                 save(value)
             return value
         return {"status": "failed", "failure": "install_state_invalid", "progress": None, "stage": None}
@@ -47,9 +55,14 @@ def save(value):
 def update(progress=None, stage=None):
     previous = current()
     old = previous.get("progress") or 0
-    save({"status": "installing", "failure": None,
-          "progress": max(old, progress) if progress is not None else previous.get("progress"),
-          "stage": stage or previous.get("stage")})
+    save(
+        {
+            "status": "installing",
+            "failure": None,
+            "progress": max(old, progress) if progress is not None else previous.get("progress"),
+            "stage": stage or previous.get("stage"),
+        }
+    )
 
 
 @app.middleware("http")
@@ -85,14 +98,24 @@ async def run_install(was_ready=False):
     async with LOCK:
         process = None
         verifying = was_ready
-        save({"status": "installing", "failure": None, "progress": 0,
-              "stage": "起動を確認中" if was_ready else "ダウンロードを準備中"})
+        save(
+            {
+                "status": "installing",
+                "failure": None,
+                "progress": 0,
+                "stage": "起動を確認中" if was_ready else "ダウンロードを準備中",
+            }
+        )
         try:
             async with asyncio.timeout(INSTALL_TIMEOUT):
                 if not was_ready:
                     process = await asyncio.create_subprocess_exec(
-                        "playwright", "install", "--only-shell", "chromium",
-                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                        "playwright",
+                        "install",
+                        "--only-shell",
+                        "chromium",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
                     )
                     output = bytearray()
                     trailing = b""
@@ -104,7 +127,9 @@ async def run_install(was_ready=False):
                             update(min(90, int(match.group(1)) * 9 // 10), "ダウンロード中")
                         trailing = chunk[-8:]
                     if await process.wait() != 0:
-                        LOGGER.error("Chromium install failed: %s", bytes(output)[-2000:].decode(errors="replace"))
+                        LOGGER.error(
+                            "Chromium install failed: %s", bytes(output)[-2000:].decode(errors="replace")
+                        )
                         raise RuntimeError("install_failed")
                 update(95, "起動を確認中")
                 verifying = True
@@ -117,9 +142,15 @@ async def run_install(was_ready=False):
                 except ProcessLookupError:
                     pass
                 await process.wait()
-            failure = ("install_timeout" if isinstance(error, TimeoutError) else
-                       "install_interrupted" if isinstance(error, asyncio.CancelledError) else
-                       "verify_failed" if verifying else "install_failed")
+            failure = (
+                "install_timeout"
+                if isinstance(error, TimeoutError)
+                else "install_interrupted"
+                if isinstance(error, asyncio.CancelledError)
+                else "verify_failed"
+                if verifying
+                else "install_failed"
+            )
             LOGGER.warning("Chromium installation ended: %s", failure)
             save({"status": "failed", "failure": failure, "progress": None, "stage": None})
             if isinstance(error, asyncio.CancelledError):
@@ -132,8 +163,12 @@ async def start_install(force=False):
     if TASK is not None and not TASK.done():
         return current()
     was_ready = current().get("status") == "ready" and not force
-    state = {"status": "installing", "failure": None, "progress": 0,
-             "stage": "起動を確認中" if was_ready else "ダウンロードを準備中"}
+    state = {
+        "status": "installing",
+        "failure": None,
+        "progress": 0,
+        "stage": "起動を確認中" if was_ready else "ダウンロードを準備中",
+    }
     save(state)
     TASK = asyncio.create_task(run_install(was_ready))
     return state

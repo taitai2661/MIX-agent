@@ -1,4 +1,5 @@
 """Capability probe verdicts, precedence, and staleness for Auto routing."""
+
 from datetime import UTC, datetime, timedelta
 
 from mix_agent import config
@@ -81,7 +82,9 @@ def test_known_and_unknown_verdicts_expire_at_different_ages():
 
     recent_unknown = record(status="unknown", checked_at=now - timedelta(minutes=1))
     assert not capability_probe.probe_needed({"tool_probe": recent_unknown, "model_id": "x"}, "tools")
-    stale_unknown = record(status="unknown", checked_at=now - config.PROBE_UNKNOWN_RETRY - timedelta(minutes=1))
+    stale_unknown = record(
+        status="unknown", checked_at=now - config.PROBE_UNKNOWN_RETRY - timedelta(minutes=1)
+    )
     assert capability_probe.probe_needed({"tool_probe": stale_unknown, "model_id": "x"}, "tools")
 
 

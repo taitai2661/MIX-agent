@@ -14,7 +14,11 @@ it("shows the overall Browser install percentage and stage", () => {
     },
   });
   const html = renderToStaticMarkup(
-    <QueryClientProvider client={client}><MemoryRouter><BrowserSettings /></MemoryRouter></QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <BrowserSettings />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   expect(html).toContain("インストール中… 42%");
   expect(html).toContain("ダウンロード中");

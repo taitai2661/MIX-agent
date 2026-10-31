@@ -18,6 +18,14 @@ permissions = [
   # `data-tauri-drag-region` header invokes. Without it the ACL rejects the
   # call and the window cannot be moved from the title bar.
   "core:window:allow-start-dragging",
+  # Windows / Linux use the custom `WindowControls` header (the native
+  # decorations are disabled in `tauri.windows.conf.json` / `tauri.linux.conf.json`
+  # so the OS buttons do not appear twice). These calls are made from the
+  # WebView, so they need an explicit grant; `core:window:default` only allows
+  # the read-only queries such as `is_maximized`.
+  "core:window:allow-minimize",
+  "core:window:allow-toggle-maximize",
+  "core:window:allow-close",
   "core:webview:default",
   "core:event:default",
   "core:app:default",
@@ -26,16 +34,14 @@ permissions = [
   "core:menu:default",
   "core:tray:default",
 
-  # Scoped plugin surface (least privilege): the frontend only uses
-  # `dialog.open`/`dialog.save` (file pickers) and `os.platform`
-  # (title-bar detection). `store`, `process` and `notification` have no
-  # frontend callers, so their `:default` grants are dropped. `window-state`
-  # persists geometry from Rust (no frontend IPC), `deep-link` delivers the
-  # MCP OAuth redirect, and `cli` exposes `doctor`/flags.
+  # Scoped plugin surface (least privilege): the frontend uses `os.platform`
+  # (title-bar detection) and `notification.send` (run-finished alerts). The
+  # native file pickers run in Rust, so the WebView is not granted
+  # `dialog:allow-open/save`; `store`, `process`, `shell`, `http`, `fs`, `cli`
+  # and `deep-link` are neither registered nor granted for frontend IPC.
+  # `window-state` persists geometry from Rust (no frontend IPC), and the deep
+  # link / CLI plugins are used by the Rust side only.
   "os:allow-platform",
-  "dialog:allow-open",
-  "dialog:allow-save",
-  "window-state:default",
-  "deep-link:default",
-  "cli:default"
+  "notification:default",
+  "window-state:default"
 ]

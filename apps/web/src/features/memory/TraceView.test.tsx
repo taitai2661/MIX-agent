@@ -12,30 +12,66 @@ const probe: TraceProbe = {
       gist: "Postgres migration の手順",
       relevance: 0.86,
       selection_reason: "現在の話題と強く一致",
-      score_breakdown: { lexical: 0.75, feature: 0.42, scope: 1, recency: 0.9, association: 0 },
+      score_breakdown: {
+        lexical: 0.75,
+        feature: 0.42,
+        scope: 1,
+        recency: 0.9,
+        association: 0,
+      },
     },
     {
       id: "mem-2",
       content: "失敗したマイグレーションは手動で戻す",
       relevance: 0.41,
       selection_reason: "関連する記憶から連想",
-      score_breakdown: { lexical: 0.2, feature: 0.35, scope: 0.82, recency: 0.5, association: 0.3 },
+      score_breakdown: {
+        lexical: 0.2,
+        feature: 0.35,
+        scope: 0.82,
+        recency: 0.5,
+        association: 0.3,
+      },
     },
   ],
   debug: {
     elapsed_ms: 12.5,
     stop_reason: "candidate_budget",
     budget_exhausted: false,
-    auto: { max_depth: 1, max_candidates: 32, retrieval_budget_ms: 82, min_association_weight: 0.2, activation_decay: 0.6, trace_count: 10, edge_count: 4 },
+    auto: {
+      max_depth: 1,
+      max_candidates: 32,
+      retrieval_budget_ms: 82,
+      min_association_weight: 0.2,
+      activation_decay: 0.6,
+      trace_count: 10,
+      edge_count: 4,
+    },
     trace: [
-      { stage: "seed", found: 4, admitted: 2, rejected: [{ id: "mem-x", score: 0.1, threshold: 0.18 }], thresholds: { established: 0.18, latent: 0.32 } },
-      { stage: "hop", depth: 1, edges_considered: 4, edges_below_threshold: 2, accepted: 1, frontier_after: 1, elapsed_ms: 9.1 },
+      {
+        stage: "seed",
+        found: 4,
+        admitted: 2,
+        rejected: [{ id: "mem-x", score: 0.1, threshold: 0.18 }],
+        thresholds: { established: 0.18, latent: 0.32 },
+      },
+      {
+        stage: "hop",
+        depth: 1,
+        edges_considered: 4,
+        edges_below_threshold: 2,
+        accepted: 1,
+        frontier_after: 1,
+        elapsed_ms: 9.1,
+      },
       { stage: "rank", considered: 3, kept: 2, result_limit: 8 },
     ],
     honored_settings: [],
     ignored_settings: ["max_depth"],
     seed_ids: ["mem-1", "mem-2"],
-    association_expansion: [{ source: "mem-1", target: "mem-2", activation: 0.3 }],
+    association_expansion: [
+      { source: "mem-1", target: "mem-2", activation: 0.3 },
+    ],
   },
 };
 
@@ -60,7 +96,17 @@ describe("TraceView", () => {
 
   it("warns when the retrieval budget is exhausted", () => {
     const html = renderToStaticMarkup(
-      <TraceView probe={{ memories: [], debug: { elapsed_ms: 400, stop_reason: "deadline", budget_exhausted: true, trace: [] } }} />,
+      <TraceView
+        probe={{
+          memories: [],
+          debug: {
+            elapsed_ms: 400,
+            stop_reason: "deadline",
+            budget_exhausted: true,
+            trace: [],
+          },
+        }}
+      />,
     );
     expect(html).toContain("予算を使い切りました");
     expect(html).toContain("検索予算超過");
@@ -79,15 +125,30 @@ describe("TraceView", () => {
         probe={{
           query: "走る",
           memories: [
-            { id: "seed-1", content: "土曜の朝に走る", relevance: 0.9, selection_reason: "語彙が一致" },
-            { id: "link-1", content: "走った後は水を飲む", relevance: 0.18, selection_reason: "リンクから" },
+            {
+              id: "seed-1",
+              content: "土曜の朝に走る",
+              relevance: 0.9,
+              selection_reason: "語彙が一致",
+            },
+            {
+              id: "link-1",
+              content: "走った後は水を飲む",
+              relevance: 0.18,
+              selection_reason: "リンクから",
+            },
           ],
           debug: {
             stop_reason: "depth",
             // The mode is echoed, never re-labelled: what ran is what shows.
             ranking_mode: "lexical",
             association_expansion: [
-              { source: "seed-1", target: "link-1", activation: 0.2, kind: "relates_to" },
+              {
+                source: "seed-1",
+                target: "link-1",
+                activation: 0.2,
+                kind: "relates_to",
+              },
             ],
             association_expansion_count: 1,
             association_cutoff: "degree_limit",
@@ -111,8 +172,14 @@ describe("TraceView", () => {
     const html = renderToStaticMarkup(
       <TraceView
         probe={{
-          memories: [{ id: "m1", content: "x", selection_reason: "リンクから" }],
-          debug: { stop_reason: "flat", association_expansion_count: 0, association_cutoff: null },
+          memories: [
+            { id: "m1", content: "x", selection_reason: "リンクから" },
+          ],
+          debug: {
+            stop_reason: "flat",
+            association_expansion_count: 0,
+            association_cutoff: null,
+          },
         }}
       />,
     );

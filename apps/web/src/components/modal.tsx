@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState, type ComponentProps, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type FormEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Button } from "@/components/button";
 import { ja } from "@/app/strings";
 import { t } from "@/app/i18n";
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
   const focusable = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
@@ -19,15 +30,24 @@ export function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
   }
 }
 
-export function useModalDialog<T extends HTMLElement>(panelRef: RefObject<T | null>, onCancel: () => void) {
+export function useModalDialog<T extends HTMLElement>(
+  panelRef: RefObject<T | null>,
+  onCancel: () => void,
+) {
   // Keep the latest handler without re-running the focus effect on every
   // parent render (typing in a controlled field used to steal focus).
   const cancelRef = useRef(onCancel);
   cancelRef.current = onCancel;
   useEffect(() => {
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const preferred = panelRef.current?.querySelector<HTMLElement>("[data-autofocus]");
-    (preferred ?? panelRef.current?.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const preferred =
+      panelRef.current?.querySelector<HTMLElement>("[data-autofocus]");
+    (
+      preferred ?? panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)
+    )?.focus();
     const keydown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") cancelRef.current();
     };
@@ -39,7 +59,13 @@ export function useModalDialog<T extends HTMLElement>(panelRef: RefObject<T | nu
   }, [panelRef]);
 }
 
-function ModalFrame({ panelRef, title, onMouseDown, onKeyDown, children }: {
+function ModalFrame({
+  panelRef,
+  title,
+  onMouseDown,
+  onKeyDown,
+  children,
+}: {
   panelRef: RefObject<HTMLDivElement | null>;
   title: string;
   onMouseDown: (e: MouseEvent<HTMLDivElement>) => void;
@@ -49,12 +75,17 @@ function ModalFrame({ panelRef, title, onMouseDown, onKeyDown, children }: {
   return (
     <div
       className="mcp-install-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
+      role="presentation"
       onMouseDown={onMouseDown}
+      onKeyDown={onKeyDown}
     >
-      <div ref={panelRef} className="mcp-install-panel card form-grid" onKeyDown={onKeyDown}>
+      <div
+        ref={panelRef}
+        className="mcp-install-panel card form-grid"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         {children}
       </div>
     </div>
@@ -107,7 +138,7 @@ export function ConfirmModal({
         >
           {confirmLabel ?? t(ja.approve)}
         </Button>
-        <Button autoFocus data-autofocus variant="ghost" type="button" onClick={onCancel}>
+        <Button data-autofocus variant="ghost" type="button" onClick={onCancel}>
           {cancelLabel ?? t(ja.cancel)}
         </Button>
       </div>
@@ -191,7 +222,6 @@ export function PromptModal({
           ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          autoFocus
           data-autofocus
         />
         <div className="form-actions">

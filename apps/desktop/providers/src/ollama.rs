@@ -156,7 +156,7 @@ fn thinking_unsupported(err: &anyhow::Error) -> bool {
 }
 
 async fn post_chat(url: &str, body: &Value) -> anyhow::Result<reqwest::Response> {
-    let request = crate::transport::json_post(crate::transport::client(), url, body);
+    let request = crate::transport::json_post(crate::transport::client()?, url, body);
     crate::transport::send_with_retry(request).await
 }
 

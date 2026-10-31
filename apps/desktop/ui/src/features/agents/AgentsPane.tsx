@@ -25,6 +25,7 @@ export function AgentsPane() {
   const [draftName, setDraftName] = useState("");
   const [draftInstructions, setDraftInstructions] = useState("");
   const [draftTools, setDraftTools] = useState<string[]>([]);
+  const [draftModel, setDraftModel] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const resetDraft = () => {
@@ -32,6 +33,7 @@ export function AgentsPane() {
     setDraftName("");
     setDraftInstructions("");
     setDraftTools([]);
+    setDraftModel("");
   };
 
   const update = useMutation({
@@ -41,6 +43,7 @@ export function AgentsPane() {
         name: draftName,
         instructions: draftInstructions,
         tool_ids: draftTools,
+        modelId: draftModel.trim() || null,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -54,12 +57,14 @@ export function AgentsPane() {
         name: draftName,
         instructions: draftInstructions,
         tool_ids: draftTools,
+        modelId: draftModel.trim() || null,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
       setDraftName("");
       setDraftInstructions("");
       setDraftTools([]);
+      setDraftModel("");
     },
   });
 
@@ -97,6 +102,18 @@ export function AgentsPane() {
             placeholder={t("System instructions…")}
             value={draftInstructions}
             onChange={(e) => setDraftInstructions(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={t("モデル（任意）")}
+          hint={t(
+            "空欄なら親の会話と同じモデルを使います。例: openai:gpt-5-mini",
+          )}
+        >
+          <Input
+            placeholder="provider:model"
+            value={draftModel}
+            onChange={(e) => setDraftModel(e.target.value)}
           />
         </Field>
         <Row className="gap-1.5">
@@ -178,6 +195,7 @@ export function AgentsPane() {
                       setDraftName(a.name);
                       setDraftInstructions(a.instructions);
                       setDraftTools(a.tool_ids);
+                      setDraftModel(a.modelId ?? "");
                     }}
                   >
                     <Pencil size={13} />

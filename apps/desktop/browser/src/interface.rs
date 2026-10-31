@@ -145,6 +145,29 @@ pub struct BrowserResponse {
     pub error: Option<String>,
 }
 
+/// One non-persisted live-view frame plus the page metadata the side panel
+/// needs to draw its toolbar. The JPEG is encoded at half the CSS viewport;
+/// `width`/`height` are the CSS viewport, not the image pixels.
+#[derive(Debug, Clone)]
+pub struct BrowserFrame {
+    pub jpeg: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A screencast frame pushed from the CDP handler. `jpeg_base64` is already
+/// base64-encoded by Chromium, so the app layer can put it straight into a
+/// `data:` URL without a second encode.
+#[derive(Debug, Clone)]
+pub struct ScreencastFrame {
+    pub workspace_id: uuid::Uuid,
+    pub jpeg_base64: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub type FrameSink = std::sync::Arc<dyn Fn(ScreencastFrame) + Send + Sync>;
+
 impl BrowserResponse {
     pub fn ok(payload: serde_json::Value) -> Self {
         Self {
@@ -238,13 +261,13 @@ pub fn desktop_agent_actions() -> Vec<String> {
 /// (exact `fetch(`, `XMLHttpRequest`, `WebSocket(`, `EventSource(` tokens) to
 /// avoid breaking legitimate DOM reads while closing the obvious hole.
 ///
-/// TODO(CDP): a substring gate cannot stop `eval("fe"+"tch")`, a redirect
-/// chain, or a same-origin page that itself fetches metadata. The durable fix
-/// is CDP-level egress control (`Network.setBlockedURLs` / request
-/// interception on the browser target, plus blocking private-IP literals after
-/// DNS in `Fetch.requestPaused`), applied to every page the operator owns —
-/// not just to model-supplied strings. Until that lands, treat this as
-/// defence-in-depth, not a boundary.
+/// A substring gate cannot stop `eval("fe"+"tch")` or a redirect chain, so it
+/// is only the first layer. The durable check lives in
+/// `ChromiumBackend::ensure_egress_guard`: every page target gets
+/// `Fetch` request interception, which resolves the host and refuses private /
+/// link-local answers before Chromium dials. This function stays as a cheap
+/// early rejection that produces a useful tool error instead of a failed page
+/// load.
 pub fn validate_evaluate_script(script: &str) -> anyhow::Result<()> {
     if script.trim().is_empty() {
         anyhow::bail!("evaluate script must not be empty");

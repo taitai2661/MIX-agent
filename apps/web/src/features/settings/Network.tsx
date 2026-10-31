@@ -1,16 +1,14 @@
 import { api } from "@/app/api";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title } from "@/components/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { t } from "@/app/i18n";
 
 export function NetworkSettings() {
-  const setting = useQuery({
-      queryKey: ["/settings"],
-      queryFn: () => api("/settings"),
-    }),
+  const setting = useSettings(),
     qc = useQueryClient();
   const [error, setError] = useState<unknown>(null),
     [saved, setSaved] = useState(false);
@@ -37,7 +35,7 @@ export function NetworkSettings() {
                 .filter(Boolean),
             });
             setSaved(true);
-            qc.invalidateQueries({ queryKey: ["/settings"] });
+            void qc.invalidateQueries({ queryKey: queryKeys.settings });
           } catch (e) {
             setError(e);
           }
@@ -45,7 +43,9 @@ export function NetworkSettings() {
       >
         <Field
           label={t("Runner通信許可先（1行1ドメイン）")}
-          hint={t("完全一致。サブドメインは別途指定します。未設定なら公開ドメインへの通信を許可します。入力すると指定ドメインだけに制限します。")}
+          hint={t(
+            "完全一致。サブドメインは別途指定します。未設定なら公開ドメインへの通信を許可します。入力すると指定ドメインだけに制限します。",
+          )}
         >
           <textarea
             name="domains"
@@ -55,7 +55,9 @@ export function NetworkSettings() {
           />
         </Field>
         <div className="notice">
-          {t("API Providerへの接続設定とは別です。Terminal・Browser・MCPの通信に適用します。LAN、localhost、metadata endpointは許可できません。")}
+          {t(
+            "API Providerへの接続設定とは別です。Terminal・Browser・MCPの通信に適用します。LAN、localhost、metadata endpointは許可できません。",
+          )}
         </div>
         <Button>{t("保存")}</Button>
         {saved && <span className="success">{t("保存しました")}</span>}

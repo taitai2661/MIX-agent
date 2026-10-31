@@ -98,8 +98,7 @@ def parse_suggestions(path: Path) -> dict[str, str]:
 
 def parse_translations(path: Path) -> dict[str, str]:
     return {
-        unescape(key): unescape(value)
-        for key, value in TRANSLATION.findall(path.read_text(encoding="utf-8"))
+        unescape(key): unescape(value) for key, value in TRANSLATION.findall(path.read_text(encoding="utf-8"))
     }
 
 

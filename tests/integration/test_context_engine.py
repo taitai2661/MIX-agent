@@ -23,14 +23,21 @@ from mix_agent.context.types import ContextBudgetError
 
 @pytest.mark.asyncio
 async def test_failed_summary_keeps_previous_context(monkeypatch):
-    from mix_agent.runs import engine
+    from mix_agent.runs import engine, engine_context
 
     history = [{"role": "user", "content": "old " * 2000}, {"role": "user", "content": "current"}]
-    run = SimpleNamespace(id="run", data={"history": history, "task_state": {"goal": "current"}, "summary": {"text": "", "covered_count": 0}})
+    run = SimpleNamespace(
+        id="run",
+        data={
+            "history": history,
+            "task_state": {"goal": "current"},
+            "summary": {"text": "", "covered_count": 0},
+        },
+    )
     db = SimpleNamespace(commit=lambda: None)
-    monkeypatch.setattr(engine, "emit", lambda *_: None)
-    monkeypatch.setattr(engine.context_budget, "input_budget", lambda *_, **__: 100)
-    monkeypatch.setattr(engine, "select_recent", lambda *args: ([history[-1]], [history[0]]))
+    monkeypatch.setattr(engine_context, "emit", lambda *_: None)
+    monkeypatch.setattr(engine_context.context_budget, "input_budget", lambda *_, **__: 100)
+    monkeypatch.setattr(engine_context, "select_recent", lambda *args: ([history[-1]], [history[0]]))
 
     class BrokenAdapter:
         def __init__(self, *_):
@@ -40,7 +47,7 @@ async def test_failed_summary_keeps_previous_context(monkeypatch):
             raise RuntimeError("unavailable")
             yield  # pragma: no cover
 
-    monkeypatch.setattr(engine, "Adapter", BrokenAdapter)
+    monkeypatch.setattr(engine_context, "Adapter", BrokenAdapter)
     with pytest.raises(ContextBudgetError, match="preserved"):
         await engine._maybe_compact_context(db, run, {"model_id": "test", "tools": []}, {}, "")
     assert run.data["history"] == history
@@ -51,11 +58,13 @@ def _window(window, reserved=4096):
 
 
 def test_context_window_ignores_boolean_saved_values():
-    resolved = context_budget.resolve_window({
-        "context_window": True,
-        "max_output_tokens": False,
-        "safety_margin": True,
-    })
+    resolved = context_budget.resolve_window(
+        {
+            "context_window": True,
+            "max_output_tokens": False,
+            "safety_margin": True,
+        }
+    )
     assert resolved == {
         "context_window": context_budget.FALLBACK_CONTEXT_WINDOW,
         "reserved_output_tokens": context_budget.FALLBACK_RESERVED_OUTPUT,
@@ -65,8 +74,7 @@ def test_context_window_ignores_boolean_saved_values():
 
 def _messages(n, size=200):
     return [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i} " + "x" * size}
-        for i in range(n)
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i} " + "x" * size} for i in range(n)
     ]
 
 

@@ -108,6 +108,17 @@ def test_archive_rejects_traversal_and_missing_skill():
         package.parse_archive(empty.getvalue())
 
 
+def test_archive_rejects_a_decompression_bomb_before_reading():
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("my-skill/SKILL.md", VALID.replace("expense-report", "my-skill"))
+        # Highly compressible, but expands to far more than one bundled file.
+        archive.writestr("my-skill/assets/zeros.bin", b"\0" * (package.FILE_MAX + 1))
+    assert len(raw.getvalue()) < package.ARCHIVE_MAX
+    with pytest.raises(package.SkillFormatError, match="exceeds"):
+        package.parse_archive(raw.getvalue())
+
+
 def test_scan_directory(tmp_path):
     skill = tmp_path / "my-skill"
     (skill / "references").mkdir(parents=True)

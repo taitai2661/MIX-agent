@@ -4,12 +4,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { t } from "./lib/i18n";
 import { applyTheme, storedTheme } from "./lib/theme";
+import { detectPlatformFromUa } from "./lib/platform";
 import { pruneComposerDrafts } from "./lib/drafts";
 import { Button } from "./components/ui/button";
 import "./styles/tokens.css";
 
 // Apply the persisted theme before the first paint to avoid a flash.
 applyTheme(storedTheme());
+// Publish a best-effort platform before React renders so shortcut labels and
+// macOS-only settings are correct on the first paint. App refines this with
+// `plugin-os`, which is authoritative inside the Tauri WebView.
+document.documentElement.dataset.platform = detectPlatformFromUa(
+  navigator.userAgent,
+);
 // Drafts expire after 30 days; drop stale records even if the user never opens
 // the thread that owns them again.
 pruneComposerDrafts();

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "description": "Canonical Run event vocabulary shared by the Docker (FastAPI) and Desktop (Rust) editions. Every kind in `shared` must be emitted with the same spelling by both engines. A kind that exists in only one edition is listed explicitly with the reason, so adding one forces a deliberate decision instead of silent drift. Checked by scripts/check-run-event-parity.py.",
+  "shared": [
+    "budget_extension_requested",
+    "budget_extension_resolved",
+    "checkpoint_saved",
+    "context_summary",
+    "message",
+    "model_selected",
+    "model_started",
+    "reasoning",
+    "stagnation_detected",
+    "status",
+    "text",
+    "tool_result",
+    "tool_started",
+    "verification_required"
+  ],
+  "docker_only": {
+    "approval": "Docker emits one approval event for a tool that needs a decision; Desktop splits the same step into tool_approval_requested/tool_approval_resolved.",
+    "browser_frame": "Docker streams browser screenshots from the containerised Playwright runner. Desktop's live browser view is a separate Tauri command/event, not a run event.",
+    "model_rerouted": "Docker's Auto routing can reroute a live Run; Desktop chooses its Auto model before the Run starts.",
+    "phase_advanced": "Docker's verification loop advances the plan phase. Desktop reports verification through verification_required/verification_failed only.",
+    "plan": "Docker emits `plan` when the update_plan tool runs; Desktop's checklist uses todo_list instead."
+  },
+  "desktop_only": {
+    "destructive_tool_called": "Desktop records the warning shown before a destructive tool. Docker asks for approval instead of emitting a separate event.",
+    "error": "Desktop surfaces provider/engine failures as a dedicated event; Docker ends the Run with status=failed and a status event.",
+    "format_applied": "Desktop records the post-edit formatter result. Docker's formatting runs as an ordinary tool call and is folded into tool_result.",
+    "replay_truncated": "Desktop's replay window marker (MAX_REPLAY_EVENTS). The Docker SSE stream resumes from Last-Event-ID instead of truncating.",
+    "steering_applied": "Desktop records an injected steering instruction as its own event. Docker has no steering event today.",
+    "todo_list": "Desktop's agent checklist. Docker emits `plan` when update_plan runs.",
+    "tool_approval_requested": "Desktop's request half of an approval; Docker emits the single `approval` kind.",
+    "tool_approval_resolved": "Desktop's resolution half of an approval; Docker emits the single `approval` kind.",
+    "tool_denied": "Desktop emits a dedicated denial event; Docker returns a tool_result carrying error/code `tool_denied`.",
+    "verification_failed": "Desktop emits a failed verification. Docker reports verification_required/stagnation_detected plus the terminal status instead."
+  }
+}

@@ -63,11 +63,13 @@ def test_sanitize_drops_malformed_entries():
 def test_render_for_prompt_lists_marks_and_returns_empty_without_items():
     assert render_for_prompt([]) == ""
     assert render_for_prompt(None) == ""
-    text = render_for_prompt([
-        {"content": "phase:setup", "status": "completed"},
-        {"content": "edit", "status": "in_progress"},
-        {"content": "verify", "status": "pending"},
-    ])
+    text = render_for_prompt(
+        [
+            {"content": "phase:setup", "status": "completed"},
+            {"content": "edit", "status": "in_progress"},
+            {"content": "verify", "status": "pending"},
+        ]
+    )
     assert "update_plan.steps" in text
     assert "- [x] phase:setup" in text
     assert "- [~] edit" in text

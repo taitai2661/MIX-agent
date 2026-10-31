@@ -41,6 +41,12 @@ COPY docs/ /workspace/docs/
 # measured with one command in the same environment the contract tests use
 # (PostgreSQL, no network, no LLM API): experiments/run_retrieval_bench.py.
 COPY experiments/ /workspace/experiments/
+# `tests/unit/test_repo_config.py` guards the repository's own tooling config.
+# It runs inside this image, so the files it reads travel with the tests
+# instead of being silently absent under /workspace.
+COPY pytest.ini ruff.toml compose.yaml /workspace/
+COPY apps/server/pyproject.toml /workspace/apps/server/pyproject.toml
+COPY .github/workflows/ci.yml /workspace/.github/workflows/ci.yml
 WORKDIR /workspace
 ENV PYTHONPATH=/app:/workspace
 USER 1000:1000

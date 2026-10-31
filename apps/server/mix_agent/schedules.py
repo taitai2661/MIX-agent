@@ -119,7 +119,7 @@ def tick(db, launch):
         job = db.get(ScheduledJob, scheduled.job_id)
         if not job or not job.data.get("enabled"):
             continue
-        from mix_agent.api.routes import enqueue_scheduled_run
+        from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
 
         try:
             run = enqueue_scheduled_run(db, job.owner_id, job, scheduled)
@@ -127,7 +127,7 @@ def tick(db, launch):
             launch(run.id)
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             db.rollback()
-    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean() == True)):
+    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean().is_(True))):
         data = job.data
         try:
             due = matches(data["cron"], current, data["timezone"])
@@ -151,7 +151,7 @@ def tick(db, launch):
             notify(db, job.owner_id, "schedule.skipped", data["name"], scheduled)
             db.commit()
             continue
-        from mix_agent.api.routes import enqueue_scheduled_run
+        from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
 
         try:
             run = enqueue_scheduled_run(db, job.owner_id, job, scheduled)
@@ -175,7 +175,7 @@ def reconcile(db, launch):
     created per job is capped so a long-dormant job cannot hang startup.
     """
     current = now().replace(second=0, microsecond=0)
-    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean() == True)):
+    for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean().is_(True))):
         try:
             parsed, tz = parse(job.data["cron"]), job.data["timezone"]
             ZoneInfo(tz)
@@ -201,7 +201,7 @@ def reconcile(db, launch):
         if not occurrences:
             continue
         chosen = occurrences[-1] if job.data.get("catch_up") else None
-        from mix_agent.api.routes import enqueue_scheduled_run
+        from mix_agent.api.helpers.scheduling import enqueue_scheduled_run
 
         for occurrence in occurrences[-MAX_MISSED_ROWS:]:
             scheduled = claim(db, job, occurrence)

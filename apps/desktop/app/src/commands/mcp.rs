@@ -297,7 +297,7 @@ pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), Stri
         challenge: String::new(),
         state: callback.state.clone(),
     };
-    let http = mixd_providers::transport::client();
+    let http = mixd_providers::transport::client().map_err(crate::error::cmd_err)?;
     let tokens =
         mixd_mcp::oauth::exchange_code(http, &endpoints, &pkce, &redirect_uri, &callback.code)
             .await

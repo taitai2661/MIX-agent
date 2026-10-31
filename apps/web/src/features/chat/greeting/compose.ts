@@ -56,7 +56,10 @@ export function pickFragment(
   return pool[pool.length - 1];
 }
 
-function withWeight(fragments: readonly Fragment[], weight: number): readonly Fragment[] {
+function withWeight(
+  fragments: readonly Fragment[],
+  weight: number,
+): readonly Fragment[] {
   return fragments.map((fragment) => ({ ...fragment, weight }));
 }
 
@@ -81,7 +84,8 @@ export function openingCandidates(signals: Signals): readonly Fragment[] {
   // 初めての訪問でははじめましてだけを使います。時間帯の挨拶と混ぜると
   // 最初の一印象が二者択一になり、どちらかが消えてしまいます。
   if (signals.gap === "first") return firstOpenings;
-  if (signals.gap === "reload" || signals.gap === "sameDay") return openings[signals.partOfDay];
+  if (signals.gap === "reload" || signals.gap === "sameDay")
+    return openings[signals.partOfDay];
   return [...returningOpenings, ...openings[signals.partOfDay]];
 }
 
@@ -101,10 +105,12 @@ function dayKindContexts(signals: Signals): readonly Fragment[] {
 }
 
 function partOfDayContexts(signals: Signals): readonly Fragment[] {
-  if (signals.partOfDay === "earlyMorning" || signals.partOfDay === "morning") return morningEdgeContexts;
+  if (signals.partOfDay === "earlyMorning" || signals.partOfDay === "morning")
+    return morningEdgeContexts;
   if (signals.partOfDay === "midday") return middayContexts;
   if (signals.partOfDay === "lateNight") return lateNightContexts;
-  if (signals.partOfDay === "evening" || signals.partOfDay === "dusk") return nightContexts;
+  if (signals.partOfDay === "evening" || signals.partOfDay === "dusk")
+    return nightContexts;
   return [];
 }
 
@@ -114,9 +120,17 @@ export function contextCandidates(signals: Signals): readonly Fragment[] {
   // 状況節に使います。英語 UI で日本の祝日を断定すると文脈がずれます。
   const japaneseCalendar = getLanguage() === "ja";
   const specific: readonly Fragment[] = [
-    ...(japaneseCalendar && signals.holiday && holidayContexts[signals.holiday] ? [holidayContexts[signals.holiday]] : []),
-    ...(japaneseCalendar && signals.event && eventContexts[signals.event] ? [eventContexts[signals.event]] : []),
-    ...(japaneseCalendar && signals.solarTerm && solarTermContexts[signals.solarTerm] ? [solarTermContexts[signals.solarTerm]] : []),
+    ...(japaneseCalendar && signals.holiday && holidayContexts[signals.holiday]
+      ? [holidayContexts[signals.holiday]]
+      : []),
+    ...(japaneseCalendar && signals.event && eventContexts[signals.event]
+      ? [eventContexts[signals.event]]
+      : []),
+    ...(japaneseCalendar &&
+    signals.solarTerm &&
+    solarTermContexts[signals.solarTerm]
+      ? [solarTermContexts[signals.solarTerm]]
+      : []),
     ...(signals.yearProgress === "start" ? yearStartContexts : []),
     ...(signals.yearProgress === "end" ? yearEndContexts : []),
   ];
@@ -127,7 +141,11 @@ export function contextCandidates(signals: Signals): readonly Fragment[] {
     ...(workloadContexts[workloadOf(signals.conversationCount)] ?? []),
     ...(seasonContexts[signals.season] ?? []),
   ];
-  return [...withWeight(specific, 4), ...withWeight(dayKindContexts(signals), 2), ...general];
+  return [
+    ...withWeight(specific, 4),
+    ...withWeight(dayKindContexts(signals), 2),
+    ...general,
+  ];
 }
 
 export function closingCandidates(signals: Signals): readonly Fragment[] {
@@ -148,7 +166,8 @@ export function noteCandidates(signals: Signals): readonly Fragment[] {
   if (signals.gap !== "first") groups.push(withWeight(notes.returning, 4));
   if (signals.partOfDay === "lateNight" || signals.partOfDay === "evening")
     groups.push(withWeight(notes.night, 3));
-  if (workloadOf(signals.conversationCount) === "heavy") groups.push(withWeight(notes.heavy, 3));
+  if (workloadOf(signals.conversationCount) === "heavy")
+    groups.push(withWeight(notes.heavy, 3));
   if (signals.conversationCount === 0) groups.push(withWeight(notes.empty, 2));
   groups.push(notes.default);
   return groups.flat();
@@ -176,7 +195,10 @@ export function compose(
 
   const note = pickFragment(notePool, seen, random) ?? notePool[0];
   const opening = pickFragment(openingPool, seen, random) ?? openingPool[0];
-  let context = random() < CONTEXT_CHANCE ? pickFragment(contextPool, seen, random) ?? null : null;
+  let context =
+    random() < CONTEXT_CHANCE
+      ? (pickFragment(contextPool, seen, random) ?? null)
+      : null;
   let closing = pickFragment(closingPool, seen, random) ?? closingPool[0];
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -202,13 +224,18 @@ export function compose(
 
   // 抽選で決まらなかった場合は、プールを頭から走査して必ず組み合わせます。
   // 走査でも直近の部品を避けられるよう、未使用のものを先に試します。
-  const unseenClosing = closingPool.filter((fragment) => !seen.has(fragment.id));
-  const unseenContext = contextPool.filter((fragment) => !seen.has(fragment.id));
+  const unseenClosing = closingPool.filter(
+    (fragment) => !seen.has(fragment.id),
+  );
+  const unseenContext = contextPool.filter(
+    (fragment) => !seen.has(fragment.id),
+  );
   for (const contextCandidates of [unseenContext, contextPool]) {
     for (const closingCandidates of [unseenClosing, closingPool]) {
       for (const candidateContext of [null, ...contextCandidates]) {
         for (const candidateClosing of closingCandidates) {
-          if (!compatible(opening, candidateContext, candidateClosing)) continue;
+          if (!compatible(opening, candidateContext, candidateClosing))
+            continue;
           const parts = candidateContext
             ? [opening, candidateContext, candidateClosing]
             : [opening, candidateClosing];
@@ -224,7 +251,11 @@ export function compose(
   }
 
   // ここまで来るのは文体タグが全て外れた場合のみ。最後の一文に落とす。
-  const fallback = sentence("compose-fallback", "進めたいことを教えてください。", "calm");
+  const fallback = sentence(
+    "compose-fallback",
+    "進めたいことを教えてください。",
+    "calm",
+  );
   return {
     title: [opening.text, fallback.text],
     titleIds: [opening.id, fallback.id],

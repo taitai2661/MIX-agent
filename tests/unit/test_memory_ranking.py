@@ -86,10 +86,10 @@ def test_ranking_constants_match_the_spec_block():
         ([1.0, 0.0], [1.0, 0.0], 1.0),
         ([1.0, 0.0], [0.0, 1.0], 0.5),
         ([1.0, 0.0], [-1.0, 0.0], 0.0),
-        ([1.0, 0.0], [1.0, 0.0, 0.0], None),      # dimension mismatch is not a score
+        ([1.0, 0.0], [1.0, 0.0, 0.0], None),  # dimension mismatch is not a score
         ([1.0, 0.0], [], None),
         ([], [1.0, 0.0], None),
-        ([0.0, 0.0], [0.0, 0.0], None),           # a zero vector has no direction
+        ([0.0, 0.0], [0.0, 0.0], None),  # a zero vector has no direction
         ([1.0, 0.0], [float("nan"), 0.0], None),  # nor does a poisoned one
     ],
 )

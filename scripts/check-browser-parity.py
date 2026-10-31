@@ -107,7 +107,7 @@ def check_limits(limits: dict) -> None:
         expression = match.group(1).replace("_", "")
         try:
             value = int(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
-        except Exception:
+        except Exception:  # noqa: BLE001 - any unparseable constant is a drift failure
             fail(f"cannot evaluate {name} = {expression!r}")
         if limits.get(key) != value:
             fail(f"limit {key} drift: contract={limits.get(key)} Rust={value}")

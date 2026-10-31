@@ -5,6 +5,7 @@ import type {
   AttachmentPayload,
   BrowserFrameView,
   BrowserInvokeOutput,
+  BrowserScreencastFrame,
   BrowserInstallState,
   BrowserProfileView,
   BrowserStatus,
@@ -48,6 +49,12 @@ import type {
   ToolView,
   UpdateInfo,
 } from "./types";
+
+/** Extension filter for the native file pickers. */
+export interface PickerFilter {
+  name: string;
+  extensions: string[];
+}
 
 export const api = {
   health: () => invoke<HealthReport>("health"),
@@ -172,6 +179,12 @@ export const api = {
     invoke<string>("export_markdown", { id, includeToolCalls }),
 
   cancelRun: (id: string) => invoke<void>("cancel_run", { id }),
+  // Returns false when the Run already finished, so the caller can send the
+  // text as a normal new turn instead.
+  steerRun: (runId: string, content: string) =>
+    invoke<boolean>("steer_run", { runId, content }),
+  /** Restores files the Run changed via edit/files; returns the count. */
+  revertRun: (runId: string) => invoke<number>("revert_run", { runId }),
   getRun: (id: string) => invoke<RunView>("get_run", { id }),
   listRuns: (conversationId: string) =>
     invoke<RunView[]>("list_runs", { conversationId }),
@@ -205,8 +218,12 @@ export const api = {
     invoke<PermissionRuleView[]>("list_permission_rules"),
   listPendingApprovals: () =>
     invoke<PendingApprovalView[]>("list_pending_approvals"),
-  decideApproval: (input: { id: string; grant: boolean; remember: boolean }) =>
-    invoke<void>("decide_approval", { input }),
+  decideApproval: (input: {
+    id: string;
+    grant: boolean;
+    remember: boolean;
+    rememberSession?: boolean;
+  }) => invoke<void>("decide_approval", { input }),
 
   listMcpConnections: () => invoke<McpConnectionView[]>("list_connections"),
   createMcpConnection: (input: {
@@ -265,6 +282,20 @@ export const api = {
   browserArtifact: (id: string) => invoke<string>("browser_artifact", { id }),
   browserFrame: (workspaceId: string, fullPage = false) =>
     invoke<BrowserFrameView | null>("browser_frame", { workspaceId, fullPage }),
+  browserStop: (workspaceId: string) =>
+    invoke<void>("browser_stop", { workspaceId }),
+  /** Keep an open panel's workspace out of the idle LRU (no Chromium launch). */
+  browserKeepalive: (workspaceId: string) =>
+    invoke<void>("browser_keepalive", { workspaceId }),
+  browserScreencastStart: (workspaceId: string) =>
+    invoke<void>("browser_screencast_start", { workspaceId }),
+  browserScreencastStop: (workspaceId: string) =>
+    invoke<void>("browser_screencast_stop", { workspaceId }),
+  /** CDP screencast frames (falls back to `browserFrame` polling). */
+  browserFrameEvent: (handler: (frame: BrowserScreencastFrame) => void) =>
+    listen<BrowserScreencastFrame>("browser://frame", (event) =>
+      handler(event.payload),
+    ),
 
   listMemories: () => invoke<MemoryView[]>("list_memories"),
   createMemory: (input: {
@@ -340,6 +371,8 @@ export const api = {
     rootPath: string;
     additionalPaths?: string[];
     sources?: string[];
+    verifyCommand?: string | null;
+    formatCommand?: string | null;
   }) => invoke<ProjectView>("create_project", { input }),
   updateProject: (
     id: string,
@@ -349,6 +382,8 @@ export const api = {
       rootPath?: string;
       additionalPaths?: string[];
       sources?: string[];
+      verifyCommand?: string | null;
+      formatCommand?: string | null;
     },
   ) => invoke<ProjectView>("update_project", { id, input }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
@@ -423,12 +458,14 @@ export const api = {
     name: string;
     instructions: string;
     tool_ids: string[];
+    modelId?: string | null;
   }) => invoke<AgentView>("create_agent", { input }),
   updateAgent: (input: {
     id: string;
     name: string;
     instructions: string;
     tool_ids: string[];
+    modelId?: string | null;
   }) => invoke<AgentView>("update_agent", { input }),
   // `delete_agent` was registered on the Rust side but never bound here, so
   // there was no way to remove an agent from the UI at all.
@@ -457,6 +494,32 @@ export const api = {
     }),
   readAttachment: (path: string) =>
     invoke<AttachmentPayload>("read_attachment", { path }),
+  // Native pickers run in Rust so the chosen path is recorded as trusted by
+  // the process that later reads/writes it. Do not use
+  // `@tauri-apps/plugin-dialog` for a path that a file command will receive:
+  // the Rust side cannot tell that return value apart from a forged one.
+  pickOpenFile: (options?: {
+    title?: string;
+    filters?: PickerFilter[];
+    multiple?: boolean;
+  }) =>
+    invoke<string[]>("pick_open_file", {
+      title: options?.title ?? null,
+      filters: options?.filters ?? null,
+      multiple: options?.multiple ?? false,
+    }),
+  pickFolder: (title?: string) =>
+    invoke<string | null>("pick_folder", { title: title ?? null }),
+  pickSaveFile: (options?: {
+    title?: string;
+    defaultName?: string;
+    filters?: PickerFilter[];
+  }) =>
+    invoke<string | null>("pick_save_file", {
+      title: options?.title ?? null,
+      defaultName: options?.defaultName ?? null,
+      filters: options?.filters ?? null,
+    }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   saveTextFile: (path: string, content: string) =>
     invoke<number>("save_text_file", { path, content }),

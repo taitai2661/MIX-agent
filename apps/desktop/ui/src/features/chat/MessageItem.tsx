@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   FileText,
@@ -180,6 +181,23 @@ export const MessageItem = memo(function MessageItem({
         <div className="text-sm text-fg">
           <Markdown>{stripLeakedMarkup(message.content)}</Markdown>
         </div>
+        {run?.replay_truncated && (
+          <div
+            role="status"
+            className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-2xs text-muted"
+          >
+            <AlertTriangle
+              size={12}
+              className="mt-0.5 shrink-0 text-warning"
+              aria-hidden="true"
+            />
+            <span>
+              {t(
+                "イベント数が上限を超えたため、この実行のログの一部は省略されています（最新の結果は表示されています）。",
+              )}
+            </span>
+          </div>
+        )}
         {run?.status === "cancelled" && (
           <div
             role="status"
@@ -289,6 +307,17 @@ function MessageToolsAccordion({
           <div className="flex items-center gap-1.5 py-2 text-faint">
             <Spinner size={12} />
             <span>{t("読み込み中…")}</span>
+          </div>
+        )}
+        {timeline?.replayTruncated && (
+          <div className="rounded-md border border-line bg-inset/50 p-2 text-2xs text-muted">
+            {timeline.replayOmitted
+              ? tf("{count}件のイベントを省略しました", {
+                  count: timeline.replayOmitted.toLocaleString(),
+                })
+              : t(
+                  "イベント数が上限を超えたため、この実行のログの一部は省略されています。",
+                )}
           </div>
         )}
         {todos.length > 0 && (

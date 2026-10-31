@@ -10,9 +10,22 @@ export type PartOfDay =
 
 export type DayKind = "sunday" | "weekend" | "monday" | "friday" | "weekday";
 
-export type Gap = "first" | "reload" | "sameDay" | "overnight" | "fewDays" | "longAway" | "farAway";
+export type Gap =
+  | "first"
+  | "reload"
+  | "sameDay"
+  | "overnight"
+  | "fewDays"
+  | "longAway"
+  | "farAway";
 
-export type Activity = "none" | "justNow" | "today" | "yesterday" | "thisWeek" | "earlier";
+export type Activity =
+  | "none"
+  | "justNow"
+  | "today"
+  | "yesterday"
+  | "thisWeek"
+  | "earlier";
 
 export type Workload = "empty" | "light" | "steady" | "heavy";
 

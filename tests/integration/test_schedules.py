@@ -18,14 +18,24 @@ def test_five_field_cron_validation_and_next_time():
 
 
 def test_cron_rejects_invalid_expression_and_timezone():
-    with pytest.raises(ValueError): parse("* * *")
-    with pytest.raises(ValueError): next_at("0 0 * * *", "Not/AZone")
+    with pytest.raises(ValueError):
+        parse("* * *")
+    with pytest.raises(ValueError):
+        next_at("0 0 * * *", "Not/AZone")
 
 
 def test_scheduled_job_api_validates_and_persists_per_owner(signed):
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
-    payload = {"name": "朝の確認", "target_type": "conversation", "target_id": conversation,
-               "prompt": "状況を確認して", "cron": "0 9 * * *", "timezone": "Asia/Tokyo", "enabled": True, "catch_up": False}
+    payload = {
+        "name": "朝の確認",
+        "target_type": "conversation",
+        "target_id": conversation,
+        "prompt": "状況を確認して",
+        "cron": "0 9 * * *",
+        "timezone": "Asia/Tokyo",
+        "enabled": True,
+        "catch_up": False,
+    }
     created = signed.post("/api/v1/scheduled-jobs", json=payload)
     assert created.status_code == 200, created.text
     listing = signed.get("/api/v1/scheduled-jobs")
@@ -42,9 +52,21 @@ async def test_agent_schedule_tools_manage_only_owned_jobs(signed):
         db.add(conversation)
         db.flush()
         run = Run(owner_id=owner, conversation_id=conversation.id, request_key=uid(), data={"snapshot": {}})
-        db.add(run); db.flush()
+        db.add(run)
+        db.flush()
         create = next(tool for tool in BUILTINS if tool["id"] == "schedule_create")
-        created = await execute(db, run, create, {"name": "朝", "target_type": "conversation", "target_id": conversation.id, "prompt": "確認して", "cron": "0 9 * * *"})
+        created = await execute(
+            db,
+            run,
+            create,
+            {
+                "name": "朝",
+                "target_type": "conversation",
+                "target_id": conversation.id,
+                "prompt": "確認して",
+                "cron": "0 9 * * *",
+            },
+        )
         assert created["created"] is True
         job = db.get(ScheduledJob, created["id"])
         assert job and job.data["timezone"] == "Asia/Tokyo"
@@ -53,5 +75,7 @@ async def test_agent_schedule_tools_manage_only_owned_jobs(signed):
         assert updated["enabled"] is False
         listing = await execute(db, run, next(tool for tool in BUILTINS if tool["id"] == "schedule_list"), {})
         assert listing["jobs"][0]["id"] == job.id
-        deleted = await execute(db, run, next(tool for tool in BUILTINS if tool["id"] == "schedule_delete"), {"id": job.id})
+        deleted = await execute(
+            db, run, next(tool for tool in BUILTINS if tool["id"] == "schedule_delete"), {"id": job.id}
+        )
         assert deleted == {"id": job.id, "deleted": True}

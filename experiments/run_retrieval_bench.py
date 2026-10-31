@@ -73,12 +73,10 @@ EXIT_ERROR = 2
 # §5.2 / §5.1, stated so the report carries the contract it measures against.
 DEFINITIONS = {
     "recall_at_5": (
-        "mean over cases with a non-empty expected set of "
-        "|expected ∩ returned[:5]| / |expected|"
+        "mean over cases with a non-empty expected set of |expected ∩ returned[:5]| / |expected|"
     ),
     "recall_at_8": (
-        "mean over cases with a non-empty expected set of "
-        "|expected ∩ returned[:8]| / |expected|"
+        "mean over cases with a non-empty expected set of |expected ∩ returned[:8]| / |expected|"
     ),
     "mrr": (
         "mean over the same cases of 1 / rank of the first expected row in the "
@@ -108,8 +106,12 @@ THRESHOLDS = (
 SUITE_METRICS = {
     "fixture": ("recall_at_5", "recall_at_8", "mrr", "noise_rate"),
     "synthetic": (
-        "recall_at_5", "recall_at_8", "mrr", "noise_rate",
-        "latency_p50_ms", "latency_p95_ms",
+        "recall_at_5",
+        "recall_at_8",
+        "mrr",
+        "noise_rate",
+        "latency_p50_ms",
+        "latency_p95_ms",
     ),
 }
 
@@ -131,16 +133,58 @@ TOPICS: tuple[tuple[str, tuple[str, ...]], ...] = (
 # Two per topic (16 = 2 * len(TOPICS)): a query is "two shared words + one
 # topic word", which is what lets a *different* topic still match 2/3 of it.
 GENERIC = (
-    "config", "error", "setup", "request", "result", "cache", "limit", "report",
-    "status", "record", "process", "value", "field", "option", "detail", "event",
+    "config",
+    "error",
+    "setup",
+    "request",
+    "result",
+    "cache",
+    "limit",
+    "report",
+    "status",
+    "record",
+    "process",
+    "value",
+    "field",
+    "option",
+    "detail",
+    "event",
 )
 # Neutral words for document tails and filler: disjoint from every query term,
 # so filler can only ever rank on recency.
 TAILS = (
-    "notebook", "summary", "draft", "agenda", "remind", "review", "sample", "lesson",
-    "budget", "travel", "recipe", "weather", "garden", "music", "camera", "window",
-    "bottle", "ticket", "pocket", "letter", "bridge", "forest", "island", "river",
-    "mountain", "valley", "harbor", "desert", "canyon", "meadow", "cabin", "village",
+    "notebook",
+    "summary",
+    "draft",
+    "agenda",
+    "remind",
+    "review",
+    "sample",
+    "lesson",
+    "budget",
+    "travel",
+    "recipe",
+    "weather",
+    "garden",
+    "music",
+    "camera",
+    "window",
+    "bottle",
+    "ticket",
+    "pocket",
+    "letter",
+    "bridge",
+    "forest",
+    "island",
+    "river",
+    "mountain",
+    "valley",
+    "harbor",
+    "desert",
+    "canyon",
+    "meadow",
+    "cabin",
+    "village",
 )
 
 # Stub embedding: how much a shared topic outweighs shared tokens. Documented
@@ -450,11 +494,10 @@ def run_synthetic_suite(args, progress_log):
             f"{len(TOPICS)} topic dims = {dims}, carried by {len(embedded_ids)} of the "
             f"{window} rows inside the candidate window"
         )
-    progress_log(
-        f"corpus: {len(rows)} rows ({scored} scored, {len(rows) - scored} filler), mode={args.mode}"
-    )
-    vectors = {query["id"]: query_vector_for(query["text"], args.mode, vocab_index, dims)
-               for query in queries}
+    progress_log(f"corpus: {len(rows)} rows ({scored} scored, {len(rows) - scored} filler), mode={args.mode}")
+    vectors = {
+        query["id"]: query_vector_for(query["text"], args.mode, vocab_index, dims) for query in queries
+    }
 
     with SessionLocal() as db:
         db.execute(delete(Memory).where(Memory.owner_id == BENCH_OWNER))
@@ -509,8 +552,9 @@ def run_synthetic_suite(args, progress_log):
 
         # One untimed call, so the first measured sample is not measuring a cold
         # planner / an empty relation cache.
-        service.search(db, BENCH_OWNER, queries[0]["text"], None, debug=True,
-                       query_vector=vectors[queries[0]["id"]])
+        service.search(
+            db, BENCH_OWNER, queries[0]["text"], None, debug=True, query_vector=vectors[queries[0]["id"]]
+        )
 
         latencies: list[float] = []
         returned_by_case: dict[str, list[str]] = {query["id"]: [] for query in queries}
@@ -522,7 +566,11 @@ def run_synthetic_suite(args, progress_log):
             for query in queries:
                 started = time.perf_counter()
                 outcome = service.search(
-                    db, BENCH_OWNER, query["text"], None, debug=True,
+                    db,
+                    BENCH_OWNER,
+                    query["text"],
+                    None,
+                    debug=True,
                     query_vector=vectors[query["id"]],
                 )
                 latencies.append((time.perf_counter() - started) * 1000.0)
@@ -669,8 +717,7 @@ def format_report(report):
             continue
         for metric, value in payload["values"].items():
             lines.append(
-                f"{suite:<10} {metric:<16} {format_value(metric, value):>10}  "
-                f"{payload['basis'][metric]}"
+                f"{suite:<10} {metric:<16} {format_value(metric, value):>10}  {payload['basis'][metric]}"
             )
     lines.append("")
     lines.append("definitions:")
@@ -754,25 +801,40 @@ def parse_args(argv=None):
         "Exits 0 when it measured something, whatever the numbers are.",
     )
     parser.add_argument("--size", type=int, default=1000, help="synthetic corpus rows (default 1000)")
-    parser.add_argument("--mode", choices=("lexical", "hybrid"), default="lexical",
-                        help="lexical = no embeddings (0.85/0.15), hybrid = stub vector term")
+    parser.add_argument(
+        "--mode",
+        choices=("lexical", "hybrid"),
+        default="lexical",
+        help="lexical = no embeddings (0.85/0.15), hybrid = stub vector term",
+    )
     parser.add_argument("--seed", type=int, default=20261010, help="corpus seed (default 20261010)")
-    parser.add_argument("--suite", choices=("fixture", "synthetic", "both"), default="both",
-                        help="fixture needs no database; synthetic needs PostgreSQL")
-    parser.add_argument("--repeat", type=int, default=3,
-                        help="timed search() passes over every query (default 3)")
+    parser.add_argument(
+        "--suite",
+        choices=("fixture", "synthetic", "both"),
+        default="both",
+        help="fixture needs no database; synthetic needs PostgreSQL",
+    )
+    parser.add_argument(
+        "--repeat", type=int, default=3, help="timed search() passes over every query (default 3)"
+    )
     parser.add_argument("--json", metavar="PATH", help="write the machine-readable report here")
     parser.add_argument("--keep", action="store_true", help="keep the synthetic rows after the run")
-    parser.add_argument("--min-recall5", type=float, metavar="FLOAT",
-                        help="exit 1 if recall@5 falls below this")
-    parser.add_argument("--min-recall8", type=float, metavar="FLOAT",
-                        help="exit 1 if recall@8 falls below this")
-    parser.add_argument("--min-mrr", type=float, metavar="FLOAT",
-                        help="exit 1 if MRR falls below this")
-    parser.add_argument("--max-noise", type=float, metavar="FLOAT",
-                        help="exit 1 if the noise rate rises above this")
-    parser.add_argument("--max-p95-ms", type=float, metavar="FLOAT",
-                        help="exit 1 if search() p95 rises above this (synthetic only)")
+    parser.add_argument(
+        "--min-recall5", type=float, metavar="FLOAT", help="exit 1 if recall@5 falls below this"
+    )
+    parser.add_argument(
+        "--min-recall8", type=float, metavar="FLOAT", help="exit 1 if recall@8 falls below this"
+    )
+    parser.add_argument("--min-mrr", type=float, metavar="FLOAT", help="exit 1 if MRR falls below this")
+    parser.add_argument(
+        "--max-noise", type=float, metavar="FLOAT", help="exit 1 if the noise rate rises above this"
+    )
+    parser.add_argument(
+        "--max-p95-ms",
+        type=float,
+        metavar="FLOAT",
+        help="exit 1 if search() p95 rises above this (synthetic only)",
+    )
     args = parser.parse_args(argv)
     if args.size < 1:
         parser.error("--size must be >= 1")

@@ -13,7 +13,7 @@ export function Auth({
 }: {
   setup: boolean;
   sessionExpired?: boolean;
-  onDone: (v: any) => void;
+  onDone: (v: { username: string; csrf: string }) => void;
 }) {
   const [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
@@ -21,7 +21,8 @@ export function Auth({
     [confirmPassword, setConfirmPassword] = useState(""),
     [showPassword, setShowPassword] = useState(false);
   useLanguage();
-  const passwordMismatch = setup && confirmPassword.length > 0 && confirmPassword !== password;
+  const passwordMismatch =
+    setup && confirmPassword.length > 0 && confirmPassword !== password;
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (setup && password !== confirmPassword) {
@@ -32,10 +33,14 @@ export function Auth({
     setBusy(true);
     setError(null);
     try {
-      const result = await api(setup ? "/setup/admin" : "/auth/login", "POST", {
+      const result = await api<{ username: string; csrf: string }>(
+        setup ? "/setup/admin" : "/auth/login",
+        "POST",
+        {
           username: form.get("username"),
           password: setup ? password : form.get("password"),
-        });
+        },
+      );
       onDone(result);
     } catch (e) {
       setError(e);
@@ -48,14 +53,34 @@ export function Auth({
       <div className="auth-card">
         <Logo />
         <p className="eyebrow">YOUR AI. YOUR SPACE.</p>
-        <label className="field"><span>{t("表示言語")}</span><select aria-label={t("表示言語")} value={getLanguage()} onChange={e => setLanguage(e.target.value as "ja" | "en")}><option value="ja">{t("日本語")}</option><option value="en">English</option></select></label>
-        <h1>{t(setup ? "ようこそ、MIX agentへ。" : sessionExpired ? "セッションの有効期限が切れました。" : "おかえりなさい。")}</h1>
+        <label className="field">
+          <span>{t("表示言語")}</span>
+          <select
+            aria-label={t("表示言語")}
+            value={getLanguage()}
+            onChange={(e) => setLanguage(e.target.value as "ja" | "en")}
+          >
+            <option value="ja">{t("日本語")}</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <h1>
+          {t(
+            setup
+              ? "ようこそ、MIX agentへ。"
+              : sessionExpired
+                ? "セッションの有効期限が切れました。"
+                : "おかえりなさい。",
+          )}
+        </h1>
         <p>
-          {t(setup
-            ? "まずは管理者アカウントを作成しましょう。"
-            : sessionExpired
-              ? "入力中の内容は保存されています。再ログインすると元の画面に戻ります。"
-              : "あなたのワークスペースにログインします。")}
+          {t(
+            setup
+              ? "まずは管理者アカウントを作成しましょう。"
+              : sessionExpired
+                ? "入力中の内容は保存されています。再ログインすると元の画面に戻ります。"
+                : "あなたのワークスペースにログインします。",
+          )}
         </p>
         <form onSubmit={submit}>
           <Field label={t("ユーザー名")}>
@@ -79,13 +104,22 @@ export function Auth({
                 maxLength={256}
                 autoComplete={setup ? "new-password" : "current-password"}
                 value={setup ? password : undefined}
-                onChange={setup ? (event) => { setPassword(event.target.value); setError(null); } : undefined}
+                onChange={
+                  setup
+                    ? (event) => {
+                        setPassword(event.target.value);
+                        setError(null);
+                      }
+                    : undefined
+                }
               />
               {setup && (
                 <button
                   type="button"
                   className="password-toggle"
-                  aria-label={t(showPassword ? "パスワードを隠す" : "パスワードを表示")}
+                  aria-label={t(
+                    showPassword ? "パスワードを隠す" : "パスワードを表示",
+                  )}
                   aria-pressed={showPassword}
                   onClick={() => setShowPassword((value) => !value)}
                 >
@@ -105,10 +139,15 @@ export function Auth({
                 autoComplete="new-password"
                 value={confirmPassword}
                 aria-invalid={passwordMismatch}
-                onChange={(event) => { setConfirmPassword(event.target.value); setError(null); }}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value);
+                  setError(null);
+                }}
               />
               {passwordMismatch && (
-                <small className="field-error">{t("パスワードが一致しません")}</small>
+                <small className="field-error">
+                  {t("パスワードが一致しません")}
+                </small>
               )}
             </Field>
           )}
@@ -119,7 +158,10 @@ export function Auth({
           </Button>
         </form>
         <small>
-          <ShieldCheck size={13} /> {t("接続先のAI Providerへ送信した内容は、そのProviderの規約に従います。")}
+          <ShieldCheck size={13} />{" "}
+          {t(
+            "接続先のAI Providerへ送信した内容は、そのProviderの規約に従います。",
+          )}
         </small>
       </div>
     </main>

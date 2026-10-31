@@ -8,13 +8,30 @@ on:
 permissions:
   contents: read
 
+# A push that supersedes an in-flight run on the same ref cancels it; without
+# this the three-OS Rust matrix keeps burning runners on stale commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   docker-backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Run application test suite
-        run: docker compose --profile test run --build --rm test
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # `alembic check` must run before pytest: the test fixture drops and
+      # recreates every table from the models, so a later check would compare
+      # the metadata with itself and miss a migration that never created a
+      # column or index.
+      - name: Verify migrations, then measure coverage
+        run: |
+          docker compose --profile test run --build --rm test \
+            sh -c "cd /app && export COVERAGE_FILE=/tmp/.coverage \
+              && alembic upgrade head \
+              && alembic check \
+              && pytest -c /app/pyproject.toml -p no:cacheprovider -q \
+                   --cov=mix_agent --cov-report=term-missing \
+                   --cov-fail-under=70 /workspace/tests"
 
       # Spec §5's ranking is a *number*, so a weighting change can be caught as
       # "a specific score moved" rather than as "the order looked different".
@@ -34,22 +51,25 @@ jobs:
   docker-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Install uv
         run: pip install uv==0.12.7
-      - name: Ruff check
+      - name: Ruff check (whole repository)
+        # Run from the root so per-file-ignore globs (tests/**, runners/**) match;
+        # `uv run --project` keeps using the server's pinned ruff.
+        run: uv run --project apps/server ruff check apps/server runners deploy scripts tests experiments
+      - name: Ruff format check (whole repository)
+        run: uv run --project apps/server ruff format --check apps/server runners deploy scripts tests experiments
+      - name: Pyright (type check + warning budget)
         working-directory: apps/server
-        run: uv run ruff check
-      - name: Ruff format check
-        working-directory: apps/server
-        run: uv run ruff format --check
+        run: uv run python ../../scripts/check-pyright-budget.py
       - name: OpenAPI schema is committed
         working-directory: apps/server
         env:
-          DATABASE_URL: postgresql+psycopg://mix:test-only-password@localhost/mix
+          DATABASE_URL: postgresql+psycopg://mix@localhost/mix
         run: |
           uv run python ../../scripts/export-openapi.py
           git diff --exit-code ../../docs/openapi.json
@@ -57,18 +77,21 @@ jobs:
   docker-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: "10.11.0"
       - name: Check frontend
         working-directory: apps/web
         run: |
           pnpm install --frozen-lockfile
-          pnpm test
+          pnpm lint
+          pnpm typecheck
+          pnpm format:check
+          pnpm test:coverage
           pnpm build
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
@@ -77,6 +100,21 @@ jobs:
         run: |
           pnpm generate:api
           git diff --exit-code src/generated/api.ts
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: E2E smoke (production build)
+        working-directory: apps/web
+        run: pnpm test:e2e
+        env:
+          # `pnpm build` above produced dist/; preview serves that instead of
+          # letting a dev-only transform mask a bundle problem.
+          E2E_SERVER: preview
       - name: Third-party license notices are current
         run: |
           node scripts/generate-third-party-licenses.mjs
@@ -88,12 +126,16 @@ jobs:
   memory-parity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Memory spec parity check
         run: python3 scripts/check-memory-parity.py
+      # Every literal HTTP error must have a stable code and English text;
+      # otherwise an English UI silently shows Japanese.
+      - name: Error code / translation parity check
+        run: python3 scripts/check-error-i18n.py
       # The greeting is duplicated by hand in both editions (fragments, id-keyed
       # English maps, suggestion labels and prompts). Without this gate a
       # fragment or suggestion can lose its English entry and silently fall
@@ -106,14 +148,84 @@ jobs:
       # unsupported.
       - name: Browser contract parity check
         run: python3 scripts/check-browser-parity.py
+      # `run_events.kind` is another cross-edition contract, but the kinds are
+      # string literals in both engines. The contract records the shared
+      # vocabulary plus every deliberate one-edition kind, so adding an event
+      # on one side forces a look at the other (and its UI parser).
+      - name: Run event contract parity check
+        run: python3 scripts/check-run-event-parity.py
+
+  # Cheap, dependency-free repository gates: no container, no network. These
+  # used to rely on human discipline (README was translated by hand, nothing
+  # looked for committed credentials).
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Committed credentials
+        run: python3 scripts/check-secrets.py
+      - name: README.md / README.en.md structure parity
+        run: python3 scripts/check-readme-parity.py
+      - name: Documentation links
+        run: python3 scripts/check-doc-links.py
+
+  # Dependency advisories are not a code-review problem; the weekly Dependabot
+  # updates can lag a disclosure by days. This audits the locked server
+  # requirements (what the image actually installs).
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv==0.12.7
+      - name: Export locked runtime requirements
+        working-directory: apps/server
+        run: uv export --frozen --no-dev --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+      - name: Audit
+        run: uvx pip-audit==2.10.1 --requirement "$RUNNER_TEMP/requirements.txt" --strict
+      # An SBOM turns "which versions were in v0.5.4?" into an artifact instead
+      # of a rebuild. CycloneDX is the format Docker/Grype/Trivy ingest.
+      - name: Generate Python SBOM (CycloneDX)
+        run: uvx --from cyclonedx-bom==7.6.0 cyclonedx-py requirements --input-file "$RUNNER_TEMP/requirements.txt" --output-format JSON --output-file "$RUNNER_TEMP/sbom-python.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-python
+          path: ${{ runner.temp }}/sbom-python.json
+          if-no-files-found: error
+
+  dependency-audit-rust:
+    # Dependabot opens upgrade PRs, but it is not a gate: a disclosure can land
+    # between weekly updates. Audit the lockfile the installers actually build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: "1.91.0"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: apps/desktop
+      - name: Install cargo-audit
+        # Pin the audit tool like `pip-audit==…` above: a new release must not
+        # change CI's dependency graph or MSRV without a reviewed change.
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit locked Rust dependencies
+        working-directory: apps/desktop
+        run: cargo audit
 
   desktop-fmt:
     # Lightweight single-OS fmt gate: rustfmt is platform-independent, so the
     # three-OS matrix below would only repeat the same check three times.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.91.0"
           components: rustfmt
@@ -128,7 +240,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Linux Tauri dependencies
         if: runner.os == 'Linux'
         run: |
@@ -137,14 +249,14 @@ jobs:
             libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
             libssl-dev libxdo-dev libgtk-3-dev libayatana-appindicator3-dev \
             fuse3
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.91.0"
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: apps/desktop
       # `cargo check` is intentionally omitted: `cargo clippy --all-targets`
@@ -180,7 +292,7 @@ jobs:
   desktop-ui:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Linux Tauri dependencies
         run: |
           sudo apt-get update
@@ -188,18 +300,18 @@ jobs:
             libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
             libssl-dev libxdo-dev libgtk-3-dev libayatana-appindicator3-dev \
             fuse3
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - name: Check version consistency
         run: node scripts/check-version-consistency.mjs
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: "10.11.0"
       - name: Get pnpm store directory
         shell: bash
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.STORE_PATH }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('apps/desktop/pnpm-lock.yaml') }}
@@ -215,7 +327,7 @@ jobs:
         run: |
           pnpm lint
           pnpm typecheck
-          pnpm test
+          pnpm test:coverage
       # `pnpm build` is `tsc -b && vite build`; the explicit `pnpm typecheck`
       # above already ran `tsc -b`, so build here via vite only to avoid
       # compiling TypeScript twice.
@@ -245,17 +357,17 @@ jobs:
   desktop-package-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: "10.11.0"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.91.0"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: apps/desktop
           key: package-windows
@@ -276,7 +388,7 @@ jobs:
           test -n "$(find target/release/bundle/nsis -type f -name '*-setup.exe' -print -quit)"
           test -n "$(find target/release/bundle/msi -type f -name '*.msi' -print -quit)"
       - name: Upload Windows installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mix-agent-desktop-windows-ci
           path: |

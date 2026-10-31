@@ -1,23 +1,55 @@
-/// Platform-aware shortcut labels.
+/// Platform-aware shortcut labels and feature hints.
 ///
 /// `App` publishes the runtime platform on
-/// `document.documentElement.dataset.platform` (`"macos"` | `"other"`),
-/// preferring Tauri's `plugin-os` over UA sniffing so a macOS WebView that
-/// reports a Windows-ish UA still gets the traffic lights.
+/// `document.documentElement.dataset.platform` (`"macos"` | `"windows"` |
+/// `"linux"` | `"other"`), preferring Tauri's `plugin-os` over UA sniffing so a
+/// macOS WebView that reports a Windows-ish UA still gets the traffic lights.
 ///
 /// The keyboard handlers accept both `metaKey` and `ctrlKey`; this module keeps
 /// the *displayed* caps in step (`⌘` / `⇧` on macOS, `Ctrl` / `Shift`
 /// elsewhere) instead of hard-coding the macOS glyphs into every hint.
 
-const MAC_UA = /Macintosh|Mac OS X/i;
+export type RuntimePlatform = "macos" | "windows" | "linux" | "other";
 
-export function isMacPlatform(): boolean {
+const MAC_UA = /Macintosh|Mac OS X/i;
+const WINDOWS_UA = /Windows/i;
+const LINUX_UA = /Linux|X11/i;
+
+/** Best-effort platform from a user agent, for the first paint. */
+export function detectPlatformFromUa(userAgent: string): RuntimePlatform {
+  if (WINDOWS_UA.test(userAgent)) return "windows";
+  if (LINUX_UA.test(userAgent)) return "linux";
+  if (MAC_UA.test(userAgent)) return "macos";
+  return "other";
+}
+
+/** The OS the UI is currently running on. */
+export function runtimePlatform(): RuntimePlatform {
   if (typeof document !== "undefined") {
     const platform = document.documentElement.dataset.platform;
-    if (platform) return platform === "macos";
+    if (
+      platform === "macos" ||
+      platform === "windows" ||
+      platform === "linux" ||
+      platform === "other"
+    ) {
+      return platform;
+    }
   }
-  if (typeof navigator === "undefined") return true;
-  return MAC_UA.test(navigator.userAgent);
+  if (typeof navigator === "undefined") return "macos";
+  return detectPlatformFromUa(navigator.userAgent);
+}
+
+export function isMacPlatform(): boolean {
+  return runtimePlatform() === "macos";
+}
+
+export function isWindowsPlatform(): boolean {
+  return runtimePlatform() === "windows";
+}
+
+export function isLinuxPlatform(): boolean {
+  return runtimePlatform() === "linux";
 }
 
 /** Primary modifier cap: `⌘` on macOS, `Ctrl` elsewhere. */
