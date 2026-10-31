@@ -670,14 +670,17 @@ impl RunEngine {
                 {
                     signals.push(crate::runs::stagnation::TurnSignal::RepeatedRead);
                 }
-                // Register the destructive effect *before* dispatch so a read
-                // that follows it in the same turn can clear it. Doing this
-                // after the loop meant a `write` then `read` in one assistant
-                // turn left the gate open even though the read had confirmed it.
+                // Classify the call now, but do not arm the verification gate
+                // yet. A call that plan mode or the permission prompt refuses
+                // changes nothing, so arming it here left an entry no read could
+                // clear and the Run ended in `verification_failed` without a
+                // single write. The gate is armed after a successful dispatch
+                // in the post-processing pass, which still runs in call order
+                // and therefore still lets a later read in the same turn confirm
+                // an earlier write.
                 let effect = destructive_reason(&call.function.name, args);
                 destructive[index] = effect.clone();
                 if self.policy.strict_verification && effect.is_some() {
-                    verification.requires_confirmation(&call.function.name, args);
                     self.emit(
                         run_id,
                         "destructive_tool_called",
@@ -836,10 +839,20 @@ impl RunEngine {
                     plan_approved = true;
                     plan_handoff = true;
                 }
-                // Only a read that actually succeeded closes the gate, and only
-                // for the target it confirms.
-                if !is_error && destructive[index].is_none() {
-                    verification.confirm(&call.function.name, args);
+                // Only a call that actually succeeded changes the ledger: a
+                // refused or failed write must not leave an effect behind, and
+                // only a successful read closes the gate for the target it
+                // confirms. Registering in call order keeps `write` then
+                // `read` in one assistant turn working without letting a read
+                // that ran *before* the write confirm it.
+                if !is_error {
+                    if destructive[index].is_some() {
+                        if self.policy.strict_verification {
+                            verification.requires_confirmation(&call.function.name, args);
+                        }
+                    } else {
+                        verification.confirm(&call.function.name, args);
+                    }
                 }
                 if !is_error {
                     // A deliberate file change re-arms the check gate, and a

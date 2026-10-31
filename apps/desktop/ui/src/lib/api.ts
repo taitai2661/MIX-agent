@@ -50,6 +50,12 @@ import type {
   UpdateInfo,
 } from "./types";
 
+/** Extension filter for the native file pickers. */
+export interface PickerFilter {
+  name: string;
+  extensions: string[];
+}
+
 export const api = {
   health: () => invoke<HealthReport>("health"),
 
@@ -488,6 +494,32 @@ export const api = {
     }),
   readAttachment: (path: string) =>
     invoke<AttachmentPayload>("read_attachment", { path }),
+  // Native pickers run in Rust so the chosen path is recorded as trusted by
+  // the process that later reads/writes it. Do not use
+  // `@tauri-apps/plugin-dialog` for a path that a file command will receive:
+  // the Rust side cannot tell that return value apart from a forged one.
+  pickOpenFile: (options?: {
+    title?: string;
+    filters?: PickerFilter[];
+    multiple?: boolean;
+  }) =>
+    invoke<string[]>("pick_open_file", {
+      title: options?.title ?? null,
+      filters: options?.filters ?? null,
+      multiple: options?.multiple ?? false,
+    }),
+  pickFolder: (title?: string) =>
+    invoke<string | null>("pick_folder", { title: title ?? null }),
+  pickSaveFile: (options?: {
+    title?: string;
+    defaultName?: string;
+    filters?: PickerFilter[];
+  }) =>
+    invoke<string | null>("pick_save_file", {
+      title: options?.title ?? null,
+      defaultName: options?.defaultName ?? null,
+      filters: options?.filters ?? null,
+    }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   saveTextFile: (path: string, content: string) =>
     invoke<number>("save_text_file", { path, content }),

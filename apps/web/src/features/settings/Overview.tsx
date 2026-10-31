@@ -1,5 +1,6 @@
 import { t } from "@/app/i18n";
 import { api, type Row } from "@/app/api";
+import { useSettings } from "@/lib/queries";
 import { Title, useRows } from "@/components/shared";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -67,10 +68,7 @@ export function SettingsOverview() {
     queryFn: () => api("/tools"),
   });
   const mcp = useRows("/mcp/connections");
-  const settings = useQuery<Row>({
-    queryKey: ["/settings"],
-    queryFn: () => api("/settings"),
-  });
+  const settings = useSettings();
   const domains = settings.data?.data.allowed_domains?.length || 0;
   const counts: Record<string, string> = {
     providers: `${providers.data?.length || 0} 件`,

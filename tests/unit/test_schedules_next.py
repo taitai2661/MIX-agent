@@ -49,13 +49,13 @@ def test_reconcile_horizon_constants_are_bounded():
 @pytest.mark.parametrize(
     "expression",
     [
-        "61 * * * *",      # invalid minute value
-        "* 24 * * *",      # invalid hour value
-        "* * 0 * *",       # invalid day-of-month
-        "* * * 13 *",      # invalid month
-        "* * * * 7",       # invalid weekday
-        "* * *",           # wrong field count
-        "1/0 * * * *",     # zero step
+        "61 * * * *",  # invalid minute value
+        "* 24 * * *",  # invalid hour value
+        "* * 0 * *",  # invalid day-of-month
+        "* * * 13 *",  # invalid month
+        "* * * * 7",  # invalid weekday
+        "* * *",  # wrong field count
+        "1/0 * * * *",  # zero step
     ],
 )
 def test_parse_rejects_invalid_expressions(expression):

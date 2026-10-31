@@ -22,4 +22,20 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Type-aware rule: `void (async () => { ... })()` was used to silence
+    // "unused promise" but also hid failures behind no `catch`. This flags a
+    // promise that nothing awaits or handles, which is what produced the
+    // silent rename/delete failures in the conversation sidebar.
+    files: ["**/*.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+    },
+  },
 );

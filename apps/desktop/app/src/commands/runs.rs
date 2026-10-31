@@ -94,9 +94,10 @@ pub async fn fetch_run_events(
 ) -> Result<Vec<RunEventView>, String> {
     let rows: Vec<RunEventRow> = sqlx::query_as(
         "SELECT run_id, sequence, kind, data, created_at \
-         FROM run_events WHERE run_id = ? ORDER BY sequence ASC",
+         FROM run_events WHERE run_id = ? ORDER BY sequence ASC LIMIT ?",
     )
     .bind(run_id)
+    .bind(mixd_core::runs::events::MAX_REPLAY_EVENTS)
     .fetch_all(pool)
     .await
     .map_err(crate::error::cmd_err)?;

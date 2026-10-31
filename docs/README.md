@@ -59,6 +59,8 @@
 | `release-notes-v0.5.2.md` | アプリ内アップデート・Linux 追加 |
 | `release-notes-v0.5.4.md` | Chromium 初回インストール・ローカルLLM・ブラウザ ライブ表示 |
 
+`v0.5.3` は発行していません（`v0.5.2` の直後に `v0.5.4` を公開）。欠番は意図的で、`v0.5.3` のリリースノートは存在しません。
+
 ## 配置制約（移動禁止の理由）
 
 - `openapi.json` … `scripts/export-openapi.py`、`scripts/check-version-consistency.mjs`、`apps/web/package.json`（`generate:api`）、`ci.yml` が参照

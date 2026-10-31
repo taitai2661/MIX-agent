@@ -7,8 +7,9 @@
 //! against traversal.
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::commands::access::{ensure_access, ensure_root};
 use crate::diff;
 use crate::AppState;
 
@@ -48,12 +49,23 @@ const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 /// Preview what a `files` write would change, without touching the file.
 #[tauri::command]
 pub async fn preview_file_diff(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     input: DiffInput,
 ) -> Result<FileDiffView, String> {
     let path = input.path.trim();
     if path.is_empty() {
         return Err("path required".to_string());
+    }
+    // The root decides which files are reachable, so an ungranted root gets
+    // the same confirmation as a directly-read file.
+    if let Some(root_path) = input.root_path.as_deref().filter(|r| !r.trim().is_empty()) {
+        let requested = std::path::Path::new(root_path);
+        if !requested.is_dir() {
+            return Err(format!("フォルダが見つかりません: {root_path}"));
+        }
+        let canonical = requested.canonicalize().map_err(crate::error::cmd_err)?;
+        ensure_root(&app, &state, &canonical)?;
     }
     let root = mixd_tools::files::FilesTool::resolve_context_root(input.root_path.as_deref())
         .map_err(crate::error::cmd_err)?;
@@ -138,8 +150,13 @@ pub struct AttachmentPayload {
 /// message. The path never comes from the WebView's own logic, only from the
 /// dialog result, and the size is capped.
 #[tauri::command]
-pub async fn read_attachment(path: String) -> Result<AttachmentPayload, String> {
+pub async fn read_attachment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<AttachmentPayload, String> {
     let path = std::path::PathBuf::from(path.trim());
+    ensure_access(&app, &state, &path, "読み込む")?;
     let filename = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -225,11 +242,17 @@ pub async fn open_external(url: String) -> Result<(), String> {
 /// Write UTF-8 text to a path the user picked with the OS save dialog (used
 /// by the Markdown export). Parent directories must already exist.
 #[tauri::command]
-pub async fn save_text_file(path: String, content: String) -> Result<u64, String> {
+pub async fn save_text_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    content: String,
+) -> Result<u64, String> {
     let path = std::path::PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return Err("path required".to_string());
     }
+    ensure_access(&app, &state, &path, "書き込む")?;
     let bytes = content.len() as u64;
     tokio::fs::write(&path, content)
         .await
@@ -240,11 +263,17 @@ pub async fn save_text_file(path: String, content: String) -> Result<u64, String
 /// Write base64-decoded bytes to a path from the OS save dialog (used by the
 /// skill ZIP export).
 #[tauri::command]
-pub async fn save_base64_file(path: String, data_base64: String) -> Result<u64, String> {
+pub async fn save_base64_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    data_base64: String,
+) -> Result<u64, String> {
     let path = std::path::PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return Err("path required".to_string());
     }
+    ensure_access(&app, &state, &path, "書き込む")?;
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data_base64)
         .map_err(|e| format!("invalid base64: {e}"))?;
     let len = bytes.len() as u64;

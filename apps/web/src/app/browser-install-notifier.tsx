@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/app/api";
+import { queryKeys } from "@/lib/queries";
 import { t } from "@/app/i18n";
 import { useToast, type ToastType } from "@/components/toast";
 
@@ -52,7 +53,7 @@ export function BrowserInstallNotifier() {
   const { addToast } = useToast();
   const previous = useRef<string | null>(null);
   const query = useQuery({
-    queryKey: ["/settings"],
+    queryKey: queryKeys.settings,
     queryFn: () => api<{ data: Record<string, unknown> }>("/settings"),
     refetchInterval: (query) =>
       query.state.data?.data.browser_install_status === "installing"

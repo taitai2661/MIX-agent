@@ -36,7 +36,7 @@ export function Models() {
           [cap]: value === "unknown" ? null : value === "yes",
         },
       });
-      qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
     } catch (e) {
       setError(e);
     }
@@ -44,7 +44,7 @@ export function Models() {
   async function verifyTools(row: Row) {
     try {
       await api("/models/" + row.id + "/verify-tools", "POST");
-      qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
     } catch (e) {
       setError(e);
     }
@@ -54,8 +54,8 @@ export function Models() {
       await api("/models/" + row.id, "PATCH", {
         context_window_override: raw.trim() ? Number(raw) : null,
       });
-      qc.invalidateQueries({ queryKey: ["/models"] });
-      qc.invalidateQueries({ queryKey: ["/settings"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/settings"] });
     } catch (e) {
       setError(e);
     }
@@ -88,7 +88,7 @@ export function Models() {
                   ? Number(f.get("context_window_override"))
                   : null,
               });
-              qc.invalidateQueries({ queryKey: ["/models"] });
+              void qc.invalidateQueries({ queryKey: ["/models"] });
               setOpen(false);
             } catch (e) {
               setError(e);

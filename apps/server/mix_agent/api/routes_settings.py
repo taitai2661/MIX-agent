@@ -1,4 +1,3 @@
-import json
 import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -6,7 +5,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 
-from mix_agent import config
+from mix_agent import config, egress_policy
 from mix_agent.api.common import (
     audit,
     context,
@@ -246,11 +245,7 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
         if value is not None:
             data[secret_key] = store_secret(db, s.owner_id, value, purpose) if value else None
     row.data = data
-    policy_dir = config.DATA / "egress"
-    policy_dir.mkdir(exist_ok=True)
-    temp = policy_dir / "policy.tmp"
-    temp.write_text(json.dumps({"allowed_domains": domains}))
-    temp.replace(policy_dir / "policy.json")
+    egress_policy.write_policy(domains)
     audit(db, s.owner_id, "settings.update", row.id)
     db.commit()
     return public(row)

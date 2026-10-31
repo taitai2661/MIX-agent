@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::runs::state::RunId;
 
+/// Upper bound on rows one replay will read.
+///
+/// Stream deltas are coalesced at write time, so a real run is far below this;
+/// the bound exists so a legacy or pathological run cannot make opening a
+/// transcript allocate an unbounded vector. Structural events sit at the head
+/// of the log, so keeping the first N preserves the tool timeline.
+pub const MAX_REPLAY_EVENTS: i64 = 50_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunEvent {
     pub run_id: RunId,

@@ -51,9 +51,7 @@ def status_events(run_id):
     with SessionLocal() as db:
         return list(
             db.scalars(
-                select(Event)
-                .where(Event.run_id == run_id, Event.kind == "status")
-                .order_by(Event.sequence)
+                select(Event).where(Event.run_id == run_id, Event.kind == "status").order_by(Event.sequence)
             )
         )
 
@@ -173,9 +171,7 @@ async def test_drive_queued_run_transitions_to_running(signed, monkeypatch):
     with SessionLocal() as db:
         assert db.get(Run, run_id).status == "completed"
     events = status_events(run_id)
-    assert any(
-        e.data.get("from_status") == "queued" and e.data.get("status") == "running" for e in events
-    )
+    assert any(e.data.get("from_status") == "queued" and e.data.get("status") == "running" for e in events)
 
 
 async def test_drive_waiting_approval_run_returns_to_running(signed, monkeypatch):
@@ -187,8 +183,7 @@ async def test_drive_waiting_approval_run_returns_to_running(signed, monkeypatch
         assert db.get(Run, run_id).status == "completed"
     events = status_events(run_id)
     assert any(
-        e.data.get("from_status") == "waiting_approval" and e.data.get("status") == "running"
-        for e in events
+        e.data.get("from_status") == "waiting_approval" and e.data.get("status") == "running" for e in events
     )
 
 
@@ -211,7 +206,9 @@ async def test_scheduler_startup_interruption_goes_through_state_machine(signed)
     set_status(run_id, "running")
     with SessionLocal() as db:
         run = db.get(Run, run_id)
-        engine.finish(db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。")
+        engine.finish(
+            db, run, "interrupted", "サーバーが再起動しました。結果不明の操作は自動再実行しません。"
+        )
     with SessionLocal() as db:
         run = db.get(Run, run_id)
         assert run.status == "interrupted"
@@ -246,7 +243,10 @@ async def test_approval_flow_uses_state_machine_and_executes_once(signed, monkey
                 }
             else:
                 yield {"kind": "text", "text": "done"}
-                yield {"kind": "response", "message": {"role": "assistant", "content": "The file was written."}}
+                yield {
+                    "kind": "response",
+                    "message": {"role": "assistant", "content": "The file was written."},
+                }
 
     async def execute(*args):
         executions.append(args[-1])
@@ -271,12 +271,10 @@ async def test_approval_flow_uses_state_machine_and_executes_once(signed, monkey
         assert "作業計画" in run.data["reason"]
     events = status_events(run_id)
     assert any(
-        e.data.get("from_status") == "running" and e.data.get("status") == "waiting_approval"
-        for e in events
+        e.data.get("from_status") == "running" and e.data.get("status") == "waiting_approval" for e in events
     )
     assert any(
-        e.data.get("from_status") == "waiting_approval" and e.data.get("status") == "running"
-        for e in events
+        e.data.get("from_status") == "waiting_approval" and e.data.get("status") == "running" for e in events
     )
 
 
@@ -326,9 +324,7 @@ def test_transition_is_committed_atomically_with_event(signed):
         run = db.get(Run, run_id)
         assert run.status == "completed"
         statuses = db.scalars(
-            select(Event)
-            .where(Event.run_id == run_id, Event.kind == "status")
-            .order_by(Event.sequence)
+            select(Event).where(Event.run_id == run_id, Event.kind == "status").order_by(Event.sequence)
         ).all()
         assert [e.data["status"] for e in statuses] == ["running", "completed"]
         assert statuses[0].data["from_status"] == "queued"

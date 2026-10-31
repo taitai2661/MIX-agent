@@ -52,9 +52,7 @@ def send(signed, monkeypatch, model_id, prompt="hello"):
 
 
 def write_project(tmp_path: Path):
-    (tmp_path / "AGENTS.md").write_text(
-        "always run `pytest` before answering", encoding="utf-8"
-    )
+    (tmp_path / "AGENTS.md").write_text("always run `pytest` before answering", encoding="utf-8")
     skill = tmp_path / ".mix" / "skills" / "release-notes"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(

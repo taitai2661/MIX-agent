@@ -8,6 +8,7 @@ pub mod error;
 pub mod http;
 pub mod local_runtime;
 pub mod menu;
+pub mod path_grants;
 pub mod push;
 pub mod run_events;
 pub mod scheduler;
@@ -522,6 +523,11 @@ pub struct AppState {
     /// the whole process so the WebView, the health loop and shutdown all see
     /// the same process ownership.
     pub local_runtime: Arc<local_runtime::LocalRuntimeManager>,
+    /// Paths the user has explicitly handed to a native picker (or confirmed
+    /// in a dialog). File commands consult this instead of trusting the path
+    /// string the WebView sent, so a compromised renderer cannot read or write
+    /// arbitrary files without a visible prompt.
+    pub grants: Arc<path_grants::PathGrants>,
 }
 
 /// Rebuild the engine's Tool Registry from the live parts.
@@ -759,6 +765,11 @@ pub async fn build_app_state(
         });
     }
     let local_runtime = local_runtime::LocalRuntimeManager::new(app_handle, storage.clone());
+    // Existing projects were chosen through a dialog on an earlier launch, so
+    // their roots are trusted without a fresh prompt. Ad-hoc paths still go
+    // through the picker or the native confirmation.
+    let grants = Arc::new(path_grants::PathGrants::default());
+    seed_project_grants(storage.as_ref(), grants.as_ref()).await;
     Ok(AppState {
         storage,
         secrets,
@@ -770,7 +781,34 @@ pub async fn build_app_state(
         embeddings,
         egress,
         local_runtime,
+        grants,
     })
+}
+
+/// Seed the grant store with project roots (and their read-only companions)
+/// that are already persisted. A corrupt row is skipped: it must not stop the
+/// app from launching, and a missing grant only means one extra prompt.
+async fn seed_project_grants(storage: &Storage, grants: &path_grants::PathGrants) {
+    let rows: Result<Vec<(String,)>, _> =
+        sqlx::query_as("SELECT json_extract(data, '$') FROM projects")
+            .fetch_all(storage.pool())
+            .await;
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(%err, "could not read project roots for the path grant store");
+            return;
+        }
+    };
+    for (json,) in rows {
+        let Ok(project) = serde_json::from_str::<mixd_storage::records::ProjectData>(&json) else {
+            continue;
+        };
+        grants.grant_permanent(std::path::Path::new(&project.root_path));
+        for extra in project.additional_paths {
+            grants.grant_permanent(std::path::Path::new(&extra));
+        }
+    }
 }
 
 /// Read the egress allowlist out of `app_settings`.
@@ -1101,13 +1139,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_http::init())
+        // `store`, `process`, `shell` and `http` used to be registered even
+        // though no command or UI module called them. Their capabilities were
+        // already denied, but not registering them removes the IPC surface
+        // entirely rather than relying on the ACL as the only gate.
         // Signed, verified updates. The WebView reaches this only through
         // `commands::update`, so no `updater:*` capability is granted.
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1271,6 +1309,9 @@ pub fn run() {
             commands::fs::open_external,
             commands::fs::save_text_file,
             commands::fs::save_base64_file,
+            commands::picker::pick_open_file,
+            commands::picker::pick_folder,
+            commands::picker::pick_save_file,
             commands::approvals::decide_approval,
             commands::tools::list_tools,
             commands::tools::set_permission_rule,

@@ -3,6 +3,7 @@ import { t } from "@/app/i18n";
 import { isMacPlatform } from "@/app/platform";
 import { Button } from "@/components/button";
 import { Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
+import { memo } from "react";
 
 import { ArtifactCard, type ChatArtifact } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
@@ -48,7 +49,7 @@ export type ChatMessageProps = {
 };
 
 /** One transcript row: context summary, message body, tools, todos, browser. */
-export function ChatMessage({
+function ChatMessageImpl({
   message,
   runs,
   allToolCalls,
@@ -243,3 +244,10 @@ export function ChatMessage({
     </div>
   );
 }
+
+/**
+ * React.memo matters here: while a run streams, `streamText` changes several
+ * times a second and re-renders the transcript. Without this, every message
+ * (and its Markdown tree) re-parsed on each token, including all history.
+ */
+export const ChatMessage = memo(ChatMessageImpl);

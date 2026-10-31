@@ -18,47 +18,9 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-cov>=6,<8", "ruff>=0.
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 [tool.pytest.ini_options]
+# Mirrors the repository-root `pytest.ini`. The Docker test image runs
+# `pytest -c /app/pyproject.toml` because the checkout is mounted at /workspace,
+# so the root config is not discoverable from /app; keep both in sync.
 asyncio_mode = "auto"
 testpaths = ["../../tests"]
-[tool.ruff]
-line-length = 110
 
-[tool.ruff.lint]
-select = [
-  "E4",    # import errors
-  "E7",    # statement errors
-  "E9",    # runtime errors
-  "F",     # pyflakes
-  "BLE",   # blind `except Exception`
-  "S",     # bandit-style security
-  "ASYNC", # async pitfalls (blocking calls, un-awaited tasks)
-]
-ignore = [
-  "S608",  # migrations build DDL from trusted literals
-]
-
-[tool.ruff.lint.per-file-ignores]
-"../../tests/**" = ["S101", "S105", "S106", "S108", "S311"]
-"../../experiments/**" = ["S101"]
-"mix_agent/tools/execute.py" = ["ASYNC109"]  # public tool API takes a timeout
-"mix_agent/tools/network.py" = ["ASYNC109"]
-"mix_agent/wakeups.py" = ["ASYNC109"]
-"mix_agent/api/routes.py" = ["E402"]  # conditional imports after helper defs
-"mix_agent/main.py" = ["E402", "ASYNC240"]  # tiny local stat in the SPA fallback
-"mix_agent/providers/catalog.py" = ["S101"]  # module-level catalog invariants
-
-[tool.ruff.lint.flake8-bugbear]
-# FastAPI dependency-injection markers are idiomatic here and are treated as
-# immutable just like the broader community does; genuine mutable defaults in
-# other call sites stay flagged by B008.
-extend-immutable-calls = [
-  "fastapi.Depends",
-  "fastapi.File",
-  "fastapi.Form",
-  "fastapi.Query",
-  "fastapi.Path",
-  "fastapi.Header",
-  "fastapi.Cookie",
-  "fastapi.Body",
-  "fastapi.Security",
-]

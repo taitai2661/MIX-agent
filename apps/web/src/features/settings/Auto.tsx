@@ -1,15 +1,13 @@
 import { t } from "@/app/i18n";
-import { api, type Row } from "@/app/api";
+import { api } from "@/app/api";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
 export function Auto() {
-  const setting = useQuery<Row>({
-    queryKey: ["/settings"],
-    queryFn: () => api("/settings"),
-  });
+  const setting = useSettings();
   const models = useRows("/models");
   const qc = useQueryClient();
   const [error, setError] = useState<unknown>(null);
@@ -65,7 +63,7 @@ export function Auto() {
                 auto_priority: String(form.get("auto_priority") || "balanced"),
               });
               setSaved(true);
-              qc.invalidateQueries({ queryKey: ["/settings"] });
+              void qc.invalidateQueries({ queryKey: queryKeys.settings });
             } catch (cause) {
               setError(cause);
             }

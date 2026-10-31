@@ -1,7 +1,20 @@
 import asyncio
 
 import pytest
-from mix_agent.db.models import *
+from mix_agent.db.models import (
+    Approval,
+    Artifact,
+    Conversation,
+    Event,
+    Message,
+    Model,
+    Permission,
+    Provider,
+    Run,
+    ToolCall,
+    User,
+    uid,
+)
 from mix_agent.db.session import SessionLocal
 from mix_agent.runs import engine
 from mix_agent.tools.execute import save_text_artifact
@@ -95,17 +108,32 @@ def test_agent_plan_tracks_pending_and_post_change_verification(signed):
     with SessionLocal() as db:
         run = db.get(Run, run_id)
         calls = []
-        for index, (name, result) in enumerate([
-            ("update_plan", {"steps": ["編集", "検証"], "pending": ["編集", "検証"], "verification": "変更前の確認"}),
-            ("write_file", {"ok": True}),
-            ("read_file", {"text": "verified"}),
-            ("update_plan", {"steps": ["編集", "検証"], "pending": [], "verification": "変更後のファイルを確認"}),
-        ]):
+        for index, (name, result) in enumerate(
+            [
+                (
+                    "update_plan",
+                    {"steps": ["編集", "検証"], "pending": ["編集", "検証"], "verification": "変更前の確認"},
+                ),
+                ("write_file", {"ok": True}),
+                ("read_file", {"text": "verified"}),
+                (
+                    "update_plan",
+                    {"steps": ["編集", "検証"], "pending": [], "verification": "変更後のファイルを確認"},
+                ),
+            ]
+        ):
             tool = tools[name]
-            call = ToolCall(owner_id=run.owner_id, run_id=run.id, data={
-                "tool_id": name, "name": name, "risk": tool["risk"],
-                "provider_call_id": f"plan-{index}", "arguments": {},
-            })
+            call = ToolCall(
+                owner_id=run.owner_id,
+                run_id=run.id,
+                data={
+                    "tool_id": name,
+                    "name": name,
+                    "risk": tool["risk"],
+                    "provider_call_id": f"plan-{index}",
+                    "arguments": {},
+                },
+            )
             db.add(call)
             db.flush()
             engine.complete_tool_call(db, run, call, tool, result)
@@ -203,7 +231,11 @@ async def test_approval_resume_and_no_double_execution(signed, monkeypatch, mode
     ],
 )
 async def test_invalid_model_tool_call_gets_repair_turn_instead_of_failing_run(
-    signed, monkeypatch, tool_name, arguments, expected_code,
+    signed,
+    monkeypatch,
+    tool_name,
+    arguments,
+    expected_code,
 ):
     run_id, _ = make_run(tool_name="write_file", mode="chat")
     requests = []
@@ -233,14 +265,15 @@ async def test_invalid_model_tool_call_gets_repair_turn_instead_of_failing_run(
         run = db.get(Run, run_id)
         assert run.status == "completed", run.data.get("reason")
         assert len(requests) == 2
-        assert any(expected_code in item.get("content", "") for item in run.data["history"] if item["role"] == "tool")
-        assert not any(call.status == "executing" for call in db.scalars(select(ToolCall).where(ToolCall.run_id == run_id)))
+        assert any(
+            expected_code in item.get("content", "") for item in run.data["history"] if item["role"] == "tool"
+        )
+        assert not any(
+            call.status == "executing"
+            for call in db.scalars(select(ToolCall).where(ToolCall.run_id == run_id))
+        )
         sequence = list(
-            db.scalars(
-                select(Event.sequence)
-                .where(Event.run_id == run_id)
-                .order_by(Event.sequence)
-            )
+            db.scalars(select(Event.sequence).where(Event.run_id == run_id).order_by(Event.sequence))
         )
         assert sequence == list(range(1, len(sequence) + 1))
 
@@ -296,9 +329,11 @@ async def test_safe_tool_calls_share_a_model_turn_and_keep_provider_order(signed
                     owner_id=run.owner_id,
                     run_id=run.id,
                     data={
-                        "tool_id": tool["id"], "tool_version": fingerprint(tool),
+                        "tool_id": tool["id"],
+                        "tool_version": fingerprint(tool),
                         "provider_call_id": provider_call_id,
-                        "name": tool["model_name"], "arguments": arguments,
+                        "name": tool["model_name"],
+                        "arguments": arguments,
                     },
                 )
             )
@@ -328,7 +363,10 @@ async def test_safe_tool_calls_share_a_model_turn_and_keep_provider_order(signed
     assert maximum == 2
     with SessionLocal() as db:
         run = db.get(Run, run_id)
-        assert [entry["call_id"] for entry in run.data["history"] if entry["role"] == "tool"] == ["first", "second"]
+        assert [entry["call_id"] for entry in run.data["history"] if entry["role"] == "tool"] == [
+            "first",
+            "second",
+        ]
 
 
 async def test_serial_tool_calls_do_not_overlap(signed, monkeypatch):
@@ -351,9 +389,11 @@ async def test_serial_tool_calls_do_not_overlap(signed, monkeypatch):
                     owner_id=run.owner_id,
                     run_id=run.id,
                     data={
-                        "tool_id": tool["id"], "tool_version": fingerprint(tool),
+                        "tool_id": tool["id"],
+                        "tool_version": fingerprint(tool),
                         "provider_call_id": provider_call_id,
-                        "name": tool["model_name"], "arguments": arguments,
+                        "name": tool["model_name"],
+                        "arguments": arguments,
                     },
                 )
             )
@@ -386,12 +426,7 @@ async def test_serial_tool_calls_do_not_overlap(signed, monkeypatch):
 def test_memory_revision_restore(signed):
     row = signed.post("/api/v1/memories", json={"content": "日本語を好む"}).json()
     key = row["id"]
-    assert (
-        signed.patch(
-            "/api/v1/memories/" + key, json={"content": "日本語で簡潔に"}
-        ).status_code
-        == 200
-    )
+    assert signed.patch("/api/v1/memories/" + key, json={"content": "日本語で簡潔に"}).status_code == 200
     revisions = signed.get("/api/v1/memories/" + key + "/revisions").json()
     assert revisions[0]["data"]["previous"]["content"] == "日本語を好む"
     assert signed.delete("/api/v1/memories/" + key).status_code == 200
@@ -399,12 +434,7 @@ def test_memory_revision_restore(signed):
     # survives, which is what makes the restore below possible.
     deleted = signed.get("/api/v1/memories?q=日本語").json()
     assert deleted == []
-    assert (
-        signed.post(
-            "/api/v1/memories/" + key + "/restore/" + revisions[0]["id"]
-        ).status_code
-        == 200
-    )
+    assert signed.post("/api/v1/memories/" + key + "/restore/" + revisions[0]["id"]).status_code == 200
     rows = signed.get("/api/v1/memories?q=日本語").json()
     assert rows[0]["id"] == key
     assert rows[0]["data"]["content"] == "日本語を好む"
@@ -487,9 +517,14 @@ def test_every_builtin_declares_a_valid_permission_and_executor(signed):
 def test_builtin_defaults_follow_the_declared_permission(signed):
     run_id, tool = make_run(tool_name="write_file", mode="agent")
     mcp_tool = {
-        "id": "mcp_x", "model_name": "mcp_x", "description": "MCP tool",
-        "source": "mcp", "source_ref": "key", "executor_ref": "mcp",
-        "default_permission": "ask", "risk": "external",
+        "id": "mcp_x",
+        "model_name": "mcp_x",
+        "description": "MCP tool",
+        "source": "mcp",
+        "source_ref": "key",
+        "executor_ref": "mcp",
+        "default_permission": "ask",
+        "risk": "external",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         "allowed_modes": ["chat", "thinking", "agent"],
     }
@@ -514,13 +549,18 @@ def test_stale_permission_fingerprint_re_asks_instead_of_defaulting_to_allow(sig
     run_id, tool = make_run(tool_name="write_file", mode="agent")
     with SessionLocal() as db:
         run = db.get(Run, run_id)
-        db.add(Permission(
-            owner_id=run.owner_id,
-            data={
-                "agent_id": "", "tool_id": "write_file", "permission": "deny",
-                "scope": call_scope(tool, {}), "tool_version": "an-older-fingerprint",
-            },
-        ))
+        db.add(
+            Permission(
+                owner_id=run.owner_id,
+                data={
+                    "agent_id": "",
+                    "tool_id": "write_file",
+                    "permission": "deny",
+                    "scope": call_scope(tool, {}),
+                    "tool_version": "an-older-fingerprint",
+                },
+            )
+        )
         db.commit()
         assert permission(db, run, tool, {"path": "x.txt", "content": "x"}) == "ask"
 
@@ -559,9 +599,7 @@ def test_permission_rule_api_persists_real_scope_and_legacy_empty_scope_matches(
         assert response.status_code == 200
         assert response.json()["data"]["scope"] == {"workspace": "/workspace"}
         assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
-        legacy = next(
-            r for r in db.scalars(select(Permission)) if r.data.get("tool_id") == tool["id"]
-        )
+        legacy = next(r for r in db.scalars(select(Permission)) if r.data.get("tool_id") == tool["id"])
         legacy.data = {**legacy.data, "scope": {}}
         db.commit()
         assert permission(db, run, tool, {"command": "echo hi"}) == "deny"
@@ -588,15 +626,15 @@ def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
     async def provisioner(kind, path, payload, timeout=120):
         assert kind == "browser-provisioner"
         if path == "/install":
-            return {"status": "installing", "failure": None,
-                    "progress": 42, "stage": "ダウンロード中"}
-        return {"status": "ready", "failure": None,
-                "progress": 100, "stage": "利用可能"}
+            return {"status": "installing", "failure": None, "progress": 42, "stage": "ダウンロード中"}
+        return {"status": "ready", "failure": None, "progress": 100, "stage": "利用可能"}
 
     monkeypatch.setattr(routes, "runner_request", provisioner)
     response = signed.post("/api/v1/browser/enable")
     assert response.status_code == 200
-    assert {"browser_open", "browser_read", "browser_click", "browser_type"} <= set(response.json()["tool_ids"])
+    assert {"browser_open", "browser_read", "browser_click", "browser_type"} <= set(
+        response.json()["tool_ids"]
+    )
     response = signed.post("/api/v1/browser/install")
     assert response.status_code == 200
     assert response.json()["status"] == "installing"
@@ -613,6 +651,7 @@ def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
         browser = [row.data for row in rules if row.data.get("tool_id", "").startswith("browser_")]
         assert browser and all(row["permission"] == "allow" for row in browser)
 
+
 def test_skill_revision_restore(signed):
     row = signed.post(
         "/api/v1/skills",
@@ -620,10 +659,18 @@ def test_skill_revision_restore(signed):
     )
     assert row.status_code == 200, row.text
     key = row.json()["id"]
-    assert signed.patch(
-        "/api/v1/skills/" + key,
-        json={"name": "release", "description": "verify", "content": "run tests then build", "enabled": True},
-    ).status_code == 200
+    assert (
+        signed.patch(
+            "/api/v1/skills/" + key,
+            json={
+                "name": "release",
+                "description": "verify",
+                "content": "run tests then build",
+                "enabled": True,
+            },
+        ).status_code
+        == 200
+    )
     revisions = signed.get("/api/v1/skills/" + key + "/revisions").json()
     assert revisions[0]["data"]["previous"]["content"] == "run tests"
     assert signed.delete("/api/v1/skills/" + key).status_code == 200
@@ -646,15 +693,8 @@ def test_model_override_and_provider_secret(signed):
     provider = response.json()
     assert "test-key-should-not-leak" not in response.text
     assert provider["data"]["has_secret_id"]
-    row = signed.post(
-        "/api/v1/models", json={"provider_id": provider["id"], "model_id": "model"}
-    ).json()
-    assert (
-        signed.patch(
-            "/api/v1/models/" + row["id"], json={"overrides": {"tools": True}}
-        ).status_code
-        == 200
-    )
+    row = signed.post("/api/v1/models", json={"provider_id": provider["id"], "model_id": "model"}).json()
+    assert signed.patch("/api/v1/models/" + row["id"], json={"overrides": {"tools": True}}).status_code == 200
     assert signed.get("/api/v1/models").json()[0]["data"]["overrides"]["tools"] is True
 
 
@@ -672,10 +712,10 @@ def test_memory_scope_is_a_soft_retrieval_signal(signed):
 
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
-        service.change(db, owner, "user preference", confidence=.9)
+        service.change(db, owner, "user preference", confidence=0.9)
         # §2's vocabulary: an unknown scope falls back to the row default, so
         # the second memory needs a real scope to be distinguishable at all.
-        service.change(db, owner, "agent-only decision", scope="task", confidence=.9)
+        service.change(db, owner, "agent-only decision", scope="task", confidence=0.9)
         db.commit()
         # A scope is a *soft* signal: the other scope stays retrievable, it
         # only ranks lower.
@@ -695,9 +735,7 @@ def test_message_retry_and_saved_selection(signed, monkeypatch):
         provider = Provider(owner_id=owner, data={"kind": "compatible"})
         db.add(provider)
         db.flush()
-        model = Model(
-            owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"}
-        )
+        model = Model(owner_id=owner, data={"provider_id": provider.id, "model_id": "fake"})
         db.add(model)
         db.commit()
         model_id = model.id
@@ -708,12 +746,7 @@ def test_message_retry_and_saved_selection(signed, monkeypatch):
     first = signed.post(url, json=body, headers=headers)
     assert first.status_code == 200, first.text
     assert signed.post(url, json=body, headers=headers).json() == first.json()
-    assert (
-        signed.post(
-            url, json={**body, "content": "changed"}, headers=headers
-        ).status_code
-        == 409
-    )
+    assert signed.post(url, json={**body, "content": "changed"}, headers=headers).status_code == 409
     history = signed.get(url).json()
     assert len(history["messages"]) == len(history["runs"]) == 1
     assert history["selection"]["model_id"] == model_id
@@ -735,9 +768,7 @@ def test_edit_message_truncates_later_turns_and_regenerates(signed, monkeypatch)
     conversation = signed.post("/api/v1/conversations", json={}).json()
     url = "/api/v1/conversations/" + conversation["id"] + "/messages"
     headers = {"Idempotency-Key": "edit-turn-1"}
-    first = signed.post(
-        url, json={"model_id": model_id, "content": "first", "mode": "chat"}, headers=headers
-    )
+    first = signed.post(url, json={"model_id": model_id, "content": "first", "mode": "chat"}, headers=headers)
     assert first.status_code == 200, first.text
     with SessionLocal() as db:
         db.get(Run, first.json()["run_id"]).status = "completed"
@@ -970,9 +1001,16 @@ def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monk
         db.add(model)
         db.commit()
         model_id = model.id
-    assert signed.put("/api/v1/settings", json={
-        "default_model_id": "auto", "auto_model_ids": [model_id],
-    }).status_code == 200
+    assert (
+        signed.put(
+            "/api/v1/settings",
+            json={
+                "default_model_id": "auto",
+                "auto_model_ids": [model_id],
+            },
+        ).status_code
+        == 200
+    )
     conversation = signed.post("/api/v1/conversations", json={}).json()
     url = "/api/v1/conversations/" + conversation["id"] + "/messages"
     first = signed.post(url, json={"content": "hello"}, headers={"Idempotency-Key": "auto-first"})
@@ -987,7 +1025,9 @@ def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monk
     # fields under test rather than the whole dict: selection also carries
     # per-conversation options such as research_mode.
     assert {key: history["selection"][key] for key in ("model_id", "agent_id", "mode")} == {
-        "model_id": "auto", "agent_id": "", "mode": "chat",
+        "model_id": "auto",
+        "agent_id": "",
+        "mode": "chat",
     }
     with SessionLocal() as db:
         assert db.get(Run, first.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"

@@ -109,7 +109,7 @@ export function Setup() {
         // global notifier needs the fresh status to show its start popup.
         await queryClient.invalidateQueries({ queryKey: ["/settings"] });
       }
-      navigate("/");
+      void navigate("/");
     } catch (e) {
       setError(e);
     } finally {

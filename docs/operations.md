@@ -27,7 +27,7 @@ MIX_LOG_FORMAT=json docker compose up -d
 
 Compose の `app` には `/live` を使う healthcheck があります。`/live` はDBに触れないため、DBが一時的に落ちてもアプリを再起動しません。DB接続まで含めた準備確認は `/health` を使ってください。
 
-`/metrics` は Prometheus 形式のプロセス内カウンタを返します（HTTPメソッド・ルートテンプレート・ステータス別の件数、レイテンシの summary、稼働時間）。ラベルは `GET /api/v1/runs` のようにルート単位へ丸めるため、Run IDや任意の404パスがそのままラベルになることはありません。外部に公開する場合はReverse Proxyでアクセス元を制限するか、`METRICS_TOKEN` を設定して `Authorization: Bearer <token>` を要求してください。複数workerで動かす場合、カウンタはプロセスごとに分かれる点に注意してください。
+`/metrics` は Prometheus 形式のプロセス内カウンタを返します（HTTPメソッド・ルートテンプレート・ステータス別の件数、レイテンシの summary、稼働時間）。ラベルは `GET /api/v1/runs` のようにルート単位へ丸めるため、Run IDや任意の404パスがそのままラベルになることはありません。`METRICS_TOKEN` が未設定の場合、`/metrics` は loopback とプライベートネットワークからのアクセスにのみ応答し、それ以外は404を返します。外部のPrometheusから直接取得する場合は `METRICS_TOKEN` を設定して `Authorization: Bearer <token>` を要求するか、LAN内に閉じた scrape 経路を用意してください。`MIX_METRICS_PUBLIC=1` を設定すると従来どおり無認証で全クライアントへ公開されます（非推奨）。複数workerで動かす場合、カウンタはプロセスごとに分かれる点に注意してください。
 
 `mcp-manager` はホストのDocker Socketを直接マウントしません。`docker-socket-proxy` 経由でコンテナ・ボリューム・ネットワーク・イメージのAPIだけを許可し、build/swarm/secrets等の管理APIを減らしています。ただしMCPの導入にはコンテナ作成APIが必要で、managerが侵害された場合の影響は依然として大きいため、信頼できるネットワーク（`mcp` internal network）に限定しています。
 
@@ -38,6 +38,12 @@ Browser Toolは専用RunnerのPlaywright Chromiumを使います。依存関係�
 実行中のRunnerがインターネットから自己更新したり、ホストのDocker Socketを操作したりすることはありません。更新はレビュー可能な依存関係変更とDockerイメージ再ビルドに限定します。
 
 アプリDBはCompose内のPostgreSQL専用です。DBポートはホストへ公開せず、アプリはDBのhealthcheckとAlembic migration完了後に起動します。テストは `docker compose --profile test run --rm test`、画面確認は `docker compose --profile preview up --build preview` を使い、それぞれ使い捨てPostgreSQLを使用します。
+
+## 通信許可（Egress）
+
+`policy.json` は許可ドメインの一覧だけでなく `mode` を持ちます。`public_web` は公開ホストへの接続を許可し、`restricted` は `allowed_domains` との完全一致のみ、`none` は全拒否です。初期状態は `public_web`（`allowed_domains: []`）で、設定画面で許可ドメインを1件以上登録すると `restricted` に切り替わります。`allowed_domains` が空の `restricted` は「全拒否」であり、意図的に許可を外した状態と壊れたポリシーを取り違えません。古い `mode` の無いファイルは従来どおり（空 = `public_web`、非空 = `restricted`）解釈されますが、起動ログに推測した mode が警告として出ます。
+
+Private IP・link-local・cloud metadata 宛の接続は mode に関係なく拒否されます。
 
 ## LAN/VPNとTLS
 

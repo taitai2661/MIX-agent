@@ -1,5 +1,6 @@
 import { t } from "@/app/i18n";
-import { api, type Row } from "@/app/api";
+import { api } from "@/app/api";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { Button } from "@/components/button";
 import { CardSkeleton } from "@/components/loading";
 import { ConfirmButton } from "@/components/modal";
@@ -75,13 +76,10 @@ export function Memories() {
     queryKey: ["/memories", q],
     queryFn: () => api(`/memories?q=${encodeURIComponent(q)}`),
   });
-  const settings = useQuery<Row>({
-    queryKey: ["/settings"],
-    queryFn: () => api("/settings"),
-  });
+  const settings = useSettings();
 
   const refresh = () => {
-    qc.invalidateQueries({ queryKey: ["/memories"] });
+    void qc.invalidateQueries({ queryKey: ["/memories"] });
   };
 
   const togglePanel = (
@@ -156,7 +154,7 @@ export function Memories() {
                 exa_api_key: null,
                 serper_api_key: null,
               });
-              await qc.invalidateQueries({ queryKey: ["/settings"] });
+              await qc.invalidateQueries({ queryKey: queryKeys.settings });
               addToast({ type: "success", title: t("設定を保存しました") });
             } catch (reason) {
               addToast({

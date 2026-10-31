@@ -1,16 +1,14 @@
-import { api, type Row } from "@/app/api";
+import { api } from "@/app/api";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title } from "@/components/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { t } from "@/app/i18n";
 
 export function NetworkSettings() {
-  const setting = useQuery<Row>({
-      queryKey: ["/settings"],
-      queryFn: () => api("/settings"),
-    }),
+  const setting = useSettings(),
     qc = useQueryClient();
   const [error, setError] = useState<unknown>(null),
     [saved, setSaved] = useState(false);
@@ -37,7 +35,7 @@ export function NetworkSettings() {
                 .filter(Boolean),
             });
             setSaved(true);
-            qc.invalidateQueries({ queryKey: ["/settings"] });
+            void qc.invalidateQueries({ queryKey: queryKeys.settings });
           } catch (e) {
             setError(e);
           }

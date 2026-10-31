@@ -1,6 +1,6 @@
 # MIX-agent Desktop — コーディングエージェント化計画
 
-> 状態: Phase 8.1〜8.4 完了。Phase 10.0（ツール契約の修復）完了。次は Phase 10.1（評価ハーネス）。
+> 状態: Phase 8.1〜8.4 完了。Phase 10.0（ツール契約の修復）／10.1（評価ハーネス）完了。次は Phase 10.5 の残り（`repo_map`、LSP 相当の definition / diagnostics）。
 
 ## 1. 目的
 
@@ -107,7 +107,7 @@ Phase 10（信頼性）を優先したため、この節は着手時点の計画
 
 | # | 状態 | 実装 |
 |---|---|---|
-| 10.1 | 一部 | `engine_loop.rs` に実ツールを使うシナリオテストを追加（並列読み取り、整形、ロールバック、stale edit、plan 承認、不正 JSON 引数）。fixture repo を採点する独立ハーネスは未着手 |
+| 10.1 | 完了 | `core/tests/coding_eval.rs` を追加。fixture repo を実エンジン・実ツールで解き、独立した検証コマンドで採点する（scripted / live の2モード）。詳細は [`coding-eval.md`](coding-eval.md)。ハーネス導入時に、バッチ `edit` の検証キーが `path:` に潰れるバグと、拒否された編集でも検証ゲートが arm されるバグを修正した |
 | 10.2 | 完了 | `format_command` を編集ステップ後に自動実行（失敗はモデルへ返す）。`verify_command` / `format_command` をプロジェクト設定とアプリ既定値から編集可能にし、検証候補を UI に表示 |
 | 10.3 | 完了 | `user_plan` を sensitive 化して承認プロンプトで停止。承認で Plan モードをその Run の間だけ解除し、次ターンから編集可能 |
 | 10.4 | 完了 | `edit` / `files` の変更前内容を Run 単位で保持し、ActivityPanel の「実行前の状態に戻す」で復元。ターミナル経由の変更は対象外 |

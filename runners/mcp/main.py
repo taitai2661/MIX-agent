@@ -29,9 +29,7 @@ SHARED = Path(os.getenv("MCP_SHARED", "/shared"))
 @app.middleware("http")
 async def auth(request: Request, call_next):
     token = Path(os.getenv("TOKEN_FILE", "/tokens/mcp.token")).read_text().strip()
-    if not secrets.compare_digest(
-        request.headers.get("authorization", ""), "Bearer " + token
-    ):
+    if not secrets.compare_digest(request.headers.get("authorization", ""), "Bearer " + token):
         return JSONResponse({"detail": "Unauthorized"}, 401)
     return await call_next(request)
 
@@ -44,9 +42,7 @@ async def serve(connection, queue):
                 command = connection["command"]
                 # No package fetch on tool invocation. Provisioning is a separate admin action.
                 if command in ("npx", "uvx"):
-                    raise ValueError(
-                        "Use an installed executable; automatic downloads are disabled"
-                    )
+                    raise ValueError("Use an installed executable; automatic downloads are disabled")
                 env = {
                     k: v
                     for k, v in os.environ.items()
@@ -83,22 +79,13 @@ async def serve(connection, queue):
                     cwd=str(SHARED),
                 )
                 errlog = stack.enter_context(open(os.devnull, "w"))  # noqa: SIM115, ASYNC230 - /dev/null never blocks; fd lifetime tied to the exit stack
-                read, write = await stack.enter_async_context(
-                    stdio_client(params, errlog=errlog)
-                )
+                read, write = await stack.enter_async_context(stdio_client(params, errlog=errlog))
             else:
                 from urllib.parse import urlsplit
 
                 parsed = urlsplit(connection["url"])
-                if (
-                    parsed.scheme != "https"
-                    or not parsed.hostname
-                    or parsed.username
-                    or parsed.password
-                ):
-                    raise ValueError(
-                        "Remote MCP requires HTTPS; private endpoints are disabled"
-                    )
+                if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                    raise ValueError("Remote MCP requires HTTPS; private endpoints are disabled")
                 headers = credentials.get("headers", {})
                 if any(k.lower() in ("host", "proxy-authorization") for k in headers):
                     raise ValueError("Reserved header")
@@ -114,9 +101,7 @@ async def serve(connection, queue):
                     )
 
                 read, write, _ = await stack.enter_async_context(
-                    streamablehttp_client(
-                        connection["url"], headers=headers, httpx_client_factory=factory
-                    )
+                    streamablehttp_client(connection["url"], headers=headers, httpx_client_factory=factory)
                 )
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
@@ -129,9 +114,7 @@ async def serve(connection, queue):
                         result = await asyncio.wait_for(session.list_tools(), 30)
                         value = {
                             "tools": [
-                                t.model_dump(
-                                    mode="json", by_alias=True, exclude_none=True
-                                )
+                                t.model_dump(mode="json", by_alias=True, exclude_none=True)
                                 for t in result.tools
                             ]
                         }
@@ -140,9 +123,7 @@ async def serve(connection, queue):
                             session.call_tool(body["tool"], body.get("arguments", {})),
                             110,
                         )
-                        value = result.model_dump(
-                            mode="json", by_alias=True, exclude_none=True
-                        )
+                        value = result.model_dump(mode="json", by_alias=True, exclude_none=True)
                     if not future.done():
                         future.set_result(value)
                 except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
@@ -164,7 +145,11 @@ async def invoke(action, body):
             if action == "discover":
                 result = await modern_discover(connection["url"], headers)
                 tools = result.get("tools", result.get("capabilities", {}).get("tools", []))
-                return {"tools": tools, "protocol_generation": "2026-07-28", "cache": {key: result.get(key) for key in ("ttlMs", "cacheScope") if key in result}}
+                return {
+                    "tools": tools,
+                    "protocol_generation": "2026-07-28",
+                    "cache": {key: result.get(key) for key in ("ttlMs", "cacheScope") if key in result},
+                }
             return await modern_call(connection["url"], body["tool"], body.get("arguments", {}), headers)
         except httpx.HTTPStatusError as error:
             if error.response.status_code in (401, 403):
@@ -249,9 +234,7 @@ async def install(body: dict):
         await process.wait()
         raise HTTPException(504, "Package installation timed out")
     if code:
-        raise HTTPException(
-            502, "パッケージを取得できません。通信許可先を確認してください"
-        )
+        raise HTTPException(502, "パッケージを取得できません。通信許可先を確認してください")
     return {"ok": True}
 
 
@@ -265,9 +248,7 @@ async def snapshot(action: str, body: dict):
         raise HTTPException(409, "MCP operations are still running")
     for _, task in CONNECTIONS.values():
         task.cancel()
-    await asyncio.gather(
-        *(task for _, task in CONNECTIONS.values()), return_exceptions=True
-    )
+    await asyncio.gather(*(task for _, task in CONNECTIONS.values()), return_exceptions=True)
     CONNECTIONS.clear()
     if action == "snapshot":
         return capture(SHARED)

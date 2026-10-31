@@ -20,7 +20,9 @@ from fastapi.responses import JSONResponse
 app = FastAPI(docs_url=None, redoc_url=None)
 LABEL = "io.mix-agent.mcp"
 NAME_RE = re.compile(r"^[a-f0-9-]{1,36}$")
-DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
 RUNTIME_IMAGE = os.getenv("MCP_RUNTIME_IMAGE", "mix-agent-mcp-runtime:local")
 MANAGER_CONTAINER = os.getenv("HOSTNAME", "mcp-manager")
 EGRESS_CONTAINER = os.getenv("MCP_EGRESS_CONTAINER", "mix-agent-egress-proxy-1")
@@ -85,7 +87,9 @@ class DockerAPI:
             return {}
         return response.json()
 
-    async def bytes(self, method: str, path: str, *, content: bytes | None = None, headers: dict | None = None, ok=(200,)) -> bytes:
+    async def bytes(
+        self, method: str, path: str, *, content: bytes | None = None, headers: dict | None = None, ok=(200,)
+    ) -> bytes:
         response = await self.client.request(method, path, content=content, headers=headers)
         if response.status_code not in ok:
             raise RuntimeError("Docker archive operation failed")
@@ -135,7 +139,11 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
 
     async def _connect(self, network: str, container: str, aliases: list[str] | None = None):
         try:
-            await self.api.call("POST", f"/networks/{network}/connect", body={"Container": container, "EndpointConfig": {"Aliases": aliases or []}})
+            await self.api.call(
+                "POST",
+                f"/networks/{network}/connect",
+                body={"Container": container, "EndpointConfig": {"Aliases": aliases or []}},
+            )
         except RuntimeError as error:
             if "already exists" not in str(error).lower():
                 raise
@@ -144,10 +152,21 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         helper = "mix-mcp-volume-init-" + uuid.uuid4().hex
         body = {
             "Image": RUNTIME_IMAGE,
-            "Cmd": ["python", "-c", "import os,pathlib;[(pathlib.Path('/data')/p).mkdir(exist_ok=True) for p in ('.packages','workspace')];[os.chown('/data/'+p,1000,1000) for p in ('.packages','workspace')]"],
-            "User": "0:0", "Labels": {LABEL: "volume-init"},
-            "HostConfig": {"NetworkMode": "none", "ReadonlyRootfs": True, "CapDrop": ["ALL"], "CapAdd": ["CHOWN"],
-                           "SecurityOpt": ["no-new-privileges:true"], "Mounts": [{"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False}]},
+            "Cmd": [
+                "python",
+                "-c",
+                "import os,pathlib;[(pathlib.Path('/data')/p).mkdir(exist_ok=True) for p in ('.packages','workspace')];[os.chown('/data/'+p,1000,1000) for p in ('.packages','workspace')]",
+            ],
+            "User": "0:0",
+            "Labels": {LABEL: "volume-init"},
+            "HostConfig": {
+                "NetworkMode": "none",
+                "ReadonlyRootfs": True,
+                "CapDrop": ["ALL"],
+                "CapAdd": ["CHOWN"],
+                "SecurityOpt": ["no-new-privileges:true"],
+                "Mounts": [{"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False}],
+            },
         }
         await self.api.call("POST", f"/containers/create?name={helper}", body=body)
         try:
@@ -168,7 +187,11 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         await self.api.call("POST", "/volumes/create", body={"Name": volume, "Labels": {LABEL: resource_id}})
         await self.prepare_volume(volume)
         try:
-            await self.api.call("POST", "/networks/create", body={"Name": network, "Internal": True, "Labels": {LABEL: resource_id}})
+            await self.api.call(
+                "POST",
+                "/networks/create",
+                body={"Name": network, "Internal": True, "Labels": {LABEL: resource_id}},
+            )
         except RuntimeError as error:
             if "already exists" not in str(error).lower():
                 raise
@@ -182,12 +205,14 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
             "PYTHONPATH=/app",
         ]
         if capability["mode"] != "none" or kind in ("npm", "pypi"):
-            env.extend([
-                "HTTP_PROXY=http://egress-proxy:3128",
-                "HTTPS_PROXY=http://egress-proxy:3128",
-                "http_proxy=http://egress-proxy:3128",
-                "https_proxy=http://egress-proxy:3128",
-            ])
+            env.extend(
+                [
+                    "HTTP_PROXY=http://egress-proxy:3128",
+                    "HTTPS_PROXY=http://egress-proxy:3128",
+                    "http_proxy=http://egress-proxy:3128",
+                    "https_proxy=http://egress-proxy:3128",
+                ]
+            )
         config = {
             "Image": image,
             "Env": env,
@@ -201,8 +226,16 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
                 "NetworkMode": network,
                 "Mounts": [
                     {"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False},
-                    {"Type": "tmpfs", "Target": "/tmp", "TmpfsOptions": {"SizeBytes": 268435456, "Mode": 0o1777}},
-                    {"Type": "tmpfs", "Target": "/run/secrets/mcp", "TmpfsOptions": {"SizeBytes": 1048576, "Mode": 0o700}},
+                    {
+                        "Type": "tmpfs",
+                        "Target": "/tmp",
+                        "TmpfsOptions": {"SizeBytes": 268435456, "Mode": 0o1777},
+                    },
+                    {
+                        "Type": "tmpfs",
+                        "Target": "/run/secrets/mcp",
+                        "TmpfsOptions": {"SizeBytes": 1048576, "Mode": 0o700},
+                    },
                 ],
                 "PidsLimit": 128,
                 "Memory": 536870912,
@@ -231,11 +264,30 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         policy = _load_policy()
         policies = policy.setdefault("source_policies", {})
         if ip:
-            policies[ip] = ({"mode": "restricted", "allowed_domains": ["registry.npmjs.org"]} if kind == "npm" else {"mode": "restricted", "allowed_domains": ["pypi.org", "files.pythonhosted.org"]}) if needs_install_egress else capability
-        policy.setdefault("resource_policies", {})[resource_id] = {"ip": ip, "runtime": capability, "installing": needs_install_egress, "driver": kind}
+            policies[ip] = (
+                (
+                    {"mode": "restricted", "allowed_domains": ["registry.npmjs.org"]}
+                    if kind == "npm"
+                    else {"mode": "restricted", "allowed_domains": ["pypi.org", "files.pythonhosted.org"]}
+                )
+                if needs_install_egress
+                else capability
+            )
+        policy.setdefault("resource_policies", {})[resource_id] = {
+            "ip": ip,
+            "runtime": capability,
+            "installing": needs_install_egress,
+            "driver": kind,
+        }
         _save_policy(policy)
         await self.api.call("POST", f"/containers/{container}/start", ok=(204, 304))
-        return {"container": container, "network": network, "volume": volume, "driver": kind, "state": "running"}
+        return {
+            "container": container,
+            "network": network,
+            "volume": volume,
+            "driver": kind,
+            "state": "running",
+        }
 
     async def action(self, resource_id: str, action: str, delete_volume: bool = False) -> dict:
         container, network, volume = _names(resource_id)
@@ -243,7 +295,12 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
             await self.api.call("POST", f"/containers/{container}/{action}?t=20", ok=(204, 304))
         elif action == "status":
             value = await self.api.call("GET", f"/containers/{container}/json")
-            return {"state": value.get("State", {}), "container": container, "network": network, "volume": volume}
+            return {
+                "state": value.get("State", {}),
+                "container": container,
+                "network": network,
+                "volume": volume,
+            }
         elif action == "uninstall":
             try:
                 await self.api.call("POST", f"/containers/{container}/stop?t=20", ok=(204, 304))
@@ -252,7 +309,9 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
             await self.api.call("DELETE", f"/containers/{container}?force=false&v=false", ok=(204, 404))
             for attached in (MANAGER_CONTAINER, EGRESS_CONTAINER):
                 try:
-                    await self.api.call("POST", f"/networks/{network}/disconnect", body={"Container": attached, "Force": True})
+                    await self.api.call(
+                        "POST", f"/networks/{network}/disconnect", body={"Container": attached, "Force": True}
+                    )
                 except RuntimeError:
                     pass
             await self.api.call("DELETE", f"/networks/{network}", ok=(204, 404))
@@ -274,15 +333,28 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         helper = "mix-mcp-copy-" + uuid.uuid4().hex
         script = (
             "import pathlib,shutil; src=pathlib.Path('/source'); dst=pathlib.Path('/destination'); "
-            + ("[shutil.rmtree(p) if p.is_dir() else p.unlink() for p in list(dst.iterdir())]; " if clear else "")
+            + (
+                "[shutil.rmtree(p) if p.is_dir() else p.unlink() for p in list(dst.iterdir())]; "
+                if clear
+                else ""
+            )
             + "[shutil.copytree(p,dst/p.name,symlinks=False) if p.is_dir() else shutil.copy2(p,dst/p.name) for p in src.iterdir()]"
         )
         body = {
-            "Image": RUNTIME_IMAGE, "Cmd": ["python", "-c", script], "User": "0:0",
+            "Image": RUNTIME_IMAGE,
+            "Cmd": ["python", "-c", script],
+            "User": "0:0",
             "Labels": {LABEL: "volume-copy"},
-            "HostConfig": {"NetworkMode": "none", "ReadonlyRootfs": True, "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
-                           "Mounts": [{"Type": "volume", "Source": source, "Target": "/source", "ReadOnly": True},
-                                      {"Type": "volume", "Source": destination, "Target": "/destination", "ReadOnly": False}]},
+            "HostConfig": {
+                "NetworkMode": "none",
+                "ReadonlyRootfs": True,
+                "CapDrop": ["ALL"],
+                "SecurityOpt": ["no-new-privileges:true"],
+                "Mounts": [
+                    {"Type": "volume", "Source": source, "Target": "/source", "ReadOnly": True},
+                    {"Type": "volume", "Source": destination, "Target": "/destination", "ReadOnly": False},
+                ],
+            },
         }
         await self.api.call("POST", f"/containers/create?name={helper}", body=body)
         try:
@@ -293,10 +365,16 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         finally:
             await self.api.call("DELETE", f"/containers/{helper}?force=true", ok=(204, 404))
 
-    async def update(self, resource_id: str, old_manifest: dict, new_manifest: dict, capability: dict, health: dict) -> dict:
+    async def update(
+        self, resource_id: str, old_manifest: dict, new_manifest: dict, capability: dict, health: dict
+    ) -> dict:
         _, _, volume = _names(resource_id)
         backup = volume + "-backup-" + uuid.uuid4().hex[:12]
-        await self.api.call("POST", "/volumes/create", body={"Name": backup, "Labels": {LABEL: resource_id, f"{LABEL}.backup": "true"}})
+        await self.api.call(
+            "POST",
+            "/volumes/create",
+            body={"Name": backup, "Labels": {LABEL: resource_id, f"{LABEL}.backup": "true"}},
+        )
         await self.copy_volume(volume, backup)
         await self.action(resource_id, "stop")
         await self.action(resource_id, "uninstall", False)
@@ -326,10 +404,17 @@ async def _volume_archive(resource_id: str) -> bytes:
     _, _, volume = _names(resource_id)
     helper = "mix-mcp-snapshot-" + uuid.uuid4().hex
     body = {
-        "Image": RUNTIME_IMAGE, "Cmd": ["python", "-c", "import time;time.sleep(300)"], "User": "0:0",
+        "Image": RUNTIME_IMAGE,
+        "Cmd": ["python", "-c", "import time;time.sleep(300)"],
+        "User": "0:0",
         "Labels": {LABEL: "snapshot"},
-        "HostConfig": {"NetworkMode": "none", "ReadonlyRootfs": True, "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
-                       "Mounts": [{"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False}]},
+        "HostConfig": {
+            "NetworkMode": "none",
+            "ReadonlyRootfs": True,
+            "CapDrop": ["ALL"],
+            "SecurityOpt": ["no-new-privileges:true"],
+            "Mounts": [{"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False}],
+        },
     }
     await DRIVER.api.call("POST", f"/containers/create?name={helper}", body=body)
     try:
@@ -346,15 +431,28 @@ async def _restore_archive(resource_id: str, archive: bytes) -> None:
     await DRIVER.api.call("POST", "/volumes/create", body={"Name": volume, "Labels": {LABEL: resource_id}})
     helper = "mix-mcp-restore-" + uuid.uuid4().hex
     body = {
-        "Image": RUNTIME_IMAGE, "Cmd": ["python", "-c", "import time;time.sleep(300)"], "User": "0:0",
+        "Image": RUNTIME_IMAGE,
+        "Cmd": ["python", "-c", "import time;time.sleep(300)"],
+        "User": "0:0",
         "Labels": {LABEL: "restore"},
-        "HostConfig": {"NetworkMode": "none", "ReadonlyRootfs": True, "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
-                       "Mounts": [{"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False}]},
+        "HostConfig": {
+            "NetworkMode": "none",
+            "ReadonlyRootfs": True,
+            "CapDrop": ["ALL"],
+            "SecurityOpt": ["no-new-privileges:true"],
+            "Mounts": [{"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False}],
+        },
     }
     await DRIVER.api.call("POST", f"/containers/create?name={helper}", body=body)
     try:
         await DRIVER.api.call("POST", f"/containers/{helper}/start", ok=(204,))
-        await DRIVER.api.bytes("PUT", f"/containers/{helper}/archive?path=/", content=archive, headers={"Content-Type": "application/x-tar"}, ok=(200,))
+        await DRIVER.api.bytes(
+            "PUT",
+            f"/containers/{helper}/archive?path=/",
+            content=archive,
+            headers={"Content-Type": "application/x-tar"},
+            ok=(200,),
+        )
     finally:
         await DRIVER.api.call("DELETE", f"/containers/{helper}?force=true", ok=(204, 404))
 
@@ -420,7 +518,13 @@ async def update(resource_id: str, body: dict):
         try:
             if not isinstance(DRIVER, DockerRuntimeDriver):
                 raise ValueError("Runtime does not support transactional updates")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
-            return await DRIVER.update(resource_id, body["old_manifest"], body["new_manifest"], body.get("network_capability", {}), body.get("health", {}))
+            return await DRIVER.update(
+                resource_id,
+                body["old_manifest"],
+                body["new_manifest"],
+                body.get("network_capability", {}),
+                body.get("health", {}),
+            )
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error))
 
@@ -432,7 +536,9 @@ async def _proxy(resource_id: str, path: str, body: dict) -> dict:
         if body.get("credentials"):
             raise ValueError("OCI MCP secrets require a bootstrap-compatible image")
         method = "server/discover" if path == "discover" else "tools/call"
-        params = {} if path == "discover" else {"name": body["tool"], "arguments": body.get("arguments_value", {})}
+        params = (
+            {} if path == "discover" else {"name": body["tool"], "arguments": body.get("arguments_value", {})}
+        )
         value = await _oci_rpc(resource_id, method, params)
         if path == "discover":
             return {"tools": value.get("tools", value.get("capabilities", {}).get("tools", []))}
@@ -448,7 +554,8 @@ async def _proxy(resource_id: str, path: str, body: dict) -> dict:
                 if attempt == 59:
                     raise
                 await asyncio.sleep(0.5)
-        assert response is not None
+        if response is None:
+            raise RuntimeError(f"workload {resource_id} never answered {path}")
         response.raise_for_status()
         value = response.json()
     if path == "discover" and isinstance(DRIVER, DockerRuntimeDriver):
@@ -464,7 +571,11 @@ async def _proxy(resource_id: str, path: str, body: dict) -> dict:
             if runtime.get("mode") == "none":
                 _, network, _ = _names(resource_id)
                 try:
-                    await DRIVER.api.call("POST", f"/networks/{network}/disconnect", body={"Container": EGRESS_CONTAINER, "Force": False})
+                    await DRIVER.api.call(
+                        "POST",
+                        f"/networks/{network}/disconnect",
+                        body={"Container": EGRESS_CONTAINER, "Force": False},
+                    )
                 except RuntimeError:
                     pass
     return value
@@ -477,7 +588,9 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
     channel = OCI_CHANNELS.get(resource_id)
     if not channel:
         uri = f"ws://localhost/v1.47/containers/{container}/attach/ws?stdin=1&stdout=1&stderr=1&stream=1"
-        websocket = await websockets.unix_connect(os.getenv("DOCKER_SOCKET", "/var/run/docker.sock"), uri=uri, max_size=16 * 1024 * 1024)
+        websocket = await websockets.unix_connect(
+            os.getenv("DOCKER_SOCKET", "/var/run/docker.sock"), uri=uri, max_size=16 * 1024 * 1024
+        )
         channel = (websocket, asyncio.Lock(), "modern")
         OCI_CHANNELS[resource_id] = channel
     websocket, lock, _ = channel
@@ -488,7 +601,12 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
             "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.4"},
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         }
-        await websocket.send((json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": request_params}) + "\n").encode())
+        await websocket.send(
+            (
+                json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": request_params})
+                + "\n"
+            ).encode()
+        )
         for _ in range(100):
             raw = await asyncio.wait_for(websocket.recv(), 115)
             if isinstance(raw, bytes):

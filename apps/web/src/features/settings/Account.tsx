@@ -98,7 +98,7 @@ export function Account({
       if (result.relogin_required) onLogout();
       else setNotice(t("ほかのログインをすべて終了しました"));
       setConfirming(null);
-      qc.invalidateQueries({ queryKey: ["/auth/login-history"] });
+      void qc.invalidateQueries({ queryKey: ["/auth/login-history"] });
     } catch (value) {
       setError(value);
     } finally {

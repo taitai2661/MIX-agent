@@ -63,6 +63,7 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
       MIX_LOG_FORMAT: ${MIX_LOG_FORMAT:-text}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      MIX_METRICS_PUBLIC: ${MIX_METRICS_PUBLIC:-}
       MIX_PROJECT_MOUNT: /project
       MIX_MODELS_DEV_URL: ${MIX_MODELS_DEV_URL:-https://models.dev/api.json}
     volumes:

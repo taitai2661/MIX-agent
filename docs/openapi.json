@@ -81,7 +81,7 @@
     "/metrics": {
       "get": {
         "summary": "Prometheus Metrics",
-        "description": "Scrape the in-process counters.\n\nSet ``METRICS_TOKEN`` to require ``Authorization: Bearer <token>``.  It is\noff by default for single-user self-hosting, but a deployment that exposes\nthe app beyond loopback should set it (or restrict the path in the proxy).",
+        "description": "Scrape the in-process counters.\n\nSet ``METRICS_TOKEN`` to require ``Authorization: Bearer <token>``.\nWithout a token the endpoint is limited to loopback and private-network\nclients; ``MIX_METRICS_PUBLIC=1`` removes even that restriction.",
         "operationId": "prometheus_metrics_metrics_get",
         "responses": {
           "200": {

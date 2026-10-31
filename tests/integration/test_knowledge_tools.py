@@ -42,7 +42,10 @@ def test_new_tool_ids_and_default_permissions(signed):
 
 
 def test_web_search_domain_and_freshness_helpers():
-    assert tools_execute._sanitize_domains(["https://Example.COM/path", "foo", "foo"]) == ["example.com", "foo"]
+    assert tools_execute._sanitize_domains(["https://Example.COM/path", "foo", "foo"]) == [
+        "example.com",
+        "foo",
+    ]
     assert tools_execute._sanitize_domains([None, ""]) == []
     assert tools_execute._apply_domains("news", ["example.com"]) == "news site:example.com"
     assert tools_execute._apply_domains("news", []) == "news"
@@ -76,7 +79,14 @@ def test_page_text_and_markdown_helpers():
 def test_knowledge_add_search_delete_roundtrip(signed):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
-        doc = knowledge.add(db, owner, "PostgreSQLのpg_trgmで部分一致検索を行う手順のメモ", title="pg_trgm手順", source_type="text", memo="DB")
+        doc = knowledge.add(
+            db,
+            owner,
+            "PostgreSQLのpg_trgmで部分一致検索を行う手順のメモ",
+            title="pg_trgm手順",
+            source_type="text",
+            memo="DB",
+        )
         db.commit()
         assert doc["chunks"] >= 1
         results = knowledge.search(db, owner, "pg_trgm 部分一致")
@@ -94,7 +104,9 @@ def test_knowledge_add_search_delete_roundtrip(signed):
 def test_saved_knowledge_is_available_to_context_retrieval(signed):
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
-        doc = knowledge.add(db, owner, "Context injection uses the saved knowledge chunks.", title="Injection")
+        doc = knowledge.add(
+            db, owner, "Context injection uses the saved knowledge chunks.", title="Injection"
+        )
         db.commit()
         results = context_retrievers.search_knowledge(db, owner, "context injection")
         assert results and results[0]["id"] == doc["id"]
@@ -142,6 +154,14 @@ def test_pdf_text_extraction_helper():
 
 def test_tool_fingerprints_cover_new_definitions():
     ids = {tool["id"] for tool in BUILTINS}
-    for expected in ("web_fetch_pdf", "browser_extract", "browser_wait", "knowledge_add", "knowledge_search", "knowledge_delete", "web_clip_save"):
+    for expected in (
+        "web_fetch_pdf",
+        "browser_extract",
+        "browser_wait",
+        "knowledge_add",
+        "knowledge_search",
+        "knowledge_delete",
+        "web_clip_save",
+    ):
         assert expected in ids
     assert len({fingerprint(tool) for tool in BUILTINS}) == len(BUILTINS)

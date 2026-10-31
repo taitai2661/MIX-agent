@@ -514,7 +514,10 @@ impl EditTool {
         let mut resolved_map: std::collections::HashMap<String, std::path::PathBuf> =
             std::collections::HashMap::new();
         for entry in &batch {
-            let entry_path = entry.get("path").and_then(|v| v.as_str()).unwrap();
+            let entry_path = entry
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("every edits entry requires a path"))?;
             let (resolved, writable) =
                 FilesTool::resolve_target_in(&workspace_root, &additional, entry_path)?;
             if !writable {
@@ -534,7 +537,10 @@ impl EditTool {
         let mut after_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         for entry in &batch {
-            let entry_path = entry.get("path").and_then(|v| v.as_str()).unwrap();
+            let entry_path = entry
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("every edits entry requires a path"))?;
             let old_string = entry
                 .get("old_string")
                 .and_then(|v| v.as_str())
@@ -548,7 +554,9 @@ impl EditTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            let before = before_map.get(entry_path).unwrap();
+            let before = before_map.get(entry_path).ok_or_else(|| {
+                anyhow::anyhow!("internal error: missing pre-read for {entry_path}")
+            })?;
             let (after, replacements) =
                 EditTool::replace(before, old_string, new_string, replace_all)?;
 
@@ -579,7 +587,9 @@ impl EditTool {
         // multi_edit remains all-or-nothing (atomic) across the batch.
         let mut written_paths: Vec<(&str, &std::path::PathBuf)> = Vec::new();
         for (entry_path, after) in &after_map {
-            let resolved = resolved_map.get(entry_path).unwrap();
+            let resolved = resolved_map.get(entry_path).ok_or_else(|| {
+                anyhow::anyhow!("internal error: missing resolved path for {entry_path}")
+            })?;
             if let Err(err) = atomic_write(resolved, after) {
                 // Rollback previously written files in reverse order
                 for (prev_path, prev_resolved) in written_paths.iter().rev() {

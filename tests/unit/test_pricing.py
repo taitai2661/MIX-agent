@@ -3,25 +3,46 @@ from mix_agent.usage import token_usage
 
 
 def test_normalize_models_dev_pricing():
-    assert pricing.normalize({"currency": "USD", "unit": "1M_tokens",
-                              "input": 3, "output": 15, "cached_input": 0.3, "cached_write": 3.75}) == {
-        "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75,
+    assert pricing.normalize(
+        {
+            "currency": "USD",
+            "unit": "1M_tokens",
+            "input": 3,
+            "output": 15,
+            "cached_input": 0.3,
+            "cached_write": 3.75,
+        }
+    ) == {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75,
     }
 
 
 def test_normalize_accepts_the_models_dev_cost_shape():
-    assert pricing.normalize({"input": 3, "output": 15, "cache_read": 0.3,
-                              "tiers": [{"input": 6, "output": 30}]}) == {
-        "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": None,
+    assert pricing.normalize(
+        {"input": 3, "output": 15, "cache_read": 0.3, "tiers": [{"input": 6, "output": 30}]}
+    ) == {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": None,
     }
 
 
 def test_normalize_converts_stated_units():
     assert pricing.normalize({"unit": "1K_tokens", "input": 0.003, "output": 0.015}) == {
-        "input": 3.0, "output": 15.0, "cache_read": None, "cache_write": None,
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": None,
+        "cache_write": None,
     }
     assert pricing.normalize({"unit": "1_token", "input": 0.000003, "output": 0.000015}) == {
-        "input": 3.0, "output": 15.0, "cache_read": None, "cache_write": None,
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": None,
+        "cache_write": None,
     }
 
 
@@ -36,7 +57,10 @@ def test_normalize_keeps_explicit_zero_prices():
     # An explicit zero is a real (free) price and must stay distinguishable
     # from an unknown price.
     assert pricing.normalize({"input": 0, "output": 0}) == {
-        "input": 0.0, "output": 0.0, "cache_read": None, "cache_write": None,
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": None,
+        "cache_write": None,
     }
 
 
@@ -90,13 +114,20 @@ def test_estimate_applies_each_price():
 
 
 def test_token_usage_normalizes_provider_shapes():
-    openai = token_usage({
-        "prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14,
-        "prompt_tokens_details": {"cached_tokens": 6},
-    })
+    openai = token_usage(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 4,
+            "total_tokens": 14,
+            "prompt_tokens_details": {"cached_tokens": 6},
+        }
+    )
     assert openai == {
-        "input_tokens": 10, "output_tokens": 4, "cached_tokens": 6,
-        "reasoning_tokens": 0, "total_tokens": 14,
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "cached_tokens": 6,
+        "reasoning_tokens": 0,
+        "total_tokens": 14,
     }
     anthropic = token_usage({"input_tokens": 10, "output_tokens": 4, "cache_read_input_tokens": 6})
     assert anthropic["cached_tokens"] == 6

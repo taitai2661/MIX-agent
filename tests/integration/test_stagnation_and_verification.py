@@ -34,6 +34,7 @@ def test_stagnation_detects_repeated_tool_failures():
         _call("read_file", risk="read", result={"error": "fail"}),
     ]
     rows = list(reversed(calls))  # type: ignore
+
     # The detector reads from the DB, so feed an in-memory shim.
     class _DB:
         def scalar(self, _stmt):

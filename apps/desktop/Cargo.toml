@@ -34,10 +34,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
-# Unified versions: single reqwest 0.12 line (compatible with tauri 2.x, which
-# depends on reqwest 0.12 via tauri-plugin-http — NOT 0.13, so no bump). The
-# updater plugin resolves its own reqwest 0.13 internally, so both versions
-# coexist; this dependency stays on 0.12 for the code in this workspace.
+# Unified versions: single reqwest 0.12 line (compatible with tauri 2.x and the
+# updater plugin, which resolves its own reqwest 0.13 internally, so both
+# versions coexist; this dependency stays on 0.12 for the code in this
+# workspace).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "json", "chrono", "uuid"] }
 rand = "0.8"

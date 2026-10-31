@@ -52,7 +52,3 @@ def test_update_and_hard_delete(signed):
 def test_secret_rejected_and_forget_parser():
     assert "private-value" not in service.redact_sensitive("api_key=private-value")
     assert service.explicit_forget_candidate("Chromeをメインに使うを忘れて") == "Chromeをメインに使う"
-    try:
-        import sqlalchemy as _sa  # noqa: F401
-    except Exception:
-        pass

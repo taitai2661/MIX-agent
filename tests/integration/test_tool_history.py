@@ -18,23 +18,26 @@ def test_conversation_tool_history_reports_failure_and_unknown_retry(signed):
         )
         db.add(run)
         db.flush()
-        db.add_all([
-            ToolCall(
-                owner_id=owner,
-                run_id=run.id,
-                status="completed",
-                data={
-                    "tool_id": "web_search", "name": "web_search",
-                    "result": {"error": "Tool failed", "token": "must-not-leak"},
-                },
-            ),
-            ToolCall(
-                owner_id=owner,
-                run_id=run.id,
-                status="executing",
-                data={"tool_id": "run_terminal", "name": "run_terminal"},
-            ),
-        ])
+        db.add_all(
+            [
+                ToolCall(
+                    owner_id=owner,
+                    run_id=run.id,
+                    status="completed",
+                    data={
+                        "tool_id": "web_search",
+                        "name": "web_search",
+                        "result": {"error": "Tool failed", "token": "must-not-leak"},
+                    },
+                ),
+                ToolCall(
+                    owner_id=owner,
+                    run_id=run.id,
+                    status="executing",
+                    data={"tool_id": "run_terminal", "name": "run_terminal"},
+                ),
+            ]
+        )
         db.commit()
         conversation_id = conversation.id
 

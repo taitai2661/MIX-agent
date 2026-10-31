@@ -654,6 +654,7 @@ async fn a_destructive_call_must_be_verified_before_concluding() {
     ])
     .await;
     std::fs::write(harness.workspace.join("note.txt"), "a\n").unwrap();
+    allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
     let outcome = harness
         .engine
@@ -686,6 +687,7 @@ async fn verification_gives_up_after_a_bounded_number_of_turns() {
     ])
     .await;
     std::fs::write(harness.workspace.join("note.txt"), "a\n").unwrap();
+    allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
     let outcome = harness
         .engine
@@ -1332,16 +1334,20 @@ async fn replay_log(
         .collect()
 }
 
-fn assert_contiguous(rows: &[(i64, String, serde_json::Value)], label: &str) {
-    for (index, (sequence, ..)) in rows.iter().enumerate() {
-        assert_eq!(
-            *sequence,
-            index as i64 + 1,
-            "{label}: sequences must start at 1 with no gaps or duplicates, got {:?}",
+/// Replay order is what matters. Adjacent stream deltas are coalesced at
+/// write time, so the sequence is strictly increasing but may have gaps; a
+/// duplicate would break `ORDER BY sequence` and is still an error.
+fn assert_ordered(rows: &[(i64, String, serde_json::Value)], label: &str) {
+    let mut previous = 0;
+    for (sequence, ..) in rows {
+        assert!(
+            *sequence > previous,
+            "{label}: sequences must be strictly increasing (no duplicates), got {:?}",
             rows.iter()
                 .map(|(s, k, _)| (*s, k.clone()))
                 .collect::<Vec<_>>()
         );
+        previous = *sequence;
     }
 }
 
@@ -1388,7 +1394,7 @@ async fn a_streamed_turn_can_be_replayed_from_the_database() {
     );
 
     let rows = replay_log(&harness.storage, run_id).await;
-    assert_contiguous(&rows, "replay log");
+    assert_ordered(&rows, "replay log");
 
     let text: String = rows
         .iter()
@@ -1452,8 +1458,13 @@ async fn token_events_are_batched_and_drained_by_a_milestone() {
         )
         .await;
     let rows = replay_log(&harness.storage, run_id).await;
-    assert_eq!(rows.len(), 6);
-    assert_contiguous(&rows, "after milestone flush");
+    // Five adjacent deltas fold into one row; the milestone stays separate.
+    assert_eq!(rows.len(), 2);
+    assert_ordered(&rows, "after milestone flush");
+    assert_eq!(
+        rows[0].2["delta"], "tok0tok1tok2tok3tok4",
+        "coalescing must not lose or reorder text"
+    );
     assert_eq!(
         rows.last().map(|(_, kind, _)| kind.as_str()),
         Some("status"),
@@ -1473,8 +1484,9 @@ async fn token_events_are_batched_and_drained_by_a_milestone() {
     }
     harness.engine.flush_all_events().await;
     let rows = replay_log(&harness.storage, run_id).await;
-    assert_eq!(rows.len(), 8);
-    assert_contiguous(&rows, "after explicit flush");
+    // One coalesced text row, the terminal status, one coalesced reasoning row.
+    assert_eq!(rows.len(), 3);
+    assert_ordered(&rows, "after explicit flush");
     assert!(harness.engine.event_buffer.lock().await.is_empty());
 }
 

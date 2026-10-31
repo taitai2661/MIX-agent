@@ -120,9 +120,7 @@ def test_create_rejects_a_name_the_rule_rejects(signed):
 
 
 def test_create_requires_a_description(signed):
-    response = signed.post(
-        "/api/v1/skills", json={"name": "my-skill", "description": "", "content": "body"}
-    )
+    response = signed.post("/api/v1/skills", json={"name": "my-skill", "description": "", "content": "body"})
     assert response.status_code == 422
     assert "description" in response.json()["detail"]
 

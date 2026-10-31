@@ -56,9 +56,7 @@ def _async_db_endpoints() -> set[str]:
             if not any(isinstance(decorator, ast.Call) for decorator in node.decorator_list):
                 continue
             uses_db = any(
-                isinstance(item, ast.Attribute)
-                and isinstance(item.value, ast.Name)
-                and item.value.id == "db"
+                isinstance(item, ast.Attribute) and isinstance(item.value, ast.Name) and item.value.id == "db"
                 for item in ast.walk(node)
             )
             awaitable = any(

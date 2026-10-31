@@ -18,9 +18,7 @@ async def test_failures_below_limit_do_not_block():
     key = "login:account"
     for _ in range(security.LOGIN_ACCOUNT_LIMIT - 1):
         security.record_failed_attempt(key, security.LOGIN_WINDOW_SECONDS)
-    security.throttle_attempt(
-        key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS
-    )
+    security.throttle_attempt(key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS)
 
 
 async def test_limit_exhaustion_blocks_then_recovers_after_window(clock):
@@ -28,13 +26,9 @@ async def test_limit_exhaustion_blocks_then_recovers_after_window(clock):
     for _ in range(security.LOGIN_ACCOUNT_LIMIT):
         security.record_failed_attempt(key, security.LOGIN_WINDOW_SECONDS)
     with pytest.raises(HTTPException):
-        security.throttle_attempt(
-            key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS
-        )
+        security.throttle_attempt(key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS)
     clock["now"] += security.LOGIN_WINDOW_SECONDS + 1
-    security.throttle_attempt(
-        key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS
-    )
+    security.throttle_attempt(key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS)
 
 
 async def test_window_rolls_off_old_failures(clock):
@@ -46,9 +40,7 @@ async def test_window_rolls_off_old_failures(clock):
         security.record_failed_attempt(key, security.ACCOUNT_CHANGE_WINDOW_SECONDS)
     clock["now"] += security.ACCOUNT_CHANGE_WINDOW_SECONDS + 1
     # Only the first window's entries are dropped; the bucket is now empty.
-    security.throttle_attempt(
-        key, security.ACCOUNT_CHANGE_LIMIT, security.ACCOUNT_CHANGE_WINDOW_SECONDS
-    )
+    security.throttle_attempt(key, security.ACCOUNT_CHANGE_LIMIT, security.ACCOUNT_CHANGE_WINDOW_SECONDS)
 
 
 async def test_clear_attempts_resets_bucket():
@@ -56,9 +48,7 @@ async def test_clear_attempts_resets_bucket():
     for _ in range(security.LOGIN_ACCOUNT_LIMIT):
         security.record_failed_attempt(key, security.LOGIN_WINDOW_SECONDS)
     security.clear_attempts(key)
-    security.throttle_attempt(
-        key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS
-    )
+    security.throttle_attempt(key, security.LOGIN_ACCOUNT_LIMIT, security.LOGIN_WINDOW_SECONDS)
 
 
 def test_dummy_hash_is_a_valid_argon2_hash():

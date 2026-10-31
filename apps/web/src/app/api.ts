@@ -85,6 +85,16 @@ type ErrorDetail =
   | undefined;
 type ApiErrorBody = { detail?: ErrorDetail; code?: string };
 
+/** Decode a successful response without assuming it has a JSON body. */
+async function parseSuccess<T>(response: Response): Promise<T> {
+  if (response.status === 204) return undefined as T;
+  // Test doubles (and a few non-browser runtimes) only implement `json()`.
+  if (typeof response.text !== "function") return (await response.json()) as T;
+  const text = await response.text();
+  if (!text.trim()) return undefined as T;
+  return JSON.parse(text) as T;
+}
+
 function errorMessage(body: ApiErrorBody, status: number): string {
   const { detail, code } = body;
   // Prefer the stable code: it survives wording changes and does not depend on
@@ -204,7 +214,7 @@ export async function api<T = unknown>(
         throw new HttpError(errorMessage(error, response.status));
       }
       cleanup();
-      return await response.json();
+      return await parseSuccess<T>(response);
     } catch (error) {
       cleanup();
       if (options.signal?.aborted) {

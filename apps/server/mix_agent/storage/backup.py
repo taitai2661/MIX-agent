@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from sqlalchemy import DateTime, select
 
-from mix_agent import config
+from mix_agent import config, egress_policy
 from mix_agent.db.models import Base, MCPConnection, Run, ScheduledRun
 from mix_agent.db.session import engine
 from mix_agent.tools.execute import runner_request
@@ -214,9 +214,7 @@ async def restore(db, raw, password, recovering=False):
     # Keep previous artifacts for operator recovery. Do not erase automatically.
     setting = payload["tables"]["app_settings"]
     domains = setting[0]["data"].get("allowed_domains", []) if setting else []
-    policy = config.DATA / "egress"
-    policy.mkdir(exist_ok=True)
-    (policy / "policy.json").write_text(json.dumps({"allowed_domains": domains}))
+    egress_policy.write_policy(domains)
     journal.unlink(missing_ok=True)
     recovery_key.unlink(missing_ok=True)
     return {"ok": True, "relogin_required": True}

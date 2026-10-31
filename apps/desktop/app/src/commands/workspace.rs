@@ -6,7 +6,7 @@
 //! as the `files` Tool.
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::AppState;
 
@@ -29,7 +29,11 @@ const HIDDEN_DIRS: &[&str] = &[
     "__pycache__",
 ];
 
-fn resolve_root(root_path: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_root(
+    app: &AppHandle,
+    state: &AppState,
+    root_path: &str,
+) -> Result<std::path::PathBuf, String> {
     let trimmed = root_path.trim();
     if trimmed.is_empty() {
         return Err("root_path required".to_string());
@@ -38,7 +42,9 @@ fn resolve_root(root_path: &str) -> Result<std::path::PathBuf, String> {
     if !path.is_dir() {
         return Err(format!("フォルダが見つかりません: {trimmed}"));
     }
-    path.canonicalize().map_err(crate::error::cmd_err)
+    let root = path.canonicalize().map_err(crate::error::cmd_err)?;
+    crate::commands::access::ensure_root(app, state, &root)?;
+    Ok(root)
 }
 
 #[derive(Serialize)]
@@ -53,11 +59,12 @@ pub struct DirEntryView {
 /// dotfiles are returned with `hidden: true` so the tree can filter them.
 #[tauri::command]
 pub async fn list_dir(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
     path: String,
 ) -> Result<Vec<DirEntryView>, String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     let target =
         mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
     if !target.is_dir() {
@@ -104,11 +111,12 @@ pub struct FileContentView {
 /// Read a project file for the read-only preview pane.
 #[tauri::command]
 pub async fn read_workspace_file(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
     path: String,
 ) -> Result<FileContentView, String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     let target =
         mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
     if !target.is_file() {
@@ -195,10 +203,11 @@ async fn run_git(root: &std::path::Path, args: &[&str]) -> Result<std::process::
 /// `git status --porcelain` for the file tree decorations.
 #[tauri::command]
 pub async fn git_status(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
 ) -> Result<GitStatusView, String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     let output = match run_git(&root, &["status", "--porcelain=v1", "-uall"]).await {
         Ok(output) => output,
         Err(_) => {
@@ -269,12 +278,13 @@ pub struct GitDiffView {
 /// single file (`scope = "file"` with `path` set → both stages for that file).
 #[tauri::command]
 pub async fn git_diff(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
     scope: String,
     path: Option<String>,
 ) -> Result<GitDiffView, String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     let mut args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-color"];
     let path = path.filter(|p| !p.trim().is_empty());
     match scope.as_str() {
@@ -329,12 +339,13 @@ pub async fn git_diff(
 /// Returns relative paths, up to `limit` entries (default 300).
 #[tauri::command]
 pub async fn find_workspace_files(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
     query: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<String>, String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     let max = limit.unwrap_or(300).min(1000);
     let q = query
         .map(|s| s.trim().to_lowercase())
@@ -389,12 +400,13 @@ pub async fn find_workspace_files(
 /// Restore a file's working tree or staged state (git restore / discard).
 #[tauri::command]
 pub async fn git_restore(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
     path: String,
     staged: bool,
 ) -> Result<(), String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
 
     let mut args = vec!["restore"];
@@ -426,12 +438,13 @@ pub async fn git_restore(
 /// Stage or unstage a file (git add / git restore --staged).
 #[tauri::command]
 pub async fn git_stage(
-    _state: State<'_, AppState>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     root_path: String,
     path: String,
     unstage: bool,
 ) -> Result<(), String> {
-    let root = resolve_root(&root_path)?;
+    let root = resolve_root(&app, &state, &root_path)?;
     mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
 
     let args: Vec<&str> = if unstage {

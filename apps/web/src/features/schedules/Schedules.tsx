@@ -151,7 +151,7 @@ export function Schedules() {
           try {
             await api("/scheduled-jobs", "POST", form);
             setForm({ ...form, name: "", prompt: "", target_id: "" });
-            refresh();
+            void refresh();
           } catch (x) {
             setError(x);
           }

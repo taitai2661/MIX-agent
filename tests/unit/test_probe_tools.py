@@ -1,9 +1,13 @@
 """Two-pass tool-call probe: forced choice first, unforced retry second."""
+
 from mix_agent.providers.adapters import Adapter
 
 
 def response_with_calls(*names):
-    return {"kind": "response", "tool_calls": [{"id": "c1", "name": name, "arguments": "{}"} for name in names]}
+    return {
+        "kind": "response",
+        "tool_calls": [{"id": "c1", "name": name, "arguments": "{}"} for name in names],
+    }
 
 
 def text_then_stop():

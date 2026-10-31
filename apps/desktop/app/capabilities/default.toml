@@ -34,15 +34,16 @@ permissions = [
   "core:menu:default",
   "core:tray:default",
 
-  # Scoped plugin surface (least privilege): the frontend only uses
-  # `dialog.open`/`dialog.save` (file pickers) and `os.platform`
-  # (title-bar detection). `store`, `process` and `notification` have no
-  # frontend callers, so their `:default` grants are dropped. `window-state`
-  # persists geometry from Rust (no frontend IPC), `deep-link` delivers the
-  # MCP OAuth redirect, and `cli` exposes `doctor`/flags.
+  # Scoped plugin surface (least privilege): the frontend uses
+  # `dialog.open`/`dialog.save` (file pickers), `os.platform` (title-bar
+  # detection) and `notification.send` (run-finished alerts). `store`,
+  # `process`, `shell`, `http` and `fs` are neither registered nor granted.
+  # `window-state` persists geometry from Rust (no frontend IPC), `deep-link`
+  # delivers the MCP OAuth redirect, and `cli` exposes `doctor`/flags.
   "os:allow-platform",
   "dialog:allow-open",
   "dialog:allow-save",
+  "notification:default",
   "window-state:default",
   "deep-link:default",
   "cli:default"

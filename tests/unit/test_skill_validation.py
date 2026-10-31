@@ -40,9 +40,7 @@ def test_the_error_names_every_problem_at_once():
 def test_scan_directory_report_returns_failures(tmp_path):
     good = tmp_path / "good-skill"
     good.mkdir()
-    (good / "SKILL.md").write_text(
-        "---\nname: good-skill\ndescription: ok\n---\nbody", encoding="utf-8"
-    )
+    (good / "SKILL.md").write_text("---\nname: good-skill\ndescription: ok\n---\nbody", encoding="utf-8")
     bad = tmp_path / "bad-skill"
     bad.mkdir()
     (bad / "SKILL.md").write_text("broken", encoding="utf-8")

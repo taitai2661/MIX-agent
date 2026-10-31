@@ -1,7 +1,7 @@
 use crate::AppState;
 use mixd_core::knowledge::{KnowledgeDoc, KnowledgeService};
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[derive(serde::Serialize)]
 pub struct KnowledgeDocView {
@@ -54,13 +54,16 @@ pub struct KnowledgeImportPath {
 
 #[tauri::command]
 pub async fn import_knowledge_file(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: KnowledgeImportPath,
 ) -> Result<KnowledgeDocView, String> {
-    let text = tokio::fs::read_to_string(&input.path)
+    let path = std::path::PathBuf::from(input.path.trim());
+    crate::commands::access::ensure_access(&app, &state, &path, "読み込む")?;
+    let text = tokio::fs::read_to_string(&path)
         .await
         .map_err(crate::error::cmd_err)?;
-    let filename = std::path::Path::new(&input.path)
+    let filename = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "document.txt".into());
@@ -95,7 +98,9 @@ pub async fn search_knowledge(
     let hits = mixd_core::retrieval::retrieve_knowledge(
         state.storage.as_ref(),
         &query,
-        limit.unwrap_or(10),
+        limit
+            .unwrap_or(10)
+            .min(mixd_core::retrieval::RESULT_LIMIT_MAX),
     )
     .await
     .map_err(crate::error::cmd_err)?;

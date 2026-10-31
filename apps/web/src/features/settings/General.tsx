@@ -1,6 +1,7 @@
-import { api, type Row } from "@/app/api";
+import { api } from "@/app/api";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { Button } from "@/components/button";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
@@ -10,10 +11,7 @@ import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
 
 export function General() {
   useLanguage();
-  const setting = useQuery<Row>({
-      queryKey: ["/settings"],
-      queryFn: () => api("/settings"),
-    }),
+  const setting = useSettings(),
     models = useRows("/models"),
     qc = useQueryClient();
   const [error, setError] = useState<unknown>(null),
@@ -59,7 +57,7 @@ export function General() {
             setLanguage(value);
             try {
               await api("/settings", "PUT", { ui_language: value });
-              await qc.invalidateQueries({ queryKey: ["/settings"] });
+              await qc.invalidateQueries({ queryKey: queryKeys.settings });
             } catch (cause) {
               setLanguage(previous);
               setError(cause);
@@ -84,7 +82,7 @@ export function General() {
                 setup_complete: setting.data.data.setup_complete,
               });
               setSaved(true);
-              qc.invalidateQueries({ queryKey: ["/settings"] });
+              void qc.invalidateQueries({ queryKey: queryKeys.settings });
             } catch (e) {
               setError(e);
             }

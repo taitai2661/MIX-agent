@@ -5,7 +5,6 @@
 /// which owns the selected model.
 
 import { useRef, useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
@@ -83,7 +82,7 @@ export function useAttachments(): {
     attachingRef.current = true;
     setAttaching(true);
     try {
-      const picked = await openDialog({
+      const paths = await api.pickOpenFile({
         multiple: true,
         filters: [
           {
@@ -92,7 +91,6 @@ export function useAttachments(): {
           },
         ],
       });
-      const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
       for (const path of paths) {
         try {
           const payload = await api.readAttachment(path);

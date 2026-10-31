@@ -1,6 +1,5 @@
 """Tests for the new RunCheckpoint module: cadence, payload, and resume."""
 
-import pytest
 from mix_agent.db.models import Conversation, Run, RunCheckpoint, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.runs import checkpoints
@@ -15,7 +14,13 @@ def _make_run(mode="agent", steps=0, tool_count=0, plan_steps=None, pending=None
         db.add(conversation)
         db.flush()
         policy = dict(mode_policy(mode))
-        snapshot = {"mode": mode, "policy": policy, "max_seconds": 5400, "max_steps": 300, "max_tool_calls": 750}
+        snapshot = {
+            "mode": mode,
+            "policy": policy,
+            "max_seconds": 5400,
+            "max_steps": 300,
+            "max_tool_calls": 750,
+        }
         run = Run(
             owner_id=owner,
             conversation_id=conversation.id,
@@ -23,8 +28,16 @@ def _make_run(mode="agent", steps=0, tool_count=0, plan_steps=None, pending=None
             data={
                 "snapshot": snapshot,
                 "history": [{"role": "system", "content": "sys"}, {"role": "user", "content": "do it"}],
-                "task_state": {"goal": "ship", "pending": pending or [], "plan": plan_steps or ["phase:setup"]},
-                "agent_plan": {"steps": plan_steps or ["phase:setup"], "pending": pending or [], "verification": ""},
+                "task_state": {
+                    "goal": "ship",
+                    "pending": pending or [],
+                    "plan": plan_steps or ["phase:setup"],
+                },
+                "agent_plan": {
+                    "steps": plan_steps or ["phase:setup"],
+                    "pending": pending or [],
+                    "verification": "",
+                },
                 "steps": steps,
                 "tool_count": tool_count,
                 "summary": {"text": "old summary", "covered_count": 4, "updated_at": None},
@@ -93,7 +106,12 @@ def test_apply_to_run_restores_history_and_counters(signed):
         ck_id = ck.id
 
         # Now mutate the run state to simulate progress after checkpoint.
-        run.data = {**run.data, "steps": 99, "tool_count": 50, "history": [{"role": "user", "content": "newer"}]}
+        run.data = {
+            **run.data,
+            "steps": 99,
+            "tool_count": 50,
+            "history": [{"role": "user", "content": "newer"}],
+        }
         db.commit()
 
         restored = db.get(RunCheckpoint, ck_id)
@@ -116,7 +134,9 @@ def test_apply_to_run_rejects_wrong_run(signed):
         ck = RunCheckpoint(
             owner_id=run.owner_id,
             run_id=run.id,
-            step=1, tool_count=0, trigger="manual",
+            step=1,
+            tool_count=0,
+            trigger="manual",
             data={"step": 1, "tool_count": 0},
         )
         db.add(ck)

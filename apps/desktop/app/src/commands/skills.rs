@@ -1,7 +1,7 @@
 use crate::AppState;
 use mixd_core::skills::{Skill, SkillResource, SkillService};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[derive(Serialize)]
 pub struct SkillView {
@@ -45,6 +45,7 @@ pub struct SkillImportInput {
 
 #[tauri::command]
 pub async fn import_skill(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: SkillImportInput,
 ) -> Result<SkillView, String> {
@@ -54,6 +55,14 @@ pub async fn import_skill(
             .payload
             .ok_or("payload is required for paste import")?,
         "zip" => {
+            if let Some(path) = input.path.as_deref().filter(|p| !p.trim().is_empty()) {
+                crate::commands::access::ensure_access(
+                    &app,
+                    &state,
+                    std::path::Path::new(path),
+                    "読み込む",
+                )?;
+            }
             let bytes = read_input(&input).await?;
             // Zip inflation and the directory walk are CPU / I/O heavy and
             // fully synchronous, so they run on the blocking pool instead of
@@ -71,6 +80,12 @@ pub async fn import_skill(
                 .path
                 .clone()
                 .ok_or("path is required for directory import")?;
+            crate::commands::access::ensure_access(
+                &app,
+                &state,
+                std::path::Path::new(&dir),
+                "参照",
+            )?;
             let (skill_md, extra) = tokio::task::spawn_blocking(move || {
                 crate::commands::zip_util::read_skill_dir(&dir)
             })

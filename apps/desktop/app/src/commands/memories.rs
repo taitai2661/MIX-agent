@@ -319,7 +319,9 @@ pub async fn search_memories(
     let hits = MemoryService::search_hybrid(
         state.storage.as_ref(),
         &query,
-        limit.unwrap_or(20),
+        limit
+            .unwrap_or(20)
+            .min(mixd_core::retrieval::RESULT_LIMIT_MAX),
         source.as_ref(),
     )
     .await

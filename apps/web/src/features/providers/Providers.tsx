@@ -197,9 +197,9 @@ export function Providers() {
             " 接続を確認して「モデル取得」で再試行してください。",
         );
       }
-      qc.invalidateQueries({ queryKey: ["/providers"] });
-      qc.invalidateQueries({ queryKey: ["/models"] });
-      qc.invalidateQueries({ queryKey: ["/settings"] });
+      void qc.invalidateQueries({ queryKey: ["/providers"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/settings"] });
     } catch (e) {
       setError(e);
     } finally {
@@ -222,7 +222,7 @@ export function Providers() {
               (r.auto_count || 0) +
               "件をAuto候補へ追加しました",
       );
-      qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
     } catch (e) {
       setError(e);
     } finally {
@@ -235,9 +235,9 @@ export function Providers() {
     try {
       await api("/providers/" + row.id, "DELETE");
       setNotice(t("Providerを削除しました"));
-      qc.invalidateQueries({ queryKey: ["/providers"] });
-      qc.invalidateQueries({ queryKey: ["/models"] });
-      qc.invalidateQueries({ queryKey: ["/settings"] });
+      void qc.invalidateQueries({ queryKey: ["/providers"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/settings"] });
     } catch (e) {
       setError(e);
     } finally {

@@ -1,6 +1,7 @@
 import { api, type Row } from "@/app/api";
 import { t } from "@/app/i18n";
 import { useRows } from "@/components/shared";
+import { useSettings } from "@/lib/queries";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -41,10 +42,7 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       queryFn: () => api("/tools"),
     }),
     permissionRules = useRows<PermissionRule>("/permission-rules");
-  const settings = useQuery<{ data: { default_model_id?: string } }>({
-    queryKey: ["/settings"],
-    queryFn: () => api("/settings"),
-  });
+  const settings = useSettings<{ data: { default_model_id?: string } }>();
   const [model, setModel] = useState("auto"),
     [temporaryMode, setTemporaryMode] = useState(false),
     [allowTools, setAllowTools] = useState(false),
@@ -139,8 +137,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     const revision = `${runId}:${run.data.status}`;
     if (reconciledRun.current === revision) return;
     reconciledRun.current = revision;
-    qc.invalidateQueries({ queryKey: ["messages", id] });
-    qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+    void qc.invalidateQueries({ queryKey: ["messages", id] });
+    void qc.invalidateQueries({ queryKey: ["tool-calls", id] });
   }, [id, qc, run.data, runId, streamConnected]);
   useEffect(() => {
     restoredConversation.current = undefined;
@@ -204,9 +202,13 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const currentRunMessageId = history.data?.runs?.find(
     (r) => r.id === runId,
   )?.message_id;
-  const latestUserMessageId = [...(history.data?.messages || [])]
-    .reverse()
-    .find((msg) => msg.data.role === "user")?.id;
+  const latestUserMessageId = useMemo(
+    () =>
+      [...(history.data?.messages || [])]
+        .reverse()
+        .find((msg) => msg.data.role === "user")?.id,
+    [history.data?.messages],
+  );
   const hasNoProviders =
     !providers.isLoading &&
     !providers.isError &&
@@ -214,9 +216,13 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const hasNoModels =
     !models.isLoading && !models.isError && (models.data?.length ?? 0) === 0;
   const needsProviderSetup = hasNoProviders || hasNoModels;
-  const lastUserMessage = [...(history.data?.messages || [])]
-    .reverse()
-    .find((m) => m.data.role === "user");
+  const lastUserMessage = useMemo(
+    () =>
+      [...(history.data?.messages || [])]
+        .reverse()
+        .find((m) => m.data.role === "user"),
+    [history.data?.messages],
+  );
   const { send, attach, rate, startEdit, cancelEdit, saveEdit, retryLastRun } =
     useChatActions({
       conversationId: id,
@@ -271,14 +277,14 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       decision,
     })
       .then(() => {
-        qc.invalidateQueries({ queryKey: ["tool-calls", id] });
-        qc.invalidateQueries({ queryKey: ["run", runId] });
+        void qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+        void qc.invalidateQueries({ queryKey: ["run", runId] });
       })
       .catch((e: unknown) => setError(e));
   }
   function handleBrowserChange(browserRunId: string) {
-    qc.invalidateQueries({ queryKey: ["run", runId] });
-    qc.invalidateQueries({ queryKey: ["browser-frames", browserRunId] });
+    void qc.invalidateQueries({ queryKey: ["run", runId] });
+    void qc.invalidateQueries({ queryKey: ["browser-frames", browserRunId] });
   }
   function handleAgentChange(nextAgent: string) {
     setAgent(nextAgent);
@@ -307,13 +313,13 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     );
   }
   function handleResumed() {
-    qc.invalidateQueries({ queryKey: ["run", runId] });
-    qc.invalidateQueries({ queryKey: ["tool-calls", id] });
+    void qc.invalidateQueries({ queryKey: ["run", runId] });
+    void qc.invalidateQueries({ queryKey: ["tool-calls", id] });
     setRunId("");
     setTimeout(() => setRunId(runId), 10);
   }
   function handleBudgetResolved() {
-    qc.invalidateQueries({ queryKey: ["run", runId] });
+    void qc.invalidateQueries({ queryKey: ["run", runId] });
   }
   const conversationTitle = (() => {
     const content = String(lastUserMessage?.data.content || "").trim();

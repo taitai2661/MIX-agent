@@ -5,6 +5,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -270,19 +271,40 @@ def live():
     return {"status": "ok"}
 
 
+def _metrics_client_allowed(request: Request) -> bool:
+    """Allow scrape access from loopback / private networks when untokened.
+
+    Default self-hosting binds to ``127.0.0.1`` and Prometheus usually runs on
+    the same host or Docker bridge, so those sources keep working unchanged.
+    A publicly reachable client must present ``METRICS_TOKEN``; without this a
+    deployment that exposes the port would publish counters to the internet.
+    Set ``MIX_METRICS_PUBLIC=1`` to opt back into the old behaviour.
+    """
+    if os.getenv("MIX_METRICS_PUBLIC", "").lower() in ("1", "true", "yes"):
+        return True
+    host = request.client.host if request.client else ""
+    try:
+        ip = ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
 @app.get("/metrics", response_class=PlainTextResponse)
 def prometheus_metrics(request: Request):
     """Scrape the in-process counters.
 
-    Set ``METRICS_TOKEN`` to require ``Authorization: Bearer <token>``.  It is
-    off by default for single-user self-hosting, but a deployment that exposes
-    the app beyond loopback should set it (or restrict the path in the proxy).
+    Set ``METRICS_TOKEN`` to require ``Authorization: Bearer <token>``.
+    Without a token the endpoint is limited to loopback and private-network
+    clients; ``MIX_METRICS_PUBLIC=1`` removes even that restriction.
     """
-    token = os.getenv("METRICS_TOKEN", "")
+    token = os.getenv("METRICS_TOKEN", "").strip()
     if token:
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if not secrets.compare_digest(supplied, token):
             raise APIError(401, "auth.login_required")
+    elif not _metrics_client_allowed(request):
+        raise APIError(404, "common.not_found")
     return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
 
 

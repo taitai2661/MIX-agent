@@ -1,6 +1,6 @@
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[derive(Deserialize)]
 pub struct BackupCreateInput {
@@ -20,9 +20,16 @@ pub struct BackupCreated {
 
 #[tauri::command]
 pub async fn create_backup(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: BackupCreateInput,
 ) -> Result<BackupCreated, String> {
+    crate::commands::access::ensure_access(
+        &app,
+        &state,
+        std::path::Path::new(&input.destination),
+        "書き込む",
+    )?;
     let info = mixd_storage::backup::create(
         state.storage.data_dir(),
         &input.destination,
@@ -58,9 +65,16 @@ pub struct BackupRestored {
 
 #[tauri::command]
 pub async fn restore_backup(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: BackupRestoreInput,
 ) -> Result<BackupRestored, String> {
+    crate::commands::access::ensure_access(
+        &app,
+        &state,
+        std::path::Path::new(&input.source),
+        "読み込む",
+    )?;
     let info =
         mixd_storage::backup::restore(state.storage.data_dir(), &input.source, &input.password)
             .await

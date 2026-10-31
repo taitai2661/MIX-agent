@@ -18,7 +18,7 @@ MIX-agent への改善提案、バグ報告、ドキュメント修正を歓迎�
 ## 開発とテストの流れ
 
 ### 1. 準備
-Node.js 22 以上、pnpm 10.x、Rust 1.82 以上（Desktop 版を触る場合）、Docker & Docker Compose（Docker 版を触る場合）を用意します。
+Node.js 22 以上、pnpm 10.x、Rust 1.91 以上（Desktop 版を触る場合。CI の固定ツールチェーンと合わせる）、Docker & Docker Compose（Docker 版を触る場合）を用意します。
 
 > [!TIP]
 > Rust のビルド成果物（`apps/desktop/target`）は数 GB〜30 GB 超まで育ちます。
@@ -49,8 +49,14 @@ docker compose --profile test run --rm test \
 # 型チェック（apps/server で。warning の総数も予算で監視する）
 cd apps/server && uv run python ../../scripts/check-pyright-budget.py
 
-# Web フロントエンドの lint / 整形 / テスト（カバレッジ下限付き）とビルド
+# Python の lint / 整形（リポジトリ全体。runners・deploy・scripts・tests も対象）
+# パスはリポジトリルートから渡す（per-file-ignores の glob を効かせるため）
+uv run --project apps/server ruff check apps/server runners deploy scripts tests experiments
+uv run --project apps/server ruff format --check apps/server runners deploy scripts tests experiments
+
+# Web フロントエンドの lint / 型チェック / 整形 / テスト（カバレッジ下限付き）とビルド
 pnpm web:lint
+pnpm --dir apps/web typecheck
 pnpm web:format:check
 pnpm web:test:coverage
 pnpm web:build
@@ -59,6 +65,19 @@ pnpm web:build
 pnpm --dir apps/web test:e2e
 # ビルド成果物に対して実行する場合（CI と同じ）
 E2E_SERVER=preview pnpm --dir apps/web test:e2e
+```
+
+リポジトリ全体の機械的ゲートは次のとおりです。PR を出す前にローカルでも実行できます:
+
+```sh
+python3 scripts/check-secrets.py        # コミットされた資格情報の形を検出
+python3 scripts/check-readme-parity.py  # README.md と README.en.md の構造一致
+node scripts/check-version-consistency.mjs
+python3 scripts/check-memory-parity.py
+python3 scripts/check-error-i18n.py
+python3 scripts/check-greeting-parity.py
+python3 scripts/check-browser-parity.py
+node scripts/check-release-notes.mjs --tag v0.5.4
 ```
 
 API 仕様（FastAPI ルート）を変更した場合は、`scripts/export-openapi.py` を実行して `docs/openapi.json` を更新し、`pnpm generate:api` で TypeScript 型定義を再生成してください。新しい HTTP エラーを追加した場合は、`mix_agent/api/error_codes.py` と `apps/web/src/app/errorCodes.ts` の両方に登録してください（`python3 scripts/check-error-i18n.py` が検査します）。新規コードは `HTTPException` ではなく `APIError(status, code)` を使うと、日本語文言の変更で機械可読コードが変わらなくなります。
@@ -71,8 +90,9 @@ Desktop 版を変更した場合は、以下のチェックとテストを実施
 pnpm desktop:ui:test
 pnpm desktop:ui:build
 
-# Rust クレートのチェックとテスト
-cargo check --workspace --manifest-path apps/desktop/Cargo.toml
+# Rust クレートのチェックとテスト（CI と同じ clippy / rustfmt）
+cargo clippy --workspace --all-targets --manifest-path apps/desktop/Cargo.toml -- -D warnings
+cargo fmt --all --manifest-path apps/desktop/Cargo.toml -- --check
 cargo test --workspace --manifest-path apps/desktop/Cargo.toml
 
 # （任意）デスクトップアプリのローカルビルド確認
@@ -82,8 +102,9 @@ pnpm desktop:build          # Linux の場合（AppImage + deb）
 ```
 
 ### 4. ドキュメント修正時の注意
+- `docs/` のファイルは**移動・改名しない**でください。CI・リリースワークフロー・parity 検査がパスを直接参照しています（`docs/README.md` の「配置制約」を参照）。
 - エディションに関する記述を行う際は、**Desktop 版と Docker 版のどちらに関する内容か**を明確にしてください。
-- 共通の機能（Provider 対応、モード仕様、Agent ループなど）を変更した場合は、双方の README やドキュメントへの影響を確認してください。
+- 共通の機能（Provider 対応、モード仕様、Agent ループなど）を変更した場合は、双方の README やドキュメントへの影響を確認してください。`README.md` と `README.en.md` は見出し階層・コマンド・リンク先を揃える必要があります（`scripts/check-readme-parity.py`）。
 - 未検証の環境・Provider を「動作確認済み」と記載しないでください。検証結果は [`docs/verification.md`](docs/verification.md) に追記してください。
 
 ### 5. Pull Request の作成

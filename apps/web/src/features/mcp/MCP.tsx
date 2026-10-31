@@ -316,8 +316,8 @@ export function MCP() {
                     )
                   : `導入が完了し、${toolCount}件のToolを利用できるようになりました。`,
               );
-              qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-              qc.invalidateQueries({ queryKey: ["/tools"] });
+              void qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+              void qc.invalidateQueries({ queryKey: ["/tools"] });
             } catch (caught) {
               setError(caught);
             } finally {
@@ -518,7 +518,7 @@ export function MCP() {
               );
               setOpen(false);
               setTemplate(false);
-              qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+              void qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
             } catch (e) {
               setError(e);
             }
@@ -676,8 +676,10 @@ export function MCP() {
                           ? `${result.tools.length} ${t("件のToolを確認しました")}`
                           : t("切断しました"),
                       );
-                      qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                      qc.invalidateQueries({ queryKey: ["/tools"] });
+                      void qc.invalidateQueries({
+                        queryKey: ["/mcp/connections"],
+                      });
+                      void qc.invalidateQueries({ queryKey: ["/tools"] });
                     } catch (e) {
                       setError(e);
                     }
@@ -712,7 +714,9 @@ export function MCP() {
                     try {
                       await api("/mcp/connections/" + r.id + "/update", "POST");
                       setNotice("更新を確認しました");
-                      qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+                      void qc.invalidateQueries({
+                        queryKey: ["/mcp/connections"],
+                      });
                     } catch (caught) {
                       setError(caught);
                     }
@@ -729,7 +733,9 @@ export function MCP() {
                         "/mcp/connections/" + r.id + "/reinstall",
                         "POST",
                       );
-                      qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
+                      void qc.invalidateQueries({
+                        queryKey: ["/mcp/connections"],
+                      });
                     } catch (caught) {
                       setError(caught);
                     }
@@ -750,7 +756,7 @@ export function MCP() {
                           "/mcp/connections/" + r.id + "/runtime/" + action,
                           "POST",
                         );
-                        qc.invalidateQueries({
+                        void qc.invalidateQueries({
                           queryKey: ["/mcp/connections"],
                         });
                       } catch (caught) {
@@ -788,8 +794,10 @@ export function MCP() {
                         confirm_volume: complete ? volume : "",
                       },
                     );
-                    qc.invalidateQueries({ queryKey: ["/mcp/connections"] });
-                    qc.invalidateQueries({ queryKey: ["/tools"] });
+                    void qc.invalidateQueries({
+                      queryKey: ["/mcp/connections"],
+                    });
+                    void qc.invalidateQueries({ queryKey: ["/tools"] });
                   } catch (caught) {
                     setError(caught);
                   }

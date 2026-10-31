@@ -57,8 +57,11 @@ services:
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
       # `text` (default) or `json`; see docs/operations.md.
       MIX_LOG_FORMAT: "${MIX_LOG_FORMAT:-text}"
-      # Optional: require `Authorization: Bearer <token>` on /metrics.
+      # Optional: require `Authorization: Bearer <token>` on /metrics. When
+      # unset, /metrics only answers loopback/private-network clients; set
+      # MIX_METRICS_PUBLIC=1 to publish it to any client.
       METRICS_TOKEN: "${METRICS_TOKEN:-}"
+      MIX_METRICS_PUBLIC: "${MIX_METRICS_PUBLIC:-}"
       # Read-only view of one host folder, used for AGENTS.md / CLAUDE.md and
       # for skills discovered under .mix/skills (then .claude/skills, then
       # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
@@ -237,8 +240,11 @@ services:
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
-      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
-    secrets: [test-db-password]
+      # The database is thrown away with the container (tmpfs) and is only
+      # reachable on the internal `database` network.  `trust` keeps the value
+      # out of the repository instead of committing a shared placeholder
+      # password; nothing outside this throwaway instance can use it.
+      POSTGRES_HOST_AUTH_METHOD: trust
     tmpfs: [/var/lib/postgresql/data]
     networks: [database]
     healthcheck:
@@ -250,7 +256,7 @@ services:
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
     profiles: [test]
     environment:
-      DATABASE_URL: postgresql+psycopg://mix:test-only-password@postgres-test/mix
+      DATABASE_URL: postgresql+psycopg://mix@postgres-test/mix
       MIX_DATA: /tmp/mix-tests
       MIX_KEYS: /tmp/mix-tests/keys
       PUBLIC_ORIGIN: http://testserver
@@ -266,8 +272,7 @@ services:
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
-      POSTGRES_PASSWORD_FILE: /run/secrets/test-db-password
-    secrets: [test-db-password]
+      POSTGRES_HOST_AUTH_METHOD: trust
     tmpfs: [/var/lib/postgresql/data]
     networks: [database]
     healthcheck:
@@ -280,7 +285,7 @@ services:
     profiles: [preview]
     ports: ["127.0.0.1:18080:18080"]
     environment:
-      DATABASE_URL: postgresql+psycopg://mix:test-only-password@preview-db/mix
+      DATABASE_URL: postgresql+psycopg://mix@preview-db/mix
       MIX_DATA: /tmp/mix-chat-preview
       MIX_KEYS: /tmp/mix-chat-preview/keys
       PUBLIC_ORIGIN: http://127.0.0.1:18080
@@ -313,6 +318,3 @@ volumes:
   browser-provisioner-token:
   browser-data:
 
-secrets:
-  test-db-password:
-    file: ./deploy/docker/test-db-password

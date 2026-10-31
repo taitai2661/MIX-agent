@@ -202,7 +202,8 @@ impl Session {
 
     async fn post_http_inner(&self, body: &str) -> Result<Value, McpError> {
         let url = self.config.url.clone().ok_or(McpError::MissingUrl)?;
-        let client = mixd_providers::transport::client();
+        let client = mixd_providers::transport::client()
+            .map_err(|err| McpError::Transport(err.to_string()))?;
         let mut req = client
             .post(&url)
             .header("content-type", "application/json")

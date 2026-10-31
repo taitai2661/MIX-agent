@@ -37,6 +37,9 @@ export function ErrorBox({
             type="button"
             className="error-expand"
             aria-expanded={expanded}
+            aria-label={
+              expanded ? "エラーの詳細を閉じる" : "エラーの詳細を表示"
+            }
             onClick={() => setExpanded(!expanded)}
           >
             <ChevronDown size={12} className={expanded ? "expanded" : ""} />

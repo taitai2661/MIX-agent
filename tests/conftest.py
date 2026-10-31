@@ -6,7 +6,7 @@ import pytest
 ROOT = Path("/tmp/mix-tests")
 os.environ["MIX_DATA"] = str(ROOT)
 os.environ["MIX_KEYS"] = str(ROOT / "keys")
-os.environ["DATABASE_URL"] = "postgresql+psycopg://mix:test-only-password@postgres-test/mix"
+os.environ["DATABASE_URL"] = "postgresql+psycopg://mix@postgres-test/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://testserver"
 # Point the models.dev catalog at a path that never exists so no test reaches
 # the network; individual tests override the lookup itself when they need one.

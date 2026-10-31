@@ -1,4 +1,5 @@
 import { api, setCSRF, type Row } from "@/app/api";
+import { queryKeys } from "@/lib/queries";
 import { BrowserInstallNotifier } from "@/app/browser-install-notifier";
 import { ja } from "@/app/strings";
 import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
@@ -51,7 +52,6 @@ import { ToastProvider } from "@/components/toast";
 import { Tour } from "@/components/tour";
 import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
-import { Chat } from "@/features/chat/Chat";
 import { Conversations } from "@/features/chat/Conversations";
 import type { WorkspaceSnapshot } from "@/features/chat/greeting";
 import { lazy, Suspense, useCallback } from "react";
@@ -72,6 +72,12 @@ const Schedules = lazy(() =>
 );
 const Projects = lazy(() =>
   import("@/features/projects/Projects").then((m) => ({ default: m.Projects })),
+);
+// The chat view pulls in the Markdown pipeline (react-markdown + remark), so
+// keeping it out of the boot chunk lets the shell and the auth screen paint
+// before the transcript parser is fetched.
+const Chat = lazy(() =>
+  import("@/features/chat/Chat").then((m) => ({ default: m.Chat })),
 );
 
 function useMediaQuery(query: string) {
@@ -219,7 +225,7 @@ export function App() {
       .catch(() => {
         // Keep the previous banner state; the page itself still works.
       });
-    void qc.invalidateQueries({ queryKey: ["/settings"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.settings });
     return () => {
       cancelled = true;
     };
@@ -299,10 +305,15 @@ export function App() {
       setCSRF("");
       setSessionExpired(true);
       setUser(null);
+      // Dropping the identity is not enough: React Query still holds the
+      // previous account's conversations, so a shared browser would show them
+      // for a moment after the next login. Clearing the cache here matches an
+      // explicit logout.
+      qc.clear();
     };
     window.addEventListener("mix:unauthorized", unauthorized);
     return () => window.removeEventListener("mix:unauthorized", unauthorized);
-  }, []);
+  }, [qc]);
   useEffect(() => {
     const path = location.pathname;
     const label =
@@ -415,7 +426,7 @@ export function App() {
       setError(cause);
       return;
     }
-    if (needsAdmin) navigate("/setup");
+    if (needsAdmin) void navigate("/setup");
     setNeedsAdmin(false);
   }
   if (error)
@@ -437,7 +448,7 @@ export function App() {
       />
     );
   async function newChat() {
-    navigate("/");
+    void navigate("/");
     setSidebar(false);
   }
   async function renameConversation(conversation: Row) {
@@ -470,7 +481,31 @@ export function App() {
           <MoreVertical size={17} />
         </button>
         {menuOpen && (
-          <div className="conversation-sidebar-menu" role="menu">
+          <div
+            className="conversation-sidebar-menu"
+            role="menu"
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              const items = Array.from(
+                event.currentTarget.querySelectorAll<HTMLElement>(
+                  '[role="menuitem"]',
+                ),
+              );
+              const index = items.indexOf(
+                document.activeElement as HTMLElement,
+              );
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                items[(index + 1) % items.length]?.focus();
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                items[(index - 1 + items.length) % items.length]?.focus();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setOpenConversationMenu(null);
+              }
+            }}
+          >
             <button
               role="menuitem"
               onClick={() =>
@@ -744,7 +779,7 @@ export function App() {
                     // Local dismissal still signs out the UI; the revoked
                     // session cookie makes any subsequent request 401.
                   }
-                  qc.cancelQueries();
+                  void qc.cancelQueries();
                   qc.clear();
                   setUser(null);
                 }}
@@ -900,11 +935,22 @@ export function App() {
                 if (!title.trim() || title.trim() === renameTarget.data.title)
                   return;
                 void (async () => {
-                  await api(`/conversations/${renameTarget.id}`, "PATCH", {
-                    title: title.trim(),
-                  });
-                  setOpenConversationMenu(null);
-                  await qc.invalidateQueries({ queryKey: ["/conversations"] });
+                  try {
+                    await api(`/conversations/${renameTarget.id}`, "PATCH", {
+                      title: title.trim(),
+                    });
+                    setOpenConversationMenu(null);
+                    await qc.invalidateQueries({
+                      queryKey: ["/conversations"],
+                    });
+                  } catch (cause) {
+                    // A failed rename used to be an unhandled rejection: the
+                    // dialog closed and the old title stayed with no
+                    // explanation. Surface the server's message instead.
+                    window.alert(
+                      cause instanceof Error ? cause.message : String(cause),
+                    );
+                  }
                 })();
               }}
               onCancel={() => setRenameTarget(null)}
@@ -920,9 +966,17 @@ export function App() {
                 const id = trashTarget.id;
                 setTrashTarget(null);
                 void (async () => {
-                  await api(`/conversations/${id}`, "DELETE");
-                  setOpenConversationMenu(null);
-                  await qc.invalidateQueries({ queryKey: ["/conversations"] });
+                  try {
+                    await api(`/conversations/${id}`, "DELETE");
+                    setOpenConversationMenu(null);
+                    await qc.invalidateQueries({
+                      queryKey: ["/conversations"],
+                    });
+                  } catch (cause) {
+                    window.alert(
+                      cause instanceof Error ? cause.message : String(cause),
+                    );
+                  }
                 })();
               }}
               onCancel={() => setTrashTarget(null)}

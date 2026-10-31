@@ -1,0 +1,57 @@
+# Repository-wide Ruff configuration.
+#
+# This lives at the repository root (rather than inside `apps/server`) so the
+# same rules apply to every Python surface: the server, the standalone runners,
+# the egress proxy, the Docker bootstrap script, maintainer scripts, tests and
+# experiments.  Previously only `apps/server` was linted, which let the runners
+# and deploy helpers drift.
+line-length = 110
+
+[lint]
+select = [
+  "E4",    # import errors
+  "E7",    # statement errors
+  "E9",    # runtime errors
+  "F",     # pyflakes
+  "BLE",   # blind `except Exception`
+  "S",     # bandit-style security
+  "ASYNC", # async pitfalls (blocking calls, un-awaited tasks)
+]
+ignore = [
+  "S608",  # migrations build DDL from trusted literals
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "S311"]
+# These two configure the process environment before importing the app; that
+# ordering is the point, so module-level imports after it are intentional.
+"tests/conftest.py" = ["E402"]
+"tests/fixtures/chat_preview.py" = ["E402"]
+"tests/integration/test_mcp.py" = ["ASYNC240"]
+"experiments/**" = ["S101"]
+"scripts/**" = ["S101", "S603", "S607"]
+# Runners do one-shot token reads and touch container-local tmpfs paths; both
+# flagged patterns are safe inside the read-only, network-isolated containers.
+"runners/**" = ["ASYNC240", "S108"]
+"apps/server/mix_agent/tools/execute.py" = ["ASYNC109"]  # public tool API takes a timeout
+"apps/server/mix_agent/tools/network.py" = ["ASYNC109"]
+"apps/server/mix_agent/wakeups.py" = ["ASYNC109"]
+"apps/server/mix_agent/api/routes.py" = ["E402"]  # conditional imports after helper defs
+"apps/server/mix_agent/main.py" = ["E402", "ASYNC240"]  # tiny local stat in the SPA fallback
+"apps/server/mix_agent/providers/catalog.py" = ["S101"]  # module-level catalog invariants
+
+[lint.flake8-bugbear]
+# FastAPI dependency-injection markers are idiomatic here and are treated as
+# immutable just like the broader community does; genuine mutable defaults in
+# other call sites stay flagged by B008.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.File",
+  "fastapi.Form",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.Body",
+  "fastapi.Security",
+]

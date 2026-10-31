@@ -175,12 +175,64 @@ pub async fn scan_local_runtimes(state: State<'_, AppState>) -> Result<LocalScan
 
 /// Probe one base URL the user typed, for a runtime on another machine, an
 /// unusual port, or a runtime not in the sweep table.
+///
+/// The URL is user-controlled and the backend fetches it, so it is confined to
+/// loopback/private/link-local(LAN) addresses. Without this a compromised
+/// renderer could use the app as an SSRF proxy against cloud metadata or the
+/// public internet, and the response would never be shown to the user.
 #[tauri::command]
 pub async fn probe_local_endpoint(base_url: String) -> Result<LocalRuntimeView, String> {
-    let runtime = discovery::probe_base_url_detailed(&base_url)
+    validate_local_probe(&base_url).await?;
+    let runtime = discovery::probe_base_url_detailed(base_url.trim())
         .await
         .map_err(crate::error::cmd_err)?;
     Ok(LocalRuntimeView::from(runtime))
+}
+
+fn allowed_local_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback() || v4.is_private() || v4.is_unspecified()
+            // Link-local (169.254.0.0/16) is deliberately excluded: it hosts
+            // cloud metadata endpoints and self-assigned interfaces are not a
+            // supported local-model address.
+        }
+        std::net::IpAddr::V6(v6) => {
+            // Unique-local (fc00::/7) and link-local (fe80::/10) are the IPv6
+            // equivalents of a LAN address. Written with masks rather than
+            // `is_unique_local` so the crate keeps its 1.82 MSRV.
+            let first = v6.segments()[0];
+            v6.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+async fn validate_local_probe(raw: &str) -> Result<(), String> {
+    let url = url::Url::parse(raw.trim()).map_err(|_| "URLの形式が正しくありません".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("http または https のURLを指定してください".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("URLに認証情報を含めることはできません".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "URLにホスト名がありません".to_string())?;
+    let port = url.port_or_known_default().unwrap_or(80);
+    let Ok(addrs) = tokio::net::lookup_host((host, port)).await else {
+        // A name that does not resolve cannot reach anything; let the probe
+        // report the connection failure with its own context.
+        return Ok(());
+    };
+    let resolved: Vec<_> = addrs.collect();
+    if resolved.is_empty() {
+        return Ok(());
+    }
+    if resolved.iter().all(|addr| allowed_local_ip(addr.ip())) {
+        Ok(())
+    } else {
+        Err("ローカルまたはプライベートネットワークのURLのみ指定できます".to_string())
+    }
 }
 
 #[derive(Deserialize)]

@@ -1,8 +1,4 @@
 import { useState } from "react";
-import {
-  open as openDialog,
-  save as saveDialog,
-} from "@tauri-apps/plugin-dialog";
 import { Archive, Download, FolderOpen, RefreshCw, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -60,8 +56,8 @@ export function BackupSettings() {
         // field silently had no effect. Honour it when present.
         const picked = path.trim()
           ? path.trim()
-          : await saveDialog({
-              defaultPath: "mix-agent.mixbak",
+          : await api.pickSaveFile({
+              defaultName: "mix-agent.mixbak",
               filters: [{ name: "Backup", extensions: ["mixbak"] }],
             });
         if (!picked) return;
@@ -139,11 +135,10 @@ export function BackupSettings() {
             disabled={busy}
             title={t("ファイルを選択")}
             onClick={async () => {
-              const picked = await openDialog({
-                multiple: false,
+              const picked = await api.pickOpenFile({
                 filters: [{ name: "Backup", extensions: ["mixbak"] }],
               });
-              if (typeof picked === "string") setRestorePath(picked);
+              if (picked.length > 0) setRestorePath(picked[0]);
             }}
           >
             <FolderOpen size={12} /> {t("参照")}

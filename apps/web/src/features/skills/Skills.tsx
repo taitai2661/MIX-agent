@@ -59,7 +59,7 @@ export function Skills() {
         setNotice(t("Skillを取り込みました"));
       }
       form.reset();
-      reload();
+      void reload();
     } catch (err) {
       setError(err);
     } finally {
@@ -81,7 +81,7 @@ export function Skills() {
         className="card"
         onSubmit={(e) => {
           e.preventDefault();
-          importSkill(e.currentTarget);
+          void importSkill(e.currentTarget);
         }}
       >
         <h3>
@@ -124,7 +124,7 @@ export function Skills() {
                     ": " +
                     result.imported,
                 );
-                reload();
+                void reload();
               } catch (err) {
                 setError(err);
               } finally {
@@ -154,7 +154,7 @@ export function Skills() {
               },
             );
             setEditing(null);
-            reload();
+            void reload();
           } catch (err) {
             setError(err);
           }
@@ -323,7 +323,7 @@ export function Skills() {
                   onConfirm={async () => {
                     try {
                       await api("/skills/" + skill.id, "DELETE");
-                      reload();
+                      void reload();
                     } catch (err) {
                       setError(err);
                     }

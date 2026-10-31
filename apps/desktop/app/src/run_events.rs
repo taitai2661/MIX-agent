@@ -38,9 +38,10 @@ pub async fn replay(app: &AppHandle<impl Runtime>, engine: &RunEngine, run_id: &
     engine.flush_all_events().await;
     let rows = sqlx::query(
         "SELECT run_id, sequence, kind, data, created_at FROM run_events \
-         WHERE run_id = ? ORDER BY sequence ASC",
+         WHERE run_id = ? ORDER BY sequence ASC LIMIT ?",
     )
     .bind(run_id)
+    .bind(mixd_core::runs::events::MAX_REPLAY_EVENTS)
     .fetch_all(engine.storage.pool())
     .await
     .unwrap_or_default();

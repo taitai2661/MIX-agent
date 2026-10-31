@@ -1,5 +1,6 @@
 import { t } from "@/app/i18n";
 import { api } from "@/app/api";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
@@ -23,7 +24,6 @@ import {
 import { useMemo, useState } from "react";
 
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
-import type { Row } from "@/app/api";
 
 export type PermissionValue = "allow" | "ask" | "deny";
 
@@ -145,10 +145,7 @@ export function Tools() {
       queryKey: ["/tools"],
       queryFn: () => api("/tools"),
     }),
-    settings = useQuery<Row>({
-      queryKey: ["/settings"],
-      queryFn: () => api("/settings"),
-    }),
+    settings = useSettings(),
     rules = useRows("/permission-rules"),
     agents = useRows("/agents"),
     qc = useQueryClient();
@@ -241,7 +238,7 @@ export function Tools() {
       exa_api_key: null,
       serper_api_key: null,
     });
-    await qc.invalidateQueries({ queryKey: ["/settings"] });
+    await qc.invalidateQueries({ queryKey: queryKeys.settings });
   }
   async function bulkApply(permission: PermissionValue) {
     const targets = filtered.map((item) => item.tool);

@@ -14,10 +14,7 @@ from openai import AsyncOpenAI
 
 def sse(events):
     return "".join(
-        ("event: " + e["type"] + "\n" if "type" in e else "")
-        + "data: "
-        + json.dumps(e)
-        + "\n\n"
+        ("event: " + e["type"] + "\n" if "type" in e else "") + "data: " + json.dumps(e) + "\n\n"
         for e in events
     )
 
@@ -44,14 +41,8 @@ def completion(delta, finish=None):
         ("gemini", "gemini-3-flash-preview"),
     ],
 )
-async def test_wire_options_and_native_tool_continuation(
-    monkeypatch, kind, model, mode
-):
-    settings = {
-        "_resolved_reasoning": resolve_reasoning(
-            kind, model, {"reasoning": True}, mode, {}
-        )
-    }
+async def test_wire_options_and_native_tool_continuation(monkeypatch, kind, model, mode):
+    settings = {"_resolved_reasoning": resolve_reasoning(kind, model, {"reasoning": True}, mode, {})}
     captured = []
     history = [{"role": "user", "content": "Find the answer"}]
     tools = [
@@ -195,26 +186,20 @@ async def test_wire_options_and_native_tool_continuation(
                 },
                 {"type": "message_stop"},
             ]
-        return httpx.Response(
-            200, headers={"content-type": "text/event-stream"}, text=sse(events)
-        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse(events))
 
     transport = httpx.MockTransport(handle)
     if kind in ("openai", "openrouter"):
         monkeypatch.setattr(
             adapters,
             "AsyncOpenAI",
-            lambda **kw: AsyncOpenAI(
-                **kw, http_client=httpx.AsyncClient(transport=transport)
-            ),
+            lambda **kw: AsyncOpenAI(**kw, http_client=httpx.AsyncClient(transport=transport)),
         )
     elif kind == "anthropic":
         monkeypatch.setattr(
             adapters,
             "AsyncAnthropic",
-            lambda **kw: AsyncAnthropic(
-                **kw, http_client=httpx.AsyncClient(transport=transport)
-            ),
+            lambda **kw: AsyncAnthropic(**kw, http_client=httpx.AsyncClient(transport=transport)),
         )
     else:
 
@@ -257,12 +242,8 @@ async def test_wire_options_and_native_tool_continuation(
             def models(self):
                 return self
 
-        monkeypatch.setattr(
-            adapters.genai, "Client", lambda **kw: NS(aio=GeminiClient())
-        )
-    adapter = adapters.Adapter(
-        {"kind": kind, "base_url": "https://provider.example"}, "test-key"
-    )
+        monkeypatch.setattr(adapters.genai, "Client", lambda **kw: NS(aio=GeminiClient()))
+    adapter = adapters.Adapter({"kind": kind, "base_url": "https://provider.example"}, "test-key")
     events = [e async for e in adapter.stream(model, history, tools, mode, settings)]
     assert [e["text"] for e in events if e["kind"] == "reasoning"] == ["Public summary"]
     response = next(e for e in events if e["kind"] == "response")
@@ -281,23 +262,17 @@ async def test_wire_options_and_native_tool_continuation(
         assert first["reasoning"]["enabled"] is True
         assert first["provider"]["require_parameters"] is True
         assert second["messages"][1]["reasoning_details"][0]["data"] == "signed"
-        assert "PRIVATE RAW" not in json.dumps(
-            [e for e in events if e["kind"] != "response"]
-        )
+        assert "PRIVATE RAW" not in json.dumps([e for e in events if e["kind"] != "response"])
     elif kind == "anthropic":
         if model.endswith("4-6"):
             assert first["thinking"]["type"] == "adaptive"
-            assert first["output_config"]["effort"] == (
-                "low" if mode == "chat" else "high"
-            )
+            assert first["output_config"]["effort"] == ("low" if mode == "chat" else "high")
         else:
             assert first["thinking"] == {"type": "enabled", "budget_tokens": 1024}
         assert second["messages"][1]["content"][0]["signature"] == "signed"
     else:
         if model.startswith("gemini-2.5"):
-            assert first["config"]["thinking_config"]["thinking_budget"] == (
-                -1 if mode == "chat" else 1024
-            )
+            assert first["config"]["thinking_config"]["thinking_budget"] == (-1 if mode == "chat" else 1024)
         else:
             assert first["config"]["thinking_config"]["thinking_level"] == (
                 "low" if mode == "chat" else "high"
@@ -305,9 +280,7 @@ async def test_wire_options_and_native_tool_continuation(
         assert second["contents"][1].parts[1].thought_signature == b"signed"
 
 
-@pytest.mark.parametrize(
-    "kind", ["openai", "openrouter", "compatible", "ollama", "lmstudio"]
-)
+@pytest.mark.parametrize("kind", ["openai", "openrouter", "compatible", "ollama", "lmstudio"])
 async def test_no_unverified_reasoning_parameters(monkeypatch, kind):
     captured = []
 
@@ -330,23 +303,19 @@ async def test_no_unverified_reasoning_parameters(monkeypatch, kind):
             ]
         else:
             events = [completion({"content": "hello"}, "stop")]
-        return httpx.Response(
-            200, headers={"content-type": "text/event-stream"}, text=sse(events)
-        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse(events))
 
     monkeypatch.setattr(
         adapters,
         "AsyncOpenAI",
-        lambda **kw: AsyncOpenAI(
-            **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        ),
+        lambda **kw: AsyncOpenAI(**kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle))),
     )
     settings = {"_resolved_reasoning": resolve_reasoning(kind, "test", {}, "chat", {})}
     _ = [
         e
-        async for e in adapters.Adapter(
-            {"kind": kind, "base_url": "https://example.com"}, "test"
-        ).stream("test", [], [], "chat", settings)
+        async for e in adapters.Adapter({"kind": kind, "base_url": "https://example.com"}, "test").stream(
+            "test", [], [], "chat", settings
+        )
     ]
     assert "reasoning" not in captured[0]
     assert "reasoning_effort" not in captured[0]

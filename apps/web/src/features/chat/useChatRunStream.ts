@@ -9,6 +9,9 @@ import {
   type RunStatus,
 } from "./types";
 
+/** Keep the live event list bounded; a long agent run emits thousands. */
+const MAX_LIVE_EVENTS = 2_000;
+
 export type ChatRunStreamState = {
   events: RunEvent[];
   streamText: string;
@@ -57,6 +60,14 @@ export function useChatRunStream({
   const storedRunsRef = useRef(storedRuns);
   const finishRef = useRef(onFinish);
   const lostRef = useRef(onStreamLost);
+  const pushEvent = useCallback((event: RunEvent) => {
+    setEvents((xs) => {
+      const next = [...xs, event];
+      return next.length > MAX_LIVE_EVENTS
+        ? next.slice(-MAX_LIVE_EVENTS)
+        : next;
+    });
+  }, []);
 
   useEffect(() => {
     storedRunsRef.current = storedRuns;
@@ -138,10 +149,10 @@ export function useChatRunStream({
       60 * 60 * 1000,
     );
     const invalidateMessages = () => {
-      qc.invalidateQueries({ queryKey: ["messages", conversationId] });
+      void qc.invalidateQueries({ queryKey: ["messages", conversationId] });
     };
     const invalidateRun = () => {
-      qc.invalidateQueries({ queryKey: ["run", runId] });
+      void qc.invalidateQueries({ queryKey: ["run", runId] });
     };
     const finish = () => {
       clearTimeout(watchdog);
@@ -169,11 +180,11 @@ export function useChatRunStream({
           ? reasoningBuffer.current + "\n\n"
           : "";
         flushStreamBuffers();
-        setEvents((xs) => [...xs, v]);
+        pushEvent(v);
         // A new step was committed on the server; refresh steps/budget.
         invalidateRun();
       } else {
-        setEvents((xs) => [...xs, v]);
+        pushEvent(v);
         if (v.kind === "approval") {
           invalidateRun();
         }
@@ -192,9 +203,9 @@ export function useChatRunStream({
       if (
         ["tool_started", "tool_result", "approval", "status"].includes(v.kind)
       )
-        qc.invalidateQueries({ queryKey: ["tool-calls", conversationId] });
+        void qc.invalidateQueries({ queryKey: ["tool-calls", conversationId] });
       if (v.kind === "browser_frame")
-        qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
+        void qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
       if (
         v.kind === "checkpoint_saved" ||
         v.kind === "budget_extension_requested" ||
@@ -235,11 +246,29 @@ export function useChatRunStream({
   }, [
     conversationId,
     flushStreamBuffers,
+    pushEvent,
     qc,
     resetStreamBuffers,
     runId,
     scheduleStreamFlush,
   ]);
+
+  // The run list can arrive after the effect above opened an EventSource for a
+  // Run that was already finished (opening an old conversation). Re-check when
+  // it does, and close a replay stream that has nothing to stream.
+  useEffect(() => {
+    if (!runId) return;
+    const stored = storedRuns?.find((run) => run.id === runId);
+    if (
+      stored &&
+      TERMINAL_RUN_STATUSES.includes(stored.status as RunStatus) &&
+      eventSourceRef.current
+    ) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+      setStreamConnected(false);
+    }
+  }, [runId, storedRuns]);
 
   return { events, streamText, reasoning, streamConnected };
 }

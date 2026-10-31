@@ -246,7 +246,7 @@ impl Provider for GeminiProvider {
         };
 
         let response =
-            transport::send_with_retry(transport::json_post(transport::client(), &url, &body))
+            transport::send_with_retry(transport::json_post(transport::client()?, &url, &body))
                 .await?;
 
         let sse = transport::sse_stream(response);
@@ -292,7 +292,7 @@ impl Provider for GeminiProvider {
                 .collect(),
         };
         let response =
-            transport::send_with_retry(transport::json_post(transport::client(), &url, &body))
+            transport::send_with_retry(transport::json_post(transport::client()?, &url, &body))
                 .await?;
         let parsed: GeminiBatchEmbedResponse = response
             .json()

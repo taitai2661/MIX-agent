@@ -52,16 +52,10 @@ open = "5"
 
 tauri = { version = "2.1", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2.0"
-tauri-plugin-fs = "2.0"
-# `unsafe-headers` deliberately NOT enabled: the Rust side only calls
-# `tauri_plugin_http::init()` and the UI never sends restricted headers
-# (Authorization etc.) through the plugin fetch. Re-add if that changes.
-tauri-plugin-http = "2.0"
+# Desktop notifications are delivered from Rust (`src/push.rs`) and from the
+# UI's shell-events hook, so this plugin stays registered and granted.
 tauri-plugin-notification = "2.0"
 tauri-plugin-os = "2.0"
-tauri-plugin-process = "2.0"
-tauri-plugin-shell = "2.0"
-tauri-plugin-store = "2.0"
 tauri-plugin-window-state = "2.0"
 tauri-plugin-deep-link = "2.0"
 tauri-plugin-single-instance = { version = "2.0", features = ["deep-link"] }

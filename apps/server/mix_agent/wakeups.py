@@ -7,20 +7,43 @@ asking it whether anything changed while this single-process server is idle.
 from __future__ import annotations
 
 import asyncio
+import threading
+from typing import Any
 
 
 class Wakeup:
     def __init__(self):
         self.revision = 0
         self.event: asyncio.Event = asyncio.Event()
+        # The loop that owns `event`. Commits can run on a worker thread (the
+        # message routes offload the transaction), and `Event.set()` from a
+        # foreign thread does not reliably wake a loop that is blocked.
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self._lock = threading.Lock()
 
     def bind(self):
         self.event = asyncio.Event()
+        try:
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = None
 
     def notify(self):
-        self.revision += 1
-        if self.event:
-            self.event.set()
+        with self._lock:
+            self.revision += 1
+            event = self.event
+            loop = self.loop
+        if loop is None or not loop.is_running():
+            event.set()
+            return
+        try:
+            current: Any = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if current is loop:
+            event.set()
+        else:
+            loop.call_soon_threadsafe(event.set)
 
     async def wait(self, seen: int, timeout: float | None = None) -> int:
         if self.revision != seen:

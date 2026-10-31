@@ -10,10 +10,18 @@ def test_folder_state_search_export_and_trash(signed):
     assert folder.status_code == 200
     conversation = signed.post("/api/v1/conversations", json={"title": "設計メモ"}).json()
     key = conversation["id"]
-    state = signed.patch(f"/api/v1/conversations/{key}/state", json={"folder_id": folder.json()["id"], "pinned": True})
+    state = signed.patch(
+        f"/api/v1/conversations/{key}/state", json={"folder_id": folder.json()["id"], "pinned": True}
+    )
     assert state.json()["data"]["pinned"] is True
     with SessionLocal() as db:
-        db.add(Message(owner_id=conversation_owner(db, key), conversation_id=key, data={"role": "user", "content": "検索できる本文"}))
+        db.add(
+            Message(
+                owner_id=conversation_owner(db, key),
+                conversation_id=key,
+                data={"role": "user", "content": "検索できる本文"},
+            )
+        )
         db.commit()
     assert [row["id"] for row in signed.get("/api/v1/conversations?q=本文").json()] == [key]
     markdown = signed.get(f"/api/v1/conversations/{key}/markdown")
@@ -33,7 +41,11 @@ def test_conversations_are_sorted_by_recent_activity_with_pinned_first(signed):
     recent = signed.post("/api/v1/conversations", json={"title": "新しい会話"}).json()
     pinned = signed.post("/api/v1/conversations", json={"title": "ピン留め会話"}).json()
     with SessionLocal() as db:
-        for key, timestamp in ((old["id"], "2026-09-01T01:00:00+00:00"), (recent["id"], "2026-09-01T03:00:00+00:00"), (pinned["id"], "2026-09-01T02:00:00+00:00")):
+        for key, timestamp in (
+            (old["id"], "2026-09-01T01:00:00+00:00"),
+            (recent["id"], "2026-09-01T03:00:00+00:00"),
+            (pinned["id"], "2026-09-01T02:00:00+00:00"),
+        ):
             row = db.get(Conversation, key)
             row.data = {**row.data, "last_message_at": timestamp}
         db.get(Conversation, pinned["id"]).data = {**db.get(Conversation, pinned["id"]).data, "pinned": True}

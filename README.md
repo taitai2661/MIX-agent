@@ -81,7 +81,7 @@ Docker や複雑なサーバー設定なしで、OpenCode のようにローカ�
 
 #### 2. ソースコードから起動・ビルド
 
-Rust (1.82+)、Node.js (22+)、pnpm を使用します。
+Rust (1.91+)、Node.js (22+)、pnpm を使用します。
 
 ```sh
 # 依存関係のインストール（Web / Desktop はそれぞれ独立した lockfile を使います）
@@ -176,7 +176,7 @@ docker compose up -d --build
 
 ### Docker 版のセキュリティモデル
 - **コンテナ隔離**: 実行部（Runner）は非 root、read-only rootfs、Capability 制限でコンテナ起動します。ホストや Docker Socket はマウントされません。
-- **通信制限**: Runner は内部ネットワークと egress-proxy を経由して通信し、管理者によって許可された公開ドメインへの接続のみを許可します。Private IP への接続は自動的に拒否されます。
+- **通信制限**: Runner は内部ネットワークと egress-proxy を経由して通信します。ポリシーの `mode` が `public_web`（初期値）なら公開ホスト、`restricted` なら許可ドメインとの完全一致のみ、`none` なら全拒否です。Private IP への接続は自動的に拒否されます。
 - **ネットワーク公開**: 標準では `localhost:8080` のみ公開。LAN 公開やリバースプロキシ構成時は `MIX_BIND` や `PUBLIC_ORIGIN` を適切に設定してください。
 
 ---

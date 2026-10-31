@@ -32,18 +32,17 @@ for filename, binary in (
     file = Path(filename)
     try:
         with file.open("xb") as handle:
-            handle.write(
-                secrets.token_bytes(32)
-                if binary
-                else secrets.token_urlsafe(48).encode()
-            )
+            handle.write(secrets.token_bytes(32) if binary else secrets.token_urlsafe(48).encode())
         os.chmod(file, 0o644 if filename.startswith("/db-secret") else 0o600)
         os.chown(file, 1000, 1000)
     except FileExistsError:
         pass
 policy = Path("/policy/policy.json")
 if not policy.exists():
-    policy.write_text('{"allowed_domains": []}')
+    # Explicit `mode` instead of the legacy "empty list = allow all" inference:
+    # a self-hoster sees the choice in the file and in the UI, and locking it
+    # down later (`restricted`) cannot be confused with a broken policy.
+    policy.write_text('{"mode": "public_web", "allowed_domains": []}')
     os.chown(policy, 1000, 1000)
 # An empty MCP policy means "no per-source overrides"; the global policy still
 # applies.  Creating it up front keeps a missing file distinguishable from an

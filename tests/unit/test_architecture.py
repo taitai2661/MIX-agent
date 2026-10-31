@@ -52,14 +52,31 @@ def test_route_modules_do_not_grow_unbounded():
     cluster instead of raising the number.
     """
     budgets = {
-        "routes.py": 3555,
-        "routes_auth.py": 245,
-        "routes_notifications.py": 145,
-        "routes_providers.py": 325,
-        "routes_artifacts.py": 100,
+        # Measured values at the last refactor. These are a ratchet: lower a
+        # number when a router shrinks; never raise it to make a PR pass.
+        # `routes_messages` is the largest and the next candidate to split.
+        "routes.py": 38,
+        "routes_artifacts.py": 60,
+        "routes_auth.py": 204,
+        "routes_collections.py": 242,
+        "routes_conversations.py": 431,
+        "routes_mcp.py": 464,
+        "routes_memories.py": 206,
+        "routes_messages.py": 374,
+        "routes_notifications.py": 105,
+        "routes_providers.py": 287,
+        "routes_runs.py": 538,
+        "routes_schedules.py": 137,
+        "routes_settings.py": 458,
+        "routes_skills.py": 175,
+        "routes_statistics.py": 370,
+        # Extracted from routes_messages so the router can stay a thin HTTP
+        # surface. Keep them from quietly growing back into a second monolith.
+        "message_context.py": 268,
+        "message_runs.py": 197,
     }
     offenders = {}
-    for path in API_DIR.glob("routes*.py"):
+    for path in [*API_DIR.glob("routes*.py"), *API_DIR.glob("message_*.py")]:
         lines = len(path.read_text(encoding="utf-8").splitlines())
         limit = budgets.get(path.name, 400)
         if lines > limit:

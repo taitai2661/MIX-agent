@@ -205,7 +205,6 @@ const eventSet = new Map<string, string>();
 for (const [month, day, name] of EVENTS) eventSet.set(`${month}-${day}`, name);
 
 function lookup<T>(
-  year: number,
   number: number,
   previousYear: Map<number, T>,
   currentYear: Map<number, T>,
@@ -217,7 +216,7 @@ function lookup<T>(
 export function holidayOf(date: Date): Entry | null {
   const { year, month, day } = calendarDate(date);
   const number = dayNumber(year, month, day);
-  return lookup(year, number, holidaysOfYear(year - 1), holidaysOfYear(year));
+  return lookup(number, holidaysOfYear(year - 1), holidaysOfYear(year));
 }
 
 /** その日の季節の行事（祝日と重ならない日のみ）。 */

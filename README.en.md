@@ -81,7 +81,7 @@ After downloading, verify the file against the `SHA256SUMS` asset attached to th
 
 #### 2. Run / Build from Source
 
-Requires Rust (1.82+), Node.js (22+), and pnpm.
+Requires Rust (1.91+), Node.js (22+), and pnpm.
 
 ```sh
 # Install dependencies (Web and Desktop keep separate lockfiles)
@@ -176,7 +176,7 @@ Security and isolation models differ by edition:
 
 ### Docker Edition Security Model
 - **Container Isolation**: Execution runners run non-root with read-only root filesystems, dropped capabilities, and memory limits. Neither the host root nor the Docker socket are mounted.
-- **Network Egress Proxy**: Runners connect exclusively through an egress proxy enforcing strict destination allowlists. Private IP ranges are blocked by default.
+- **Network Egress Proxy**: Runners connect exclusively through an egress proxy. Its `mode` is `public_web` (default: any public host), `restricted` (exact allowlist matches only) or `none` (deny all); private IP ranges are blocked in every mode.
 - **Network Binding**: Listens on `localhost:8080` by default. Use `MIX_BIND` and `PUBLIC_ORIGIN` behind HTTPS reverse proxies for LAN/VPN setups.
 
 ---

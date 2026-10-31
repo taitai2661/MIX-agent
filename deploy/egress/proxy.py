@@ -1,8 +1,9 @@
 """Minimal HTTP CONNECT/forward gateway. Exact-host ACL, public-IP validation and DNS pinning.
 
 Policy files fail closed: an unreadable or corrupt policy denies traffic rather
-than silently re-enabling unrestricted egress (where an empty allow-list means
-allow-all).
+than silently re-enabling unrestricted egress.  The policy `mode` states intent
+explicitly (`public_web`, `restricted`, `none`); legacy files without `mode` are
+still honoured, but the inference is logged.
 """
 
 import asyncio
@@ -46,9 +47,55 @@ def load_policy(path, *, required=True):
         return {"unreadable": True}
 
 
+POLICY_MODES = ("public_web", "restricted", "none")
+
+
 def host_allowed(host, allowed_domains):
     """An empty list means unrestricted public egress; otherwise use exact matches."""
     return not allowed_domains or host in allowed_domains
+
+
+def normalize_domains(values):
+    return [value.lower().rstrip(".") for value in values or [] if isinstance(value, str)]
+
+
+def host_permitted(mode, host, allowed_domains):
+    """Whether ``host`` may be reached under a resolved policy mode."""
+    if mode == "public_web":
+        return True
+    return mode == "restricted" and host in allowed_domains
+
+
+def resolve_policy(policy, source_policy=None):
+    """Resolve the effective ``(mode, allowed_domains)`` for one request source.
+
+    ``mode`` is explicit whenever the policy file says so:
+
+    * ``public_web``  — any public host is reachable (still no private IPs).
+    * ``restricted``  — only exact hosts in ``allowed_domains``; an empty list
+      therefore denies everything.
+    * ``none``        — deny all egress.
+
+    Older policy files have no ``mode`` key.  Their implicit behaviour is kept
+    (empty list = ``public_web``, non-empty = ``restricted``) so an upgrade
+    cannot silently cut off a working deployment, but the inference is logged
+    because it is exactly the ambiguity that makes "empty list" unsafe.
+    """
+    source = source_policy or {}
+    raw_mode = source.get("mode") or policy.get("mode")
+    domains = source.get("allowed_domains")
+    if domains is None:
+        domains = policy.get("allowed_domains", [])
+    domains = normalize_domains(domains)
+    if raw_mode in POLICY_MODES:
+        return raw_mode, domains
+    inferred = "public_web" if not domains else "restricted"
+    logger.warning(
+        "egress policy has no `mode`; inferring %r from %d allowed domain(s)",
+        inferred,
+        len(domains),
+    )
+    return inferred, domains
 
 
 async def transfer(reader, writer):
@@ -86,9 +133,9 @@ async def handle(reader, writer):
         if policy.get("unreadable") or mcp_policy.get("unreadable"):
             raise ValueError()
         source_policy = mcp_policy.get("source_policies", {}).get(source_ip)
-        mode = source_policy.get("mode") if source_policy else "public_web"
-        allowed_domains = source_policy.get("allowed_domains", []) if source_policy else policy.get("allowed_domains", [])
-        if mode == "none" or not host_allowed(host, allowed_domains) or port not in (80, 443):
+        mode, allowed_domains = resolve_policy(policy, source_policy)
+        allowed = host_permitted(mode, host, allowed_domains)
+        if not allowed or port not in (80, 443):
             logger.info(
                 "denied %s -> %s:%d (mode=%s, domains=%s)", source_ip, host, port, mode, allowed_domains
             )
@@ -128,9 +175,7 @@ async def handle(reader, writer):
     except Exception as exc:  # noqa: BLE001 - transport boundary; respond and log
         logger.info("request failed from %s to %s: %s", source_ip, target, type(exc).__name__)
         if not writer.is_closing():
-            writer.write(
-                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            )
+            writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     finally:
         writer.close()
         if upstream:
@@ -138,8 +183,15 @@ async def handle(reader, writer):
 
 
 async def main():
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    server = await asyncio.start_server(handle, "0.0.0.0", 3128, limit=MAX_HEADER)
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
+    server = await asyncio.start_server(
+        handle,
+        "0.0.0.0",  # noqa: S104 - the proxy must be reachable from sibling containers
+        3128,
+        limit=MAX_HEADER,
+    )
     async with server:
         await server.serve_forever()
 

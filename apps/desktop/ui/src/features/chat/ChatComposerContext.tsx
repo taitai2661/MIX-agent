@@ -19,7 +19,6 @@ import {
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import {
@@ -116,8 +115,8 @@ export function ChatComposerProvider({ children }: { children: ReactNode }) {
     async (name: string) => {
       // Folder-first: every project is rooted at a directory, so pick one
       // before creating. Cancelling the picker aborts and returns null.
-      const path = await openDialog({ directory: true, multiple: false });
-      if (typeof path !== "string" || !path) return null;
+      const path = await api.pickFolder();
+      if (!path) return null;
       const created = await api.createProject({
         name: name.trim(),
         instructions: "",

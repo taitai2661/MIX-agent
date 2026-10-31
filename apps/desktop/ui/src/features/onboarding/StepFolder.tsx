@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Folder } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
@@ -58,8 +57,8 @@ export function StepFolder({
   const pickFolder = async () => {
     // Cancelling the picker leaves the step as it was rather than clearing it —
     // the dialog returning `null` is a "never mind", not a "clear it".
-    const path = await openDialog({ directory: true, multiple: false });
-    if (typeof path === "string" && path) {
+    const path = await api.pickFolder();
+    if (path) {
       setRoot(path);
       setError(null);
     }

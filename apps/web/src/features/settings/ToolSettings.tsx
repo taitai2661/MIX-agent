@@ -1,6 +1,7 @@
 import { t } from "@/app/i18n";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Row } from "@/app/api";
+import { queryKeys } from "@/lib/queries";
 import { Button } from "@/components/button";
 import { ErrorBox, Field, Title } from "@/components/shared";
 import { useState } from "react";
@@ -8,7 +9,7 @@ import { Link } from "react-router-dom";
 
 function useSettings() {
   return useQuery<Row>({
-    queryKey: ["/settings"],
+    queryKey: queryKeys.settings,
     queryFn: () => api("/settings"),
     refetchInterval: (query) =>
       query.state.data?.data.browser_install_status === "installing"
@@ -38,7 +39,7 @@ export function BrowserSettings() {
     try {
       await api("/browser/enable", "POST");
       await api("/browser/install", "POST");
-      await qc.invalidateQueries({ queryKey: ["/settings"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.settings });
     } catch (e) {
       setError(e);
     } finally {
@@ -50,7 +51,7 @@ export function BrowserSettings() {
     setError(null);
     try {
       await api("/browser/update", "POST");
-      await qc.invalidateQueries({ queryKey: ["/settings"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.settings });
     } catch (e) {
       setError(e);
     } finally {
@@ -80,7 +81,7 @@ export function BrowserSettings() {
           const form = new FormData(event.currentTarget);
           try {
             await api("/settings", "PUT", payload(form));
-            await qc.invalidateQueries({ queryKey: ["/settings"] });
+            await qc.invalidateQueries({ queryKey: queryKeys.settings });
           } catch (e) {
             setError(e);
           }
@@ -279,7 +280,7 @@ export function WebSearchSettings() {
           const form = new FormData(event.currentTarget);
           try {
             await api("/settings", "PUT", payload(form));
-            await qc.invalidateQueries({ queryKey: ["/settings"] });
+            await qc.invalidateQueries({ queryKey: queryKeys.settings });
           } catch (e) {
             setError(e);
           }

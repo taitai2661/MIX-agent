@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import shutil
 import subprocess
@@ -41,9 +42,7 @@ def test_backup_tampering_and_password():
         unseal(blob[:-1] + bytes([blob[-1] ^ 1]), "backup-passphrase")
 
 
-@pytest.mark.parametrize(
-    "path", ["../secret", "/etc/passwd", "/workspace/../keys", "/var/run/docker.sock"]
-)
+@pytest.mark.parametrize("path", ["../secret", "/etc/passwd", "/workspace/../keys", "/var/run/docker.sock"])
 def test_path_escape(path):
     with pytest.raises(ValueError):
         runner.parts(path)
@@ -75,27 +74,29 @@ async def test_workspace_check_accepts_only_fixed_checks(tmp_path, monkeypatch):
     (tmp_path / "invalid.py").write_text("answer = (\n")
     with pytest.raises(SyntaxError):
         await runner.workspace_check({"kind": "python_syntax", "path": "invalid.py"})
-    for args in ({"kind": "python_syntax", "path": "../secret.py"},
-                 {"kind": "git_status; touch bad"},
-                 {"kind": "git_diff_check", "path": "valid.py"}):
+    for args in (
+        {"kind": "python_syntax", "path": "../secret.py"},
+        {"kind": "git_status; touch bad"},
+        {"kind": "git_diff_check", "path": "valid.py"},
+    ):
         with pytest.raises((ValueError, OSError)):
             await runner.workspace_check(args)
     assert not (tmp_path / "bad").exists()
 
 
 async def test_workspace_git_checks_are_read_only(tmp_path, monkeypatch):
-    if shutil.which("git") is None:
+    git = shutil.which("git")
+    if git is None:
         pytest.skip("Git is installed in the execution image, not the test image")
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    # Fixed argv (no shell); run off the event loop so the check does not block it.
+    await asyncio.to_thread(subprocess.run, [git, "init", "-q", str(tmp_path)], check=True)  # noqa: S603
     monkeypatch.setattr(runner, "ROOT", tmp_path)
     assert (await runner.workspace_check({"kind": "git_status"}))["ok"]
     assert (await runner.workspace_check({"kind": "git_diff_check"}))["ok"]
     assert not (tmp_path / ".git" / "index.lock").exists()
 
 
-@pytest.mark.parametrize(
-    "name", ["../escape", "/etc/passwd", "x/../../escape", "x\\escape"]
-)
+@pytest.mark.parametrize("name", ["../escape", "/etc/passwd", "x/../../escape", "x\\escape"])
 def test_backup_path_traversal(name):
     with pytest.raises(ValueError):
         snapshots.validate_snapshot({"files": {name: "aGk="}})
@@ -217,16 +218,9 @@ def test_setup_only_once_and_csrf(signed):
         ).status_code
         == 409
     )
+    assert signed.post("/api/v1/conversations", json={}, headers={"x-csrf-token": "wrong"}).status_code == 403
     assert (
-        signed.post(
-            "/api/v1/conversations", json={}, headers={"x-csrf-token": "wrong"}
-        ).status_code
-        == 403
-    )
-    assert (
-        signed.post(
-            "/api/v1/conversations", json={}, headers={"origin": "https://evil.example"}
-        ).status_code
+        signed.post("/api/v1/conversations", json={}, headers={"origin": "https://evil.example"}).status_code
         == 403
     )
     assert signed.post("/api/v1/conversations", json={}).status_code == 200
@@ -272,7 +266,11 @@ def test_hostname_origin_matching_request_destination_is_allowed(client, headers
         {"host": "192.168.1.24:8080", "origin": "http://192.168.1.24:8081"},
         {"host": "192.168.1.24:8080", "origin": "https://192.168.1.24:8080"},
         {"host": "8.8.8.8:8080", "origin": "http://8.8.8.8:8080"},
-        {"host": "192.168.1.24:8080", "origin": "http://192.168.1.24:8080", "x-forwarded-host": "example.test"},
+        {
+            "host": "192.168.1.24:8080",
+            "origin": "http://192.168.1.24:8080",
+            "x-forwarded-host": "example.test",
+        },
         {"host": "localhost:8080", "origin": "http://localhost:5173"},
         {"host": "localhost:8080", "origin": "http://127.0.0.1:8081"},
     ],
@@ -288,9 +286,7 @@ def test_direct_origin_rejects_mismatched_public_or_forwarded_hosts(client, head
 
 def test_unauthorized_and_validation_redaction(client):
     assert client.get("/api/v1/providers").status_code == 401
-    result = client.post(
-        "/api/v1/setup/admin", json={"username": "x", "password": "secret"}
-    )
+    result = client.post("/api/v1/setup/admin", json={"username": "x", "password": "secret"})
     assert result.status_code == 422
     assert '"input"' not in result.text
     assert "secret" not in result.text

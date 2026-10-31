@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from starlette.concurrency import run_in_threadpool
 
 from mix_agent import config
 from mix_agent.api.common import (
@@ -114,6 +115,25 @@ def list_checkpoints(key: str, ctx=Depends(context)):
     return {"checkpoints": run_checkpoints.list_for_run(db, run.id)}
 
 
+def _poll_run_events(run_id: str, cursor: int):
+    """Read one SSE page off the event loop.
+
+    The stream polls while a run is live; a synchronous SQLAlchemy session in
+    an `async def` generator would block every other request on the single
+    uvicorn worker for the duration of the query.
+    """
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(Event.sequence, Event.kind, Event.data)
+            .where(Event.run_id == run_id, Event.sequence > cursor)
+            .order_by(Event.sequence)
+            .limit(200)
+        ).all()
+        run = session.get(Run, run_id)
+        status = run.status if run else None
+    return [(sequence, kind, data) for sequence, kind, data in rows], status
+
+
 @router.get("/runs/{key}/events")
 async def run_events(key: str, request: Request, after: int = 0):
     # Authenticate with a short-lived session.  Keeping the request-scoped
@@ -133,28 +153,18 @@ async def run_events(key: str, request: Request, after: int = 0):
     async def stream():
         nonlocal cursor
         while not await request.is_disconnected():
-            with SessionLocal() as session:
-                events = list(
-                    session.scalars(
-                        select(Event)
-                        .where(Event.run_id == key, Event.sequence > cursor)
-                        .order_by(Event.sequence)
-                        .limit(200)
-                    )
-                )
-                run = session.get(Run, key)
-                # The run can be deleted between the authenticated request and
-                # this poll; end the stream instead of dereferencing None.
-                if run is None:
-                    yield "event: done\ndata: {}\n\n"
-                    return
-                status = run.status
-                for event in events:
-                    cursor = event.sequence
-                    yield f"id: {cursor}\nevent: activity\ndata: {json.dumps({'kind': event.kind, **event.data}, ensure_ascii=False)}\n\n"
-                if status in ("completed", "failed", "cancelled", "interrupted") and len(events) < 200:
-                    yield "event: done\ndata: {}\n\n"
-                    return
+            events, status = await run_in_threadpool(_poll_run_events, key, cursor)
+            # The run can be deleted between the authenticated request and
+            # this poll; end the stream instead of dereferencing None.
+            if status is None:
+                yield "event: done\ndata: {}\n\n"
+                return
+            for sequence, kind, data in events:
+                cursor = sequence
+                yield f"id: {cursor}\nevent: activity\ndata: {json.dumps({'kind': kind, **data}, ensure_ascii=False)}\n\n"
+            if status in ("completed", "failed", "cancelled", "interrupted") and len(events) < 200:
+                yield "event: done\ndata: {}\n\n"
+                return
             # Keep proxies from closing an idle SSE stream without polling the DB.
             seen = wakeup.revision
             changed = await wakeup.wait(seen, timeout=15)

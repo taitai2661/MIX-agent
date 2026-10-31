@@ -117,8 +117,21 @@ impl VerificationLedger {
         let Some(reason) = destructive_reason(tool, args) else {
             return false;
         };
-        self.outstanding
-            .insert(effect_key(tool, args), reason.clone());
+        // A batch `edit` carries its targets in `edits`, not in `path`. Keying
+        // the whole call on `path` produced one `path:` (empty) entry, which
+        // reading either file could never clear — the run then failed
+        // verification no matter how correct the edit was. Arm every target so
+        // a confirming read clears exactly what it covers.
+        let targets = mutated_paths(tool, args);
+        if targets.is_empty() {
+            self.outstanding
+                .insert(effect_key(tool, args), reason.clone());
+        } else {
+            for path in targets {
+                self.outstanding
+                    .insert(format!("path:{path}"), reason.clone());
+            }
+        }
         self.last_reason = Some(reason);
         true
     }
@@ -493,6 +506,37 @@ mod tests {
         assert!(shell_destructive_reason("./perform_checks.sh").is_none());
         // fd duplication is not a file write.
         assert!(shell_destructive_reason("make 2>&1 | tail -n 20").is_none());
+    }
+
+    #[test]
+    fn a_batch_edit_arms_every_target_not_one_empty_path() {
+        let mut ledger = VerificationLedger::default();
+        assert!(ledger.requires_confirmation(
+            "edit",
+            &args(serde_json::json!({
+                "edits": [
+                    {"path": "src/a.rs", "old_string": "a", "new_string": "b"},
+                    {"path": "src/b.rs", "old_string": "c", "new_string": "d"}
+                ]
+            }))
+        ));
+        assert_eq!(
+            ledger.outstanding(),
+            vec!["path:src/a.rs".to_string(), "path:src/b.rs".to_string()]
+        );
+
+        // Reading one target leaves the other outstanding; the old keying
+        // stored `path:` and neither read could ever clear it.
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "src/a.rs"})),
+        );
+        assert_eq!(ledger.outstanding(), vec!["path:src/b.rs".to_string()]);
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "src/b.rs"})),
+        );
+        assert!(!ledger.is_blocked());
     }
 
     #[test]

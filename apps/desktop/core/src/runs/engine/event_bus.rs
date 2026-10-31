@@ -197,16 +197,22 @@ impl RunEngine {
         if batch.is_empty() {
             return;
         }
-        if let Err(err) = self.insert_events(batch).await {
+        // A long answer is thousands of `text` deltas. Storing one row per
+        // token made `run_events` grow without bound and made opening an old
+        // run read (and re-render) every token; merging adjacent deltas keeps
+        // the replay identical while cutting the row count by up to the flush
+        // batch size. Structural events are never merged.
+        let batch = coalesce_stream_events(batch);
+        if let Err(err) = self.insert_events(&batch).await {
             tracing::warn!(
                 %run_id,
                 %err,
                 "batched run event insert failed; falling back to row by row"
             );
-            for evt in batch {
+            for evt in &batch {
                 if let Err(err) = self.persist_event(evt).await {
                     tracing::error!(
-                        %run_id,
+                        run = %run_id,
                         sequence = evt.sequence,
                         kind = %evt.kind,
                         %err,
@@ -253,5 +259,101 @@ impl RunEngine {
         .execute(self.storage.pool())
         .await?;
         Ok(())
+    }
+}
+
+/// Keep a merged stream row below this so one pathological turn cannot create
+/// a single multi-megabyte JSON blob.
+const MAX_COALESCED_STREAM_BYTES: usize = 64 * 1024;
+
+/// Merge adjacent `text` / `reasoning` deltas into one persisted row.
+///
+/// The reducer appends `data.delta` strings in sequence order, so merging is
+/// invisible on replay. Non-stream events and a change of kind always break the
+/// run, which preserves the original ordering around tool calls.
+fn coalesce_stream_events(batch: &[RunEvent]) -> Vec<RunEvent> {
+    let mut out: Vec<RunEvent> = Vec::with_capacity(batch.len());
+    for evt in batch {
+        if matches!(evt.kind.as_str(), "text" | "reasoning") {
+            if let Some(prev) = out.last_mut() {
+                if prev.kind == evt.kind && prev.run_id == evt.run_id {
+                    let before = prev
+                        .data
+                        .get("delta")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    let next = evt
+                        .data
+                        .get("delta")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    let merged_len = before.len() + next.len();
+                    if merged_len <= MAX_COALESCED_STREAM_BYTES {
+                        prev.data = serde_json::json!({
+                            "delta": format!("{before}{next}")
+                        });
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(evt.clone());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn event(sequence: i64, kind: &str, delta: &str) -> RunEvent {
+        RunEvent {
+            run_id: Uuid::new_v4(),
+            sequence,
+            kind: kind.to_string(),
+            data: serde_json::json!({ "delta": delta }),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn adjacent_stream_deltas_merge_and_keep_the_first_sequence() {
+        let run = Uuid::new_v4();
+        let mut first = event(1, "text", "Hello");
+        first.run_id = run;
+        let mut second = event(2, "text", " world");
+        second.run_id = run;
+        let merged = coalesce_stream_events(&[first, second]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].sequence, 1);
+        assert_eq!(merged[0].data["delta"], "Hello world");
+    }
+
+    #[test]
+    fn a_structural_event_breaks_the_merge() {
+        let run = Uuid::new_v4();
+        let mut text = event(1, "text", "before");
+        text.run_id = run;
+        let mut tool = event(2, "tool_started", "");
+        tool.run_id = run;
+        tool.data = serde_json::json!({ "tool_call_id": "t1" });
+        let mut after = event(3, "text", "after");
+        after.run_id = run;
+        let merged = coalesce_stream_events(&[text, tool, after]);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].data["delta"], "before");
+        assert_eq!(merged[2].data["delta"], "after");
+    }
+
+    #[test]
+    fn different_stream_kinds_do_not_merge() {
+        let run = Uuid::new_v4();
+        let mut text = event(1, "text", "answer");
+        text.run_id = run;
+        let mut reasoning = event(2, "reasoning", "thought");
+        reasoning.run_id = run;
+        let merged = coalesce_stream_events(&[text, reasoning]);
+        assert_eq!(merged.len(), 2);
     }
 }

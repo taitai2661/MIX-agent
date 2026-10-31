@@ -60,13 +60,22 @@ def test_password_change_requires_current_password_and_rotates_csrf(signed):
     signed.headers["x-csrf-token"] = changed.json()["csrf"]
     assert signed.get("/api/v1/auth/me").status_code == 200
     signed.post("/api/v1/auth/logout")
-    assert signed.post("/api/v1/auth/login", json={"username": "tester", "password": "new-password-12345"}).status_code == 200
+    assert (
+        signed.post(
+            "/api/v1/auth/login", json={"username": "tester", "password": "new-password-12345"}
+        ).status_code
+        == 200
+    )
 
 
 def test_password_change_can_revoke_every_session(signed):
     result = signed.post(
         "/api/v1/auth/password",
-        json={"current_password": "test-password-12345", "new_password": "new-password-12345", "revoke_all_sessions": True},
+        json={
+            "current_password": "test-password-12345",
+            "new_password": "new-password-12345",
+            "revoke_all_sessions": True,
+        },
     )
     assert result.status_code == 200
     assert result.json()["relogin_required"] is True
@@ -114,5 +123,7 @@ def test_session_revocation_and_login_history_keep_only_safe_recent_events(signe
 def test_account_endpoints_require_authentication_and_csrf(signed):
     anonymous = TestClient(app)
     assert anonymous.post("/api/v1/auth/sessions/revoke", json={"scope": "all"}).status_code == 401
-    result = signed.post("/api/v1/auth/sessions/revoke", json={"scope": "others"}, headers={"x-csrf-token": "wrong"})
+    result = signed.post(
+        "/api/v1/auth/sessions/revoke", json={"scope": "others"}, headers={"x-csrf-token": "wrong"}
+    )
     assert result.status_code == 403

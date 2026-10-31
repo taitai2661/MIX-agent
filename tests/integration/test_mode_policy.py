@@ -59,5 +59,9 @@ def test_workspace_check_is_fixed_and_allowed_but_terminal_still_asks():
     tools = {tool["id"]: tool for tool in BUILTINS}
     check = tools["workspace_check"]
     assert check["default_permission"] == "allow"
-    assert check["input_schema"]["properties"]["kind"]["enum"] == ["git_status", "git_diff_check", "python_syntax"]
+    assert check["input_schema"]["properties"]["kind"]["enum"] == [
+        "git_status",
+        "git_diff_check",
+        "python_syntax",
+    ]
     assert tools["run_terminal"]["default_permission"] == "ask"

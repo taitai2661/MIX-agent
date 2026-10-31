@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   ChevronLeft,
   FileText,
@@ -133,15 +132,15 @@ export function ProjectsPane() {
   });
 
   const pickFolder = async () => {
-    const path = await openDialog({ directory: true, multiple: false });
-    if (typeof path === "string" && path) {
+    const path = await api.pickFolder();
+    if (path) {
       update.mutate({ rootPath: path });
     }
   };
 
   const pickDraftFolder = async () => {
-    const path = await openDialog({ directory: true, multiple: false });
-    if (typeof path === "string" && path) setDraftRoot(path);
+    const path = await api.pickFolder();
+    if (path) setDraftRoot(path);
   };
 
   const newChatInProject = async () => {

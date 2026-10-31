@@ -387,3 +387,23 @@ describe("automatic 4-retry mechanism", () => {
     expect(callCount).toBe(2);
   });
 });
+
+describe("success bodies", () => {
+  it("returns undefined for a 204 without trying to parse JSON", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 204, text: async () => "" });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api("/conversations/abc", "DELETE")).resolves.toBeUndefined();
+  });
+
+  it("accepts an empty 200 body", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api("/settings", "PUT", {})).resolves.toBeUndefined();
+  });
+});

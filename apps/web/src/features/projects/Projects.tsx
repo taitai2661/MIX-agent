@@ -6,7 +6,7 @@ import { CardSkeleton } from "@/components/loading";
 import { Empty, ErrorBox, Title } from "@/components/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 type Project = Row & {
   data: { name: string; instructions: string; sources: string[] };
@@ -17,6 +17,7 @@ type Conversation = Row & {
 
 export function Projects() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const projects = useQuery<Project[]>({
     queryKey: ["/projects"],
@@ -149,7 +150,9 @@ export function Projects() {
             variant="outline"
             disabled={!source.trim() || project.data.sources.length >= 20}
             onClick={() => {
-              update({ sources: [...project.data.sources, source.trim()] });
+              void update({
+                sources: [...project.data.sources, source.trim()],
+              });
               setSource("");
             }}
           >
@@ -173,7 +176,7 @@ export function Projects() {
                 await api(`/projects/${project.id}`, "DELETE");
                 await qc.invalidateQueries({ queryKey: ["/projects"] });
                 await qc.invalidateQueries({ queryKey: ["/conversations"] });
-                window.location.href = "/projects";
+                void navigate("/projects");
               } catch (cause) {
                 setError(cause);
               }

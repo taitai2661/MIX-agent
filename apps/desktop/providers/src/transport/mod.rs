@@ -22,16 +22,20 @@ use crate::reliability::{self, ProviderErrorKind};
 /// cover the body read and kill a long-lived SSE stream, while `read_timeout`
 /// only fires when the peer stops sending mid-stream. Callers that need a hard
 /// deadline (health probes, token exchange) set `.timeout()` on their request.
-pub fn client() -> &'static Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
+pub fn client() -> anyhow::Result<&'static Client> {
+    // A TLS/crypto-provider failure is a real possibility on a stripped-down
+    // Linux install. Returning it lets the provider report "no HTTPS support"
+    // instead of aborting the whole app from inside a `get_or_init`.
+    static CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+    let built = CLIENT.get_or_init(|| {
         Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(120))
             .pool_max_idle_per_host(4)
             .build()
-            .expect("reqwest TLS backend")
-    })
+            .map_err(|err| format!("could not initialise the HTTP client: {err}"))
+    });
+    built.as_ref().map_err(|err| anyhow::anyhow!(err.clone()))
 }
 
 /// Send a request, retrying transient failures.

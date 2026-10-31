@@ -83,7 +83,7 @@ export function Agents() {
                 },
               );
               setOpen(false);
-              qc.invalidateQueries({ queryKey: ["/agents"] });
+              void qc.invalidateQueries({ queryKey: ["/agents"] });
             } catch (e) {
               setError(e);
             }

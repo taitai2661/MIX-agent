@@ -180,6 +180,17 @@ export function ChatTranscript({
           onBudgetResolved={onBudgetResolved}
         />
       </div>
+      {/* Streaming text is otherwise silent for screen readers: the transcript
+          re-renders visually but nothing is announced. A polite region keeps it
+          from interrupting navigation, and the tail bounds how much is read. */}
+      <span
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="false"
+      >
+        {active ? streamText.slice(-500) : ""}
+      </span>
       {!atBottom && (
         <button
           type="button"

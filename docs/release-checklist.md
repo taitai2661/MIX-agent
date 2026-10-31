@@ -23,13 +23,15 @@
 公開前にチェックする点:
 
 - `LICENSE`、`NOTICE` とアイコンのライセンス情報が残っている。
-- API key、パスワード、個人データ、開発機の生成物が含まれていない。
+- API key、パスワード、個人データ、開発機の生成物が含まれていない。`scripts/check-secrets.py` と `repo-hygiene` ジョブが成功している。
+- `dependency-audit` が成功し、Python 依存の CycloneDX SBOM（`sbom-python` artifact）が生成されている。
 - 設定ファイル・README・Releaseノートに非公開の作業用リポジトリへの参照が含まれていない。
 - ZimaOSの既存手動導入からストア導入へのデータ引き継ぎは自動ではない。ガイドのバックアップ・復元説明を維持する。
 - `apps/MIX-agent/docker-compose.yml`の`x-casaos.version`がReleaseタグと一致している。v2/v1ストアは`scripts/stage-store-source.sh`で同じファイルから生成する。
 - Desktop版は署名付き自動更新を提供する。秘密鍵はRepository Secretsの`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`のみに置き、リポジトリや生成物へ含めない。公開鍵は`tauri.conf.json`に埋め込む。鍵のオフラインバックアップをリポジトリ外に保管する。
 - `latest.json`の4プラットフォーム（`darwin-aarch64` / `darwin-x86_64` / `windows-x86_64` / `linux-x86_64`）すべてにURLと`.sig`の内容が入っていることを確認する。1つでも欠けるとTauriはマニフェスト全体を無効とみなす。
 - `desktop-release`の`Verify tag matches app version`が成功し、タグと各manifestのバージョンが一致している。
+- `Release notes are present and publishable`（`scripts/check-release-notes.mjs`）が成功している。`docs/release-notes-vX.Y.Z.md` が無い、または「未公開ドラフト」と書かれたままのタグは公開できません。
 - `desktop-rust (windows-latest)`と`desktop-package-windows`が成功し、NSIS/MSIのビルドが通っている。WindowsのPTYテスト2件は既知のConPTY制約として`#[cfg_attr(windows, ignore)]`でスキップされるため、Windows実機で手動確認する（`docs/verification.md`参照）。
 - `apps/desktop/browser/src/chromium-manifest.json` の `version` / `sha256` / `size` が、実際に配布する Chrome for Testing の zip と一致している。`pnpm chromium:pin` の差分をレビューし、リリース前に各プラットフォームで初回インストールを確認する。`desktop-release` の `verify-chromium-pin` が成功していること。
 - 初回インストールが失敗した場合に、システムの Chromium / Chrome / Edge へフォールバックできる。オフライン環境向けの手動配置手順がリリースノートにある。

@@ -161,7 +161,7 @@ export function useChatActions({
       if (conversationId !== conversation) navigate("/chat/" + conversation);
       else {
         setRunId(r.run_id);
-        queryClient.invalidateQueries({
+        void queryClient.invalidateQueries({
           queryKey: ["messages", conversationId],
         });
       }
@@ -214,7 +214,7 @@ export function useChatActions({
       await api("/messages/" + messageId + "/feedback", "PUT", {
         value: current === value ? null : value,
       });
-      queryClient.invalidateQueries({
+      void queryClient.invalidateQueries({
         queryKey: ["messages", conversationId],
       });
     } catch (e) {
@@ -260,13 +260,13 @@ export function useChatActions({
       );
       cancelEdit();
       setRunId(r.run_id);
-      queryClient.invalidateQueries({
+      void queryClient.invalidateQueries({
         queryKey: ["messages", conversationId],
       });
-      queryClient.invalidateQueries({
+      void queryClient.invalidateQueries({
         queryKey: ["tool-calls", conversationId],
       });
-      queryClient.invalidateQueries({ queryKey: ["/conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["/conversations"] });
     } catch (e) {
       setError(e);
     } finally {

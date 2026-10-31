@@ -20,6 +20,8 @@
     "desktop:build": "pnpm --dir apps/desktop tauri:build",
     "desktop:build:dmg": "pnpm --dir apps/desktop tauri:build:dmg",
     "desktop:build:windows": "pnpm --dir apps/desktop tauri:build:windows",
+    "desktop:eval": "cargo test --manifest-path apps/desktop/Cargo.toml -p mixd-core --test coding_eval -- --nocapture",
+    "desktop:eval:live": "cargo test --manifest-path apps/desktop/Cargo.toml -p mixd-core --test coding_eval -- --ignored --nocapture",
     "desktop:package": "pnpm --dir apps/desktop tauri:build:dmg",
     "licenses:generate": "node scripts/generate-third-party-licenses.mjs",
     "setup": "pnpm --dir apps/web install && pnpm --dir apps/desktop install"

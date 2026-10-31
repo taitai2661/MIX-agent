@@ -203,7 +203,7 @@ describe("chat component interactions", () => {
     Object.defineProperty(paste, "clipboardData", {
       value: { items: [{ kind: "file", getAsFile: () => file }] },
     });
-    act(() => textarea.dispatchEvent(paste));
+    void act(() => textarea.dispatchEvent(paste));
     expect(onAttach).toHaveBeenCalledWith([file]);
 
     keydown(textarea, { key: "Enter" });
@@ -224,7 +224,9 @@ describe("chat component interactions", () => {
       configurable: true,
       value: [file],
     });
-    act(() => fileInput.dispatchEvent(new Event("change", { bubbles: true })));
+    void act(() =>
+      fileInput.dispatchEvent(new Event("change", { bubbles: true })),
+    );
     expect(onAttach).toHaveBeenCalledWith([file]);
 
     click(container.querySelector(".composer-actions button.icon")!);
@@ -313,7 +315,9 @@ describe("chat component interactions", () => {
       value: 0,
       writable: true,
     });
-    act(() => messages.dispatchEvent(new Event("scroll", { bubbles: true })));
+    void act(() =>
+      messages.dispatchEvent(new Event("scroll", { bubbles: true })),
+    );
     const jump = container.querySelector(".scroll-to-bottom")!;
     expect(jump).not.toBeNull();
     click(jump);

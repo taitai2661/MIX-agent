@@ -7,7 +7,6 @@ import io
 import os
 import secrets
 import signal
-import time
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -30,14 +29,9 @@ BROWSER_LAUNCH_ARGS = os.getenv("BROWSER_LAUNCH_ARGS", "").split() if os.getenv(
 
 @app.middleware("http")
 async def auth(request: Request, call_next):
-    expected = (
-        "Bearer "
-        + Path(os.getenv("TOKEN_FILE", "/tokens/execution.token")).read_text().strip()
-    )
+    expected = "Bearer " + Path(os.getenv("TOKEN_FILE", "/tokens/execution.token")).read_text().strip()
     if not secrets.compare_digest(request.headers.get("authorization", ""), expected):
-        return __import__("fastapi").responses.JSONResponse(
-            {"detail": "Unauthorized"}, 401
-        )
+        return __import__("fastapi").responses.JSONResponse({"detail": "Unauthorized"}, 401)
     return await call_next(request)
 
 
@@ -139,13 +133,35 @@ async def workspace_check(args):
         return {"kind": kind, "path": path, "ok": True}
     if kind not in {"git_status", "git_diff_check"} or path is not None:
         raise ValueError("Unknown check or unexpected path")
-    command = ["git", "--no-optional-locks", "-c", "core.pager=cat", "-c", "diff.external=",
-               "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
-    command += (["status", "--short", "--untracked-files=no", "--ignore-submodules=all"]
-                if kind == "git_status" else ["diff", "--check", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all"])
+    command = [
+        "git",
+        "--no-optional-locks",
+        "-c",
+        "core.pager=cat",
+        "-c",
+        "diff.external=",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+    ]
+    command += (
+        ["status", "--short", "--untracked-files=no", "--ignore-submodules=all"]
+        if kind == "git_status"
+        else ["diff", "--check", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all"]
+    )
     proc = await asyncio.create_subprocess_exec(
-        *command, cwd=ROOT, env={"PATH": os.environ.get("PATH", ""), "HOME": "/tmp", "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        *command,
+        cwd=ROOT,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": "/tmp",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+        },
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     try:
         output, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
@@ -153,8 +169,12 @@ async def workspace_check(args):
         proc.kill()
         await proc.wait()
         raise ValueError("Workspace check timed out") from None
-    return {"kind": kind, "ok": proc.returncode == 0, "exit_code": proc.returncode,
-            "output": output[:64000].decode("utf-8", errors="replace")}
+    return {
+        "kind": kind,
+        "ok": proc.returncode == 0,
+        "exit_code": proc.returncode,
+        "output": output[:64000].decode("utf-8", errors="replace"),
+    }
 
 
 async def drain(proc, entry):
@@ -177,8 +197,10 @@ def browser_config(values):
         "timeout": max(3000, min(60000, int(values.get("browser_timeout_ms", 15000)))),
         "locale": str(values.get("browser_locale", "ja-JP"))[:35] or "ja-JP",
         "user_agent": str(values.get("browser_user_agent", ""))[:500],
-        "viewport": {"width": max(320, min(2560, int(values.get("browser_viewport_width", 1280)))),
-                     "height": max(320, min(2560, int(values.get("browser_viewport_height", 720))))},
+        "viewport": {
+            "width": max(320, min(2560, int(values.get("browser_viewport_width", 1280)))),
+            "height": max(320, min(2560, int(values.get("browser_viewport_height", 720)))),
+        },
         "block_images": bool(values.get("browser_block_images", False)),
     }
 
@@ -199,15 +221,15 @@ async def page(run_id, values=None):
                 await PLAYWRIGHT.stop()
             PLAYWRIGHT = None
             BROWSER = None
-            raise ValueError(
-                "Chromiumを起動できません。Browserが導入されているか確認してください。"
-            ) from exc
+            raise ValueError("Chromiumを起動できません。Browserが導入されているか確認してください。") from exc
     entry = PAGES.get(run_id)
     if entry is None or entry["config"] != config:
         if entry is not None:
             await entry["context"].close()
         context_args = {
-            "accept_downloads": False, "service_workers": "block", "locale": config["locale"],
+            "accept_downloads": False,
+            "service_workers": "block",
+            "locale": config["locale"],
             "viewport": config["viewport"],
         }
         if config["user_agent"]:
@@ -239,7 +261,7 @@ async def browser_frame(current_page):
     result = {"url": current_page.url}
     try:
         result["frame_base64"] = base64.b64encode(await current_page.screenshot(timeout=5000)).decode()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the live view is best-effort; the run continues
         result["frame_unavailable"] = True
     return result
 
@@ -294,10 +316,7 @@ async def execute(body: Execute):
             if name == "workspace_check":
                 return await workspace_check(args)
             if name == "run_terminal":
-                if (
-                    sum(p["process"].returncode is None for p in PROCESSES.values())
-                    >= 8
-                ):
+                if sum(p["process"].returncode is None for p in PROCESSES.values()) >= 8:
                     raise ValueError("Process limit reached")
                 env = {
                     k: v
@@ -312,9 +331,7 @@ async def execute(body: Execute):
                         "https_proxy",
                     )
                 }
-                env.update(
-                    HOME="/workspace", TMPDIR="/tmp", PIP_DISABLE_PIP_VERSION_CHECK="1"
-                )
+                env.update(HOME="/workspace", TMPDIR="/tmp", PIP_DISABLE_PIP_VERSION_CHECK="1")
                 proc = await asyncio.create_subprocess_exec(
                     "/bin/sh",
                     "-lc",
@@ -336,9 +353,7 @@ async def execute(body: Execute):
                 entry["reader"] = asyncio.create_task(drain(proc, entry))
                 if not args.get("background"):
                     try:
-                        await asyncio.wait_for(
-                            asyncio.shield(entry["reader"]), timeout=90
-                        )
+                        await asyncio.wait_for(asyncio.shield(entry["reader"]), timeout=90)
                     except (TimeoutError, asyncio.CancelledError):
                         stop(entry)
                         await entry["reader"]
@@ -402,7 +417,9 @@ async def execute(body: Execute):
                 elif name == "browser_extract":
                     limit = max(1, min(100, int(args.get("limit", 20) or 20)))
                     items = await p.locator(args["selector"]).evaluate_all(
-                        "elements => elements.slice(0, " + str(limit) + ").map(e => ({text: (e.innerText || '').slice(0, 2000), href: e.href || (e.querySelector('a') || {}).href || ''}))"
+                        "elements => elements.slice(0, "
+                        + str(limit)
+                        + ").map(e => ({text: (e.innerText || '').slice(0, 2000), href: e.href || (e.querySelector('a') || {}).href || ''}))"
                     )
                     return {**await browser_frame(p), "count": len(items), "items": items}
                 elif name == "browser_wait":

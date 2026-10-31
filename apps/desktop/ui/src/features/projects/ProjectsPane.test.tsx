@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setLanguage } from "@/lib/i18n";
 import { api } from "@/lib/api";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ProjectsPane } from "./ProjectsPane";
 
 vi.mock("@/lib/api", () => ({
@@ -28,15 +27,11 @@ vi.mock("@/lib/api", () => ({
       throw new Error("not under test");
     }),
     deleteProject: vi.fn(async () => undefined),
+    pickFolder: vi.fn(async () => "/tmp/demo"),
   },
 }));
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(async () => "/tmp/demo"),
-}));
-
 const mockedApi = vi.mocked(api);
-const mockedOpen = vi.mocked(openDialog);
 
 // jsdom reports en-US; pin the language so labels are deterministic.
 beforeAll(() => setLanguage("ja"));
@@ -70,7 +65,7 @@ describe("ProjectsPane creation", () => {
     renderPane();
 
     await user.click(screen.getByRole("button", { name: "フォルダを選択" }));
-    expect(mockedOpen).toHaveBeenCalled();
+    expect(mockedApi.pickFolder).toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByText("/tmp/demo")).toBeInTheDocument(),
     );

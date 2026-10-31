@@ -113,9 +113,24 @@ pub async fn get_recent_logs(lines: Option<usize>) -> Result<String, String> {
         return Ok("no log directory exists yet".to_string());
     }
 
-    // Find the latest mix-agent.log.* file or mix-agent.log
+    // Directory scans and file reads are synchronous. Running them on the
+    // blocking pool keeps a large/cold log file from stalling the Tauri async
+    // runtime (and every other command queued behind it).
+    tokio::task::spawn_blocking(move || read_recent_logs(&dir, limit))
+        .await
+        .map_err(crate::error::cmd_err)
+}
+
+/// Read at most `limit` trailing lines, and at most `MAX_LOG_READ_BYTES` from
+/// the end of the file: a multi-gigabyte log is not loaded just to show 200
+/// lines.
+fn read_recent_logs(dir: &std::path::Path, limit: usize) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const MAX_LOG_READ_BYTES: u64 = 2 * 1024 * 1024;
+
     let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
@@ -133,17 +148,28 @@ pub async fn get_recent_logs(lines: Option<usize>) -> Result<String, String> {
     }
     files.sort_by_key(|a| std::cmp::Reverse(a.0));
     let Some((_, latest_path)) = files.first() else {
-        return Ok("no log file found".to_string());
+        return "no log file found".to_string();
     };
 
-    match tokio::fs::read_to_string(latest_path).await {
-        Ok(content) => {
-            let all_lines: Vec<&str> = content.lines().collect();
-            let start = all_lines.len().saturating_sub(limit);
-            Ok(all_lines[start..].join("\n"))
+    let mut file = match std::fs::File::open(latest_path) {
+        Ok(file) => file,
+        Err(e) => return format!("could not read log file: {e}"),
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(MAX_LOG_READ_BYTES);
+    if start > 0 {
+        if let Err(e) = file.seek(SeekFrom::Start(start)) {
+            return format!("could not read log file: {e}");
         }
-        Err(e) => Ok(format!("could not read log file: {e}")),
     }
+    let mut bytes = Vec::new();
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return format!("could not read log file: {e}");
+    }
+    let content = String::from_utf8_lossy(&bytes);
+    let all_lines: Vec<&str> = content.lines().collect();
+    let start = all_lines.len().saturating_sub(limit);
+    all_lines[start..].join("\n")
 }
 
 #[tauri::command]

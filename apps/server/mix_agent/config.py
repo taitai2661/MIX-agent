@@ -152,6 +152,14 @@ def allowed_origin(origin: str, *, scheme: str, host: str, forwarded: bool = Fal
 def initialize():
     for path in (DATA, KEYS, ARTIFACTS, SKILLS_DIR):
         path.mkdir(parents=True, exist_ok=True)
+    if os.getenv("MIX_MODEL_INFO_URL") and not os.getenv("MIX_MODELS_DEV_URL"):
+        # Kept for existing deployments, but say so: the alias silently kept
+        # working long after the catalog moved, so nobody migrated.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "MIX_MODEL_INFO_URL is deprecated; use MIX_MODELS_DEV_URL instead."
+        )
     key = KEYS / "master.key"
     try:
         with key.open("xb") as f:

@@ -52,9 +52,9 @@ export interface paths {
          * Prometheus Metrics
          * @description Scrape the in-process counters.
          *
-         *     Set ``METRICS_TOKEN`` to require ``Authorization: Bearer <token>``.  It is
-         *     off by default for single-user self-hosting, but a deployment that exposes
-         *     the app beyond loopback should set it (or restrict the path in the proxy).
+         *     Set ``METRICS_TOKEN`` to require ``Authorization: Bearer <token>``.
+         *     Without a token the endpoint is limited to loopback and private-network
+         *     clients; ``MIX_METRICS_PUBLIC=1`` removes even that restriction.
          */
         get: operations["prometheus_metrics_metrics_get"];
         put?: never;

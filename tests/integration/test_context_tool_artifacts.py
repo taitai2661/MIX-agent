@@ -6,9 +6,13 @@ from sqlalchemy import select
 
 def _tool(name="write_file"):
     return {
-        "id": name, "model_name": name, "description": "t",
-        "source": "builtin", "executor_ref": "builtin",
-        "default_permission": "ask", "risk": "approval",
+        "id": name,
+        "model_name": name,
+        "description": "t",
+        "source": "builtin",
+        "executor_ref": "builtin",
+        "default_permission": "ask",
+        "risk": "approval",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         "allowed_modes": ["chat", "thinking", "agent"],
     }
@@ -26,9 +30,11 @@ def _make_run():
             request_key=str(uid()),
             data={
                 "snapshot": {
-                    "mode": "agent", "model_id": "fake",
+                    "mode": "agent",
+                    "model_id": "fake",
                     "provider": {"kind": "compatible"},
-                    "tool_ids": ["write_file"], "tools": [_tool()],
+                    "tool_ids": ["write_file"],
+                    "tools": [_tool()],
                 },
                 "history": [{"role": "user", "content": "Do the test"}],
             },
@@ -40,9 +46,15 @@ def _make_run():
 
 def _complete(db, run, result):
     call = ToolCall(
-        owner_id=run.owner_id, run_id=run.id,
-        data={"tool_id": "write_file", "name": "write_file",
-              "risk": "approval", "provider_call_id": "c1", "arguments": {}},
+        owner_id=run.owner_id,
+        run_id=run.id,
+        data={
+            "tool_id": "write_file",
+            "name": "write_file",
+            "risk": "approval",
+            "provider_call_id": "c1",
+            "arguments": {},
+        },
     )
     db.add(call)
     db.flush()
@@ -52,15 +64,24 @@ def _complete(db, run, result):
 def test_context_tool_output_artifact_stays_out_of_user_artifacts(signed):
     run_id = _make_run()
     artifact = {
-        "artifact_id": "ctx-1", "name": "tool-result.json", "mime": "application/json",
-        "size": 4, "kind": "context-tool-output",
+        "artifact_id": "ctx-1",
+        "name": "tool-result.json",
+        "mime": "application/json",
+        "size": 4,
+        "kind": "context-tool-output",
     }
     with SessionLocal() as db:
         run = db.get(Run, run_id)
-        _complete(db, run, {
-            "excerpt": "short excerpt", "truncated": True,
-            "artifact": artifact, "artifact_ref": "artifact://ctx-1",
-        })
+        _complete(
+            db,
+            run,
+            {
+                "excerpt": "short excerpt",
+                "truncated": True,
+                "artifact": artifact,
+                "artifact_ref": "artifact://ctx-1",
+            },
+        )
         assert run.data.get("artifacts", []) == []
         assert "ctx-1" in run.data["tool_refs"]
 
@@ -68,8 +89,11 @@ def test_context_tool_output_artifact_stays_out_of_user_artifacts(signed):
 def test_user_created_artifact_still_surfaces(signed):
     run_id = _make_run()
     artifact = {
-        "artifact_id": "user-1", "name": "result.html", "mime": "text/html",
-        "size": 5, "kind": "user-created",
+        "artifact_id": "user-1",
+        "name": "result.html",
+        "mime": "text/html",
+        "size": 5,
+        "kind": "user-created",
     }
     with SessionLocal() as db:
         run = db.get(Run, run_id)
@@ -113,24 +137,48 @@ def test_large_browser_read_artifact_not_exposed_in_tool_history(signed, tmp_pat
         db.add(run)
         db.flush()
         internal = {
-            "artifact_id": "ctx-2", "name": "tool-result.json", "mime": "application/json",
-            "size": 4, "kind": "context-tool-output",
+            "artifact_id": "ctx-2",
+            "name": "tool-result.json",
+            "mime": "application/json",
+            "size": 4,
+            "kind": "context-tool-output",
         }
         external = {
-            "artifact_id": "user-2", "name": "page.html", "mime": "text/html",
-            "size": 5, "kind": "user-created",
+            "artifact_id": "user-2",
+            "name": "page.html",
+            "mime": "text/html",
+            "size": 5,
+            "kind": "user-created",
         }
-        db.add_all([
-            ToolCall(owner_id=owner, run_id=run.id, status="completed", data={
-                "tool_id": "browser_read", "name": "browser_read",
-                "result": {"excerpt": "x", "truncated": True, "artifact": internal,
-                           "artifact_ref": "artifact://ctx-2"},
-            }),
-            ToolCall(owner_id=owner, run_id=run.id, status="completed", data={
-                "tool_id": "create_artifact", "name": "create_artifact",
-                "result": {"artifact": external},
-            }),
-        ])
+        db.add_all(
+            [
+                ToolCall(
+                    owner_id=owner,
+                    run_id=run.id,
+                    status="completed",
+                    data={
+                        "tool_id": "browser_read",
+                        "name": "browser_read",
+                        "result": {
+                            "excerpt": "x",
+                            "truncated": True,
+                            "artifact": internal,
+                            "artifact_ref": "artifact://ctx-2",
+                        },
+                    },
+                ),
+                ToolCall(
+                    owner_id=owner,
+                    run_id=run.id,
+                    status="completed",
+                    data={
+                        "tool_id": "create_artifact",
+                        "name": "create_artifact",
+                        "result": {"artifact": external},
+                    },
+                ),
+            ]
+        )
         db.commit()
         conversation_id = conversation.id
 

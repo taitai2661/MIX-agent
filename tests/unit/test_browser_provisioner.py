@@ -1,4 +1,5 @@
 """Installer state and retry behavior without a network download."""
+
 import asyncio
 
 import pytest

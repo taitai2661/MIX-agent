@@ -143,17 +143,11 @@ def render(tag: str) -> str:
         service.pop("build", None)
         service["image"] = f"{PACKAGE}-{TARGETS[name]}:{tag}"
         # Named volumes only; see _is_bind_mount.
-        service["volumes"] = [
-            volume
-            for volume in service.get("volumes", [])
-            if not _is_bind_mount(volume)
-        ]
+        service["volumes"] = [volume for volume in service.get("volumes", []) if not _is_bind_mount(volume)]
     # The ZimaOS dashboard is reached by private LAN IP. OAuth and push users
     # must set PUBLIC_ORIGIN to their actual HTTPS origin after installation.
     source["services"]["app"]["ports"] = ["8080:8080"]
-    source["services"]["mcp-manager"]["environment"]["MCP_RUNTIME_IMAGE"] = (
-        f"{PACKAGE}-mcp-runtime:{tag}"
-    )
+    source["services"]["mcp-manager"]["environment"]["MCP_RUNTIME_IMAGE"] = f"{PACKAGE}-mcp-runtime:{tag}"
     # MCP manager connects this exact container to per-server Docker networks.
     # A store may rewrite the Compose project name, so keep this name stable.
     source["services"]["egress-proxy"]["container_name"] = "mix-agent-egress-proxy-1"
@@ -209,7 +203,13 @@ def render(tag: str) -> str:
 
 
 if __name__ == "__main__":
-    rendered = render(sys.argv[1] if len(sys.argv) == 2 else "v0.5.2")
+    if len(sys.argv) != 2:
+        raise SystemExit(
+            "usage: render_zimaos_compose.py vX.Y.Z\n"
+            "The release tag is required: generating with a default produced "
+            "stale store metadata (v0.5.2) long after the app had moved on."
+        )
+    rendered = render(sys.argv[1])
     for output in OUTS:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered)
