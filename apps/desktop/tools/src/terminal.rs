@@ -344,8 +344,6 @@ impl Tool for TerminalTool {
     }
 }
 
-/// Escape a value as a Sandbox profile string literal.
-#[cfg(target_os = "macos")]
 /// Keep the live-PTY map bounded. Keys are per (Run, directory), so the map
 /// grows with every Run rather than with the number of projects.
 fn evict_excess_shells(sessions: &mut HashMap<String, Arc<ShellSession>>, keep: &str) {
