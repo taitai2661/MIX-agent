@@ -92,7 +92,7 @@ fn validate_paths(root_path: &str, additional_paths: &[String]) -> Result<(), St
 /// A project root is a directory the app will list and the agent will read,
 /// so it must have come from the picker (or a confirmation). Additional paths
 /// are read-only companions and get the same treatment.
-fn ensure_project_grants(
+async fn ensure_project_grants(
     app: &AppHandle,
     state: &AppState,
     root_path: &str,
@@ -101,12 +101,12 @@ fn ensure_project_grants(
     let root = std::path::Path::new(root_path)
         .canonicalize()
         .map_err(crate::error::cmd_err)?;
-    crate::commands::access::ensure_root(app, state, &root)?;
+    crate::commands::access::ensure_root(app, state, &root).await?;
     for extra in additional_paths {
         let path = std::path::Path::new(extra)
             .canonicalize()
             .map_err(crate::error::cmd_err)?;
-        crate::commands::access::ensure_access(app, state, &path, "参照")?;
+        crate::commands::access::ensure_access(app, state, &path, "参照").await?;
     }
     Ok(())
 }
@@ -254,7 +254,7 @@ pub async fn create_project(
 ) -> Result<ProjectView, String> {
     let root_path = input.root_path.unwrap_or_default().trim().to_string();
     validate_paths(&root_path, &input.additional_paths)?;
-    ensure_project_grants(&app, &state, &root_path, &input.additional_paths)?;
+    ensure_project_grants(&app, &state, &root_path, &input.additional_paths).await?;
     // Folder-first: an omitted name takes the folder's basename so the
     // user can create a project from the picker alone.
     let name = project_name(&root_path, input.name);
@@ -335,7 +335,7 @@ pub async fn update_project(
         .additional_paths
         .unwrap_or_else(|| data.additional_paths.clone());
     validate_paths(&next_root, &next_additional)?;
-    ensure_project_grants(&app, &state, &next_root, &next_additional)?;
+    ensure_project_grants(&app, &state, &next_root, &next_additional).await?;
     let root_changed = next_root != data.root_path;
     data.root_path = next_root;
     data.additional_paths = next_additional;

@@ -97,6 +97,7 @@ Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ�
 - **エラーコード**: `HTTPException` のレスポンスは `{detail, code}` を返します。`detail` は日本語の正規メッセージ（ログ・既存クライアント用）、`code` は `auth.invalid_credentials` のような安定した識別子です。Web UI は `code` で英語表示を選ぶため、文言変更で翻訳が外れません。未知の動的エラーには `common.http_<status>` が付きます。
 - **メトリクス**: `/metrics` が Prometheus 形式のリクエスト件数・レイテンシ・稼働時間を返します。`app` の healthcheck はDB非依存の `/live` を使い、準備確認は `/health` が担います。
 - **整合性検査**: `scripts/check-error-i18n.py` が「発生しうるエラー」「コード表」「英語文言」の3つを照合します。
+- **Run イベント契約**: 両エディションが emit する `run_events.kind` は `packages/tool_contracts/run_events.json` に集約しています。共通語彙と、片方だけが持つイベント（理由付き）を明示し、`scripts/check-run-event-parity.py` がソース上の emit 箇所と突き合わせます。
 
 ---
 

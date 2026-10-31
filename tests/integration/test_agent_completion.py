@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
 from mix_agent.context.summary import render as render_summary
-from mix_agent.runs.engine import (
-    _replace_summary_block,
+from mix_agent.runs.engine_context import _replace_summary_block
+from mix_agent.runs.engine_support import (
     agent_completion_issue,
     agent_interruption_reason,
     refresh_task_state,

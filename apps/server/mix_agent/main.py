@@ -53,6 +53,11 @@ async def lifespan(app):
         import logging
 
         logging.getLogger(__name__).exception("startup recovery failed")
+    # The settings row is the source of truth for the proxy allow-list. Repair
+    # a policy file left stale by a failed settings update or restore.
+    from mix_agent import egress_policy
+
+    await asyncio.to_thread(egress_policy.reconcile_from_db)
     task = asyncio.create_task(scheduler())
     memory_task = asyncio.create_task(memory_scheduler())
     from mix_agent.push import worker as push_worker
@@ -78,7 +83,7 @@ async def lifespan(app):
 # formatter when MIX_LOG_FORMAT=json is set.
 configure_logging()
 
-app = FastAPI(title="MIX agent", version="0.5.4", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.5.5", lifespan=lifespan)
 LOGGER = logging.getLogger("mix_agent.http")
 
 
@@ -282,7 +287,12 @@ def _metrics_client_allowed(request: Request) -> bool:
     """
     if os.getenv("MIX_METRICS_PUBLIC", "").lower() in ("1", "true", "yes"):
         return True
-    host = request.client.host if request.client else ""
+    from mix_agent.client_ip import resolve_client_ip
+
+    host = resolve_client_ip(
+        request.client.host if request.client else "",
+        request.headers.get("x-forwarded-for"),
+    )
     try:
         ip = ip_address(host)
     except ValueError:

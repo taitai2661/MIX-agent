@@ -211,6 +211,51 @@ async fn run_events_are_returned_in_sequence_order() {
 }
 
 #[tokio::test]
+async fn replay_window_keeps_the_head_and_the_latest_events() {
+    use mixd_core::runs::events::load_replay_window;
+
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-trunc", "Truncation test").await;
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+         VALUES ('run-trunc', ?, '{}', 'conv-trunc', 'completed', 'rk-trunc')",
+    )
+    .bind(SINGLE_USER_ID)
+    .execute(pool)
+    .await
+    .expect("insert run");
+    for sequence in 1..=10 {
+        sqlx::query(
+            "INSERT INTO run_events (id, run_id, sequence, kind, data) \
+             VALUES (?, 'run-trunc', ?, 'text', ?)",
+        )
+        .bind(format!("trunc-{sequence}"))
+        .bind(sequence)
+        .bind(serde_json::json!({ "delta": sequence.to_string() }).to_string())
+        .execute(pool)
+        .await
+        .expect("insert event");
+    }
+
+    let window = load_replay_window(pool, "run-trunc", 4)
+        .await
+        .expect("window");
+    assert_eq!(window.total, 10);
+    let sequences: Vec<i64> = window.rows.iter().map(|row| row.1).collect();
+    // Two oldest + two newest: the tool timeline survives, and so does the
+    // latest answer/status that a head-only window used to drop.
+    assert_eq!(sequences, vec![1, 2, 9, 10]);
+
+    let complete = load_replay_window(pool, "run-trunc", 100)
+        .await
+        .expect("window");
+    assert_eq!(complete.total, 10);
+    assert_eq!(complete.rows.len(), 10);
+    assert_eq!(complete.omitted(100), 0);
+}
+
+#[tokio::test]
 async fn truncate_messages_from_drops_the_turn_and_its_run() {
     let storage = temp_storage().await;
     let pool = storage.pool();

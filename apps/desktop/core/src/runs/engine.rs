@@ -286,6 +286,9 @@ fn run_view_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<RunView> {
             .get("error")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        // Filled by `list_runs` from the event log; a single Run snapshot has
+        // no reason to count the whole log.
+        replay_truncated: false,
     })
 }
 

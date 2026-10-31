@@ -61,7 +61,8 @@ pub async fn import_skill(
                     &state,
                     std::path::Path::new(path),
                     "読み込む",
-                )?;
+                )
+                .await?;
             }
             let bytes = read_input(&input).await?;
             // Zip inflation and the directory walk are CPU / I/O heavy and
@@ -85,7 +86,8 @@ pub async fn import_skill(
                 &state,
                 std::path::Path::new(&dir),
                 "参照",
-            )?;
+            )
+            .await?;
             let (skill_md, extra) = tokio::task::spawn_blocking(move || {
                 crate::commands::zip_util::read_skill_dir(&dir)
             })

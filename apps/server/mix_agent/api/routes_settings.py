@@ -32,6 +32,7 @@ from mix_agent.db.models import (
     Settings,
 )
 from mix_agent.memory import service as memory
+from mix_agent.runs.state import NON_TERMINAL_STATES
 from mix_agent.tools.execute import runner_request
 from mix_agent.tools.registry import call_scope, fingerprint, registry
 
@@ -245,9 +246,12 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
         if value is not None:
             data[secret_key] = store_secret(db, s.owner_id, value, purpose) if value else None
     row.data = data
-    egress_policy.write_policy(domains)
     audit(db, s.owner_id, "settings.update", row.id)
     db.commit()
+    # Write the proxy policy only after the settings row is durable. The old
+    # order left the proxy on the new allow-list while the UI still showed (and
+    # a rollback restored) the previous one.
+    egress_policy.write_policy_or_503(domains)
     return public(row)
 
 
@@ -424,9 +428,7 @@ def settings_diagnostics(ctx=Depends(context)):
         "checked_at": checked_at.isoformat(),
         "services": runner_status,
         "runs": {
-            "active": sum(
-                run_counts.get(status, 0) for status in ("queued", "running", "waiting_approval", "paused")
-            ),
+            "active": sum(run_counts.get(status, 0) for status in NON_TERMINAL_STATES),
             "failed_30d": db.scalar(
                 select(func.count())
                 .select_from(Run)

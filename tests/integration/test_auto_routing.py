@@ -2,7 +2,7 @@ import asyncio
 from datetime import timedelta
 
 import httpx
-from mix_agent.api import routes
+from mix_agent.api import routes_messages
 from mix_agent.db.models import (
     AutoReliabilityEvent,
     Conversation,
@@ -26,7 +26,7 @@ from mix_agent.providers.adapters import (
 from mix_agent.reliability import classify_failure, reliability, retry_after, speed
 from mix_agent.reliability import record as record_reliability
 from mix_agent.routing import routing_context, routing_profile, select_auto_model
-from mix_agent.runs import engine
+from mix_agent.runs import engine, engine_provider, engine_support
 from sqlalchemy import select
 
 
@@ -61,7 +61,7 @@ def test_auto_settings_and_capability_filters(signed, monkeypatch):
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     response = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -95,7 +95,7 @@ def test_auto_dynamic_setting_preserves_existing_choices(signed, monkeypatch):
     assert saved["auto_model_ids"] == [model_id]
     assert saved["auto_retry_count"] == 2
     assert saved["auto_dynamic_switching"] is False
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     response = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -166,7 +166,7 @@ def test_auto_retry_count_repairs_malformed_legacy_snapshot_value(signed, monkey
             "allowed_domains": [],
         }
         db.commit()
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     response = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -177,17 +177,17 @@ def test_auto_retry_count_repairs_malformed_legacy_snapshot_value(signed, monkey
     with SessionLocal() as db:
         run = db.get(Run, response.json()["run_id"])
         assert run.data["snapshot"]["auto_retry_count"] == 3
-    assert engine.auto_retry_count(None) == 3
-    assert engine.auto_retry_count("3") == 3
-    assert engine.auto_retry_count(True) == 3
-    assert engine.auto_retry_count(0) == 0
+    assert engine_support.auto_retry_count(None) == 3
+    assert engine_support.auto_retry_count("3") == 3
+    assert engine_support.auto_retry_count(True) == 3
+    assert engine_support.auto_retry_count(0) == 0
 
 
 def test_provider_rate_limit_ignores_malformed_boolean_value():
     async def verify():
         # A boolean is not a valid request count, even though bool subclasses int.
-        await engine.wait_for_provider_slot({"id": "boolean-rate-limit", "rate_limit_rpm": True})
-        assert not engine._PROVIDER_REQUESTS["boolean-rate-limit"]
+        await engine_support.wait_for_provider_slot({"id": "boolean-rate-limit", "rate_limit_rpm": True})
+        assert not engine_support._PROVIDER_REQUESTS["boolean-rate-limit"]
 
     asyncio.run(verify())
 
@@ -428,7 +428,7 @@ def test_auto_retries_only_before_visible_output(signed, monkeypatch):
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -447,7 +447,7 @@ def test_auto_retries_only_before_visible_output(signed, monkeypatch):
             response = httpx.Response(503, request=httpx.Request("POST", "https://provider.test"))
             raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         assert db.get(Run, queued.json()["run_id"]).status == "failed"
@@ -464,7 +464,7 @@ def test_auto_reroutes_when_stream_ends_without_response(signed, monkeypatch):
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -489,7 +489,7 @@ def test_auto_reroutes_when_stream_ends_without_response(signed, monkeypatch):
                 "usage": {},
             }
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         assert db.get(Run, queued.json()["run_id"]).status == "completed"
@@ -505,7 +505,7 @@ def test_auto_success_records_first_output_and_completion_timings(signed, monkey
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -526,7 +526,7 @@ def test_auto_success_records_first_output_and_completion_timings(signed, monkey
                 "usage": {"output_tokens": 5},
             }
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         event = db.scalar(
@@ -542,7 +542,7 @@ def test_auto_success_records_first_output_and_completion_timings(signed, monkey
 
 def test_completed_answers_record_tps_for_manual_models_and_statistics(signed, monkeypatch):
     model_id = make_model({}, model_id="manual-timed")
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -563,7 +563,7 @@ def test_completed_answers_record_tps_for_manual_models_and_statistics(signed, m
                 "usage": {"output_tokens": 5},
             }
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         event = db.scalar(
@@ -599,7 +599,7 @@ def test_completed_answers_record_tps_for_manual_models_and_statistics(signed, m
 
 def test_completed_answer_without_usage_does_not_record_tps(signed, monkeypatch):
     model_id = make_model({}, model_id="manual-no-usage")
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -620,7 +620,7 @@ def test_completed_answer_without_usage_does_not_record_tps(signed, monkeypatch)
                 "usage": {},
             }
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         assert not db.scalar(
@@ -639,7 +639,7 @@ def test_completed_answer_without_usage_does_not_record_tps(signed, monkeypatch)
 def test_streaming_text_is_batched_without_losing_content(signed, monkeypatch):
     """Fast token streams should not require one database commit per token."""
     model_id = make_model({}, model_id="batched-stream")
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -661,7 +661,7 @@ def test_streaming_text_is_batched_without_losing_content(signed, monkeypatch):
                 "usage": {},
             }
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         events = db.scalars(
@@ -711,7 +711,7 @@ def test_unknown_context_model_is_usable_by_auto_without_an_override(signed, mon
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     response = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -748,7 +748,7 @@ def test_auto_retries_once_after_pre_output_context_error(signed, monkeypatch):
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -768,7 +768,7 @@ def test_auto_retries_once_after_pre_output_context_error(signed, monkeypatch):
                 raise ProviderContextLimitError("context limit")
             yield {"kind": "response", "message": {"role": "assistant", "content": "ok"}, "tool_calls": []}
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -793,7 +793,7 @@ def test_auto_retries_transient_provider_error_but_not_auth_error(signed, monkey
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -813,7 +813,7 @@ def test_auto_retries_transient_provider_error_but_not_auth_error(signed, monkey
                 raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
             yield {"kind": "response", "message": {"role": "assistant", "content": "ok"}, "tool_calls": []}
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -836,7 +836,7 @@ def test_auto_retries_transient_provider_error_but_not_auth_error(signed, monkey
             raise httpx.HTTPStatusError("unauthorized", request=response.request, response=response)
             yield
 
-    monkeypatch.setattr(engine, "Adapter", AuthFailAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", AuthFailAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -858,7 +858,7 @@ def test_auto_retry_count_uses_each_candidate_once_and_is_snapshotted(signed, mo
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -895,7 +895,7 @@ def test_auto_retry_count_uses_each_candidate_once_and_is_snapshotted(signed, mo
                 raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
             yield {"kind": "response", "message": {"role": "assistant", "content": "ok"}, "tool_calls": []}
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -921,7 +921,7 @@ def test_auto_does_not_retry_not_found_or_when_retry_count_is_zero(signed, monke
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -944,7 +944,7 @@ def test_auto_does_not_retry_not_found_or_when_retry_count_is_zero(signed, monke
             raise error
             yield
 
-    monkeypatch.setattr(engine, "Adapter", NotFoundAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", NotFoundAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -986,7 +986,7 @@ def test_auto_does_not_retry_not_found_or_when_retry_count_is_zero(signed, monke
             raise httpx.HTTPStatusError("temporary", request=response.request, response=response)
             yield
 
-    monkeypatch.setattr(engine, "Adapter", TemporaryFailureAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", TemporaryFailureAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -1011,7 +1011,7 @@ def test_auto_retries_nvidia_nim_function_not_found_and_reports_entitlement_fail
         ).status_code
         == 200
     )
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -1038,7 +1038,7 @@ def test_auto_retries_nvidia_nim_function_not_found_and_reports_entitlement_fail
             raise httpx.HTTPStatusError("not found", request=response.request, response=response)
             yield
 
-    monkeypatch.setattr(engine, "Adapter", NIMUnavailableAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", NIMUnavailableAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -1055,7 +1055,7 @@ def test_auto_retries_nvidia_nim_function_not_found_and_reports_entitlement_fail
 def test_nvidia_nim_function_not_found_does_not_retry_for_manual_selection(signed, monkeypatch):
     nvidia = {"kind": "compatible", "preset_id": "nvidia-nim"}
     model = make_model({}, context=None, model_id="nim-manual", provider_data=nvidia)
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -1082,7 +1082,7 @@ def test_nvidia_nim_function_not_found_does_not_retry_for_manual_selection(signe
             raise httpx.HTTPStatusError("not found", request=response.request, response=response)
             yield
 
-    monkeypatch.setattr(engine, "Adapter", NIMUnavailableAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", NIMUnavailableAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
     with SessionLocal() as db:
         run = db.get(Run, queued.json()["run_id"])
@@ -1263,7 +1263,7 @@ def test_auto_priority_setting_persists_and_is_snapshotted(signed, monkeypatch):
         == 200
     )
     assert signed.get("/api/v1/settings").json()["data"]["auto_priority"] == "speed"
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     response = signed.post(
         f"/api/v1/conversations/{conversation}/messages",

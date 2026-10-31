@@ -2,7 +2,7 @@
 
 from sqlalchemy import select
 
-from mix_agent.api import routes
+from mix_agent.api import routes_messages
 from mix_agent.db.models import Conversation, Model, Provider, Run, ToolCall, User, uid
 from mix_agent.db.session import SessionLocal
 from mix_agent.runs import engine
@@ -117,7 +117,7 @@ def test_messages_endpoint_returns_sanitized_todos(signed):
 
 
 def test_next_run_carries_todos_into_the_system_prompt(signed, monkeypatch):
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     model_id = create_model()
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     with SessionLocal() as db:
@@ -147,7 +147,7 @@ def test_next_run_carries_todos_into_the_system_prompt(signed, monkeypatch):
 
 
 def test_chat_mode_prompt_does_not_receive_carried_todos(signed, monkeypatch):
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     model_id = create_model()
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     with SessionLocal() as db:

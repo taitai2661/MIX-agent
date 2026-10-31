@@ -23,7 +23,7 @@ from mix_agent.context.types import ContextBudgetError
 
 @pytest.mark.asyncio
 async def test_failed_summary_keeps_previous_context(monkeypatch):
-    from mix_agent.runs import engine
+    from mix_agent.runs import engine, engine_context
 
     history = [{"role": "user", "content": "old " * 2000}, {"role": "user", "content": "current"}]
     run = SimpleNamespace(
@@ -35,9 +35,9 @@ async def test_failed_summary_keeps_previous_context(monkeypatch):
         },
     )
     db = SimpleNamespace(commit=lambda: None)
-    monkeypatch.setattr(engine, "emit", lambda *_: None)
-    monkeypatch.setattr(engine.context_budget, "input_budget", lambda *_, **__: 100)
-    monkeypatch.setattr(engine, "select_recent", lambda *args: ([history[-1]], [history[0]]))
+    monkeypatch.setattr(engine_context, "emit", lambda *_: None)
+    monkeypatch.setattr(engine_context.context_budget, "input_budget", lambda *_, **__: 100)
+    monkeypatch.setattr(engine_context, "select_recent", lambda *args: ([history[-1]], [history[0]]))
 
     class BrokenAdapter:
         def __init__(self, *_):
@@ -47,7 +47,7 @@ async def test_failed_summary_keeps_previous_context(monkeypatch):
             raise RuntimeError("unavailable")
             yield  # pragma: no cover
 
-    monkeypatch.setattr(engine, "Adapter", BrokenAdapter)
+    monkeypatch.setattr(engine_context, "Adapter", BrokenAdapter)
     with pytest.raises(ContextBudgetError, match="preserved"):
         await engine._maybe_compact_context(db, run, {"model_id": "test", "tools": []}, {}, "")
     assert run.data["history"] == history

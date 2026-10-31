@@ -2,7 +2,7 @@
 name: mix-agent
 services:
   init:
-    image: ghcr.io/taitai2661/mix-agent-init:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-init:v0.5.5
     entrypoint:
     - python
     - /bootstrap.py
@@ -22,8 +22,13 @@ services:
     - packages:/packages
     - mcp-shared:/shared
   db:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
@@ -51,7 +56,12 @@ services:
     security_opt: &id002
     - no-new-privileges:true
     pids_limit: 128
-    tmpfs: &id003
+    logging: &id003
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    tmpfs: &id004
     - /tmp:size=256m,mode=1777
     ports:
     - 8080:8080
@@ -64,6 +74,7 @@ services:
       MIX_LOG_FORMAT: ${MIX_LOG_FORMAT:-text}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       MIX_METRICS_PUBLIC: ${MIX_METRICS_PUBLIC:-}
+      MIX_TRUSTED_PROXIES: ${MIX_TRUSTED_PROXIES:-}
       MIX_PROJECT_MOUNT: /project
       MIX_MODELS_DEV_URL: ${MIX_MODELS_DEV_URL:-https://models.dev/api.json}
     volumes:
@@ -106,14 +117,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    image: ghcr.io/taitai2661/mix-agent-app:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-app:v0.5.5
   execution-runner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -130,14 +142,15 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.5
   browser-runner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -153,14 +166,15 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.5
   browser-provisioner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -175,14 +189,15 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.5
   mcp-runner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -200,7 +215,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.5
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     restart: unless-stopped
@@ -239,14 +254,15 @@ services:
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
-    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.4
+    logging: *id003
+    tmpfs: *id004
+    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.5
     user: 1000:1000
     environment:
       TOKEN_FILE: /tokens/manager.token
       POLICY_FILE: /policy/mcp-policy.json
       DOCKER_HOST: http://docker-socket-proxy:2375
-      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.4
+      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.5
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
     - manager-token:/tokens:ro
@@ -275,7 +291,8 @@ services:
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       MCP_POLICY_FILE: /policy/mcp-policy.json
       LOG_LEVEL: INFO
@@ -290,7 +307,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.4
+    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.5
     container_name: mix-agent-egress-proxy-1
 networks:
   database:
@@ -343,9 +360,9 @@ x-casaos:
   category: AI
   architectures:
   - amd64
-  version: 0.5.4
-  update_at: '2026-10-28'
+  version: 0.5.5
+  update_at: '2026-10-31'
   release_notes:
-    en_US: Desktop (beta) installs Chromium on demand, manages local LLM runtimes, and adds a live browser view.
-      Desktop/Web browser actions are expanded.
-    ja_JP: Desktop版（ベータ）にChromiumの初回インストール、ローカルLLMランタイム管理、ブラウザのライブ表示を追加。Desktop/Web版のブラウザ操作を拡張。
+    en_US: 'Hardening release: tighter browser egress, secret redaction, backup and restore improvements, and run
+      replay limits. Happy Halloween!'
+    ja_JP: 安定化リリース。ブラウザ通信の制限強化、秘密情報のマスク、バックアップと復元の改善、実行ログの上限対応など。

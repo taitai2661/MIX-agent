@@ -9,6 +9,7 @@ use std::path::Path;
 
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tokio::sync::oneshot;
 
 use crate::AppState;
 
@@ -16,7 +17,11 @@ use crate::AppState;
 ///
 /// `action` is a short Japanese verb phrase ("読み込む", "書き込む") used in
 /// the prompt so the dialog says what the app is about to do.
-pub fn ensure_access(
+///
+/// The dialog is shown through the plugin's callback API rather than
+/// `blocking_show`: these are async commands, and blocking their runtime thread
+/// while a modal is open stalls unrelated invokes behind it.
+pub async fn ensure_access(
     app: &AppHandle,
     state: &AppState,
     path: &Path,
@@ -26,15 +31,20 @@ pub fn ensure_access(
         return Ok(());
     }
     let display = path.display();
-    let allowed = app
-        .dialog()
+    let (tx, rx) = oneshot::channel();
+    app.dialog()
         .message(format!(
             "MIX-agent が次のパスを{action}することを許可しますか？\nAllow MIX-agent to access this path?\n\n{display}"
         ))
         .title("MIX-agent")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show();
+        .show(move |allowed| {
+            let _ = tx.send(allowed);
+        });
+    let allowed = rx
+        .await
+        .map_err(|_| "確認ダイアログが閉じられました".to_string())?;
     if allowed {
         state.grants.grant(path);
         Ok(())
@@ -46,6 +56,6 @@ pub fn ensure_access(
 /// Same as [`ensure_access`] but for a folder root that other paths are
 /// resolved against. An unapproved root must fail even if the command would
 /// otherwise only list one level.
-pub fn ensure_root(app: &AppHandle, state: &AppState, root: &Path) -> Result<(), String> {
-    ensure_access(app, state, root, "参照")
+pub async fn ensure_root(app: &AppHandle, state: &AppState, root: &Path) -> Result<(), String> {
+    ensure_access(app, state, root, "参照").await
 }

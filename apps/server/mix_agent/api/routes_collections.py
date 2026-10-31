@@ -7,6 +7,7 @@ from mix_agent.api.common import (
     context,
     own,
     public,
+    set_title_placeholder,
 )
 from mix_agent.api.schemas import (
     AgentInput,
@@ -31,12 +32,11 @@ from mix_agent.db.models import (
 )
 from mix_agent.memory import service as memory
 from mix_agent.providers.reasoning import reasoning_control
+from mix_agent.runs.state import NON_TERMINAL_STATES
 from mix_agent.skills import service as skills
 from mix_agent.tools.registry import registry
 
 router = APIRouter(prefix="/api/v1")
-
-# Backward-compatible re-exports for external callers (engine.py, scheduler, etc.)
 
 
 COLLECTIONS = {
@@ -123,9 +123,12 @@ async def create_entity(collection: str, request: Request, ctx=Depends(context))
     from pydantic import ValidationError
 
     try:
-        value = schema.model_validate(await request.json()).model_dump()
+        payload = await request.json()
+        value = schema.model_validate(payload).model_dump()
     except ValidationError:
         raise HTTPException(422, "入力項目を確認してください")
+    if collection == "conversations":
+        set_title_placeholder(value, explicit="title" in payload)
     validate_entity(collection, value, db, s.owner_id)
     if collection == "models":
         value = apply_context_override(value)
@@ -156,6 +159,8 @@ async def edit_entity(collection: str, key: str, request: Request, ctx=Depends(c
         # Omitted pricing keeps the saved override; an explicit null clears it.
         if "pricing_override" not in payload:
             value["pricing_override"] = row.data.get("pricing_override")
+    if collection == "conversations" and "title" in payload:
+        set_title_placeholder(value, explicit=True)
     # Probe results are system-managed state, not part of the public model
     # editor schema. Keep them when the user edits a model.
     row.data = {**row.data, **value}
@@ -180,7 +185,7 @@ def delete_entity(collection: str, key: str, ctx=Depends(context)):
         if db.scalar(
             select(Run.id).where(
                 Run.owner_id == s.owner_id,
-                Run.status.in_(["running", "queued", "waiting_approval", "paused"]),
+                Run.status.in_(NON_TERMINAL_STATES),
             )
         ):
             raise HTTPException(409, "実行を停止してから削除してください")

@@ -11,9 +11,9 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.4"
+version = "0.5.5"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.91"
 authors = ["MIX-agent contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/taitai2661/MIX-agent"

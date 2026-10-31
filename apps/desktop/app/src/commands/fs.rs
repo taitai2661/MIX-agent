@@ -65,7 +65,7 @@ pub async fn preview_file_diff(
             return Err(format!("フォルダが見つかりません: {root_path}"));
         }
         let canonical = requested.canonicalize().map_err(crate::error::cmd_err)?;
-        ensure_root(&app, &state, &canonical)?;
+        ensure_root(&app, &state, &canonical).await?;
     }
     let root = mixd_tools::files::FilesTool::resolve_context_root(input.root_path.as_deref())
         .map_err(crate::error::cmd_err)?;
@@ -156,7 +156,7 @@ pub async fn read_attachment(
     path: String,
 ) -> Result<AttachmentPayload, String> {
     let path = std::path::PathBuf::from(path.trim());
-    ensure_access(&app, &state, &path, "読み込む")?;
+    ensure_access(&app, &state, &path, "読み込む").await?;
     let filename = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -252,7 +252,7 @@ pub async fn save_text_file(
     if path.as_os_str().is_empty() {
         return Err("path required".to_string());
     }
-    ensure_access(&app, &state, &path, "書き込む")?;
+    ensure_access(&app, &state, &path, "書き込む").await?;
     let bytes = content.len() as u64;
     tokio::fs::write(&path, content)
         .await
@@ -273,7 +273,7 @@ pub async fn save_base64_file(
     if path.as_os_str().is_empty() {
         return Err("path required".to_string());
     }
-    ensure_access(&app, &state, &path, "書き込む")?;
+    ensure_access(&app, &state, &path, "書き込む").await?;
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data_base64)
         .map_err(|e| format!("invalid base64: {e}"))?;
     let len = bytes.len() as u64;

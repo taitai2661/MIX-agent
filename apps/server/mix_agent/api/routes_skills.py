@@ -113,7 +113,7 @@ async def import_skill_archive(file: UploadFile = File(...), ctx=Depends(context
     if len(raw) > skill_package.ARCHIVE_MAX:
         raise HTTPException(413, "アーカイブは5MBまでです")
     try:
-        parsed = skill_package.parse_archive(raw)
+        parsed = await asyncio.to_thread(skill_package.parse_archive, raw)
     except skill_package.SkillFormatError as exc:
         raise HTTPException(422, str(exc)) from exc
     filename = (file.filename or "")[:200]

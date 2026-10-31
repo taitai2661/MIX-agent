@@ -126,6 +126,6 @@ async fn empty_password_is_refused_on_create() {
     let err = backup::create(&dir, &dest, "")
         .await
         .expect_err("must require a password");
-    assert!(err.to_string().contains("password is required"), "{err}");
+    assert!(err.to_string().contains("at least 12"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -118,7 +118,9 @@ pub(crate) fn decode_status_text(raw: &[u8]) -> String {
     }
     // BOM-less UTF-16LE is easy to spot for a short digit string: every
     // second byte is NUL.
-    if raw.len() >= 2 && raw.len() % 2 == 0 && raw.iter().skip(1).step_by(2).all(|byte| *byte == 0)
+    if raw.len() >= 2
+        && raw.len().is_multiple_of(2)
+        && raw.iter().skip(1).step_by(2).all(|byte| *byte == 0)
     {
         return decode_utf16(raw, u16::from_le_bytes);
     }

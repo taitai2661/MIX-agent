@@ -1,6 +1,6 @@
 {
   "name": "mix-agent-monorepo",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "private": true,
   "description": "MIX-agent — Unified Monorepo for MIX-agent (Docker/Server/Web) and Desktop",
   "license": "Apache-2.0",

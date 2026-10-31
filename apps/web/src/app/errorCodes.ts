@@ -55,6 +55,8 @@ export const ERROR_CODES_EN: Record<string, string> = {
   "backup.failed":
     "Backup failed. Stop runs and background processes, then check the runner connection and size limit.",
   "backup.in_progress": "A backup or restore is in progress.",
+  "egress.policy_write_failed":
+    "Settings were saved, but the network policy could not be written. Retry the update.",
   "message.empty": "Enter a message.",
   "provider.model_sync_failed":
     "Could not fetch the model list. Your existing settings were kept.",

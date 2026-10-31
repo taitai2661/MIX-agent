@@ -160,17 +160,44 @@ jobs:
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
 
+      # Developer ID credentials are optional: without them the build keeps the
+      # ad-hoc signature used for the beta. When the secrets are present they
+      # are exported for the build step, and Tauri signs/notarizes the bundle.
+      - name: Configure optional Apple signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          IN_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          IN_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IN_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          IN_APPLE_ID: ${{ secrets.APPLE_ID }}
+          IN_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          IN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${IN_APPLE_CERTIFICATE:-}" ]; then
+            echo "Apple signing secrets are not configured; keeping the ad-hoc build."
+            exit 0
+          fi
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="$(printenv "IN_$name" || true)"
+            if [ -n "$value" ]; then
+              echo "$name=$value" >> "$GITHUB_ENV"
+            fi
+          done
+
       # `tauri build` runs beforeBuildCommand (the Vite UI build) exactly once;
       # there is no Chromium fetch step any more.
-      # Ad-hoc macOS signature and unsigned Windows installers are unchanged;
-      # the updater signature below is a separate, mandatory layer that
+      # The updater signature below is a separate, mandatory layer that
       # authenticates the downloaded update payload.
       - name: Build and bundle
         working-directory: apps/desktop
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
-            echo "::warning::Apple Developer ID signing/notarization is disabled; the app is ad-hoc signed, so Gatekeeper asks for a one-time Open Anyway confirmation."
+            if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+              echo "::warning::Apple Developer ID signing/notarization is not configured; the app is ad-hoc signed, so Gatekeeper asks for a one-time Open Anyway confirmation."
+            fi
           elif [ "${{ runner.os }}" = "Windows" ]; then
             echo "::warning::The Windows installer is unsigned; SmartScreen may warn or block launch."
           fi
@@ -196,7 +223,11 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           signature="$(codesign -dv --verbose=4 "$app" 2>&1)"
           echo "$signature"
-          echo "$signature" | grep -q '^Signature=adhoc$'
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "$signature" | grep -q 'Authority=Developer ID Application'
+          else
+            echo "$signature" | grep -q '^Signature=adhoc$'
+          fi
 
           case "${{ matrix.target }}" in
             aarch64-apple-darwin) want=arm64 ;;
@@ -207,6 +238,13 @@ jobs:
           app_archs="$(lipo -archs "$app/Contents/MacOS/mix-agent-desktop")"
           echo "app archs: $app_archs"
           echo "$app_archs" | grep -qw "$want"
+
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            # The ticket is stapled by the bundler; failing here is better than
+            # publishing a signed but non-notarized DMG that Gatekeeper blocks.
+            spctl --assess --type execute --verbose=4 "$app"
+            xcrun stapler validate "$app"
+          fi
 
       # Stage installers *and* the updater payloads under the exact names
       # latest.json advertises. Every updater payload must have a matching

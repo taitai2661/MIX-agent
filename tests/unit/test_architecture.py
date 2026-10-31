@@ -57,8 +57,10 @@ def test_route_modules_do_not_grow_unbounded():
         # `routes_messages` is the largest and the next candidate to split.
         "routes.py": 38,
         "routes_artifacts.py": 60,
-        "routes_auth.py": 204,
-        "routes_collections.py": 242,
+        # +1: request_client_ip keeps login throttling correct behind a proxy.
+        "routes_auth.py": 205,
+        # +6: title_is_placeholder records user-provided titles explicitly.
+        "routes_collections.py": 248,
         "routes_conversations.py": 431,
         "routes_mcp.py": 464,
         "routes_memories.py": 206,

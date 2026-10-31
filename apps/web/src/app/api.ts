@@ -211,10 +211,16 @@ export async function api<T = unknown>(
           .catch(() => ({ detail: t(ja.communicationFailed) }));
         cleanup();
         notifyUnauthorized(path, response.status);
-        throw new HttpError(errorMessage(error, response.status));
+        throw new HttpError(
+          errorMessage(error, response.status),
+          response.status,
+        );
       }
+      // Keep the timer armed through the body read: a server that sends
+      // headers and then stalls the stream used to hang the caller forever.
+      const parsed = await parseSuccess<T>(response);
       cleanup();
-      return await parseSuccess<T>(response);
+      return parsed;
     } catch (error) {
       cleanup();
       if (options.signal?.aborted) {
@@ -281,7 +287,7 @@ export async function binary(
           .catch(() => ({ detail: t(ja.operationFailed) }));
         cleanup();
         notifyUnauthorized(path, r.status);
-        throw new HttpError(errorMessage(e, r.status));
+        throw new HttpError(errorMessage(e, r.status), r.status);
       }
       cleanup();
       return r;

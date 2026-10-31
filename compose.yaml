@@ -6,12 +6,20 @@ x-restricted: &restricted
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   pids_limit: 128
+  # A 24/7 home server otherwise fills its disk with the default unbounded
+  # json-file log. 10 MiB x 3 per service is enough to investigate an incident
+  # without keeping months of request lines.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
   tmpfs:
     - /tmp:size=256m,mode=1777
 
 services:
   init:
-    image: python:3.12.11-slim-bookworm
+    image: python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
     entrypoint: [python, /bootstrap.py]
     network_mode: none
     volumes:
@@ -30,8 +38,14 @@ services:
       - packages:/packages
       - mcp-shared:/shared
   db:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     restart: unless-stopped
+    # Same bound as x-restricted: PostgreSQL logs are verbose during recovery.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
@@ -62,6 +76,8 @@ services:
       # MIX_METRICS_PUBLIC=1 to publish it to any client.
       METRICS_TOKEN: "${METRICS_TOKEN:-}"
       MIX_METRICS_PUBLIC: "${MIX_METRICS_PUBLIC:-}"
+      # Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is trusted.
+      MIX_TRUSTED_PROXIES: "${MIX_TRUSTED_PROXIES:-}"
       # Read-only view of one host folder, used for AGENTS.md / CLAUDE.md and
       # for skills discovered under .mix/skills (then .claude/skills, then
       # .agents/skills). Point MIX_PROJECT_DIR at the repository you work on.
@@ -235,7 +251,7 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
   postgres-test:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     profiles: [test]
     environment:
       POSTGRES_DB: mix
@@ -267,7 +283,7 @@ services:
     depends_on:
       postgres-test: {condition: service_healthy}
   preview-db:
-    image: postgres:17.5-bookworm
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     profiles: [preview]
     environment:
       POSTGRES_DB: mix

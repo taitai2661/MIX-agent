@@ -29,7 +29,7 @@ const HIDDEN_DIRS: &[&str] = &[
     "__pycache__",
 ];
 
-fn resolve_root(
+async fn resolve_root(
     app: &AppHandle,
     state: &AppState,
     root_path: &str,
@@ -43,7 +43,7 @@ fn resolve_root(
         return Err(format!("フォルダが見つかりません: {trimmed}"));
     }
     let root = path.canonicalize().map_err(crate::error::cmd_err)?;
-    crate::commands::access::ensure_root(app, state, &root)?;
+    crate::commands::access::ensure_root(app, state, &root).await?;
     Ok(root)
 }
 
@@ -64,7 +64,7 @@ pub async fn list_dir(
     root_path: String,
     path: String,
 ) -> Result<Vec<DirEntryView>, String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     let target =
         mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
     if !target.is_dir() {
@@ -116,7 +116,7 @@ pub async fn read_workspace_file(
     root_path: String,
     path: String,
 ) -> Result<FileContentView, String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     let target =
         mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
     if !target.is_file() {
@@ -207,7 +207,7 @@ pub async fn git_status(
     state: State<'_, AppState>,
     root_path: String,
 ) -> Result<GitStatusView, String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     let output = match run_git(&root, &["status", "--porcelain=v1", "-uall"]).await {
         Ok(output) => output,
         Err(_) => {
@@ -284,7 +284,7 @@ pub async fn git_diff(
     scope: String,
     path: Option<String>,
 ) -> Result<GitDiffView, String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     let mut args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-color"];
     let path = path.filter(|p| !p.trim().is_empty());
     match scope.as_str() {
@@ -345,7 +345,7 @@ pub async fn find_workspace_files(
     query: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<String>, String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     let max = limit.unwrap_or(300).min(1000);
     let q = query
         .map(|s| s.trim().to_lowercase())
@@ -406,7 +406,7 @@ pub async fn git_restore(
     path: String,
     staged: bool,
 ) -> Result<(), String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
 
     let mut args = vec!["restore"];
@@ -444,7 +444,7 @@ pub async fn git_stage(
     path: String,
     unstage: bool,
 ) -> Result<(), String> {
-    let root = resolve_root(&app, &state, &root_path)?;
+    let root = resolve_root(&app, &state, &root_path).await?;
     mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
 
     let args: Vec<&str> = if unstage {

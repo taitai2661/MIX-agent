@@ -19,6 +19,12 @@ export function BackupSettings() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
+  // Keep this in sync with MIN_PASSWORD_CHARS in the Rust storage crate. The
+  // backend is authoritative; this only stops a predictable rejection.
+  const passwordReady = [...password].length >= 12;
+  // Restore also accepts archives created before the 12-character policy, so
+  // only an empty field is predictably wrong here.
+  const restoreReady = password.length > 0;
 
   const requestRestore = async () => {
     const ok = await confirm({
@@ -102,7 +108,7 @@ export function BackupSettings() {
         <Input
           type="password"
           aria-label={t("バックアップパスワード")}
-          placeholder={t("バックアップパスワード")}
+          placeholder={t("バックアップパスワード（12文字以上）")}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
@@ -116,7 +122,7 @@ export function BackupSettings() {
           />
           <Button
             variant="primary"
-            disabled={busy || !password}
+            disabled={busy || !passwordReady}
             onClick={() => void run("create")}
             title={t("暗号化バックアップを作成")}
           >
@@ -144,7 +150,7 @@ export function BackupSettings() {
             <FolderOpen size={12} /> {t("参照")}
           </Button>
           <Button
-            disabled={busy || !restorePath || !password}
+            disabled={busy || !restorePath || !restoreReady}
             onClick={() => void requestRestore()}
             title={t("バックアップを検証し、再起動時に復元")}
           >

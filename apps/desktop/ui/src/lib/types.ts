@@ -494,6 +494,8 @@ export interface RunView {
   summary: string;
   budget: unknown;
   error: string | null;
+  /** The persisted event log exceeds the replay window (newest events kept). */
+  replay_truncated?: boolean;
 }
 
 /** A snapshot frame. Page metadata (URL, title, history) comes from the much

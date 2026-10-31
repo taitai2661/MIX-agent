@@ -9,7 +9,7 @@ discovered and then dropped.
 from pathlib import Path
 
 from mix_agent import config, project_docs
-from mix_agent.api import routes
+from mix_agent.api import routes_messages
 from mix_agent.db.models import Model, Provider, Run, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.skills import discovery
@@ -37,7 +37,7 @@ def make_model(context=20000):
 
 
 def send(signed, monkeypatch, model_id, prompt="hello"):
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     response = signed.post(
         f"/api/v1/conversations/{conversation}/messages",

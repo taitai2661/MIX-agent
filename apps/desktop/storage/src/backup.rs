@@ -63,9 +63,12 @@ pub struct RestoreInfo {
     pub manifest: BackupManifest,
 }
 
+const MIN_PASSWORD_CHARS: usize = 12;
+
 fn derive_key(password: &str, salt: &[u8]) -> anyhow::Result<[u8; KEY_LEN]> {
-    // Reject an empty password up front rather than silently producing a
-    // well-known key.
+    // Restore must keep working for archives created before the 12-character
+    // policy existed, so this layer only rejects an empty password. New
+    // backups go through `derive_key_for_new_backup` below.
     if password.is_empty() {
         bail!("a backup password is required");
     }
@@ -76,6 +79,16 @@ fn derive_key(password: &str, salt: &[u8]) -> anyhow::Result<[u8; KEY_LEN]> {
         .hash_password_into(password.as_bytes(), salt.as_str().as_bytes(), &mut key)
         .map_err(|e| anyhow!("key derivation failed: {e}"))?;
     Ok(key)
+}
+
+fn derive_key_for_new_backup(password: &str, salt: &[u8]) -> anyhow::Result<[u8; KEY_LEN]> {
+    // The Docker edition requires 12 characters as well; keeping one policy
+    // for *new* archives stops a desktop backup from being materially easier
+    // to guess without making older archives impossible to restore.
+    if password.chars().count() < MIN_PASSWORD_CHARS {
+        bail!("a backup password must be at least {MIN_PASSWORD_CHARS} characters");
+    }
+    derive_key(password, salt)
 }
 
 /// Minimal uncompressed tar writer, so the payload stays a valid archive and
@@ -259,7 +272,7 @@ async fn create_inner(
     let mut nonce_raw = [0u8; NONCE_LEN];
     aes_gcm::aead::rand_core::RngCore::fill_bytes(&mut OsRng, &mut salt);
     aes_gcm::aead::rand_core::RngCore::fill_bytes(&mut OsRng, &mut nonce_raw);
-    let key = derive_key(password, &salt)?;
+    let key = derive_key_for_new_backup(password, &salt)?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| anyhow!("cipher init failed: {e}"))?;
     let nonce_bytes = Nonce::from_slice(&nonce_raw);
     let ciphertext = cipher
@@ -432,5 +445,14 @@ mod tests {
     #[test]
     fn empty_password_is_refused() {
         assert!(derive_key("", &[1u8; SALT_LEN]).is_err());
+    }
+
+    #[test]
+    fn a_short_password_is_refused_for_new_backups() {
+        assert!(derive_key_for_new_backup("short", &[1u8; SALT_LEN]).is_err());
+        assert!(derive_key_for_new_backup("long enough!", &[1u8; SALT_LEN]).is_ok());
+        // Legacy archives were created under the old "non-empty" policy and
+        // must still derive a key when restored.
+        assert!(derive_key("short", &[1u8; SALT_LEN]).is_ok());
     }
 }

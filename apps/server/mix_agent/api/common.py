@@ -58,6 +58,39 @@ def conversation_title(content):
     return (text[:77] + "…") if len(text) > 78 else (text or "新しいチャット")
 
 
+def set_title_placeholder(value, explicit: bool):
+    """Record whether the title is the generated placeholder.
+
+    Comparing the title to a Japanese default string treated a conversation the
+    user deliberately renamed to that text as untouched. New rows carry the
+    decision explicitly; ``title_is_placeholder`` reads the legacy shape only
+    when the flag is absent.
+    """
+    value["title_is_placeholder"] = not explicit
+
+
+def title_is_placeholder(data) -> bool:
+    return bool(data.get("title_is_placeholder", data.get("title") == "新しいチャット"))
+
+
+def with_generated_title(data, content):
+    """Return ``data`` with the first user message used as its title.
+
+    Leaves an explicitly named conversation untouched, including one the user
+    renamed to the placeholder text.
+    """
+    if not title_is_placeholder(data):
+        return data
+    return {
+        **data,
+        # An attachment-only turn can have whitespace where text would be
+        # (`MessageInput` allows it when artifacts are present). It still needs
+        # a real generated title, not the placeholder marked as final.
+        "title": conversation_title((content or "").strip() or "添付について"),
+        "title_is_placeholder": False,
+    }
+
+
 def record_login(db, owner_id, successful, ip="unknown"):
     """Keep only the latest 100 outcomes for this account, with connection metadata."""
     db.add(LoginEvent(owner_id=owner_id, successful=successful, ip=ip))

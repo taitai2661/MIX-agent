@@ -3,7 +3,7 @@
 import pytest
 from mix_agent.db.models import Approval, Conversation, Event, Run, User, uid
 from mix_agent.db.session import SessionLocal
-from mix_agent.runs import engine
+from mix_agent.runs import engine, engine_provider, engine_tools
 from mix_agent.runs.state import RUN_STATES, InvalidRunTransition, transition_run
 from mix_agent.tools.registry import BUILTINS
 from sqlalchemy import select
@@ -152,7 +152,7 @@ class CompletingAdapter:
 
 
 async def test_drive_terminal_run_does_not_return_to_running(signed, monkeypatch):
-    monkeypatch.setattr(engine, "Adapter", CompletingAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", CompletingAdapter)
     run_id = make_run()
     set_status(run_id, "completed")
     await engine.drive(run_id)
@@ -165,7 +165,7 @@ async def test_drive_terminal_run_does_not_return_to_running(signed, monkeypatch
 
 
 async def test_drive_queued_run_transitions_to_running(signed, monkeypatch):
-    monkeypatch.setattr(engine, "Adapter", CompletingAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", CompletingAdapter)
     run_id = make_run()
     await engine.drive(run_id)
     with SessionLocal() as db:
@@ -175,7 +175,7 @@ async def test_drive_queued_run_transitions_to_running(signed, monkeypatch):
 
 
 async def test_drive_waiting_approval_run_returns_to_running(signed, monkeypatch):
-    monkeypatch.setattr(engine, "Adapter", CompletingAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", CompletingAdapter)
     run_id = make_run()
     set_status(run_id, "waiting_approval")
     await engine.drive(run_id)
@@ -194,7 +194,7 @@ async def test_drive_does_not_run_from_unexpected_status(signed, monkeypatch):
     async def forbidden(*args):
         calls.append(args)
 
-    monkeypatch.setattr(engine, "Adapter", forbidden)
+    monkeypatch.setattr(engine_provider, "Adapter", forbidden)
     run_id = make_run()
     set_status(run_id, "running")
     await engine.drive(run_id)
@@ -252,8 +252,8 @@ async def test_approval_flow_uses_state_machine_and_executes_once(signed, monkey
         executions.append(args[-1])
         return {"ok": True}
 
-    monkeypatch.setattr(engine, "Adapter", ToolRequestingAdapter)
-    monkeypatch.setattr(engine, "execute", execute)
+    monkeypatch.setattr(engine_provider, "Adapter", ToolRequestingAdapter)
+    monkeypatch.setattr(engine_tools, "execute", execute)
     await engine.drive(run_id)
     with SessionLocal() as db:
         run = db.get(Run, run_id)

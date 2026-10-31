@@ -5,10 +5,14 @@
 //! and the Rust side cannot tell that value apart from one the WebView made up.
 //! Opening the dialog here lets the process that owns the trust boundary see
 //! the result directly and grant exactly that path.
+//!
+//! The callback (`pick_*`) API is used instead of `blocking_pick_*` so a modal
+//! does not pin a Tauri async-runtime thread while the user decides.
 
 use serde::Deserialize;
-use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri::{AppHandle, Runtime, State};
+use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
+use tokio::sync::oneshot;
 
 use crate::AppState;
 
@@ -18,11 +22,11 @@ pub struct PickerFilter {
     pub extensions: Vec<String>,
 }
 
-fn apply_filters<R: tauri::Runtime>(
-    mut builder: tauri_plugin_dialog::FileDialogBuilder<R>,
+fn apply_filters<R: Runtime>(
+    mut builder: FileDialogBuilder<R>,
     title: Option<String>,
     filters: Option<Vec<PickerFilter>>,
-) -> tauri_plugin_dialog::FileDialogBuilder<R> {
+) -> FileDialogBuilder<R> {
     if let Some(title) = title.filter(|t| !t.trim().is_empty()) {
         builder = builder.set_title(title);
     }
@@ -34,6 +38,38 @@ fn apply_filters<R: tauri::Runtime>(
         builder = builder.add_filter(filter.name, &extensions);
     }
     builder
+}
+
+async fn pick_one<R: Runtime>(builder: FileDialogBuilder<R>) -> Option<FilePath> {
+    let (tx, rx) = oneshot::channel();
+    builder.pick_file(move |path| {
+        let _ = tx.send(path);
+    });
+    rx.await.ok().flatten()
+}
+
+async fn pick_many<R: Runtime>(builder: FileDialogBuilder<R>) -> Vec<FilePath> {
+    let (tx, rx) = oneshot::channel();
+    builder.pick_files(move |paths| {
+        let _ = tx.send(paths);
+    });
+    rx.await.ok().flatten().unwrap_or_default()
+}
+
+async fn pick_folder_path<R: Runtime>(builder: FileDialogBuilder<R>) -> Option<FilePath> {
+    let (tx, rx) = oneshot::channel();
+    builder.pick_folder(move |path| {
+        let _ = tx.send(path);
+    });
+    rx.await.ok().flatten()
+}
+
+async fn pick_save_path<R: Runtime>(builder: FileDialogBuilder<R>) -> Option<FilePath> {
+    let (tx, rx) = oneshot::channel();
+    builder.save_file(move |path| {
+        let _ = tx.send(path);
+    });
+    rx.await.ok().flatten()
 }
 
 /// Pick one or more files. Returns an empty list when the user cancels, which
@@ -48,12 +84,12 @@ pub async fn pick_open_file(
 ) -> Result<Vec<String>, String> {
     let builder = apply_filters(app.dialog().file(), title, filters);
     let picked = if multiple.unwrap_or(false) {
-        builder.blocking_pick_files()
+        pick_many(builder).await
     } else {
-        builder.blocking_pick_file().map(|path| vec![path])
+        pick_one(builder).await.into_iter().collect()
     };
     let mut out = Vec::new();
-    for path in picked.unwrap_or_default() {
+    for path in picked {
         let path = path.into_path().map_err(|e| e.to_string())?;
         state.grants.grant(&path);
         out.push(path.to_string_lossy().to_string());
@@ -69,7 +105,7 @@ pub async fn pick_folder(
     title: Option<String>,
 ) -> Result<Option<String>, String> {
     let builder = apply_filters(app.dialog().file(), title, None);
-    let Some(path) = builder.blocking_pick_folder() else {
+    let Some(path) = pick_folder_path(builder).await else {
         return Ok(None);
     };
     let path = path.into_path().map_err(|e| e.to_string())?;
@@ -92,7 +128,7 @@ pub async fn pick_save_file(
         Some(name) => builder.set_file_name(name),
         None => builder,
     };
-    let Some(path) = builder.blocking_save_file() else {
+    let Some(path) = pick_save_path(builder).await else {
         return Ok(None);
     };
     let path = path.into_path().map_err(|e| e.to_string())?;

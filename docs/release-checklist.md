@@ -6,7 +6,7 @@
 2. 実機または検証用Docker環境で新規導入を試し、管理者作成、Provider接続、Runner、MCPを確認する。
 3. 既存データの暗号化バックアップを取得し、検証環境へ復元する。DB migration後の会話と設定を確認する。
 4. 公開リポジトリのmainへ反映し、必須CIが成功したことを確認する。
-5. `desktop-release` をmain refで手動実行し、`tag=main`、`dry_run=true` を指定する。Apple Silicon／Intel macOSのDMG、Windows x64のNSIS／MSI、Linux x64のAppImage／debがbuildされ、6ファイル分の`SHA256SUMS`と署名済みペイロードから生成した`latest.json`が作成されることを確認する。`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` がRepository Secretsに登録済みであること。macOS `.app` はDeveloper ID署名・公証なしだが、必ずad-hoc署名され、`Verify macOS signature and bundle architecture` が成功すること（`codesign --verify --deep --strict` とアプリ本体のCPUアーキテクチャ一致）。Chromiumは同梱されず、初回利用時に`browser/src/chromium-manifest.json`のSHA-256で検証してダウンロードされる。
+5. `desktop-release` をmain refで手動実行し、`tag=main`、`dry_run=true` を指定する。Apple Silicon／Intel macOSのDMG、Windows x64のNSIS／MSI、Linux x64のAppImage／debがbuildされ、6ファイル分の`SHA256SUMS`と署名済みペイロードから生成した`latest.json`が作成されることを確認する。`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` がRepository Secretsに登録済みであること。macOS `.app` は既定ではDeveloper ID署名・公証なしだが、必ずad-hoc署名され、`Verify macOS signature and bundle architecture` が成功すること（`codesign --verify --deep --strict` とアプリ本体のCPUアーキテクチャ一致）。`APPLE_*` Secretsを登録した場合は、同ジョブがDeveloper ID署名・公証・stapleまで検証する。Chromiumは同梱されず、初回利用時に`browser/src/chromium-manifest.json`のSHA-256で検証してダウンロードされる。
 6. `vX.Y.Z` タグを作成し、`Release MIX-agent` が8種類のAMD64イメージをGHCRへ配布した後、ZimaOSストア公開が自動で続くことを確認する。
 7. 初回公開時はGitHub Packagesで8種類のパッケージをPublicにし、匿名で各イメージをpull/manifest参照できることを確認する。
 8. `gh-pages` に `store.json`、`index.json`、`store/main.zip` があり、対象バージョンが一致していることを確認する。
@@ -24,7 +24,7 @@
 
 - `LICENSE`、`NOTICE` とアイコンのライセンス情報が残っている。
 - API key、パスワード、個人データ、開発機の生成物が含まれていない。`scripts/check-secrets.py` と `repo-hygiene` ジョブが成功している。
-- `dependency-audit` が成功し、Python 依存の CycloneDX SBOM（`sbom-python` artifact）が生成されている。
+- `dependency-audit` が成功し、Python 依存の CycloneDX SBOM（`sbom-python` artifact）が生成されている。`dependency-audit-rust` も成功し、`Cargo.lock` に既知の脆弱性がない。
 - 設定ファイル・README・Releaseノートに非公開の作業用リポジトリへの参照が含まれていない。
 - ZimaOSの既存手動導入からストア導入へのデータ引き継ぎは自動ではない。ガイドのバックアップ・復元説明を維持する。
 - `apps/MIX-agent/docker-compose.yml`の`x-casaos.version`がReleaseタグと一致している。v2/v1ストアは`scripts/stage-store-source.sh`で同じファイルから生成する。
@@ -36,13 +36,13 @@
 - `apps/desktop/browser/src/chromium-manifest.json` の `version` / `sha256` / `size` が、実際に配布する Chrome for Testing の zip と一致している。`pnpm chromium:pin` の差分をレビューし、リリース前に各プラットフォームで初回インストールを確認する。`desktop-release` の `verify-chromium-pin` が成功していること。
 - 初回インストールが失敗した場合に、システムの Chromium / Chrome / Edge へフォールバックできる。オフライン環境向けの手動配置手順がリリースノートにある。
 
-### Developer ID / Authenticode 署名を有効化する場合（未実施）
+### Developer ID / Authenticode 署名を有効化する場合（証明書未登録）
 
 現状は macOS が ad-hoc 署名のみ、Windows が未署名です。証明書を用意できた時点で、以下を一度に切り替えます。証明書・パスワードは Repository Secrets のみに置き、リポジトリへコミットしないでください。
 
 1. Apple Developer Program に加入し、Developer ID Application 証明書と App Store Connect API キー（または Apple ID の app-specific password）を用意する。
-2. Secrets に `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` を登録する。
-3. `desktop-release` の macOS ビルドで `APPLE_*` を渡し、`codesign --verify --deep --strict` の後段に `xcrun notarytool submit --wait` と `xcrun stapler staple` を追加する。現在の `Signature=adhoc` を要求する検証は Developer ID の検証へ置き換える。
+2. Secrets に `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` を登録する。登録すると`Configure optional Apple signing` がビルドへ資格情報を渡し、署名・公証・stapleの検証まで自動で切り替わる。
+3. 証明書が無い間は ad-hoc 署名のままなので、`Verify macOS signature and bundle architecture` が `Signature=adhoc` を検証する分岐を維持する。
 4. Windows は Authenticode 証明書（EV 推奨）を Secrets に登録し、Tauri の `certificateThumbprint` / `digestAlgorithm` / `timestampUrl` を設定して NSIS/MSI に署名する。署名後に `signtool verify /pa /v` を実行する。
 5. 署名済み成果物で Gatekeeper / SmartScreen の警告が出ないこと、自動更新の `.sig` が壊れていないことを実機で確認する。
 

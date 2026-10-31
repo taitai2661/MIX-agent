@@ -32,3 +32,16 @@ def test_token_is_required_and_enforced_when_configured(monkeypatch):
     assert client.get("/metrics").status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer scrape-token"}).status_code == 200
+
+
+def test_a_trusted_proxy_forwards_the_real_client_address(monkeypatch):
+    monkeypatch.delenv("METRICS_TOKEN", raising=False)
+    monkeypatch.delenv("MIX_METRICS_PUBLIC", raising=False)
+    monkeypatch.setenv("MIX_TRUSTED_PROXIES", "10.0.0.5")
+    # The proxy is private, but the client it reports is public: the forwarded
+    # address must decide, not the peer address.
+    client = TestClient(app, client=("10.0.0.5", 40000))
+    denied = client.get("/metrics", headers={"x-forwarded-for": "8.8.8.8"})
+    assert denied.status_code == 404
+    allowed = client.get("/metrics", headers={"x-forwarded-for": "192.168.1.10"})
+    assert allowed.status_code == 200

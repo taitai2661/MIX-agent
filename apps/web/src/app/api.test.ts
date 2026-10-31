@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { api, binary, setCSRF } from "./api";
+import { api, binary, HttpError, setCSRF } from "./api";
 import { setLanguage } from "./i18n";
 afterEach(() => {
   vi.useRealTimers();
@@ -89,6 +89,22 @@ describe("authenticated mutations", () => {
       "The request conflicts with the current state.",
     );
     setLanguage("ja");
+  });
+  it("keeps the HTTP status on the thrown error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          detail: "競合",
+          code: "request.idempotency_conflict",
+        }),
+      }),
+    );
+    const error = await api("/conflict", "POST", {}).catch((err) => err);
+    expect(error).toBeInstanceOf(HttpError);
+    expect((error as HttpError).status).toBe(409);
   });
   it("surfaces actionable server errors", async () => {
     vi.stubGlobal(

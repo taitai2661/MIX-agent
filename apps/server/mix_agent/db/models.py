@@ -53,6 +53,7 @@ class Session(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     csrf: Mapped[str] = mapped_column(String(64))
     expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (Index("sessions_expires", "expires"),)
 
 
 class LoginEvent(Base):
@@ -98,7 +99,11 @@ class ConversationFolder(Record, Base):
 
 class Message(Record, Base):
     __tablename__ = "messages"
-    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    # The composite (conversation_id, created_at) index below covers queries
+    # that filter by conversation alone, so the implicit single-column index
+    # was pure write/storage overhead.
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"))
+    __table_args__ = (Index("messages_conversation_created", "conversation_id", "created_at"),)
 
 
 class Feedback(Record, Base):
@@ -362,6 +367,7 @@ class Artifact(Record, Base):
 
 class Audit(Record, Base):
     __tablename__ = "audit_events"
+    __table_args__ = (Index("audit_events_owner_created", "owner_id", "created_at"),)
 
 
 class Run(Record, Base):
@@ -419,7 +425,10 @@ class Event(Base):
     kind: Mapped[str] = mapped_column(String(50))
     data: Mapped[dict] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    __table_args__ = (UniqueConstraint("run_id", "sequence"),)
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence"),
+        Index("run_events_created", "created_at"),
+    )
 
 
 class ToolCall(Record, Base):

@@ -16,7 +16,7 @@ from mix_agent.db.models import (
     uid,
 )
 from mix_agent.db.session import SessionLocal
-from mix_agent.runs import engine
+from mix_agent.runs import engine, engine_provider, engine_support, engine_tools
 from mix_agent.tools.execute import save_text_artifact
 from mix_agent.tools.registry import BUILTINS, call_scope, fingerprint, permission
 from sqlalchemy import select
@@ -141,7 +141,7 @@ def test_agent_plan_tracks_pending_and_post_change_verification(signed):
             if index == 1:
                 assert run.data["agent_plan"]["verification"] == ""
         assert run.data["task_state"]["pending"] == []
-        assert engine.agent_completion_issue(run, calls) is None
+        assert engine_support.agent_completion_issue(run, calls) is None
 
 
 class FakeAdapter:
@@ -185,7 +185,7 @@ async def test_agent_does_not_complete_while_plan_has_pending_work(signed, monke
         async def stream(self, model, history, tools, mode, settings):
             yield {"kind": "response", "message": {"role": "assistant", "content": "完了しました。"}}
 
-    monkeypatch.setattr(engine, "Adapter", PrematureAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", PrematureAdapter)
     await engine.drive(run_id)
     with SessionLocal() as db:
         run = db.get(Run, run_id)
@@ -201,14 +201,14 @@ async def test_agent_does_not_complete_while_plan_has_pending_work(signed, monke
 @pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])
 async def test_approval_resume_and_no_double_execution(signed, monkeypatch, mode):
     run_id, _ = make_run(mode=mode)
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     executions = []
 
     async def execute(*args):
         executions.append(args[-1])
         return {"ok": True}
 
-    monkeypatch.setattr(engine, "execute", execute)
+    monkeypatch.setattr(engine_tools, "execute", execute)
     await engine.drive(run_id)
     with SessionLocal() as db:
         assert db.get(Run, run_id).status == "waiting_approval"
@@ -259,7 +259,7 @@ async def test_invalid_model_tool_call_gets_repair_turn_instead_of_failing_run(
                     "tool_calls": [],
                 }
 
-    monkeypatch.setattr(engine, "Adapter", InvalidThenAnswerAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", InvalidThenAnswerAdapter)
     await engine.drive(run_id)
     with SessionLocal() as db:
         run = db.get(Run, run_id)
@@ -281,12 +281,12 @@ async def test_invalid_model_tool_call_gets_repair_turn_instead_of_failing_run(
 @pytest.mark.parametrize("mode", ["chat", "thinking", "agent"])
 async def test_denied_tool_never_executes(signed, monkeypatch, mode):
     run_id, tool = make_run(mode=mode)
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
 
     async def forbidden(*args):
         raise AssertionError("Must not execute")
 
-    monkeypatch.setattr(engine, "execute", forbidden)
+    monkeypatch.setattr(engine_tools, "execute", forbidden)
     with SessionLocal() as db:
         run = db.get(Run, run_id)
         db.add(
@@ -357,8 +357,8 @@ async def test_safe_tool_calls_share_a_model_turn_and_keep_provider_order(signed
         active -= 1
         return {"call": args[-1]}
 
-    monkeypatch.setattr(engine, "Adapter", CompleteAfterTools)
-    monkeypatch.setattr(engine, "execute", delayed_execute)
+    monkeypatch.setattr(engine_provider, "Adapter", CompleteAfterTools)
+    monkeypatch.setattr(engine_tools, "execute", delayed_execute)
     await engine.drive(run_id)
     assert maximum == 2
     with SessionLocal() as db:
@@ -417,8 +417,8 @@ async def test_serial_tool_calls_do_not_overlap(signed, monkeypatch):
         active -= 1
         return {"ok": True}
 
-    monkeypatch.setattr(engine, "Adapter", CompleteAfterTools)
-    monkeypatch.setattr(engine, "execute", delayed_execute)
+    monkeypatch.setattr(engine_provider, "Adapter", CompleteAfterTools)
+    monkeypatch.setattr(engine_tools, "execute", delayed_execute)
     await engine.drive(run_id)
     assert maximum == 1
 
@@ -621,7 +621,7 @@ def test_audit_events_are_readable_and_filterable(signed):
 
 
 def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_settings
 
     async def provisioner(kind, path, payload, timeout=120):
         assert kind == "browser-provisioner"
@@ -629,7 +629,7 @@ def test_browser_setup_bundle_and_deferred_install_status(signed, monkeypatch):
             return {"status": "installing", "failure": None, "progress": 42, "stage": "ダウンロード中"}
         return {"status": "ready", "failure": None, "progress": 100, "stage": "利用可能"}
 
-    monkeypatch.setattr(routes, "runner_request", provisioner)
+    monkeypatch.setattr(routes_settings, "runner_request", provisioner)
     response = signed.post("/api/v1/browser/enable")
     assert response.status_code == 200
     assert {"browser_open", "browser_read", "browser_click", "browser_type"} <= set(
@@ -727,9 +727,9 @@ def test_memory_scope_is_a_soft_retrieval_signal(signed):
 
 
 def test_message_retry_and_saved_selection(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_messages
 
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data={"kind": "compatible"})
@@ -753,9 +753,9 @@ def test_message_retry_and_saved_selection(signed, monkeypatch):
 
 
 def test_edit_message_truncates_later_turns_and_regenerates(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_messages
 
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data={"kind": "compatible"})
@@ -802,9 +802,9 @@ def test_edit_message_truncates_later_turns_and_regenerates(signed, monkeypatch)
 
 
 def test_edit_message_rejects_assistant_and_other_conversations(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_messages
 
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data={"kind": "compatible"})
@@ -856,9 +856,9 @@ def test_edit_message_rejects_assistant_and_other_conversations(signed, monkeypa
 
 
 def test_edit_message_failure_keeps_the_history(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_messages
 
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data={"kind": "compatible"})
@@ -895,9 +895,9 @@ def test_edit_message_failure_keeps_the_history(signed, monkeypatch):
 
 
 def test_edit_idempotency_is_scoped_to_the_target_message(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_messages
 
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data={"kind": "compatible"})
@@ -989,9 +989,9 @@ def test_delete_message_tail_defers_artifact_unlink_until_commit(signed, tmp_pat
 
 
 def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monkeypatch):
-    from mix_agent.api import routes
+    from mix_agent.api import routes_messages
 
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     with SessionLocal() as db:
         owner = db.scalar(select(User.id))
         provider = Provider(owner_id=owner, data={"kind": "compatible"})

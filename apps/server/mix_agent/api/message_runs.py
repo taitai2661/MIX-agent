@@ -3,7 +3,8 @@
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from mix_agent.api.common import conversation_title as _conversation_title
+from mix_agent.api.common import title_is_placeholder, with_generated_title
+from mix_agent.api.message_memory import commit_explicit_memory
 from mix_agent.api.routes_conversations import effective_tool_ids
 from mix_agent.context import task_state as context_task_state
 from mix_agent.db.models import Message, Run, now
@@ -88,7 +89,7 @@ def _build_run_record(
             "allow_tools": body.allow_tools,
             "temporary_artifact_ids": list(body.artifact_ids) if temporary_mode else [],
             "temporary_conversation": temporary_mode
-            and conversation.data.get("title") == "新しいチャット"
+            and title_is_placeholder(conversation.data)
             and not prior_content,
             # Phase 1 Context Engine state (progressive summary + task state + trace).
             "task_state": (snapshot.get("_context_bootstrap") or {}).get("task_state")
@@ -116,11 +117,8 @@ def _build_run_record(
     db.add(message)
     db.flush()
     run.data = {**run.data, "input_message_id": message.id}
-    if not temporary_mode and conversation.data.get("title") == "新しいチャット":
-        conversation.data = {
-            **conversation.data,
-            "title": _conversation_title(body.content or "添付について"),
-        }
+    if not temporary_mode:
+        conversation.data = with_generated_title(conversation.data, body.content)
     if not temporary_mode:
         conversation.data = {
             **conversation.data,
@@ -192,6 +190,8 @@ def persist_message_run(
         temporary_mode,
         prior_content,
     )
+    # Best-effort: the Run is already committed.
+    commit_explicit_memory(db, s.owner_id, body.content, temporary_mode)
     for path in orphaned_paths:
         path.unlink(missing_ok=True)
     return run

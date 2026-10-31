@@ -50,6 +50,7 @@ ERROR_CODES: dict[str, str] = {
     "カスタムはOpenAI互換・Anthropic・Geminiから選択してください": "provider.custom_transport_invalid",
     "クロスサイトリクエストは拒否されました": "common.cross_site_blocked",
     "バックアップできません。実行・バックグラウンドProcessを停止し、Runner接続とサイズ上限を確認してください。": "backup.failed",
+    "通信ポリシーを保存できませんでした": "egress.policy_write_failed",
     "バックアップ処理中です": "backup.in_progress",
     "バックアップ／復元処理中です": "common.backup_in_progress",
     "メッセージを入力してください": "message.empty",

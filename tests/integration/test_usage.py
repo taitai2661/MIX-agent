@@ -1,9 +1,9 @@
 import asyncio
 
-from mix_agent.api import routes
+from mix_agent.api import routes_messages
 from mix_agent.db.models import Model, ModelUsageEvent, Provider, User
 from mix_agent.db.session import SessionLocal
-from mix_agent.runs import engine
+from mix_agent.runs import engine, engine_provider
 from sqlalchemy import select
 
 
@@ -23,7 +23,7 @@ def make_model(pricing=None, model_id="priced"):
 
 
 def _drive(signed, monkeypatch, model_id, usage, key):
-    monkeypatch.setattr(routes, "launch", lambda _: None)
+    monkeypatch.setattr(routes_messages, "launch", lambda _: None)
     conversation = signed.post("/api/v1/conversations", json={}).json()["id"]
     queued = signed.post(
         f"/api/v1/conversations/{conversation}/messages",
@@ -44,7 +44,7 @@ def _drive(signed, monkeypatch, model_id, usage, key):
                 "usage": usage,
             }
 
-    monkeypatch.setattr(engine, "Adapter", FakeAdapter)
+    monkeypatch.setattr(engine_provider, "Adapter", FakeAdapter)
     asyncio.run(engine.drive(queued.json()["run_id"]))
 
 

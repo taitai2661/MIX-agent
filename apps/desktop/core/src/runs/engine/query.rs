@@ -1,6 +1,8 @@
 use super::helpers::*;
 use super::*;
 
+use crate::runs::events::MAX_REPLAY_EVENTS;
+
 impl RunEngine {
     pub async fn list_providers(&self) -> Vec<ProviderHandle> {
         self.providers.list().await
@@ -270,28 +272,32 @@ impl RunEngine {
         }
         // One grouped query for the whole conversation instead of one per run.
         // A denied approval also writes a `tool_result` with an error, so the
-        // count covers both failures and refusals.
-        let failures: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT e.run_id, COUNT(*) FROM run_events e \
-             JOIN runs r ON r.id = e.run_id \
-             WHERE r.conversation_id = ? AND e.kind = 'tool_result' \
-               AND json_extract(e.data, '$.error') IS NOT NULL \
-             GROUP BY e.run_id",
+        // failure count covers both failures and refusals. The total count
+        // drives the transcript's replay-truncation warning without fetching
+        // the (potentially huge) event log.
+        let counts: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT e.run_id, COUNT(*), \
+                    COALESCE(SUM(CASE WHEN e.kind = 'tool_result' \
+                      AND json_extract(e.data, '$.error') IS NOT NULL \
+                      THEN 1 ELSE 0 END), 0) \
+             FROM run_events e JOIN runs r ON r.id = e.run_id \
+             WHERE r.conversation_id = ? GROUP BY e.run_id",
         )
         .bind(conversation_id.to_string())
         .fetch_all(self.storage.pool())
         .await
         .unwrap_or_else(|err| {
-            tracing::warn!(?err, %conversation_id, "failed tool count query failed");
+            tracing::warn!(?err, %conversation_id, "run event aggregate query failed");
             Vec::new()
         });
-        let by_run: std::collections::HashMap<String, u32> = failures
+        let by_run: std::collections::HashMap<String, (u32, bool)> = counts
             .into_iter()
-            .map(|(run_id, count)| (run_id, count as u32))
+            .map(|(run_id, total, failures)| (run_id, (failures as u32, total > MAX_REPLAY_EVENTS)))
             .collect();
         for view in &mut views {
-            if let Some(count) = by_run.get(&view.id.to_string()) {
-                view.failed_tool_count = *count;
+            if let Some((failures, truncated)) = by_run.get(&view.id.to_string()) {
+                view.failed_tool_count = *failures;
+                view.replay_truncated = *truncated;
             }
         }
         views

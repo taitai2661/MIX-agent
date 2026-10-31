@@ -598,7 +598,7 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
         request_id = next(RPC_IDS)
         request_params = dict(params)
         request_params["_meta"] = {
-            "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.4"},
+            "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.5"},
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         }
         await websocket.send(

@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "mix-agent-desktop"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3125,7 +3125,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-browser"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3150,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-core"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3174,7 +3174,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-mcp"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3198,7 +3198,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-providers"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-storage"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3241,7 +3241,7 @@ dependencies = [
 
 [[package]]
 name = "mixd-tools"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-trait",

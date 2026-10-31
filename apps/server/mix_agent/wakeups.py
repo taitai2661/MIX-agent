@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import weakref
 from typing import Any
 
 
@@ -60,7 +61,11 @@ class Wakeup:
 
 class RunWakeups:
     def __init__(self):
-        self._by_run: dict[str, Wakeup] = {}
+        # A Run is streamed by at most a few SSE connections. Holding every
+        # Wakeup forever made a long-running server retain one dictionary entry
+        # per Run ever viewed; the active stream owns the only strong reference
+        # it needs.
+        self._by_run: weakref.WeakValueDictionary[str, Wakeup] = weakref.WeakValueDictionary()
 
     def for_run(self, run_id: str) -> Wakeup:
         return self._by_run.setdefault(run_id, Wakeup())

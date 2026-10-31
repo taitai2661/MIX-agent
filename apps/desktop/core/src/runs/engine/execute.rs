@@ -1028,7 +1028,7 @@ impl RunEngine {
             // a caller can set, so a zero must not turn the modulo into a panic.
             if self.policy.checkpointing
                 && self.policy.checkpoint_every_steps > 0
-                && steps % self.policy.checkpoint_every_steps == 0
+                && steps.is_multiple_of(self.policy.checkpoint_every_steps)
             {
                 let snapshot = CheckpointSnapshot {
                     step_index: steps,

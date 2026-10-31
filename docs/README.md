@@ -58,6 +58,7 @@
 | `release-notes-v0.5.1.md` | macOS 署名修正・Windows x64 追加 |
 | `release-notes-v0.5.2.md` | アプリ内アップデート・Linux 追加 |
 | `release-notes-v0.5.4.md` | Chromium 初回インストール・ローカルLLM・ブラウザ ライブ表示 |
+| `release-notes-v0.5.5.md` | 安定化（ブラウザ境界・秘密マスク・復元改善・実行ログ上限） |
 
 `v0.5.3` は発行していません（`v0.5.2` の直後に `v0.5.4` を公開）。欠番は意図的で、`v0.5.3` のリリースノートは存在しません。
 

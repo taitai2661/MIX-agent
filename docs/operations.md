@@ -23,11 +23,15 @@ MIX_LOG_FORMAT=json docker compose up -d
 
 `request_id` はレスポンスの `X-Request-ID` と一致するため、ユーザーから報告されたIDで該当リクエストを検索できます。
 
+`db` と `x-restricted` を使う各コンテナのログは、Docker の `json-file` ドライバで 10 MiB × 3 ファイルに制限しています。長期保存が必要な場合はこの上限を上げず、外部のログ収集基盤へ転送してください。
+
 ## ヘルスチェックとメトリクス
 
 Compose の `app` には `/live` を使う healthcheck があります。`/live` はDBに触れないため、DBが一時的に落ちてもアプリを再起動しません。DB接続まで含めた準備確認は `/health` を使ってください。
 
 `/metrics` は Prometheus 形式のプロセス内カウンタを返します（HTTPメソッド・ルートテンプレート・ステータス別の件数、レイテンシの summary、稼働時間）。ラベルは `GET /api/v1/runs` のようにルート単位へ丸めるため、Run IDや任意の404パスがそのままラベルになることはありません。`METRICS_TOKEN` が未設定の場合、`/metrics` は loopback とプライベートネットワークからのアクセスにのみ応答し、それ以外は404を返します。外部のPrometheusから直接取得する場合は `METRICS_TOKEN` を設定して `Authorization: Bearer <token>` を要求するか、LAN内に閉じた scrape 経路を用意してください。`MIX_METRICS_PUBLIC=1` を設定すると従来どおり無認証で全クライアントへ公開されます（非推奨）。複数workerで動かす場合、カウンタはプロセスごとに分かれる点に注意してください。
+
+Reverse Proxy 配下では、アプリから見た TCP ピアは Proxy のアドレスです。`MIX_TRUSTED_PROXIES` にその Proxy の IP/CIDR（例: `172.16.0.0/12`）を設定すると、その Proxy から届いた `X-Forwarded-For` だけを使って `/metrics` の公開判定とログイン試行制限のクライアントIPを解決します。未設定時の信頼対象は loopback（`127.0.0.1,::1`）のみで、それ以外のクライアントが送った `X-Forwarded-For` は無視されます。Proxy のアドレスを誤って広く指定するとIP偽装を許すため、必要なサブネットだけを指定してください。
 
 `mcp-manager` はホストのDocker Socketを直接マウントしません。`docker-socket-proxy` 経由でコンテナ・ボリューム・ネットワーク・イメージのAPIだけを許可し、build/swarm/secrets等の管理APIを減らしています。ただしMCPの導入にはコンテナ作成APIが必要で、managerが侵害された場合の影響は依然として大きいため、信頼できるネットワーク（`mcp` internal network）に限定しています。
 
@@ -69,7 +73,7 @@ Filesystemの接続設定は `/packages/node_modules/.bin/mcp-server-filesystem`
 
 復元前の暗号化退避はdata volumeの `restore-rollback.mix`、古い添付は `rollback-*` に残ります。Runnerも `.mix-rollback-*` に以前のファイルを保持します。自動削除はしません。これらの退避はディスクを消費するので、検証済みバックアップを別に確保してから管理者が整理してください。
 
-復元途中に停止した場合、起動時に退避アーカイブから回復します。回復中のパスフレーズは鍵用volumeに一時保存し、完了時に削除します。Runnerに接続できず回復できない場合は起動を失敗させます。鍵volumeも含めて保全してください。DBだけのバックアップではSecretを復号できません。
+復元途中に停止した場合、起動時に退避アーカイブから回復します。回復用のパスフレーズは鍵用volumeの `restore-passphrase` に master key で暗号化して一時保存し、完了時に削除します。Runnerに接続できず回復できない場合は起動を失敗させます。鍵volumeも含めて保全してください。DBだけのバックアップではSecretを復号できません。
 
 ## 開発用画面確認
 

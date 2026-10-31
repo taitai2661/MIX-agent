@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import re
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -23,6 +24,10 @@ FILE_MAX = 262144
 FILES_TOTAL_MAX = 2 * 1024 * 1024
 FILES_COUNT_MAX = 100
 ARCHIVE_MAX = 5 * 1024 * 1024
+# Declared (uncompressed) size ceiling for one archive. The per-skill limits
+# above are applied later; this bound stops a small deflate stream from making
+# the parser allocate gigabytes before it can reject the package.
+ARCHIVE_UNCOMPRESSED_MAX = 16 * 1024 * 1024
 
 _FRONTMATTER = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n(.*))?$", re.DOTALL)
 
@@ -126,6 +131,27 @@ def safe_relative_path(name: str) -> str:
     return str(path)
 
 
+def _read_entry(bundle: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
+    """Read one entry with a hard cap on the *decompressed* size.
+
+    ``ZipInfo.file_size`` comes from the archive and is therefore untrusted.
+    Reading at most ``FILE_MAX + 1`` bytes means a forged or hostile header can
+    still never make this allocation larger than one bundled file.
+    """
+    if info.flag_bits & 0x1:
+        raise SkillFormatError(f"encrypted archive entries are not supported: {info.filename}")
+    if info.file_size > FILE_MAX:
+        raise SkillFormatError(f"archive entry exceeds {FILE_MAX} bytes: {info.filename}")
+    try:
+        with bundle.open(info) as handle:
+            data = handle.read(FILE_MAX + 1)
+    except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error) as exc:
+        raise SkillFormatError(f"cannot read archive entry: {info.filename}") from exc
+    if len(data) > FILE_MAX:
+        raise SkillFormatError(f"archive entry exceeds {FILE_MAX} bytes: {info.filename}")
+    return data
+
+
 def parse_archive(raw: bytes) -> list[dict]:
     """Parse a zip archive into one or more skill packages."""
     if len(raw) > ARCHIVE_MAX:
@@ -135,6 +161,8 @@ def parse_archive(raw: bytes) -> list[dict]:
     except zipfile.BadZipFile as exc:
         raise SkillFormatError("archive is not a valid zip file") from exc
     entries: dict[str, bytes] = {}
+    declared_total = 0
+    actual_total = 0
     with bundle:
         for info in bundle.infolist():
             if info.is_dir():
@@ -142,7 +170,14 @@ def parse_archive(raw: bytes) -> list[dict]:
             name = safe_relative_path(info.filename)
             if len(entries) >= FILES_COUNT_MAX + 20:
                 raise SkillFormatError("archive contains too many files")
-            entries[name] = bundle.read(info)
+            declared_total += info.file_size
+            if declared_total > ARCHIVE_UNCOMPRESSED_MAX:
+                raise SkillFormatError("archive expands beyond the uncompressed size limit")
+            data = _read_entry(bundle, info)
+            actual_total += len(data)
+            if actual_total > ARCHIVE_UNCOMPRESSED_MAX:
+                raise SkillFormatError("archive expands beyond the uncompressed size limit")
+            entries[name] = data
 
     roots = sorted(
         {

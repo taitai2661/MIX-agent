@@ -19,11 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Measure coverage
+      # `alembic check` must run before pytest: the test fixture drops and
+      # recreates every table from the models, so a later check would compare
+      # the metadata with itself and miss a migration that never created a
+      # column or index.
+      - name: Verify migrations, then measure coverage
         run: |
           docker compose --profile test run --build --rm test \
             sh -c "cd /app && export COVERAGE_FILE=/tmp/.coverage \
               && alembic upgrade head \
+              && alembic check \
               && pytest -c /app/pyproject.toml -p no:cacheprovider -q \
                    --cov=mix_agent --cov-report=term-missing \
                    --cov-fail-under=70 /workspace/tests"
@@ -143,6 +148,12 @@ jobs:
       # unsupported.
       - name: Browser contract parity check
         run: python3 scripts/check-browser-parity.py
+      # `run_events.kind` is another cross-edition contract, but the kinds are
+      # string literals in both engines. The contract records the shared
+      # vocabulary plus every deliberate one-edition kind, so adding an event
+      # on one side forces a look at the other (and its UI parser).
+      - name: Run event contract parity check
+        run: python3 scripts/check-run-event-parity.py
 
   # Cheap, dependency-free repository gates: no container, no network. These
   # used to rely on human discipline (README was translated by hand, nothing
@@ -187,6 +198,26 @@ jobs:
           name: sbom-python
           path: ${{ runner.temp }}/sbom-python.json
           if-no-files-found: error
+
+  dependency-audit-rust:
+    # Dependabot opens upgrade PRs, but it is not a gate: a disclosure can land
+    # between weekly updates. Audit the lockfile the installers actually build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: "1.91.0"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: apps/desktop
+      - name: Install cargo-audit
+        # Pin the audit tool like `pip-audit==…` above: a new release must not
+        # change CI's dependency graph or MSRV without a reviewed change.
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit locked Rust dependencies
+        working-directory: apps/desktop
+        run: cargo audit
 
   desktop-fmt:
     # Lightweight single-OS fmt gate: rustfmt is platform-independent, so the

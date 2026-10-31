@@ -13,12 +13,10 @@ New code should import from the domain module instead of this aggregator.
 """
 
 from mix_agent.api.common import context, own
+from mix_agent.api.message_context import _handle_explicit_memory_requests
 from mix_agent.api.routes_collections import router
 from mix_agent.api.routes_conversations import effective_tool_ids
-from mix_agent.api.routes_messages import (
-    _handle_explicit_memory_requests,
-    _model_window_info,
-)
+from mix_agent.api.routes_messages import _model_window_info
 from mix_agent.storage.cleanup import (
     _delete_message_tail,
     _doomed_messages,

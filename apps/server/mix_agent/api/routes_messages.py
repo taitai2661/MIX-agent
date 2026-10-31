@@ -12,7 +12,6 @@ from mix_agent import config
 from mix_agent.api.common import audit, context, own, public
 from mix_agent.api.message_context import (
     _build_history_payload,
-    _handle_explicit_memory_requests,
     _model_window_info as _model_window_info,  # re-exported for api.routes
 )
 from mix_agent.api.message_runs import persist_message_run, _resolve_tool_ids
@@ -39,6 +38,7 @@ from mix_agent.providers.probing import (
 from mix_agent.providers.reasoning import resolve_reasoning
 from mix_agent.routing import effective_capabilities, select_auto_model
 from mix_agent.runs.engine import launch
+from mix_agent.runs.state import NON_TERMINAL_STATES
 from mix_agent.storage.cleanup import _doomed_messages
 
 router = APIRouter(prefix="/api/v1")
@@ -85,7 +85,6 @@ async def _create_message_run(
     if body.research_mode and mode != "agent":
         raise HTTPException(422, "調査モードはAgentモードで実行してください")
     agent = own(db, Agent, requested_agent_id, s.owner_id).data if requested_agent_id else {}
-    _handle_explicit_memory_requests(db, s.owner_id, body.content, temporary_mode)
     artifacts = [own(db, Artifact, artifact_id, s.owner_id) for artifact_id in body.artifact_ids]
     artifact_mimes = [artifact.data["mime"] for artifact in artifacts]
     tool_ids = _resolve_tool_ids(agent, requested_agent_id, mode, temporary_mode, body, settings)
@@ -106,17 +105,18 @@ async def _create_message_run(
         if truncate_from_message_id
         else set()
     )
-    prior_content = (
+    prior_messages = (
         []
         if temporary_mode
         else [
-            message.data.get("content", "")
+            message
             for message in db.scalars(
                 select(Message).where(Message.conversation_id == key).order_by(Message.created_at, Message.id)
             )
             if message.id not in doomed_ids
         ]
     )
+    prior_content = [message.data.get("content", "") for message in prior_messages]
     auto_selection = None
     if requested_model_id == "auto":
         allowed_ids = settings.data.get("auto_model_ids", [])
@@ -196,7 +196,7 @@ async def _create_message_run(
         reasoning,
         tool_ids,
         temporary_mode,
-        exclude_message_ids=doomed_ids,
+        prior_messages,
     )
     auto_routing = (
         {
@@ -303,7 +303,7 @@ async def edit_message(key: str, message_id: str, body: MessageInput, request: R
     active = db.scalar(
         select(Run).where(
             Run.conversation_id == key,
-            Run.status.in_(("queued", "running", "waiting_approval", "paused", "budget_extension_pending")),
+            Run.status.in_(NON_TERMINAL_STATES),
         )
     )
     if active:

@@ -35,7 +35,7 @@ from mix_agent.db.models import (
 )
 from mix_agent.memory import embeddings as mem_embeddings
 from mix_agent.runs.engine import TASKS
-from mix_agent.runs.state import transition_run
+from mix_agent.runs.state import NON_TERMINAL_STATES, transition_run
 from mix_agent.tools.execute import is_user_artifact, runner_request
 
 from mix_agent.storage.cleanup import (
@@ -208,7 +208,7 @@ async def delete_conversation(key: str, permanent: bool = False, ctx=Depends(con
         for run in db.scalars(
             select(Run).where(
                 Run.conversation_id == key,
-                Run.status.in_(["queued", "running", "waiting_approval", "paused"]),
+                Run.status.in_(NON_TERMINAL_STATES),
             )
         ):
             stopped_runs.append(run.id)

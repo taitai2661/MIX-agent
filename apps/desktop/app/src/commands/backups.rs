@@ -29,7 +29,8 @@ pub async fn create_backup(
         &state,
         std::path::Path::new(&input.destination),
         "書き込む",
-    )?;
+    )
+    .await?;
     let info = mixd_storage::backup::create(
         state.storage.data_dir(),
         &input.destination,
@@ -74,7 +75,8 @@ pub async fn restore_backup(
         &state,
         std::path::Path::new(&input.source),
         "読み込む",
-    )?;
+    )
+    .await?;
     let info =
         mixd_storage::backup::restore(state.storage.data_dir(), &input.source, &input.password)
             .await

@@ -171,6 +171,11 @@ export const en: Record<string, string> = {
   "作成": "Create",
   "検索": "Search",
   "読み込み中…": "Loading…",
+  "イベント数が上限を超えたため、この実行のログの一部は省略されています。":
+    "Some run events were omitted because this run exceeded the replay limit.",
+  "イベント数が上限を超えたため、この実行のログの一部は省略されています（最新の結果は表示されています）。":
+    "Some run events were omitted because this run exceeded the replay limit (the latest result is shown).",
+  "{count}件のイベントを省略しました": "{count} events omitted",
   "エラー": "Error",
   "初期設定": "Initial setup",
   "会話から自動でメモリを作成":
@@ -593,6 +598,7 @@ export const en: Record<string, string> = {
   "データベース全体をスナップショットし、圧縮・暗号化します (Argon2id + AES-256-GCM)。API キーは OS キーチェーンに残るため含まれません。":
     "The whole database is snapshotted, compressed and encrypted (Argon2id + AES-256-GCM). API keys stay in the OS Keychain and are not included.",
   "バックアップパスワード": "Backup password",
+  "バックアップパスワード（12文字以上）": "Backup password (12+ characters)",
   "保存先パス": "Destination path",
   "暗号化バックアップを作成": "Create an encrypted backup",
   "復元する既存の .mixbak": "Existing .mixbak to restore",

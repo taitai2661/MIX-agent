@@ -31,6 +31,7 @@ from mix_agent.auth.security import (
     record_failed_attempt,
     throttle_attempt,
 )
+from mix_agent.client_ip import request_client_ip
 from mix_agent.db.models import LoginEvent, Settings, User, Workspace
 from mix_agent.db.session import get_db
 
@@ -72,7 +73,7 @@ def setup_admin(body: Credentials, response: Response, db=Depends(get_db)):
 
 @router.post("/auth/login")
 def login(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
-    ip = request.client.host if request.client else "unknown"
+    ip = request_client_ip(request)
     user = db.scalar(select(User).where(User.username == body.username))
     ip_key = "login-ip:" + ip
     account_key = f"login:{user.id}" if user else None

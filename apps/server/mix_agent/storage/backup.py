@@ -10,11 +10,14 @@ from uuid import uuid4
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import DateTime, select
 
 from mix_agent import config, egress_policy
+from mix_agent.auth.security import decrypt, encrypt
 from mix_agent.db.models import Base, MCPConnection, Run, ScheduledRun
 from mix_agent.db.session import engine
+from mix_agent.runs.state import NON_TERMINAL_STATES
 from mix_agent.tools.execute import runner_request
 
 ACTIVE = False
@@ -39,7 +42,7 @@ def unseal(raw, password):
 
 
 def check_idle(db):
-    if db.scalar(select(Run.id).where(Run.status.in_(["queued", "running", "waiting_approval", "paused"]))):
+    if db.scalar(select(Run.id).where(Run.status.in_(NON_TERMINAL_STATES))):
         raise ValueError("すべての実行を停止してからバックアップしてください")
     if db.scalar(select(ScheduledRun.id).where(ScheduledRun.status.in_(["pending", "running", "retrying"]))):
         raise ValueError("待機中または再試行待ちの定期実行を停止してからバックアップしてください")
@@ -136,7 +139,7 @@ def validate(raw, password):
             raise ValueError("Artifact checksum mismatch")
     if len(payload["tables"]["users"]) != 1:
         raise ValueError("Backup must contain exactly one administrator")
-    if any(r["status"] in ("running", "queued", "waiting_approval") for r in payload["tables"]["runs"]):
+    if any(r["status"] in NON_TERMINAL_STATES for r in payload["tables"]["runs"]):
         raise ValueError("Backup contains active runs")
     return payload
 
@@ -152,7 +155,13 @@ async def restore(db, raw, password, recovering=False):
     if not recovering:
         rollback_blob = await create(db, password)
         (config.DATA / "restore-rollback.mix").write_bytes(rollback_blob)
-        recovery_key.write_text(password)
+        # Crash recovery needs the passphrase, but the data volume alone must
+        # not contain it in clear text next to the rollback archive. Encrypt it
+        # with the master key (stored in the separate keys volume).
+        recovery_key.write_text(
+            json.dumps(encrypt(password, "restore-recovery"), ensure_ascii=False),
+            encoding="utf-8",
+        )
         recovery_key.chmod(0o600)
         journal.write_text(json.dumps({"phase": "restoring"}))
     old_workspace = await runner_request("execution", "/snapshot", {})
@@ -214,7 +223,10 @@ async def restore(db, raw, password, recovering=False):
     # Keep previous artifacts for operator recovery. Do not erase automatically.
     setting = payload["tables"]["app_settings"]
     domains = setting[0]["data"].get("allowed_domains", []) if setting else []
-    egress_policy.write_policy(domains)
+    # The database swap is durable now. A policy-file failure must not leave
+    # the recovery journal behind (the next boot would re-apply the rollback);
+    # startup reconciles the file from the restored settings.
+    egress_policy.write_policy_best_effort(domains)
     journal.unlink(missing_ok=True)
     recovery_key.unlink(missing_ok=True)
     return {"ok": True, "relogin_required": True}
@@ -232,11 +244,20 @@ async def recover_interrupted():
     try:
         from mix_agent.db.session import SessionLocal
 
+        recovery_key = config.KEYS / "restore-passphrase"
+        raw_key = recovery_key.read_text(encoding="utf-8")
+        try:
+            password = decrypt(json.loads(raw_key))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, InvalidTag):
+            # A journal written by an older version stored the passphrase in
+            # clear text. Keep that one recovery path working across the
+            # upgrade; new journals are always the encrypted form.
+            password = raw_key
         with SessionLocal() as db:
             await restore(
                 db,
                 (config.DATA / "restore-rollback.mix").read_bytes(),
-                (config.KEYS / "restore-passphrase").read_text(),
+                password,
                 recovering=True,
             )
     except Exception:

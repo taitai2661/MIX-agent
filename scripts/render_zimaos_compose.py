@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.5.4
+Run with: python scripts/render_zimaos_compose.py v0.5.5
 PyYAML is required for this maintainer-only script.
 """
 
@@ -41,6 +41,20 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
+    "v0.5.5": {
+        "update_at": "2026-10-31",
+        "notes": {
+            "en_US": (
+                "Hardening release: tighter browser egress, secret redaction, "
+                "backup and restore improvements, and run replay limits. "
+                "Happy Halloween!"
+            ),
+            "ja_JP": (
+                "安定化リリース。ブラウザ通信の制限強化、秘密情報のマスク、"
+                "バックアップと復元の改善、実行ログの上限対応など。"
+            ),
+        },
+    },
     "v0.5.4": {
         "update_at": "2026-10-28",
         "notes": {

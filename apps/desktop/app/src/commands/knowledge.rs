@@ -59,7 +59,7 @@ pub async fn import_knowledge_file(
     input: KnowledgeImportPath,
 ) -> Result<KnowledgeDocView, String> {
     let path = std::path::PathBuf::from(input.path.trim());
-    crate::commands::access::ensure_access(&app, &state, &path, "読み込む")?;
+    crate::commands::access::ensure_access(&app, &state, &path, "読み込む").await?;
     let text = tokio::fs::read_to_string(&path)
         .await
         .map_err(crate::error::cmd_err)?;

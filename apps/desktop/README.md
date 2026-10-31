@@ -53,7 +53,7 @@ apps/desktop/
 
 | ツール | バージョン | 用途 |
 | :--- | :--- | :--- |
-| **Rust** | 1.82 以上（推奨: 1.91.0） | Cargo workspace のビルド |
+| **Rust** | 1.91 以上（固定: 1.91.0） | Cargo workspace のビルド |
 | **Node.js** | 22 以上 | UI のビルド・テスト |
 | **pnpm** | 10.x（`10.11.0`） | パッケージマネージャ |
 | **Tauri CLI** | 2.x（`^2.12.1`） | `tauri dev` / `tauri build` |

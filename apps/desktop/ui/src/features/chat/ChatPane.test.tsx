@@ -34,10 +34,6 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(),
-}));
-
 const mocked = vi.mocked(api, true);
 
 function userMessage(

@@ -804,7 +804,7 @@ async fn insert_rows(storage: &Storage, rows: &[CorpusRow], batch: usize) -> any
         .execute(&mut *tx)
         .await?;
         inserted += 1;
-        if inserted % batch == 0 {
+        if inserted.is_multiple_of(batch) {
             tx.commit().await?;
             progress(&format!("corpus: inserted {inserted}/{} rows", rows.len()));
             tx = storage.pool().begin().await?;
