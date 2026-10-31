@@ -265,6 +265,9 @@ export function SchedulesPane() {
 
       <SectionHeading>{t("登録済みジョブ")}</SectionHeading>
       {runNow.isError && <ErrorBox error={runNow.error} />}
+      {(toggle.isError || remove.isError) && (
+        <ErrorBox error={toggle.error ?? remove.error} />
+      )}
       {started && !runNow.isPending && (
         <Alert tone="success">
           {tf("{name} を今すぐ実行しました。", { name: started })}

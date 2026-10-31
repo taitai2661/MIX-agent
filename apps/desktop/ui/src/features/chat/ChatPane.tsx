@@ -67,17 +67,6 @@ function ChatPaneBody() {
     queryKey: SETTINGS_QUERY_KEY,
     queryFn: api.getSettings,
   });
-  const messages = useQuery({
-    queryKey: ["messages", conversationId],
-    queryFn: () => api.listMessages(conversationId!),
-    enabled: !!conversationId,
-  });
-  const runs = useQuery({
-    queryKey: ["runs", conversationId],
-    queryFn: () => api.listRuns(conversationId!),
-    enabled: !!conversationId,
-  });
-
   // A temporary send that created its own conversation: once the run ends the
   // backend deletes that thread, so the composer has to let go of it too.
   const temporaryNewRef = useRef<string | null>(null);
@@ -102,6 +91,21 @@ function ChatPaneBody() {
   const activeConversationId = newThreadDraft
     ? null
     : (conversationId ?? surfaceConversations[0]?.id ?? null);
+  // Key the history off the conversation the pane actually renders, not the
+  // persisted id. On launch `conversationId` is still null for a beat while a
+  // thread is being adopted — querying the id made that thread's history look
+  // like it was never loading. A brand-new draft has no conversation at all,
+  // so the query is disabled and must not report "pending" forever.
+  const messages = useQuery({
+    queryKey: ["messages", activeConversationId],
+    queryFn: () => api.listMessages(activeConversationId!),
+    enabled: !!activeConversationId,
+  });
+  const runs = useQuery({
+    queryKey: ["runs", activeConversationId],
+    queryFn: () => api.listRuns(activeConversationId!),
+    enabled: !!activeConversationId,
+  });
   // Read this thread's own timeline. A run started in another thread stays
   // tracked (and keeps streaming) instead of being wiped by the next send.
   const liveEntry = useRunEvents((s) =>
@@ -235,7 +239,11 @@ function ChatPaneBody() {
           project_id: activeProjectId,
         });
         createdId = created.id;
-        setConversationId(created.id);
+        // Adopt the new conversation only after the send succeeds. Setting it
+        // here flipped the composer's draft slot mid-request, which saved the
+        // prompt being sent into the "new chat" slot and cleared attachments
+        // that were still uploading. A failed first send also deleted the row,
+        // so the pane no longer briefly switched to a thread that vanished.
         target = created.id;
       }
       try {
@@ -259,6 +267,7 @@ function ChatPaneBody() {
         return {
           runId: out.run_id,
           conversationId: target,
+          created: createdConversation,
           purged: temporaryMode && createdConversation,
         };
       } catch (err) {
@@ -281,8 +290,9 @@ function ChatPaneBody() {
         throw err;
       }
     },
-    onSuccess: ({ runId, conversationId, purged }) => {
+    onSuccess: ({ runId, conversationId, created, purged }) => {
       retryNeedsNewConversation.current = false;
+      if (created) setConversationId(conversationId);
       if (purged) temporaryNewRef.current = conversationId;
       startRun(runId, conversationId);
       void queryClient.invalidateQueries({
@@ -496,12 +506,17 @@ function ChatPaneBody() {
       )}
       <PaneErrorBoundary name="Transcript" resetKeys={[activeConversationId]}>
         <Transcript
+          // Scroll state (`stuck`, previous message count) belongs to one
+          // thread. Reusing the component across a thread switch preserved a
+          // scrolled-up offset, so the newly opened thread appeared halfway
+          // down its history with auto-follow switched off.
+          key={activeConversationId ?? "new"}
           messages={visibleMessages}
           runs={runById}
           models={models.data ?? EMPTY_MODELS}
           live={liveForThisConversation}
           liveRunId={liveForThisConversation ? liveRunId : null}
-          loading={messages.isPending}
+          loading={activeConversationId !== null && messages.isPending}
           error={messages.isError ? messages.error : null}
           welcome={welcome}
           onEditMessage={onEditMessage}

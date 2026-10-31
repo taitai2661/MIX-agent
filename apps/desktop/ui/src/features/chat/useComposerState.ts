@@ -113,6 +113,7 @@ export function useComposerState({
     addImageFiles,
     onAttach,
     removeAttachment,
+    removeAttachments,
     clearAttachments,
   } = useAttachments();
   const { listening, toggleVoiceInput, speechSupported } = useVoiceInput(
@@ -128,6 +129,13 @@ export function useComposerState({
   const draftKeyRef = useRef<string | null>(draftKey);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // Set while the first send of a brand-new thread is in flight. The chat pane
+  // creates the conversation before the request resolves, so `draftKey` flips
+  // from "none" to the new id mid-send. That is not a user thread switch: the
+  // sent text must be cleared from the "none" slot, and anything typed while
+  // waiting has to survive into the new thread instead of being saved behind.
+  const pendingAdoptionRef = useRef<string | null>(null);
+  const lastSentTextRef = useRef<string | null>(null);
 
   const historyIndexRef = useRef<number>(-1);
   const historyDraftRef = useRef<string>("");
@@ -188,6 +196,15 @@ export function useComposerState({
 
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+
+  // A new query replaces the result list, so the old highlight may point past
+  // its end. Restart at the top whenever the query changes.
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mentionQuery]);
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQuery]);
 
   const checkSlash = useCallback(() => {
     const el = textareaRef.current;
@@ -286,6 +303,32 @@ export function useComposerState({
     if (key !== draftKeyRef.current) {
       const prev = draftKeyRef.current;
       const current = draftRef.current;
+      // A first send adopts the conversation it just created: the key flips
+      // mid-request, but the composer is still the same logical draft. Clear
+      // the sent slot and carry anything typed while waiting into the new
+      // thread. Treating it as a thread switch used to write the just-sent
+      // prompt back into the "new chat" slot (where it reappeared on the next
+      // new chat) and clear a screenshot that was still being uploaded.
+      const adopting =
+        pendingAdoptionRef.current !== null &&
+        pendingAdoptionRef.current === prev &&
+        key !== prev;
+      if (adopting) {
+        pendingAdoptionRef.current = null;
+        const sent = lastSentTextRef.current;
+        lastSentTextRef.current = null;
+        draftKeyRef.current = key;
+        if (current && current !== sent) {
+          // Text typed while the request was in flight belongs to the new
+          // thread; keep it rather than loading over it.
+          saveComposerDraft(key, current);
+        } else {
+          clearComposerDraft(prev);
+          setDraft(loadComposerDraft(key));
+        }
+        return;
+      }
+      lastSentTextRef.current = null;
       // Persist the old thread's text outside the state updater (updaters
       // must be pure; side-effects here double-fire under StrictMode).
       if (prev !== undefined) {
@@ -421,13 +464,24 @@ export function useComposerState({
     }
     if (!canSend) return;
     const trimmed = draft.trim();
-    const pending = onSend(trimmed, attachments, { temporaryMode, allowTools });
+    const sendKey = draftKeyRef.current;
+    // Snapshot the attachments by identity: an image added while the request is
+    // in flight is not part of this send and must not be cleared with it.
+    const sentAttachments = attachments;
+    lastSentTextRef.current = trimmed;
+    if (sendKey === "none") pendingAdoptionRef.current = sendKey;
+    const pending = onSend(trimmed, sentAttachments, {
+      temporaryMode,
+      allowTools,
+    });
     if (pending && typeof (pending as Promise<unknown>).then === "function") {
       try {
         await pending;
       } catch {
         // Keep the prompt and its attachments so the user can retry. The error is
         // surfaced by the mutation's ErrorBox above the composer.
+        pendingAdoptionRef.current = null;
+        lastSentTextRef.current = null;
         textareaRef.current?.focus();
         return;
       }
@@ -438,9 +492,15 @@ export function useComposerState({
     if (!temporaryMode) pushPromptHistory(trimmed);
     historyIndexRef.current = -1;
     historyDraftRef.current = "";
-    setDraft("");
-    clearAttachments();
-    clearComposerDraft(draftKeyRef.current);
+    // Only clear the text that was actually sent. The composer stays editable
+    // while the request is in flight, and an unconditional clear erased a new
+    // message the user had already started typing.
+    if (draftRef.current.trim() === trimmed) setDraft("");
+    removeAttachments(sentAttachments);
+    // Clear the slot the send *started* in. After a first send the pane has
+    // already moved `draftKey` to the new conversation, and clearing only that
+    // new slot left the sent prompt behind in "none" for the next new chat.
+    clearComposerDraft(sendKey);
     // Temporary mode is per-send: leaving it on would silently discard the next
     // turn's transcript too.
     setTemporaryMode(false);
@@ -463,7 +523,10 @@ export function useComposerState({
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setMentionIndex((i) => i + 1);
+        setMentionIndex((i) => {
+          const count = document.querySelectorAll("[data-mention-item]").length;
+          return count > 0 ? Math.min(i + 1, count - 1) : 0;
+        });
         return;
       }
       if (e.key === "ArrowUp") {
@@ -477,7 +540,11 @@ export function useComposerState({
         !isImeComposing
       ) {
         const items = document.querySelectorAll("[data-mention-item]");
-        const active = items[mentionIndex] as HTMLElement | undefined;
+        // Results can arrive late or shrink while the popover is open; clamp
+        // the highlight instead of falling through to "send the raw @query".
+        const active = items[Math.min(mentionIndex, items.length - 1)] as
+          | HTMLElement
+          | undefined;
         if (active) {
           e.preventDefault();
           active.click();
@@ -494,7 +561,10 @@ export function useComposerState({
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSlashIndex((i) => i + 1);
+        setSlashIndex((i) => {
+          const count = document.querySelectorAll("[data-slash-item]").length;
+          return count > 0 ? Math.min(i + 1, count - 1) : 0;
+        });
         return;
       }
       if (e.key === "ArrowUp") {
@@ -508,7 +578,9 @@ export function useComposerState({
         !isImeComposing
       ) {
         const items = document.querySelectorAll("[data-slash-item]");
-        const active = items[slashIndex] as HTMLElement | undefined;
+        const active = items[Math.min(slashIndex, items.length - 1)] as
+          | HTMLElement
+          | undefined;
         if (active) {
           e.preventDefault();
           active.click();

@@ -7,7 +7,13 @@ import {
   it,
   vi,
 } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setLanguage } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
@@ -181,6 +187,30 @@ describe("ModelPicker", () => {
     await user.type(combobox, "{ArrowDown}{ArrowDown}{Enter}");
     // The list starts on Auto; two downs reach the second model (o3).
     expect(onChange).toHaveBeenCalledWith("openai:o3");
+  });
+
+  it("does not choose a model on the Enter that commits an IME conversion", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={onChange}
+        providers={providers}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "モデルを選択" }));
+    const combobox = screen.getByRole("combobox");
+
+    fireEvent.keyDown(combobox, {
+      key: "Enter",
+      keyCode: 229,
+      isComposing: true,
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
   });
 
   it("jumps with Home/End and chooses with native option buttons", async () => {

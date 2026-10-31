@@ -48,29 +48,19 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     if (rightPanel === "file" && !filePreviewPath) setRightPanel("none");
   }, [diffTarget, filePreviewPath, rightPanel, setRightPanel]);
 
-  // Overlay drawer: Escape or a click outside closes it. It is deliberately
-  // non-modal: opening it must not steal focus from the composer, and Tab is
-  // free to leave the panel. A docked panel is part of the page, so only
-  // Escape (in `useAppShortcuts`) applies there.
+  // Overlay drawer: a click outside closes it. It is deliberately non-modal:
+  // opening it must not steal focus from the composer, and Tab is free to leave
+  // the panel. Escape is handled once in `useAppShortcuts`, which knows about
+  // the palette, shortcut sheet and native popups above the panel; a second
+  // bubble-phase handler here closed the drawer while one of those was closing.
   useEffect(() => {
     if (rightPanel === "none" || isDocked) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // Do not steal Escape from an open modal dialog / menu above us.
-      if (document.querySelector("[role='dialog'][data-modal='true']")) return;
-      e.preventDefault();
-      setRightPanel("none");
-    };
     const onPointerDown = (e: PointerEvent) => {
       const aside = asideRef.current;
       if (aside && !aside.contains(e.target as Node)) setRightPanel("none");
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("pointerdown", onPointerDown);
-    };
+    return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [isDocked, rightPanel, setRightPanel]);
 
   if (rightPanel === "none") return null;
@@ -81,13 +71,15 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     rightPanel === "browser";
 
   // Can be rendered either as a docked flex sibling (split-view) or as an
-  // overlay drawer depending on `isDocked`.
+  // overlay drawer depending on `isDocked`. An overlay drawer is out of flow:
+  // it takes no width from the centre column, so the inline-panel cap must not
+  // squeeze it (or its siblings).
   return (
     <aside
       ref={asideRef as Ref<HTMLElement>}
       tabIndex={-1}
       data-side-panel=""
-      style={panelStyle(rightPanelWidth, cap)}
+      style={panelStyle(rightPanelWidth, isDocked ? cap : null)}
       role={isDocked ? "region" : "dialog"}
       aria-modal="false"
       aria-label={t("サイドパネル")}

@@ -45,6 +45,20 @@ function ProviderIcon({ kind }: { kind: string }) {
   return <Icon size={15} className="shrink-0 text-faint" aria-hidden="true" />;
 }
 
+/** The Rust catalogue ships preset categories as Japanese identifiers
+ *  (`直接接続`, `ゲートウェイ`, …), so the `<optgroup>` label used to stay
+ *  Japanese in the English UI. Listing the known categories keeps the lookup
+ *  literal-based — the i18n coverage test only sees literal translation
+ *  arguments — while an unknown category added to the catalogue still falls
+ *  back to its raw name instead of disappearing. */
+const PRESET_CATEGORY_KEYS: Record<string, string> = {
+  直接接続: "直接接続",
+  ゲートウェイ: "ゲートウェイ",
+  ローカル: "ローカル",
+  国内: "国内",
+  OpenAI互換: "OpenAI互換",
+};
+
 export function ProvidersPane() {
   const queryClient = useQueryClient();
   const providers = useProviders();
@@ -198,7 +212,10 @@ export function ProvidersPane() {
                 {presets.isPending ? t("読み込み中…") : t("プリセットを選択…")}
               </option>
               {presetGroups.map(([category, items]) => (
-                <optgroup key={category} label={category}>
+                <optgroup
+                  key={category}
+                  label={t(PRESET_CATEGORY_KEYS[category] ?? category)}
+                >
                   {items.map((p) => (
                     <option key={p.slug} value={p.slug}>
                       {p.label}

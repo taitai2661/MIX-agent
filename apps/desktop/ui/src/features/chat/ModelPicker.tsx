@@ -306,6 +306,16 @@ export function ModelPicker({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // Enter is also how an IME commits a Japanese conversion. Choosing the
+    // highlighted model then silently changed the selection and closed the
+    // picker while the user was still typing a search term.
+    if (
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229 ||
+      (event.key === "Enter" && event.nativeEvent.keyCode === 229)
+    ) {
+      return;
+    }
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setActive((index) => Math.min(index + 1, optionRows.length - 1));

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setLanguage } from "@/lib/i18n";
@@ -58,6 +58,50 @@ describe("ProjectsPane creation", () => {
     await user.type(screen.getByPlaceholderText("Project 名"), "demo");
     expect(create).toBeDisabled();
     expect(mockedApi.createProject).not.toHaveBeenCalled();
+  });
+
+  it("does not create twice when Enter is pressed during a pending create", async () => {
+    const user = userEvent.setup();
+    const original = mockedApi.createProject.getMockImplementation();
+    let resolveCreate: (() => void) | undefined;
+    mockedApi.createProject.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = () =>
+            resolve({
+              id: "p1",
+              name: "demo",
+              instructions: "",
+              rootPath: "/tmp/demo",
+              additionalPaths: [],
+              sources: [],
+              verifyCommand: null,
+              formatCommand: null,
+              verifyCandidates: [],
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-01-01T00:00:00Z",
+            });
+        }),
+    );
+    renderPane();
+
+    await user.click(screen.getByRole("button", { name: "フォルダを選択" }));
+    await screen.findByText("/tmp/demo");
+    const name = screen.getByPlaceholderText("Project 名");
+    await user.type(name, "demo");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(mockedApi.createProject).toHaveBeenCalledTimes(1),
+    );
+
+    // The Create button is disabled while pending; Enter used to bypass it.
+    await user.keyboard("{Enter}");
+    expect(mockedApi.createProject).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveCreate?.();
+    });
+    if (original) mockedApi.createProject.mockImplementation(original);
   });
 
   it("creates a project rooted at the picked folder", async () => {

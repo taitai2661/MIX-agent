@@ -244,6 +244,22 @@ describe("ChatPane send/edit/retry", () => {
     );
   });
 
+  it("shows the empty state instead of a skeleton for a new chat", async () => {
+    mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
+    const { container } = renderPane();
+
+    await screen.findByPlaceholderText("MIX-agent に話しかける…");
+    act(() => useUi.getState().startNewThread());
+
+    // A draft has no conversation, so there is no history to wait for. The
+    // disabled query reports `isPending` forever; feeding that to the
+    // transcript left every new chat stuck on the loading skeleton.
+    expect(
+      await screen.findByText("モデル提供元が接続されていません"),
+    ).toBeInTheDocument();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
   it("keeps a blank draft when the first send fails", async () => {
     mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
     mocked.createConversation.mockResolvedValue(

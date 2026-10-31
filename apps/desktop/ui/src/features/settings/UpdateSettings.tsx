@@ -90,6 +90,7 @@ export function UpdateSettings() {
     setInstalling(true);
     setError(null);
     setProgress(null);
+    setInstalled(null);
     try {
       const info = await api.installUpdate();
       setInstalled(info.version);
@@ -101,10 +102,45 @@ export function UpdateSettings() {
     }
   };
 
-  const percent =
-    progress && progress.total && progress.total > 0
+  const relaunch = async () => {
+    setError(null);
+    try {
+      await api.relaunchApp();
+    } catch (e) {
+      // `relaunch_app` can fail (for example when the OS refuses to start a
+      // new instance). Swallowing it made the 再起動 button look dead.
+      setError(errorMessage(e));
+    }
+  };
+
+  // A new check is a fresh answer: do not keep the previous download error or
+  // progress bar next to it. An install in flight owns the progress area, so a
+  // background re-check must not reset it.
+  useEffect(() => {
+    if (installing || !checkQuery.isFetching) return;
+    setError(null);
+    setProgress(null);
+  }, [checkQuery.isFetching, installing]);
+
+  // After installing v0.5.5 the pane stays open until the user restarts. If a
+  // later check finds v0.5.6, the old "v0.5.5 をインストールしました" banner must
+  // not keep hiding the newer install button.
+  useEffect(() => {
+    const version = update?.version;
+    if (!version) return;
+    setInstalled((current) => (current === version ? current : null));
+  }, [update?.version]);
+
+  const installingPhase = progress?.stage === "installing";
+  const percent = installingPhase
+    ? 100
+    : progress && progress.total && progress.total > 0
       ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
       : null;
+  // `check_for_update` already reports the running version. Use it when the
+  // separate `app_version` call failed (or is still in flight) instead of
+  // telling the user the version is unknown.
+  const displayVersion = version ?? update?.current_version ?? null;
   const queryError = checkQuery.isError ? errorMessage(checkQuery.error) : null;
   const upToDate =
     checkQuery.isFetched && !checkQuery.isError && checkQuery.data === null;
@@ -115,8 +151,8 @@ export function UpdateSettings() {
         <div className="flex flex-col gap-3 py-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="m-0 text-sm text-fg">
-              {version
-                ? tf("現在のバージョン: {version}", { version })
+              {displayVersion
+                ? tf("現在のバージョン: {version}", { version: displayVersion })
                 : t("現在のバージョンを取得できませんでした")}
             </p>
             <Button
@@ -150,9 +186,11 @@ export function UpdateSettings() {
                 />
               </div>
               <p className="m-0 text-xs text-muted">
-                {percent === null
-                  ? t("ダウンロード中…")
-                  : tf("ダウンロード中… {percent}%", { percent })}
+                {installingPhase
+                  ? t("インストール中…")
+                  : percent === null
+                    ? t("ダウンロード中…")
+                    : tf("ダウンロード中… {percent}%", { percent })}
               </p>
             </div>
           )}
@@ -161,7 +199,7 @@ export function UpdateSettings() {
             <Alert
               tone="success"
               action={
-                <Button size="sm" onClick={() => void api.relaunchApp()}>
+                <Button size="sm" onClick={() => void relaunch()}>
                   <RotateCw size={12} /> {t("再起動")}
                 </Button>
               }
@@ -181,6 +219,7 @@ export function UpdateSettings() {
                   <Button
                     size="sm"
                     variant="primary"
+                    disabled={checkQuery.isFetching || installing}
                     onClick={() => void requestInstall()}
                   >
                     <Download size={12} /> {t("ダウンロードしてインストール")}

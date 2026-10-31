@@ -297,17 +297,28 @@ export function App() {
   // centre column. `panelCap` only clamps the inline panes on narrow windows.
   const [shellRow, setShellRow] = useState<HTMLDivElement | null>(null);
   const panelCap = usePanelCap(shellRow);
+  // The wizard replaces the shell's render, but these hooks stay mounted. Keep
+  // their side effects quiet while it is up: otherwise ⌘K during onboarding
+  // silently opened the palette and it appeared the moment setup finished,
+  // and native menu events changed surface/panel state behind the wizard.
+  const onboarding = useOnboardingGate();
+  const shellEnabled = onboarding.ready && !onboarding.show;
   useShellEvents({
-    newThread: startNewThread,
-    openView: (target) => setView(target),
-    openSettingsTab: (tab) => openSettings(tab),
+    newThread: () => {
+      if (shellEnabled) startNewThread();
+    },
+    openView: (target) => {
+      if (shellEnabled) setView(target);
+    },
+    openSettingsTab: (tab) => {
+      if (shellEnabled) openSettings(tab);
+    },
   });
-  useAppShortcuts();
+  useAppShortcuts(shellEnabled);
 
   const activeProjectId = useUi((s) => s.activeProjectId);
   const conversations = useConversations();
   const projects = useProjects();
-  const onboarding = useOnboardingGate();
   const activeProject =
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
   const git = useGitStatus(

@@ -162,10 +162,14 @@ fn looks_binary(bytes: &[u8]) -> bool {
 
 #[derive(Serialize)]
 pub struct GitStatusEntry {
-    /// Root-relative path (renames show the new path).
+    /// Root-relative path (renames show the new path), unquoted.
     pub path: String,
-    /// Single-letter XY status from `git status --porcelain`.
+    /// The compact XY status used by the file-tree badge.
     pub status: String,
+    /// Index (staged) side of the XY pair. Space means "no change".
+    pub index_status: String,
+    /// Worktree (unstaged) side of the XY pair. Space means "no change".
+    pub worktree_status: String,
 }
 
 #[derive(Serialize)]
@@ -208,7 +212,11 @@ pub async fn git_status(
     root_path: String,
 ) -> Result<GitStatusView, String> {
     let root = resolve_root(&app, &state, &root_path).await?;
-    let output = match run_git(&root, &["status", "--porcelain=v1", "-uall"]).await {
+    // `-z` returns paths verbatim (space-separated records are NUL terminated).
+    // Without it git C-quotes names with spaces or non-ASCII characters
+    // (`"my notes.md"`, `"\346\227\245..."`); the UI then displayed the quotes
+    // and passed them back to `git diff`, which matched nothing.
+    let output = match run_git(&root, &["status", "--porcelain=v1", "-z", "-uall"]).await {
         Ok(output) => output,
         Err(_) => {
             return Ok(GitStatusView {
@@ -233,8 +241,23 @@ pub async fn git_status(
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(GitStatusView {
+        available: true,
+        branch,
+        entries: parse_porcelain_z(&stdout),
+    })
+}
+
+/// Parse `git status --porcelain=v1 -z` records.
+///
+/// Records are `XY<space>path\0`; a rename/copy is followed by one extra
+/// record with the original path. Keeping the two status letters separate lets
+/// the Changes pane filter staged vs unstaged entries, and using `-z` means the
+/// path is already raw (no C-style quoting for spaces or non-ASCII names).
+fn parse_porcelain_z(stdout: &str) -> Vec<GitStatusEntry> {
     let mut entries = Vec::new();
-    for line in stdout.lines() {
+    let mut records = stdout.split('\0');
+    while let Some(line) = records.next() {
         if line.len() < 4 {
             continue;
         }
@@ -244,26 +267,32 @@ pub async fn git_status(
         let Some(xy) = line.get(..2) else {
             continue;
         };
-        let rest = line.get(2..).unwrap_or("").trim_start();
-        let path = if let Some((_old, new)) = rest.split_once(" -> ") {
-            // Rename: prefer the new path for display.
-            new.trim().to_string()
-        } else {
-            rest.to_string()
-        };
+        let index_status = xy.get(0..1).unwrap_or(" ").to_string();
+        let worktree_status = xy.get(1..2).unwrap_or(" ").to_string();
+        // `-z` uses `XY<space>path`; strip exactly the separator, not all
+        // leading whitespace (a filename may legitimately begin with a space).
+        let rest = line.get(2..).unwrap_or("");
+        let path = rest.strip_prefix(' ').unwrap_or(rest);
+        // Rename/copy records carry the original path as the next NUL record;
+        // the new path is the one we display and act on.
+        if index_status == "R"
+            || index_status == "C"
+            || worktree_status == "R"
+            || worktree_status == "C"
+        {
+            records.next();
+        }
         if path.is_empty() {
             continue;
         }
         entries.push(GitStatusEntry {
-            path,
+            path: path.to_string(),
             status: xy.trim().to_string(),
+            index_status,
+            worktree_status,
         });
     }
-    Ok(GitStatusView {
-        available: true,
-        branch,
-        entries,
-    })
+    entries
 }
 
 #[derive(Serialize)]
@@ -463,4 +492,35 @@ pub async fn git_stage(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_porcelain_z;
+
+    #[test]
+    fn parses_paths_verbatim_including_spaces_and_non_ascii() {
+        let entries = parse_porcelain_z(" M my notes.md\0?? 日本語.md\0");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "my notes.md");
+        assert_eq!(entries[0].index_status, " ");
+        assert_eq!(entries[0].worktree_status, "M");
+        assert_eq!(entries[1].path, "日本語.md");
+        assert_eq!(entries[1].status, "??");
+    }
+
+    #[test]
+    fn keeps_the_new_path_of_a_rename_and_skips_its_old_path() {
+        let entries = parse_porcelain_z("RM renamed 日本.md\0日本語.md\0");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "renamed 日本.md");
+        assert_eq!(entries[0].index_status, "R");
+        assert_eq!(entries[0].worktree_status, "M");
+    }
+
+    #[test]
+    fn skips_unparseable_records_instead_of_panicking() {
+        assert!(parse_porcelain_z("M\0\u{FFFD}\0").is_empty());
+        assert!(parse_porcelain_z("").is_empty());
+    }
 }

@@ -248,6 +248,60 @@ describe("Onboarding", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reuses the provider row after a failed key so the key can be corrected", async () => {
+    const user = userEvent.setup();
+    mockedApi.providerPresets.mockResolvedValue([PRESET]);
+    const provider = {
+      id: "pv1",
+      kind: "openai",
+      label: "OpenAI",
+      base_url: "https://api.openai.com/v1",
+      enabled: true,
+      has_api_key: true,
+      preset: "openai",
+    };
+    let created = false;
+    mockedApi.createProvider.mockImplementation(async () => {
+      created = true;
+      return provider;
+    });
+    mockedApi.listProviders.mockImplementation(async () =>
+      created ? [provider] : [],
+    );
+    mockedApi.updateProvider.mockResolvedValue(provider);
+    mockedApi.connectProvider
+      .mockRejectedValueOnce("model discovery returned 401")
+      .mockResolvedValueOnce(1);
+
+    renderWizard();
+    await reachProviderStep(user);
+    await user.click(screen.getByTestId("onboarding-provider-tab-cloud"));
+    await user.selectOptions(screen.getByRole("combobox"), "openai");
+    await user.type(screen.getByPlaceholderText("sk-…"), "sk-wrong");
+    await user.click(
+      screen.getByRole("button", { name: "接続してモデル一覧を取得" }),
+    );
+    await screen.findByText("model discovery returned 401");
+
+    // The failed attempt left a provider row. Retrying must update it, not
+    // create a duplicate that the backend rejects by label.
+    await screen.findByText(/の設定を再利用します/);
+    const key = screen.getByPlaceholderText("sk-…");
+    await user.clear(key);
+    await user.type(key, "sk-right");
+    await user.click(
+      screen.getByRole("button", { name: "接続してモデル一覧を取得" }),
+    );
+
+    await waitFor(() =>
+      expect(mockedApi.updateProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "pv1", api_key: "sk-right" }),
+      ),
+    );
+    expect(mockedApi.createProvider).toHaveBeenCalledTimes(1);
+    await screen.findByRole("button", { name: "フォルダを選択" });
+  });
+
   it("creates the project from the picked folder and makes it active", async () => {
     const user = userEvent.setup();
     renderWizard();

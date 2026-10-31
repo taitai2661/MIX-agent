@@ -268,6 +268,7 @@ export function McpPane() {
             )}
           </DataTable>
         )}
+        {remove.isError && <ErrorBox error={remove.error} />}
       </Card>
     </Section>
   );

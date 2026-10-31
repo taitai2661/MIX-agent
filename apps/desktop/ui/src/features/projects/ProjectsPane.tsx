@@ -391,6 +391,8 @@ export function ProjectsPane() {
           {chatError && <ErrorBadge error={chatError} />}
           {conversations.isPending ? (
             <ListSkeleton rows={2} label={t("読み込み中…")} />
+          ) : conversations.isError ? (
+            <ErrorBox error={conversations.error} />
           ) : linked.length === 0 ? (
             <EmptyState compact title={t("会話がありません")} />
           ) : (
@@ -439,6 +441,7 @@ export function ProjectsPane() {
           </Button>
           {update.isError && <ErrorBadge error={update.error} />}
           {create.isError && <ErrorBadge error={create.error} />}
+          {remove.isError && <ErrorBadge error={remove.error} />}
         </Row>
         {dialog}
       </Page>
@@ -477,7 +480,18 @@ export function ProjectsPane() {
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && draftRoot) create.mutate();
+              // Match the Create button's guard. Enter used to bypass the
+              // pending check, so holding it created the same project twice;
+              // it also fired while an IME was committing a Japanese name.
+              if (
+                e.key === "Enter" &&
+                !e.nativeEvent.isComposing &&
+                draftRoot &&
+                !create.isPending
+              ) {
+                e.preventDefault();
+                create.mutate();
+              }
             }}
           />
         </Field>
@@ -545,6 +559,11 @@ export function ProjectsPane() {
           ))}
         </div>
       )}
+      {/* The backend refuses to delete a project that still has a running
+          conversation and returns a useful reason. Without this the confirm
+          dialog just closed and the card stayed put, which looked like a
+          dead button. */}
+      {remove.isError && <ErrorBox error={remove.error} />}
       {dialog}
     </Page>
   );

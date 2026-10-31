@@ -40,6 +40,7 @@ function Check({
 
 export function DiagnosticsPane() {
   const [copied, setCopied] = useState(false);
+  const [actionError, setActionError] = useState<unknown>(null);
   const [showLogs, setShowLogs] = useState(false);
   const diagnostics = useQuery({
     queryKey: ["diagnostics"],
@@ -57,18 +58,22 @@ export function DiagnosticsPane() {
   const d = diagnostics.data;
 
   const handleCopyReport = async () => {
+    setActionError(null);
     try {
       const exported = await api.exportDiagnostics();
       const text = JSON.stringify(exported, null, 2);
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // fallback
+    } catch (err) {
+      // A rejected export or clipboard permission used to make the button
+      // look inert. Say what failed instead.
+      setActionError(err);
     }
   };
 
   const handleDownloadReport = async () => {
+    setActionError(null);
     try {
       const exported = await api.exportDiagnostics();
       const blob = new Blob([JSON.stringify(exported, null, 2)], {
@@ -80,8 +85,8 @@ export function DiagnosticsPane() {
       a.download = `mix-agent-diagnostics-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      // fallback
+    } catch (err) {
+      setActionError(err);
     }
   };
 
@@ -124,6 +129,8 @@ export function DiagnosticsPane() {
               </Button>
             </div>
           </div>
+
+          {actionError != null && <ErrorAlert error={actionError} />}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Check label={t("ストレージ")} ok={d.db_ok}>

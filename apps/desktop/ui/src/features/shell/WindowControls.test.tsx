@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { WindowControls } from "./WindowControls";
 
 describe("WindowControls", () => {
@@ -16,6 +16,19 @@ describe("WindowControls", () => {
   it("does not render when platform is macos", () => {
     document.documentElement.dataset.platform = "macos";
     const { container } = render(<WindowControls />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("hides the buttons when plugin-os corrects the platform to macOS", async () => {
+    // main.tsx writes a UA guess ("other") first; plugin-os is authoritative
+    // and replaces it after mount.
+    document.documentElement.dataset.platform = "other";
+    const { container } = render(<WindowControls />);
+    expect(container.firstChild).not.toBeNull();
+
+    await act(async () => {
+      document.documentElement.dataset.platform = "macos";
+    });
     expect(container.firstChild).toBeNull();
   });
 

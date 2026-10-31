@@ -287,6 +287,8 @@ export interface UpdateProgress {
   downloaded: number;
   /** `null` when the server sends no `Content-Length`. */
   total: number | null;
+  /** `"installing"` once the payload has been verified and is being written. */
+  stage?: "downloading" | "installing";
 }
 
 export interface ToolView {
@@ -633,6 +635,10 @@ export interface FileContentView {
 export interface GitStatusEntry {
   path: string;
   status: string;
+  /** Index (staged) side of git's XY pair; a space means unchanged. */
+  index_status?: string;
+  /** Worktree (unstaged) side of git's XY pair; a space means unchanged. */
+  worktree_status?: string;
 }
 
 export interface GitStatusView {

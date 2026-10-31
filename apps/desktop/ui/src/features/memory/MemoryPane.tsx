@@ -381,17 +381,20 @@ export function MemoryPane() {
                 onResolved={refresh}
               />
             )}
-            {verify.isError && (
+            {/* One mutation is shared by every card. Compare its variables so
+                a pending/failed verify marks only the row that was clicked
+                instead of spinning (or showing the same error) on all of them. */}
+            {verify.isError && verify.variables === m.id && (
               <ErrorBox error={verify.error} className="text-xs" />
             )}
             <Row align="end">
               <Button
                 size="sm"
-                disabled={verify.isPending}
+                disabled={verify.isPending && verify.variables === m.id}
                 onClick={() => verify.mutate(m.id)}
                 title={t("有効としてマーク")}
               >
-                {verify.isPending ? (
+                {verify.isPending && verify.variables === m.id ? (
                   <Spinner size={12} />
                 ) : (
                   <CheckCircle2 size={12} />

@@ -222,7 +222,7 @@ const DirRows = memo(function DirRows({
               }}
               title={tf("チャットに入力 (@{path})", { path: childPath })}
               aria-label={t("チャットに入力")}
-              className="absolute right-1 hidden h-5 w-5 items-center justify-center rounded bg-surface/80 text-muted shadow-xs hover:bg-surface hover:text-brand group-hover/row:flex"
+              className="absolute right-1 hidden h-5 w-5 items-center justify-center rounded bg-surface/80 text-muted shadow-xs hover:bg-surface hover:text-brand group-hover/row:flex group-focus-within/row:flex"
             >
               <AtSign size={11} />
             </button>

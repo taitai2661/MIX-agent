@@ -12,8 +12,19 @@ export function WindowControls() {
   useEffect(() => {
     // macOS では OS の Traffic Light ボタン（Overlay）を使うため表示しない。
     // Windows / Linux では dataset.platform が "windows" / "linux" になる。
-    const platform = document.documentElement.dataset.platform;
-    setIsMac(platform === "macos");
+    // `main.tsx` writes a UA guess first and `App` replaces it with the
+    // authoritative `plugin-os` value after mount. Reading once locked in the
+    // provisional "other" and left our close buttons on top of the macOS
+    // traffic lights, so follow later corrections too.
+    const sync = () => {
+      setIsMac(document.documentElement.dataset.platform === "macos");
+    };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-platform"],
+    });
 
     let unlisten: (() => void) | undefined;
     (async () => {
@@ -35,6 +46,7 @@ export function WindowControls() {
     })();
 
     return () => {
+      observer.disconnect();
       unlisten?.();
     };
   }, []);
