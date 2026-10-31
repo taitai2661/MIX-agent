@@ -2,7 +2,7 @@
 name: mix-agent
 services:
   init:
-    image: ghcr.io/taitai2661/mix-agent-init:v0.5.4@sha256:a0e6e481099af77987c2786bd01662a0ddbddcb1ca7a1f97ba2e4805ef8fd507
+    image: ghcr.io/taitai2661/mix-agent-init:v0.5.5@sha256:b1c30cee3f00ef110731e50a75708003e891131affa587d62f3d560071678ffd
     entrypoint:
       - python
       - /bootstrap.py
@@ -22,8 +22,13 @@ services:
       - packages:/packages
       - mcp-shared:/shared
   db:
-    image: postgres:17.5-bookworm@sha256:2088c1744625793a8a89118d2dee63fb121139141ff0ff53bd72e63bb6089d0d
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
     environment:
       POSTGRES_DB: mix
       POSTGRES_USER: mix
@@ -51,7 +56,12 @@ services:
     security_opt: &id002
       - no-new-privileges:true
     pids_limit: 128
-    tmpfs: &id003
+    logging: &id003
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    tmpfs: &id004
       - /tmp:size=256m,mode=1777
     ports:
       - 8080:8080
@@ -61,6 +71,10 @@ services:
       MIX_KEYS: /keys
       RUNNER_KEYS: /runner-keys
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      MIX_LOG_FORMAT: ${MIX_LOG_FORMAT:-text}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      MIX_METRICS_PUBLIC: ${MIX_METRICS_PUBLIC:-}
+      MIX_TRUSTED_PROXIES: ${MIX_TRUSTED_PROXIES:-}
       MIX_PROJECT_MOUNT: /project
       MIX_MODELS_DEV_URL: ${MIX_MODELS_DEV_URL:-https://models.dev/api.json}
     volumes:
@@ -86,17 +100,28 @@ services:
       - host.docker.internal:host-gateway
     mem_limit: 1g
     cpus: 2
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/live', timeout=3).status == 200 else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       db:
         condition: service_healthy
-    image: ghcr.io/taitai2661/mix-agent-app:v0.5.4@sha256:3ab377a3937dee72ae7812504dc58597cb1560e63d4cc05ee0cd757867100275
+    image: ghcr.io/taitai2661/mix-agent-app:v0.5.5@sha256:0751cb7b2275bb3d1ca6f3f574d05fb16fd355aeea8f3c943ba8980403e073aa
   execution-runner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -113,14 +138,15 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.4@sha256:79a7b32665d9d68f02c11f40a1a553f1b42beaf833ae06a5e963c391577a95e3
+    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.5@sha256:6216814ad321f2107cb0519c5d269304a9e326763ca02b61624689084b89ff61
   browser-runner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -136,14 +162,15 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.4@sha256:598221d16e05d688c556fb91287329b0ae4cdbc821d52a9728e196bfbe4ad5c6
+    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.5@sha256:12e93c39bc8fb3e28b0f5bd07dc4f08c150eaf8334c5c7d86f2fb42fade04853
   browser-provisioner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -158,14 +185,15 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.4@sha256:37d8a9702594a1710c3b35b913e163d5cfa76874aecb514b6484bf562a5279b4
+    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.5@sha256:348ce949971691edcd04d5242e6792acf71eda846e3d0e6d393f1604c4c413ac
   mcp-runner:
     restart: unless-stopped
     read_only: true
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       HTTP_PROXY: http://egress-proxy:3128
       HTTPS_PROXY: http://egress-proxy:3128
@@ -183,7 +211,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.4@sha256:d2be626dd79daffacf80fd9331b8dcb6df162f738221f7b68d053f07448c4b3c
+    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.5@sha256:42095150eab762c00172fb1410d6da0b4dd5f5232b4c8dbc29c5a22296127abd
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     restart: unless-stopped
@@ -222,14 +250,15 @@ services:
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
-    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.4@sha256:466f12f806f738500be2a9362a024609dfea2fa0f2e9dcbfe00575e9ad402247
+    logging: *id003
+    tmpfs: *id004
+    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.5@sha256:5ec1637195943912eab05f10ab9009a456a43f1d6b2162f0b8049e7a8a4ee269
     user: 1000:1000
     environment:
       TOKEN_FILE: /tokens/manager.token
       POLICY_FILE: /policy/mcp-policy.json
       DOCKER_HOST: http://docker-socket-proxy:2375
-      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.4
+      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.5
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
       - manager-token:/tokens:ro
@@ -258,7 +287,8 @@ services:
     cap_drop: *id001
     security_opt: *id002
     pids_limit: 128
-    tmpfs: *id003
+    logging: *id003
+    tmpfs: *id004
     environment:
       MCP_POLICY_FILE: /policy/mcp-policy.json
       LOG_LEVEL: INFO
@@ -273,7 +303,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.4@sha256:10092102b0f038be380eaa2bf8beef2c0f87794e694fb473d96a4c01607cfa51
+    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.5@sha256:7b3f87a0ee0a97238b84ab8cd759cf21bb7620ab06a49786f29ac07f85e44100
     container_name: mix-agent-egress-proxy-1
 networks:
   database:
@@ -307,5 +337,5 @@ x-casaos:
   title:
     en_US: MIX-agent
     ja_JP: MIX-agent
-  version: 0.5.4
+  version: 0.5.5
   icon: https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages/apps/io.github.taitai2661.mix-agent/assets/icon.png
