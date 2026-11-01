@@ -229,7 +229,8 @@ export function CommandPalette() {
         icon: <GitCompareArrows size={15} />,
         kind: "action",
         run: () => {
-          // The right panel only exists on the agent workspace.
+          // File changes are an agent-workspace target; the chat surface has
+          // no workspace.
           setSurface("desktop-agent");
           setRightPanel("changes");
         },

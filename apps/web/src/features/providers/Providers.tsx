@@ -4,9 +4,15 @@ import { Button } from "@/components/button";
 import { ConfirmButton } from "@/components/modal";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, RefreshCw, Server } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 
 import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
+import {
+  ChatGptLoginCard,
+  ChatGptQuotaCard,
+  ChatGptWarning,
+  type ChatGptLogin,
+} from "./ChatGptPanel";
 
 export type ProviderPreset = {
   id: string;
@@ -21,6 +27,7 @@ export type ProviderPreset = {
 
 export const FEATURED_PRESET_IDS = [
   "openai",
+  "chatgpt",
   "anthropic",
   "gemini",
   "openrouter",
@@ -97,7 +104,9 @@ export function Providers() {
     [name, setName] = useState(""),
     [kind, setKind] = useState("compatible"),
     [baseUrl, setBaseUrl] = useState(""),
-    [allowPrivate, setAllowPrivate] = useState(false);
+    [allowPrivate, setAllowPrivate] = useState(false),
+    [consent, setConsent] = useState(false),
+    [login, setLogin] = useState<ChatGptLogin | null>(null);
   const fields = visibleProviderFields(selectedPreset, !editing);
   const featured = useMemo(
     () =>
@@ -117,6 +126,7 @@ export function Providers() {
   function applyPreset(preset: ProviderPreset | null) {
     setSelectedPreset(preset);
     setFilter("");
+    setConsent(false);
     if (editing || !preset) return;
     setName(preset.id === "custom" ? "" : preset.name);
     setKind(preset.kind);
@@ -130,6 +140,7 @@ export function Providers() {
   function openForm(row: Row | null) {
     setEditing(row);
     setFilter("");
+    setConsent(false);
     if (row) {
       const preset =
         presets.data?.find((item) => item.id === row.data.preset_id) || null;
@@ -147,13 +158,97 @@ export function Providers() {
     }
     setOpen(true);
   }
+  async function startChatGptLogin(providerId: string) {
+    setError(null);
+    try {
+      const started = await api<{
+        login_id: string;
+        verification_url: string;
+        user_code: string;
+        interval: number;
+      }>("/providers/chatgpt/device/start", "POST", {
+        provider_id: providerId,
+      });
+      setLogin({
+        providerId,
+        ...started,
+        status: "pending",
+      });
+    } catch (e) {
+      setError(e);
+    }
+  }
+
+  const completeLogin = useCallback(
+    async (_account: ChatGptLogin["account"]) => {
+      const current = login;
+      setLogin(null);
+      if (!current) return;
+      setBusy(true);
+      try {
+        await api(`/providers/${current.providerId}/sync-models`, "POST");
+        setNotice(t("ChatGPT に接続し、モデルを取得しました。"));
+      } catch (e) {
+        setError(e);
+      } finally {
+        setBusy(false);
+      }
+      void qc.invalidateQueries({ queryKey: ["/providers"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
+      void qc.invalidateQueries({ queryKey: ["/settings"] });
+    },
+    [login, qc],
+  );
+
+  const failedLogin = useCallback((message: string) => {
+    setLogin(null);
+    setError(new Error(message));
+  }, []);
+
+  async function cancelLogin() {
+    const current = login;
+    setLogin(null);
+    if (!current) return;
+    try {
+      await api(`/providers/chatgpt/device/${current.login_id}/cancel`, "POST");
+    } catch {
+      // The local card is already closed; a stale server state expires in 15m.
+    }
+  }
+
+  async function logout(row: Row) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/providers/${row.id}/logout`, "POST");
+      setNotice(t("ログアウトしました"));
+      void qc.invalidateQueries({ queryKey: ["/providers"] });
+      void qc.invalidateQueries({ queryKey: ["/models"] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    if (selectedPreset?.id === "chatgpt" && !consent) {
+      setError(
+        new Error(
+          t(
+            "ChatGPT 連携は非公式・自己責任の機能です。同意にチェックしてから保存してください。",
+          ),
+        ),
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const result = await api<{
+        id?: string;
         model_sync?: {
           status: string;
           count: number;
@@ -200,6 +295,9 @@ export function Providers() {
       void qc.invalidateQueries({ queryKey: ["/providers"] });
       void qc.invalidateQueries({ queryKey: ["/models"] });
       void qc.invalidateQueries({ queryKey: ["/settings"] });
+      if (selectedPreset?.id === "chatgpt" && !editing && result.id) {
+        await startChatGptLogin(result.id);
+      }
     } catch (e) {
       setError(e);
     } finally {
@@ -267,7 +365,18 @@ export function Providers() {
         {t("API Keyは暗号化して保存され、保存後は再表示されません。")}
       </div>
       <ErrorBox error={error || rows.error} />
+      {rows.data?.some((row) => row.data.preset_id === "chatgpt") && (
+        <ChatGptWarning />
+      )}
       {notice && <p className="success">{notice}</p>}
+      {login && (
+        <ChatGptLoginCard
+          login={login}
+          onComplete={completeLogin}
+          onFailed={failedLogin}
+          onCancel={() => void cancelLogin()}
+        />
+      )}
       {open && fields.picker && (
         <div className="card provider-picker">
           <div>
@@ -345,14 +454,32 @@ export function Providers() {
               </Button>
             )}
           </div>
+          {selectedPreset?.id === "chatgpt" && (
+            <>
+              <ChatGptWarning />
+              <label className="check provider-consent">
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  required
+                  onChange={(e) => setConsent(e.target.checked)}
+                />
+                {t("上記を理解し、非公式・自己責任であることに同意します")}
+              </label>
+            </>
+          )}
           <p className="provider-form-hint">
-            {selectedPreset && !selectedPreset.api_key_required
+            {selectedPreset?.id === "chatgpt"
               ? t(
-                  "ローカル接続はAPI Key不要です。保存するとモデルを取得します。",
+                  "保存後に ChatGPT のログイン（デバイスコード）を開始します。API Key は使いません。",
                 )
-              : selectedPreset?.default_url
-                ? t("API Keyを貼り付けて保存すると、モデルを自動取得します。")
-                : t("接続先URLを入力してください。")}
+              : selectedPreset && !selectedPreset.api_key_required
+                ? t(
+                    "ローカル接続はAPI Key不要です。保存するとモデルを取得します。",
+                  )
+                : selectedPreset?.default_url
+                  ? t("API Keyを貼り付けて保存すると、モデルを自動取得します。")
+                  : t("接続先URLを入力してください。")}
           </p>
           {fields.name && (
             <Field label={t("表示名")}>
@@ -499,58 +626,90 @@ export function Providers() {
           (item) => item.id === row.data.preset_id,
         );
         return (
-          <div className="card provider-card" key={row.id}>
-            <div className="provider-icon">
-              <Server size={22} />
+          <div className="provider-block" key={row.id}>
+            <div className="card provider-card">
+              <div className="provider-icon">
+                <Server size={22} />
+              </div>
+              <div className="grow">
+                <h3>{row.data.name}</h3>
+                <p>
+                  {preset?.name || row.data.kind}
+                  <span> · </span>
+                  {row.data.preset_id === "chatgpt" ? (
+                    row.data.auth?.account_id ? (
+                      <>
+                        {row.data.auth.email || t("ログイン済み")}
+                        {row.data.auth.plan_type
+                          ? ` · ${row.data.auth.plan_type}`
+                          : ""}
+                      </>
+                    ) : (
+                      t("未ログイン")
+                    )
+                  ) : row.data.has_secret_id ? (
+                    t("API Key 保存済み")
+                  ) : (
+                    t("API Key なし")
+                  )}
+                </p>
+                <small>{row.data.base_url}</small>
+              </div>
+              <div className="row-actions">
+                {row.data.preset_id === "chatgpt" &&
+                !row.data.auth?.account_id ? (
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void startChatGptLogin(row.id)}
+                  >
+                    {t("ChatGPT でログイン")}
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => action(row, "test")}
+                >
+                  {t("接続テスト")}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => action(row, "sync-models")}
+                >
+                  <RefreshCw size={14} />
+                  {t("モデル取得")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    openForm(row);
+                  }}
+                >
+                  {t("編集")}
+                </Button>
+                <ConfirmButton
+                  variant="ghost"
+                  disabled={busy}
+                  title={t("Providerを削除")}
+                  message={t(
+                    "Providerと取得済みのモデルを削除しますか？ 元に戻せません。",
+                  )}
+                  confirmLabel={t("削除")}
+                  onConfirm={() => remove(row)}
+                >
+                  {t("削除")}
+                </ConfirmButton>
+              </div>
             </div>
-            <div className="grow">
-              <h3>{row.data.name}</h3>
-              <p>
-                {preset?.name || row.data.kind}
-                <span> · </span>
-                {row.data.has_secret_id
-                  ? t("API Key 保存済み")
-                  : t("API Key なし")}
-              </p>
-              <small>{row.data.base_url}</small>
-            </div>
-            <div className="row-actions">
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => action(row, "test")}
-              >
-                {t("接続テスト")}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => action(row, "sync-models")}
-              >
-                <RefreshCw size={14} />
-                {t("モデル取得")}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  openForm(row);
-                }}
-              >
-                {t("編集")}
-              </Button>
-              <ConfirmButton
-                variant="ghost"
-                disabled={busy}
-                title={t("Providerを削除")}
-                message={t(
-                  "Providerと取得済みのモデルを削除しますか？ 元に戻せません。",
-                )}
-                confirmLabel={t("削除")}
-                onConfirm={() => remove(row)}
-              >
-                {t("削除")}
-              </ConfirmButton>
-            </div>
+            {row.data.preset_id === "chatgpt" ? (
+              <ChatGptQuotaCard
+                row={row}
+                onLogin={() => void startChatGptLogin(row.id)}
+                onLogout={() => void logout(row)}
+              />
+            ) : null}
           </div>
         );
       })}

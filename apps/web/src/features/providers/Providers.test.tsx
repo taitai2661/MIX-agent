@@ -40,6 +40,17 @@ const custom: ProviderPreset = {
   extra_config_schema: [],
 };
 
+const chatgpt: ProviderPreset = {
+  id: "chatgpt",
+  name: "ChatGPT (Codex 使用枠)",
+  category: "サブスクリプション",
+  kind: "openai",
+  default_url: "https://chatgpt.com/backend-api/codex",
+  api_key_required: false,
+  allow_private_default: false,
+  extra_config_schema: [],
+};
+
 it("hides connection details for a known cloud provider", () => {
   expect(visibleProviderFields(openai, true)).toEqual({
     picker: false,
@@ -53,6 +64,13 @@ it("hides connection details for a known cloud provider", () => {
 
 it("skips the API key for local providers", () => {
   expect(visibleProviderFields(ollama, true).apiKey).toBe(false);
+});
+
+it("never offers an API key field for the ChatGPT OAuth preset", () => {
+  expect(visibleProviderFields(chatgpt, true)).toMatchObject({
+    picker: false,
+    apiKey: false,
+  });
 });
 
 it("asks for name, URL, and connection type on custom providers", () => {

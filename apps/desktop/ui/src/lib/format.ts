@@ -125,6 +125,31 @@ export function formatContext(tokens: number): string {
   return String(tokens);
 }
 
+/** Compact token count for the usage meter.
+ *
+ *  Unlike `formatContext` (which is pinned to K/M because model rows are a
+ *  dense fixed-width table), this follows the display language's units so the
+ *  Japanese UI reads `6万` and the English UI `60K` — the same number the
+ *  status line shows. */
+export function formatTokens(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return "0";
+  const locale = getLanguage() === "en" ? "en-US" : "ja-JP";
+  return new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(tokens);
+}
+
+/** Estimated spend: `$0.00`, `$0.0123`, `$1.23`. `null` (unpriced model) reads
+ *  as a dash rather than a misleading zero. */
+export function formatCost(usd: number | null | undefined): string {
+  if (usd == null || !Number.isFinite(usd) || usd < 0) return "—";
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  if (usd < 1) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 /** Model ids are stored as `<provider_id>:<model>` where `provider_id` is a
  * UUID, e.g. `a1830932-37fa-445c-a824-2336c7e2e6b8:liquid/lfm2-1.2b`.
  * Showing the raw id leaks the UUID into the UI. Strip the first segment so

@@ -11,6 +11,7 @@ import {
   Download,
   Folder,
   FolderTree,
+  Gauge,
   GitCompareArrows,
   Globe,
   PanelLeft,
@@ -509,6 +510,26 @@ export function App() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() =>
+                  setRightPanel(rightPanel === "usage" ? "none" : "usage")
+                }
+                title={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-label={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-pressed={rightPanel === "usage"}
+              >
+                <Gauge size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
                   setRightPanel(rightPanel === "none" ? "activity" : "none")
                 }
                 title={
@@ -524,6 +545,30 @@ export function App() {
                 aria-pressed={rightPanel !== "none"}
               >
                 <PanelRight size={16} />
+              </Button>
+            </div>
+          )}
+          {view === "chat" && !agentSurface && (
+            <div className="flex items-center gap-1 border-s border-line ps-1.5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  setRightPanel(rightPanel === "usage" ? "none" : "usage")
+                }
+                title={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-label={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-pressed={rightPanel === "usage"}
+              >
+                <Gauge size={16} />
               </Button>
             </div>
           )}
@@ -594,7 +639,7 @@ export function App() {
             </div>
           </div>
         </section>
-        {view === "chat" && agentSurface && !browserFull && (
+        {view === "chat" && !browserFull && (
           <PaneErrorBoundary name="RightPanel" resetKeys={[view, agentSurface]}>
             <RightPanel cap={panelCap} />
           </PaneErrorBoundary>

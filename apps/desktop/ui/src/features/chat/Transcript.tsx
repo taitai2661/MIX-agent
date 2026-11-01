@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import { cn } from "@/lib/cn";
 import { t, tf } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
 import { useNow } from "@/lib/clock";
@@ -186,7 +187,12 @@ export function Transcript({
         className="stable-scroll h-full overflow-y-auto overscroll-contain"
       >
         <div
-          className="mx-auto flex w-full max-w-content flex-col gap-6 px-4 py-8 sm:px-6"
+          className={cn(
+            "mx-auto flex w-full max-w-content flex-col gap-6 px-4 py-8 sm:px-6",
+            // The empty state sits in the vertical middle of the pane, like a
+            // landing page, instead of hugging the top edge under the titlebar.
+            isEmpty && !error && "min-h-full justify-center py-10 sm:py-14",
+          )}
           role="log"
           aria-label={t("会話")}
           // Pause the live region while tokens stream: announcing every flush
@@ -298,36 +304,36 @@ function Welcome({
   const isAgent = surface === "desktop-agent";
 
   return (
-    <div className="relative flex flex-col items-center gap-6 py-16 text-center animate-rise">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -top-6 left-1/2 size-64 -translate-x-1/2 rounded-full bg-brand/10 blur-3xl"
-      />
-      <div className="relative grid size-14 place-items-center rounded-2xl border border-line bg-gradient-to-b from-surface to-inset text-brand">
-        {isAgent ? <Bot size={24} /> : <Sparkles size={24} />}
+    <div className="relative flex flex-col items-center gap-7 text-center animate-rise">
+      <div className="grid size-[72px] place-items-center rounded-3xl border border-line bg-surface text-brand">
+        {isAgent ? (
+          <Bot size={28} strokeWidth={1.6} aria-hidden="true" />
+        ) : (
+          <Sparkles size={28} strokeWidth={1.6} aria-hidden="true" />
+        )}
       </div>
-      <div className="flex flex-col gap-2">
-        <p className="text-2xs font-bold tracking-[0.18em] text-accent uppercase">
-          {isAgent ? t("デスクトップエージェント") : "MIX-agent"}
+      <div className="flex flex-col gap-3">
+        <p className="text-2xs font-bold tracking-[0.22em] text-brand uppercase">
+          MIX-AGENT
         </p>
         {welcome ? (
-          <h2 className="mx-auto max-w-lg text-2xl font-semibold tracking-tight text-balance text-fg">
+          <h2 className="mx-auto max-w-[38rem] text-[22px] leading-[1.5] font-semibold tracking-tight text-balance text-fg sm:text-[28px] sm:leading-[1.55]">
             {welcomeTitle(welcome)}
           </h2>
         ) : (
-          <h2 className="text-2xl font-semibold tracking-tight text-fg">
-            MIX-agent
+          <h2 className="text-[28px] font-semibold tracking-tight text-fg">
+            MIX-AGENT
           </h2>
         )}
         {welcome && (
-          <p className="mx-auto flex max-w-md items-center justify-center gap-1.5 text-xs text-faint">
-            <ShieldCheck size={13} aria-hidden="true" />
+          <p className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-1.5 text-[13px] text-faint">
+            <ShieldCheck size={14} aria-hidden="true" />
             {welcomeNote(welcome)}
           </p>
         )}
       </div>
       {!hasModels ? (
-        <div className="mx-auto flex w-full max-w-md flex-col items-center gap-3 rounded-xl border border-warning/30 bg-warning-soft p-4 text-center">
+        <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-3 rounded-2xl border border-warning/30 bg-warning-soft p-5 text-center">
           <div className="flex items-center gap-2 text-sm font-medium text-warning">
             <Sparkles size={16} />
             <span>{t("モデル提供元が接続されていません")}</span>
@@ -370,7 +376,7 @@ function WelcomeSuggestions({
 }) {
   const insertPrompt = usePromptInsert((s) => s.insertPrompt);
   return (
-    <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+    <div className="grid w-full max-w-2xl grid-cols-1 gap-2.5 sm:grid-cols-2">
       {suggestions.map((suggestion) => (
         <Button
           key={suggestion.id}
@@ -379,12 +385,12 @@ function WelcomeSuggestions({
             const detail = promptDetail(suggestion);
             insertPrompt(detail.text, detail.mode);
           }}
-          className="group h-auto items-start justify-start gap-2.5 rounded-xl border-line px-3.5 py-3 text-start transition-colors hover:border-line-strong"
+          className="group h-auto min-h-[52px] w-full items-center justify-start gap-3 rounded-full px-3.5 py-2 text-start"
         >
-          <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
-            <CornerDownLeft size={12} aria-hidden="true" />
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-inset text-muted transition-colors group-hover:bg-surface group-hover:text-fg">
+            <CornerDownLeft size={14} aria-hidden="true" />
           </span>
-          <span className="min-w-0 flex-1 text-xs leading-5 text-fg">
+          <span className="min-w-0 flex-1 pe-1.5 text-sm font-medium leading-5 text-fg">
             {greetingText(suggestionLabelId(suggestion.id), suggestion.label)}
           </span>
         </Button>

@@ -75,6 +75,7 @@ mod tests {
             output_tokens: output,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            context_tokens: None,
         }
     }
 
@@ -108,6 +109,7 @@ mod tests {
                 output_tokens: 0,
                 cache_read_tokens: 1_000_000,
                 cache_write_tokens: 0,
+                context_tokens: None,
             },
         )
         .unwrap();

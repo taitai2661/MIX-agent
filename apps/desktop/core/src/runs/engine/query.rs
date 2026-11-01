@@ -303,6 +303,33 @@ impl RunEngine {
         views
     }
 
+    /// The most recent cumulative usage summary logged for a Run.
+    ///
+    /// Resuming a Run starts a fresh loop; without this the first post-resume
+    /// `usage` event would report only the new turns and overwrite the persisted
+    /// total, making a resumed Run look cheaper than the work it actually did.
+    pub(super) async fn latest_usage(&self, run_id: RunId) -> Option<RunUsage> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT data FROM run_events \
+             WHERE run_id = ? AND kind = 'usage' ORDER BY sequence DESC LIMIT 1",
+        )
+        .bind(run_id.to_string())
+        .fetch_optional(self.storage.pool())
+        .await
+        .map_err(|err| {
+            tracing::warn!(%run_id, %err, "latest_usage query failed; resuming from zero");
+            err
+        })
+        .ok()?;
+        let (data,) = row?;
+        serde_json::from_str(&data)
+            .map_err(|err| {
+                tracing::warn!(%run_id, %err, "latest_usage saw corrupt JSON; resuming from zero");
+                err
+            })
+            .ok()
+    }
+
     /// Record a status transition for a Run, both in the denormalised `status`
     /// column (what the UI lists) and inside the `data` blob (what
     /// [`run_view_from_row`] reads).

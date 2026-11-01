@@ -19,6 +19,12 @@
 | [`release-checklist.md`](release-checklist.md) | 現行仕様 | バージョン公開作業の確認手順 |
 | [`verification.md`](verification.md) | 履歴 | 時点ごとの検証記録（新しい節を先頭に追記。履歴は書き換えない） |
 
+## 戦略・競合
+
+| ドキュメント | 役割 | 内容 |
+| :--- | :--- | :--- |
+| [`dsh-competitive-plan.md`](dsh-competitive-plan.md) | 設計記録 | DeepSeek Harness 対抗戦略と 6 ヶ月ロードマップ（Phase 0〜4、判断ゲート、KPI） |
+
 ## Memory（両エディション共通仕様）
 
 | ドキュメント | 役割 | 内容 |

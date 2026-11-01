@@ -25,6 +25,10 @@ KNOWN_ASYNC_DB_ENDPOINTS = {
     "browser_return",
     "browser_update",
     "cancel",
+    # ChatGPT device login / logout perform a small DB write around an awaited
+    # upstream call; the outbound HTTP dominates, so they stay async.
+    "chatgpt_device_start",
+    "chatgpt_device_status",
     "delete_conversation",
     "edit_memory",
     "edit_message",
@@ -36,6 +40,7 @@ KNOWN_ASYNC_DB_ENDPOINTS = {
     "mcp_oauth_callback",
     "mcp_runtime_action",
     "provider_action",
+    "provider_logout",
     "reinstall_mcp",
     "send_message",
     "start_mcp_oauth",

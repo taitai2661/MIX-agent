@@ -2,7 +2,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   formatBytes,
   formatContext,
+  formatCost,
   formatDuration,
+  formatTokens,
   relativeTime,
   threadGroup,
 } from "./format";
@@ -76,5 +78,27 @@ describe("formatContext", () => {
   it("renders an unknown window as a dash", () => {
     expect(formatContext(0)).toBe("—");
     expect(formatContext(Number.NaN)).toBe("—");
+  });
+});
+
+describe("formatTokens", () => {
+  it("follows the display language's compact units", () => {
+    setLanguage("ja");
+    expect(formatTokens(60_000)).toBe("6万");
+    expect(formatTokens(0)).toBe("0");
+    setLanguage("en");
+    expect(formatTokens(60_000)).toBe("60K");
+    expect(formatTokens(0)).toBe("0");
+    setLanguage("ja");
+  });
+});
+
+describe("formatCost", () => {
+  it("keeps small estimates legible and unpriced models honest", () => {
+    expect(formatCost(0)).toBe("$0.00");
+    expect(formatCost(0.0042)).toBe("$0.0042");
+    expect(formatCost(0.42)).toBe("$0.420");
+    expect(formatCost(1.234)).toBe("$1.23");
+    expect(formatCost(null)).toBe("—");
   });
 });

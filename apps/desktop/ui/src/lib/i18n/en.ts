@@ -56,6 +56,17 @@ export const en: Record<string, string> = {
   "ライト": "Light",
   "ダーク": "Dark",
   "システムに従う": "Follow system",
+  "アクセントカラー": "Accent color",
+  "アクセントカラーを選択": "Choose an accent color",
+  "ボタンやリンクなど、操作の目印となる色を選びます。":
+    "Choose the color that marks actions such as buttons and links.",
+  "緑": "Green",
+  "青": "Blue",
+  "藍": "Indigo",
+  "紫": "Violet",
+  "ピンク": "Pink",
+  "オレンジ": "Orange",
+  "ティール": "Teal",
   "コマンドパレット": "Command palette",
 
   // Chat composer
@@ -63,7 +74,6 @@ export const en: Record<string, string> = {
   "深く考えてほしいことを入力…": "Ask for a deep, careful answer…",
   "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)":
     "Instruct the agent… (terminal execution & file edits allowed)",
-  "デスクトップエージェント": "Desktop Agent",
   "プロジェクトを選択": "Select a project",
   "送信": "Send",
   "停止": "Stop",
@@ -146,6 +156,24 @@ export const en: Record<string, string> = {
     "Destructive tool {tool} fired; a confirming read is expected.",
   "ステップ上限 {steps} / ツール上限 {calls} に到達しました。":
     "Reached the step limit ({steps}) / tool limit ({calls}).",
+
+  // Usage
+  "使用状況": "Usage",
+  "使用状況を表示": "Show usage",
+  "使用状況を閉じる": "Close usage",
+  "使用": "Usage",
+  "このスレッドにはまだ使用状況がありません": "No usage in this thread yet",
+  "メッセージを送ると、トークン数と推定コストが表示されます。":
+    "Send a message to see token counts and estimated cost.",
+  "最新ターンで使用したプロンプト量です。":
+    "Prompt tokens used by the latest turn.",
+  "このRun": "This run",
+  "会話合計": "Conversation total",
+  "入力トークン": "Input tokens",
+  "出力トークン": "Output tokens",
+  "キャッシュ読取": "Cache read",
+  "キャッシュ書込": "Cache write",
+  "推定コスト": "Estimated cost",
 
   // Tool activity
   "このRunのアクティビティ": "Run activity",

@@ -3,6 +3,7 @@
 /// exactly the same logic.
 
 import type { RunEventPayload } from "./api";
+import type { RunUsage } from "./types";
 
 export interface ToolActivity {
   id: string;
@@ -42,6 +43,8 @@ export interface RunTimeline {
   reasoning: string;
   tools: ToolActivity[];
   status: string;
+  /** Latest cumulative token/spend summary, once a turn has reported usage. */
+  usage: RunUsage | null;
   budgetRequest: BudgetRequest | null;
   checkpoints: string[];
   stagnation: string | null;
@@ -72,6 +75,7 @@ export function createTimeline(runId: string): RunTimeline {
     reasoning: "",
     tools: [],
     status: "idle",
+    usage: null,
     budgetRequest: null,
     checkpoints: [],
     stagnation: null,
@@ -134,6 +138,24 @@ export function optNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
+/** Read a `usage` payload (live event, status fallback, or persisted row). */
+export function parseRunUsage(value: unknown): RunUsage | null {
+  const raw = record(value);
+  const input = optNumber(raw.inputTokens);
+  const output = optNumber(raw.outputTokens);
+  if (input === undefined && output === undefined) return null;
+  const cost = optNumber(raw.estimatedCostUsd);
+  return {
+    input_tokens: input ?? 0,
+    output_tokens: output ?? 0,
+    cache_read_tokens: optNumber(raw.cacheReadTokens) ?? 0,
+    cache_write_tokens: optNumber(raw.cacheWriteTokens) ?? 0,
+    context_tokens: optNumber(raw.contextTokens) ?? 0,
+    context_window: optNumber(raw.contextWindow) ?? 0,
+    estimated_cost_usd: cost ?? null,
+  };
+}
+
 /** Fold one event into the timeline. Unknown kinds are ignored. */
 export function applyRunEvent(
   timeline: RunTimeline,
@@ -155,6 +177,15 @@ export function applyRunEvent(
       if (status) next.status = status;
       const err = optString(d.error);
       if (err) next.error = err;
+      // The terminal status carries the same cumulative summary as the last
+      // `usage` event, so a replay that only kept the tail still has it.
+      const totals = parseRunUsage(d.totals);
+      if (totals) next.usage = totals;
+      break;
+    }
+    case "usage": {
+      const usage = parseRunUsage(d);
+      if (usage) next.usage = usage;
       break;
     }
     case "error": {

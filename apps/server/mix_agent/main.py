@@ -21,6 +21,7 @@ from mix_agent.logging_setup import configure_logging
 from mix_agent.api.routes import router
 from mix_agent.api.routes_artifacts import router as artifacts_router
 from mix_agent.api.routes_auth import router as auth_router
+from mix_agent.api.routes_chatgpt import router as chatgpt_router
 from mix_agent.api.routes_conversations import router as conversations_router
 from mix_agent.api.routes_mcp import router as mcp_router
 from mix_agent.api.routes_memories import router as memories_router
@@ -324,6 +325,9 @@ app.include_router(backup_router)
 app.include_router(auth_router)
 # Explicit provider/artifact routes must be registered before the generic
 # `/{collection}/{key}` routes in `router` so they keep precedence.
+# ChatGPT's `/providers/{key}/logout` must also precede the generic
+# `/providers/{key}/{action}` handler in providers_router.
+app.include_router(chatgpt_router)
 app.include_router(providers_router)
 app.include_router(artifacts_router)
 app.include_router(notifications_router)

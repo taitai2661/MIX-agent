@@ -415,6 +415,14 @@ fn an_sse_stream(
                                 output_tokens: 0,
                                 cache_read_tokens: cached,
                                 cache_write_tokens: written,
+                                // Anthropic reports the three input buckets
+                                // separately, so the prompt that occupied the
+                                // context window is their sum.
+                                context_tokens: Some(
+                                    u.input_tokens
+                                        .saturating_add(cached)
+                                        .saturating_add(written),
+                                ),
                             });
                         }
                     }
@@ -427,6 +435,7 @@ fn an_sse_stream(
                                 output_tokens: 0,
                                 cache_read_tokens: 0,
                                 cache_write_tokens: 0,
+                                context_tokens: Some(0),
                             });
                             entry.output_tokens = u.output_tokens;
                             if entry.input_tokens == 0 {
@@ -438,6 +447,12 @@ fn an_sse_stream(
                             if entry.cache_write_tokens == 0 {
                                 entry.cache_write_tokens = u.cache_creation_input_tokens;
                             }
+                            entry.context_tokens = Some(
+                                entry
+                                    .input_tokens
+                                    .saturating_add(entry.cache_read_tokens)
+                                    .saturating_add(entry.cache_write_tokens),
+                            );
                         }
                         if let Some(meta) = event.message {
                             if let Some(u) = meta.usage {
@@ -446,6 +461,7 @@ fn an_sse_stream(
                                     output_tokens: 0,
                                     cache_read_tokens: 0,
                                     cache_write_tokens: 0,
+                                    context_tokens: Some(0),
                                 });
                                 entry.output_tokens = u.output_tokens;
                             }
@@ -717,6 +733,11 @@ mod tests {
         let usage = done[0].1.clone().expect("usage must be reported");
         assert_eq!(usage.input_tokens, 12);
         assert_eq!(usage.output_tokens, 34);
+        assert_eq!(
+            usage.context_tokens,
+            Some(16),
+            "cache read tokens join the prompt occupancy on Anthropic"
+        );
         assert_eq!(usage.cache_read_tokens, 4);
     }
 

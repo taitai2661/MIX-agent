@@ -306,8 +306,8 @@ export function useAppShortcuts(enabled = true) {
         return;
       }
       // ⌘⇧B — Codex's browser shortcut. It also brings the agent workspace
-      // into view, so the pane is actually rendered (the side panel only
-      // exists on the desktop-agent surface).
+      // into view, so the pane is actually rendered (the browser pane is still
+      // an agent-only target even though the side panel itself exists in chat).
       if (isMod && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         const state = useUi.getState();

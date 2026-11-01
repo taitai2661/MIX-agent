@@ -39,7 +39,10 @@ async def provider_values(body, db, owner, previous=None):
             raise HTTPException(422, "カスタムはOpenAI互換・Anthropic・Geminiから選択してください")
         kind, url = body.kind, body.base_url
     elif preset:
-        kind, url = preset["kind"], body.base_url or preset["default_url"]
+        kind = preset["kind"]
+        # ChatGPT tokens must never be sent to a caller-supplied host; the
+        # helper below rejects an override and pins the Codex backend URL.
+        url = preset["default_url"] if preset["id"] == "chatgpt" else (body.base_url or preset["default_url"])
     else:
         if body.kind not in KIND_VALUES:
             raise HTTPException(422, "Providerの接続方式を指定してください")
@@ -66,6 +69,10 @@ async def provider_values(body, db, owner, previous=None):
             raise HTTPException(422, "LAN接続先は「プライベート接続を許可」を明示してください")
     data["base_url"] = url
     data["extra_config"] = body.extra_config
+    if preset and preset["id"] == "chatgpt":
+        from mix_agent.api.routes_chatgpt import chatgpt_provider_values
+
+        return chatgpt_provider_values(data, body, preset, previous)
     old_secret_id = previous.get("secret_id") if previous else None
     if body.api_key is not None:
         data["secret_id"] = store_secret(db, owner, body.api_key, "provider") if body.api_key else None
@@ -189,7 +196,13 @@ async def add_provider(body: ProviderInput, ctx=Depends(context)):
     db.flush()
     audit(db, s.owner_id, "provider.create", row.id)
     db.commit()
-    sync = await sync_provider_models(db, s.owner_id, row)
+    # ChatGPT has no credential until the device-code flow completes, so the
+    # immediate catalog fetch can only fail. The UI calls sync-models after
+    # login instead.
+    if row.data.get("preset_id") == "chatgpt":
+        sync = {"status": "skipped", "count": 0, "auto_count": 0}
+    else:
+        sync = await sync_provider_models(db, s.owner_id, row)
     db.commit()
     return provider_response(row, sync)
 

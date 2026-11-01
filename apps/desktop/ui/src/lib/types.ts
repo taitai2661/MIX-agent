@@ -495,9 +495,25 @@ export interface RunView {
   updated_at: string;
   summary: string;
   budget: unknown;
+  /** Cumulative token/spend summary, absent on Runs older than this field. */
+  usage?: RunUsage | null;
   error: string | null;
   /** The persisted event log exceeds the replay window (newest events kept). */
   replay_truncated?: boolean;
+}
+
+/** Token/cost summary carried by `usage` events and persisted on a Run row. */
+export interface RunUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  /** Prompt tokens of the latest turn (the context meter's numerator). */
+  context_tokens: number;
+  /** Context window of the model, or 0 when the provider did not report one. */
+  context_window: number;
+  /** Estimated spend in USD, or null for a model outside the price table. */
+  estimated_cost_usd: number | null;
 }
 
 /** A snapshot frame. Page metadata (URL, title, history) comes from the much

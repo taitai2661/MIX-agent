@@ -23,7 +23,7 @@ use crate::runs::budget::{Budget, BudgetVerdict};
 use crate::runs::checkpoint_store::CheckpointStore;
 use crate::runs::mode_policy::AgentModePolicy;
 use crate::runs::stagnation::{classify_tool_call, StagnationDetector};
-use crate::runs::state::{RunId, RunStatus, RunView};
+use crate::runs::state::{RunId, RunStatus, RunUsage, RunView};
 use crate::runs::verification::{
     destructive_reason, exit_code_of, mutated_paths, VerificationLedger,
 };
@@ -282,6 +282,10 @@ fn run_view_from_row(row: &sqlx::sqlite::SqliteRow) -> Option<RunView> {
             .unwrap_or_default()
             .to_string(),
         budget: data.get("budget").cloned().unwrap_or_default(),
+        // Written by `finish_run`; older rows simply have no usage summary.
+        usage: data
+            .get("usage")
+            .and_then(|value| serde_json::from_value::<RunUsage>(value.clone()).ok()),
         error: data
             .get("error")
             .and_then(|v| v.as_str())
@@ -501,7 +505,11 @@ pub struct RunOutcome {
     pub text: String,
     pub reasoning: String,
     pub tool_calls: Vec<RunToolCall>,
+    /// The final turn's usage, kept for callers that report a per-turn figure.
     pub usage: Option<Usage>,
+    /// Cumulative usage for the whole Run, persisted on the `runs` row.
+    #[serde(default)]
+    pub totals: RunUsage,
     pub finish_reason: Option<String>,
     pub steps: u32,
 }

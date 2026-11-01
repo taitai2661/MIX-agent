@@ -272,6 +272,9 @@ impl Provider for OpenAiProvider {
                             cache_read_tokens: u.prompt_tokens_details.cached_tokens,
                             // The API reports no cache-write count.
                             cache_write_tokens: 0,
+                            // OpenAI's prompt count already includes the cached
+                            // tokens, so it is the context occupancy verbatim.
+                            context_tokens: Some(u.prompt_tokens),
                         });
                     }
                     for choice in chunk.choices {

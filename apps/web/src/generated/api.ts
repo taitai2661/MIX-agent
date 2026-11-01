@@ -252,6 +252,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/chatgpt/device/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chatgpt Device Start */
+        post: operations["chatgpt_device_start_api_v1_providers_chatgpt_device_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/chatgpt/device/{login_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Chatgpt Device Status */
+        get: operations["chatgpt_device_status_api_v1_providers_chatgpt_device__login_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/chatgpt/device/{login_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chatgpt Device Cancel */
+        post: operations["chatgpt_device_cancel_api_v1_providers_chatgpt_device__login_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{key}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Provider Quota */
+        get: operations["provider_quota_api_v1_providers__key__quota_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{key}/quota/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Provider Quota Refresh */
+        post: operations["provider_quota_refresh_api_v1_providers__key__quota_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{key}/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Provider Logout */
+        post: operations["provider_logout_api_v1_providers__key__logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -2089,6 +2191,40 @@ export interface components {
             /** Requested At */
             requested_at: string;
         };
+        /** ChatGptDeviceStart */
+        ChatGptDeviceStart: {
+            /** Provider Id */
+            provider_id: string;
+        };
+        /** ChatGptDeviceStartView */
+        ChatGptDeviceStartView: {
+            /** Login Id */
+            login_id: string;
+            /** Verification Url */
+            verification_url: string;
+            /** User Code */
+            user_code: string;
+            /** Expires In */
+            expires_in: number;
+            /** Interval */
+            interval: number;
+        };
+        /** ChatGptDeviceStatusView */
+        ChatGptDeviceStatusView: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "complete" | "error" | "expired";
+            /** Error */
+            error?: string | null;
+            /** Account */
+            account?: {
+                [key: string]: unknown;
+            } | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ContextSummaryView */
         ContextSummaryView: {
             /** Text */
@@ -2730,6 +2866,67 @@ export interface components {
             /** Created At */
             created_at: string;
             model_sync: components["schemas"]["ModelSyncResult"];
+        };
+        /** QuotaCreditsView */
+        QuotaCreditsView: {
+            /**
+             * Has Credits
+             * @default false
+             */
+            has_credits: boolean;
+            /**
+             * Unlimited
+             * @default false
+             */
+            unlimited: boolean;
+            /**
+             * Balance
+             * @default
+             */
+            balance: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** QuotaView */
+        QuotaView: {
+            /**
+             * Plan Type
+             * @default
+             */
+            plan_type: string;
+            /** Captured At */
+            captured_at: string;
+            /** Windows */
+            windows?: components["schemas"]["QuotaWindowView"][];
+            credits?: components["schemas"]["QuotaCreditsView"] | null;
+            /**
+             * Limit Reached
+             * @default false
+             */
+            limit_reached: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** QuotaWindowView */
+        QuotaWindowView: {
+            /** Id */
+            id: string;
+            /** Used Percent */
+            used_percent: number;
+            /**
+             * Window Minutes
+             * @default 0
+             */
+            window_minutes: number;
+            /**
+             * Window Seconds
+             * @default 0
+             */
+            window_seconds: number;
+            /** Resets At */
+            resets_at: number;
+        } & {
+            [key: string]: unknown;
         };
         /** RecordView */
         RecordView: {
@@ -3940,6 +4137,302 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    chatgpt_device_start_api_v1_providers_chatgpt_device_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatGptDeviceStart"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatGptDeviceStartView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    chatgpt_device_status_api_v1_providers_chatgpt_device__login_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                login_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatGptDeviceStatusView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    chatgpt_device_cancel_api_v1_providers_chatgpt_device__login_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                login_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    provider_quota_api_v1_providers__key__quota_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    provider_quota_refresh_api_v1_providers__key__quota_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error envelope; `code` stays stable when the message wording changes. */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    provider_logout_api_v1_providers__key__logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Error envelope; `code` stays stable when the message wording changes. */

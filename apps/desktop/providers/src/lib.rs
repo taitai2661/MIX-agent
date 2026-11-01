@@ -249,6 +249,19 @@ pub struct Usage {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
+    /// Tokens that occupy the model's context window for this turn.
+    ///
+    /// This is not derivable from the other fields: Anthropic reports cached
+    /// tokens *alongside* `input_tokens`, while OpenAI and Gemini include the
+    /// cached tokens *inside* their prompt count. Adding `cache_read_tokens` to
+    /// `input_tokens` would therefore double-count on two of the three cloud
+    /// transports. Each adapter sets this from the provider's own prompt count
+    /// (or the sum of Anthropic's three input buckets) so the context meter is
+    /// accurate regardless of the wire format. `None` on a hand-built `Usage`
+    /// means the caller did not report it; consumers fall back to the input
+    /// buckets rather than guessing.
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

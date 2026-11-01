@@ -382,6 +382,9 @@ fn ge_sse_stream(
                         output_tokens: u.candidates_token_count + u.thoughts_token_count,
                         cache_read_tokens: u.cached_content_token_count,
                         cache_write_tokens: 0,
+                        // Gemini's prompt count already includes cached
+                        // content tokens.
+                        context_tokens: Some(u.prompt_token_count),
                     });
                 }
                 for candidate in chunk.candidates {
@@ -616,6 +619,11 @@ mod tests {
         let usage = done[0].1.clone().expect("usage must be reported");
         assert_eq!(usage.input_tokens, 7);
         assert_eq!(usage.output_tokens, 12);
+        assert_eq!(
+            usage.context_tokens,
+            Some(7),
+            "Gemini's prompt count is the context occupancy as-is"
+        );
     }
 
     #[tokio::test]

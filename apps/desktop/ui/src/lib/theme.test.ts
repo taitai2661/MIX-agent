@@ -42,6 +42,7 @@ describe("applyTheme", () => {
   afterEach(() => {
     delete nativeWindow.__TAURI_INTERNALS__;
     document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("style");
   });
 
   it("paints the document and pins the native window to an explicit theme", async () => {
@@ -69,5 +70,19 @@ describe("applyTheme", () => {
 
     await Promise.resolve();
     expect(setTheme).not.toHaveBeenCalled();
+  });
+
+  it("re-applies the stored accent whenever the theme changes", () => {
+    localStorage.setItem("mix-agent-accent", "violet");
+
+    applyTheme("light");
+    expect(
+      document.documentElement.style.getPropertyValue("--color-brand"),
+    ).toBe("#7c3aed");
+
+    applyTheme("dark");
+    expect(
+      document.documentElement.style.getPropertyValue("--color-brand"),
+    ).toBe("#b58cf5");
   });
 });

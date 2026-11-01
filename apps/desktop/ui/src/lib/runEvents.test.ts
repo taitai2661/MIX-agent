@@ -340,6 +340,51 @@ describe("applyRunEvent", () => {
     );
     expect(timeline).toEqual(createTimeline("run-1"));
   });
+
+  it("keeps the latest usage summary and reads it from a terminal status", () => {
+    let timeline = createTimeline("run-1");
+    timeline = applyRunEvent(
+      timeline,
+      event("usage", {
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 2,
+        contextTokens: 107,
+        contextWindow: 128_000,
+        estimatedCostUsd: 0.0012,
+      }),
+    );
+    expect(timeline.usage).toEqual({
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_read_tokens: 5,
+      cache_write_tokens: 2,
+      context_tokens: 107,
+      context_window: 128_000,
+      estimated_cost_usd: 0.0012,
+    });
+
+    // A status event is the only usage carrier in logs written before the
+    // dedicated event existed; the terminal payload must still populate it.
+    timeline = applyRunEvent(
+      timeline,
+      event("status", {
+        status: "completed",
+        totals: {
+          inputTokens: 200,
+          outputTokens: 40,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          contextTokens: 200,
+          contextWindow: 128_000,
+          estimatedCostUsd: 0.0024,
+        },
+      }),
+    );
+    expect(timeline.usage?.input_tokens).toBe(200);
+    expect(timeline.usage?.estimated_cost_usd).toBe(0.0024);
+  });
 });
 
 describe("reduceRunEvents", () => {

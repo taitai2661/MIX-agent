@@ -5,6 +5,7 @@
 /// exactly one source of truth for "is the app dark" and the Tailwind `dark:`
 /// variant reduces to a single attribute selector.
 
+import { applyAccent, storedAccent } from "./accent";
 import { getString, setString } from "./storage";
 
 export type Theme = "light" | "dark" | "system";
@@ -64,7 +65,11 @@ function syncNativeTheme(theme: Theme): void {
 
 /** Writes the concrete theme to the document and the native window. */
 function setResolvedTheme(theme: Theme): void {
-  document.documentElement.dataset.theme = resolveTheme(theme);
+  const resolved = resolveTheme(theme);
+  document.documentElement.dataset.theme = resolved;
+  // The accent has separate light/dark ramps, so a theme switch has to repaint
+  // it too — including the OS-driven change while the app follows `system`.
+  applyAccent(storedAccent(), resolved);
   syncNativeTheme(theme);
 }
 

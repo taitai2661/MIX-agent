@@ -391,6 +391,54 @@ class ProviderInput(Input):
     rate_limit_period: Literal["minute", "second"] = "minute"
 
 
+class ChatGptDeviceStart(Input):
+    provider_id: str = Field(min_length=1, max_length=100)
+
+
+class ChatGptDeviceStartView(BaseModel):
+    login_id: str
+    verification_url: str
+    user_code: str
+    expires_in: int
+    interval: int
+
+
+class ChatGptDeviceStatusView(BaseModel):
+    status: Literal["pending", "complete", "error", "expired"]
+    error: str | None = None
+    account: dict | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class QuotaWindowView(BaseModel):
+    id: str
+    used_percent: float
+    window_minutes: int = 0
+    window_seconds: int = 0
+    resets_at: int
+
+    model_config = ConfigDict(extra="allow")
+
+
+class QuotaCreditsView(BaseModel):
+    has_credits: bool = False
+    unlimited: bool = False
+    balance: str = ""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class QuotaView(BaseModel):
+    plan_type: str = ""
+    captured_at: str
+    windows: list[QuotaWindowView] = Field(default_factory=list)
+    credits: QuotaCreditsView | None = None
+    limit_reached: bool = False
+
+    model_config = ConfigDict(extra="allow")
+
+
 class ModelInput(Input):
     provider_id: str
     model_id: str = Field(min_length=1, max_length=200)

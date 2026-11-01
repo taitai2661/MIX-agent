@@ -11,7 +11,7 @@ from datetime import timedelta
 from sqlalchemy import delete
 
 from mix_agent import pricing
-from mix_agent.db.models import ModelUsageEvent, now
+from mix_agent.db.models import ModelUsageEvent, Provider, now
 
 RETENTION = timedelta(days=90)
 
@@ -112,6 +112,12 @@ def record(
         else:
             return None
     prices, price_source = pricing.resolve(model_data or {})
+    # A ChatGPT subscription turn has no per-token price. Recording zero keeps
+    # the cost dashboard honest while token counts stay useful for context and
+    # trend reporting.
+    provider_row = db.get(Provider, provider_id) if provider_id else None
+    if provider_row is not None and provider_row.data.get("billing_mode") == "subscription":
+        prices, price_source = {"input": 0.0, "output": 0.0, "cache_read": 0.0}, "subscription"
     data = {
         "model_id": (model_data or {}).get("model_id"),
         "model_record_id": model_record_id,

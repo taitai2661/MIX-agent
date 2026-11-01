@@ -560,6 +560,45 @@ export const en: Record<string, string> = {
   "Providerを追加": "Add provider",
   "API Keyは暗号化して保存され、保存後は再表示されません。":
     "API keys are encrypted and cannot be viewed after saving.",
+  "非公式・自己責任の機能です": "Unofficial feature — use at your own risk",
+  "この連携は OpenAI の公式 API ではなく、Codex CLI が使う非公開バックエンドを利用します。利用規約・アカウント制限に抵触する可能性、予告なく停止する可能性があります。MIX-agent は動作や継続利用を保証しません。":
+    "This integration uses the private backend the Codex CLI uses, not an official OpenAI API. It may violate the terms of service or account limits, and it may stop working without notice. MIX-agent does not guarantee that it will work or remain available.",
+  "上記を理解し、非公式・自己責任であることに同意します":
+    "I understand the above and accept that this is unofficial and at my own risk.",
+  "ChatGPT 連携は非公式・自己責任の機能です。同意にチェックしてから保存してください。":
+    "The ChatGPT integration is unofficial and at your own risk. Check the consent box before saving.",
+  "保存後に ChatGPT のログイン（デバイスコード）を開始します。API Key は使いません。":
+    "Saving starts the ChatGPT device-code login. No API key is used.",
+  "ChatGPT にログイン": "Sign in to ChatGPT",
+  "表示された URL を開き、ワンタイムコードを入力してください。この画面は自動で完了を確認します。":
+    "Open the URL and enter the one-time code. This page checks for completion automatically.",
+  "コードをコピー": "Copy code",
+  "認証ページを開く": "Open sign-in page",
+  "認証の完了を待っています…": "Waiting for sign-in to complete…",
+  "ChatGPT に接続し、モデルを取得しました。":
+    "Connected to ChatGPT and fetched models.",
+  "ChatGPT 使用枠": "ChatGPT usage",
+  "5時間枠": "5-hour window",
+  "週次枠": "Weekly window",
+  "使用枠": "Usage window",
+  "未ログイン": "Not signed in",
+  "ログイン済み": "Signed in",
+  "ChatGPT でログイン": "Sign in with ChatGPT",
+  "残量を更新": "Refresh usage",
+  "ログアウトしました": "Signed out",
+  "残量を取得しています…": "Loading usage…",
+  "再ログイン": "Sign in again",
+  "リセット:": "Resets:",
+  "クレジット: 無制限": "Credits: unlimited",
+  "クレジット残高:": "Credit balance:",
+  "クレジットなし": "No credits",
+  "使用枠に達しています。": "The usage limit has been reached.",
+  "取得:": "Updated:",
+  "ログインすると 5 時間枠・週次枠の残量を表示します。":
+    "Sign in to see the 5-hour and weekly usage windows.",
+  "残量は OpenAI の非公開エンドポイントから取得しています。表示は保証されません。":
+    "Usage comes from a private OpenAI endpoint. The figures are not guaranteed.",
+  "サブスクリプション": "Subscription",
   "Providerと取得済みのモデルを削除しますか？ 元に戻せません。":
     "Delete this provider and its fetched models? This cannot be undone.",
   "Providerを削除しました": "Provider deleted",

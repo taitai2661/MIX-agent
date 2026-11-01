@@ -66,7 +66,9 @@ def test_route_modules_do_not_grow_unbounded():
         "routes_memories.py": 206,
         "routes_messages.py": 374,
         "routes_notifications.py": 105,
-        "routes_providers.py": 287,
+        # ChatGPT-specific HTTP lives in routes_chatgpt.py; this module keeps
+        # one small normalization branch for the preset and its skip-sync rule.
+        "routes_providers.py": 310,
         "routes_runs.py": 538,
         "routes_schedules.py": 137,
         "routes_settings.py": 458,
