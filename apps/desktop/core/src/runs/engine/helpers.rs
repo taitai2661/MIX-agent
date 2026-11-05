@@ -246,8 +246,15 @@ mod tests {
         // Traversal, absolute paths outside the root, and character devices
         // are all refused instead of being read/restored verbatim.
         assert!(resolve_snapshot_path(Some(&root), "../escape.txt").is_none());
-        assert!(resolve_snapshot_path(Some(&root), "/etc/passwd").is_none());
-        assert!(resolve_snapshot_path(Some(&root), "/dev/zero").is_none());
+        // `/etc/passwd` is not an absolute path on Windows, so use a real
+        // drive-qualified path there instead of asserting Unix semantics.
+        #[cfg(unix)]
+        {
+            assert!(resolve_snapshot_path(Some(&root), "/etc/passwd").is_none());
+            assert!(resolve_snapshot_path(Some(&root), "/dev/zero").is_none());
+        }
+        #[cfg(windows)]
+        assert!(resolve_snapshot_path(Some(&root), r"C:\Windows\win.ini").is_none());
         assert!(resolve_snapshot_path(None, "notes.txt").is_none());
         let _ = std::fs::remove_dir_all(&root);
     }

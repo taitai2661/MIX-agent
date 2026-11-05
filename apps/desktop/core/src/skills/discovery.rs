@@ -739,7 +739,7 @@ mod tests {
         // exists without letting it pollute the catalogue.
         assert!(failures
             .iter()
-            .any(|failure| failure.path.ends_with("legacy/SKILL.md")));
+            .any(|failure| failure.path.replace('\\', "/").ends_with("legacy/SKILL.md")));
         assert!(skills.iter().all(|skill| skill.name != "legacy-skill"));
     }
 }
