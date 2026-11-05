@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, LogOut, RefreshCw, ShieldAlert } from "lucide-react";
 
-import { api } from "@/app/api";
+import { api, HttpError } from "@/app/api";
 import { t } from "@/app/i18n";
 import { Button } from "@/components/button";
+import { resetTimeLabel } from "./quota";
 
 export type ChatGptLogin = {
   providerId: string;
@@ -39,6 +40,67 @@ export type Quota = {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Map the device-flow status codes to user-facing text. */
+function loginErrorText(code: string): string {
+  switch (code) {
+    case "chatgpt_login_expired":
+      return t(
+        "ログインの有効期限が切れました。もう一度ログインしてください。",
+      );
+    case "chatgpt_login_not_found":
+      return t("ログイン情報が見つかりません。もう一度ログインしてください。");
+    case "chatgpt_login_failed":
+    case "chatgpt_device_failed":
+      return t("ChatGPT のログインに失敗しました。");
+    case "chatgpt_device_unavailable":
+      return t(
+        "このアカウントでは ChatGPT のデバイスコードログインを利用できません。",
+      );
+    default:
+      return code;
+  }
+}
+
+/** Auth failures need a fresh login; a network/5xx failure only needs a retry. */
+function isAuthQuotaError(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 401;
+}
+
+function quotaErrorText(error: unknown): string {
+  const text = errorText(error);
+  if (text.includes("chatgpt_auth_required")) {
+    return t("ChatGPT の再ログインが必要です。");
+  }
+  if (text.includes("chatgpt_auth_expired")) {
+    return t(
+      "ChatGPT のログインの有効期限が切れました。もう一度ログインしてください。",
+    );
+  }
+  if (
+    text.includes("chatgpt_quota_failed") ||
+    text.includes("chatgpt_quota_unavailable")
+  ) {
+    return t("使用枠を取得できませんでした。");
+  }
+  if (text.includes("chatgpt_rate_limited")) {
+    return t("ChatGPT の使用枠に達しています。");
+  }
+  if (text.includes("chatgpt_refresh_failed")) {
+    return t("ChatGPT の認証更新に失敗しました。");
+  }
+  if (text.includes("chatgpt_credentials_save_failed")) {
+    return t("ChatGPT の認証情報を保存できませんでした。");
+  }
+  return text;
+}
+
+const STALE_AFTER_MS = 15 * 60 * 1000;
+
+function isStale(quota: Quota): boolean {
+  const captured = Date.parse(quota.captured_at);
+  return Number.isFinite(captured) && Date.now() - captured > STALE_AFTER_MS;
 }
 
 export function ChatGptWarning() {
@@ -94,7 +156,9 @@ export function ChatGptLoginCard({
           return;
         }
         if (status.status === "error" || status.status === "expired") {
-          failedRef.current(status.error || "chatgpt_login_failed");
+          failedRef.current(
+            loginErrorText(status.error || "chatgpt_login_failed"),
+          );
           return;
         }
       } catch (error) {
@@ -167,17 +231,14 @@ function windowLabel(window: QuotaWindow): string {
     : t("使用枠");
 }
 
-function resetLabel(seconds: number): string {
-  if (!seconds) return "";
-  return new Date(seconds * 1000).toLocaleString();
-}
-
 export function ChatGptQuotaCard({
   row,
+  loginEnabled,
   onLogin,
   onLogout,
 }: {
   row: { id: string; data: Record<string, unknown> };
+  loginEnabled: boolean;
   onLogin: () => void;
   onLogout: () => void;
 }) {
@@ -187,12 +248,17 @@ export function ChatGptQuotaCard({
   const auth = row.data.auth as
     | { email?: string; plan_type?: string; account_id?: string }
     | undefined;
-  const connected = Boolean(auth?.account_id);
+  // `status` is derived from the stored credential blob server-side; the
+  // account id is only a display claim and may be absent.
+  const connected =
+    row.data.status === "ready" || (row.data.status == null && Boolean(auth));
   const quota = useQuery<Quota>({
     queryKey: ["/providers", row.id, "quota"],
     queryFn: () => api(`/providers/${row.id}/quota`),
     enabled: connected,
-    refetchInterval: 60_000,
+    // Inference headers and SSE events update this snapshot immediately; the
+    // periodic poll is only a safety net.
+    refetchInterval: 300_000,
     retry: false,
   });
 
@@ -204,6 +270,9 @@ export function ChatGptQuotaCard({
       await qc.invalidateQueries({ queryKey: ["/providers", row.id, "quota"] });
     } catch (error) {
       setActionError(errorText(error));
+      // The adapter persists a rejected refresh token as auth_failed; refresh
+      // the provider row so the card stops claiming the account is connected.
+      void qc.invalidateQueries({ queryKey: ["/providers"] });
     } finally {
       setBusy(false);
     }
@@ -240,10 +309,14 @@ export function ChatGptQuotaCard({
               <LogOut size={14} />
               {t("ログアウト")}
             </Button>
-          ) : (
+          ) : loginEnabled ? (
             <Button type="button" disabled={busy} onClick={onLogin}>
               {t("ChatGPT でログイン")}
             </Button>
+          ) : (
+            <span className="provider-quota-hint">
+              {t("非公式連携が無効です")}
+            </span>
           )}
         </div>
       </div>
@@ -255,26 +328,38 @@ export function ChatGptQuotaCard({
         <p>{t("残量を取得しています…")}</p>
       ) : quota.error ? (
         <div className="provider-quota-error">
-          <p>{errorText(quota.error)}</p>
-          <Button type="button" variant="outline" onClick={onLogin}>
-            {t("再ログイン")}
-          </Button>
+          <p>{quotaErrorText(quota.error)}</p>
+          {isAuthQuotaError(quota.error) ? (
+            <Button type="button" variant="outline" onClick={onLogin}>
+              {t("再ログイン")}
+            </Button>
+          ) : null}
         </div>
       ) : quota.data ? (
         <>
+          {isStale(quota.data) ? (
+            <p className="provider-quota-hint">
+              {t("15 分以上前の情報です。")}
+            </p>
+          ) : null}
           <div className="quota-grid">
-            {quota.data.windows.map((window) => (
-              <div className="quota-row" key={window.id}>
+            {quota.data.windows.map((window, index) => (
+              <div className="quota-row" key={`${window.id}-${index}`}>
                 <div className="quota-label">
                   <span>{windowLabel(window)}</span>
-                  <strong>{Math.round(window.used_percent)}%</strong>
+                  <strong>
+                    {Math.max(0, 100 - Math.round(window.used_percent))}%{" "}
+                    {t("残り")}
+                  </strong>
                 </div>
                 <div
                   className="quota-bar"
                   role="progressbar"
+                  aria-label={windowLabel(window)}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={Math.round(window.used_percent)}
+                  aria-valuetext={`${Math.round(window.used_percent)}% ${t("使用済み")}`}
                 >
                   <span
                     style={{ width: `${Math.min(100, window.used_percent)}%` }}
@@ -282,7 +367,7 @@ export function ChatGptQuotaCard({
                 </div>
                 {window.resets_at ? (
                   <small>
-                    {t("リセット:")} {resetLabel(window.resets_at)}
+                    {t("リセット:")} {resetTimeLabel(window.resets_at)}
                   </small>
                 ) : null}
               </div>
@@ -300,6 +385,10 @@ export function ChatGptQuotaCard({
           {quota.data.limit_reached ? (
             <p className="provider-quota-error">
               {t("使用枠に達しています。")}
+              <br />
+              {t(
+                "リセットを待つか、APIキー方式のProviderに切り替えてください。",
+              )}
             </p>
           ) : null}
           <small className="provider-quota-captured">
@@ -316,6 +405,8 @@ export function ChatGptQuotaCard({
         {t(
           "残量は OpenAI の非公開エンドポイントから取得しています。表示は保証されません。",
         )}
+        <br />
+        {t("リセット時刻は端末のタイムゾーンで表示し、UTC も併記しています。")}
       </p>
     </div>
   );

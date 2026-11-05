@@ -49,7 +49,11 @@ pub const DEFAULT_MAX_OPEN_WORKSPACES: usize = 2;
 /// Close a browser that has not been touched by the agent or the live view.
 /// An open pane sends a periodic keepalive, so it only expires after the pane
 /// is closed.
-pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// Parked Chromium processes hold hundreds of megabytes. Five minutes is long
+/// enough to survive a short detour (reading a file, replying in chat) and
+/// short enough that an abandoned browser does not sit in memory for a quarter
+/// of an hour.
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Memory/CPU-constrained machines can lower the live-browser cap without a
 /// rebuild; values below 1 are ignored.
@@ -439,9 +443,21 @@ impl BrowserOperator {
     pub async fn invoke(&self, call: BrowserCall) -> anyhow::Result<BrowserResponse> {
         let response = self.invoke_call(&call).await;
         if let Err(err) = &response {
+            // Log only the action kind: the full Debug form includes `Type`
+            // text, `Evaluate` scripts and other values the user may not want
+            // in a diagnostics bundle.
+            let action_kind = serde_json::to_value(&call.action)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("kind")
+                        .and_then(|kind| kind.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "unknown".to_string());
             tracing::warn!(
                 workspace = %call.workspace_id,
-                action = ?call.action,
+                action = %action_kind,
                 %err,
                 "browser call failed"
             );

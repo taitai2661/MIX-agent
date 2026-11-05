@@ -57,12 +57,40 @@ export function useChatRunStream({
   const streamTextBuffer = useRef("");
   const reasoningBuffer = useRef("");
   const streamFrame = useRef<number | null>(null);
+  const eventBuffer = useRef<RunEvent[]>([]);
+  const eventFrame = useRef<number | null>(null);
   const storedRunsRef = useRef(storedRuns);
   const finishRef = useRef(onFinish);
   const lostRef = useRef(onStreamLost);
   const pushEvent = useCallback((event: RunEvent) => {
+    // Coalesce SSE bursts into one state update per animation frame. A tool
+    // loop can emit dozens of events between frames; appending one array per
+    // event made the live list O(n²) and forced the whole transcript to
+    // re-render each time.
+    eventBuffer.current.push(event);
+    if (eventFrame.current !== null) return;
+    eventFrame.current = requestAnimationFrame(() => {
+      eventFrame.current = null;
+      const batch = eventBuffer.current.splice(0);
+      if (batch.length === 0) return;
+      setEvents((xs) => {
+        const next = xs.concat(batch);
+        return next.length > MAX_LIVE_EVENTS
+          ? next.slice(-MAX_LIVE_EVENTS)
+          : next;
+      });
+    });
+  }, []);
+
+  const flushEvents = useCallback(() => {
+    if (eventFrame.current !== null) {
+      cancelAnimationFrame(eventFrame.current);
+      eventFrame.current = null;
+    }
+    const batch = eventBuffer.current.splice(0);
+    if (batch.length === 0) return;
     setEvents((xs) => {
-      const next = [...xs, event];
+      const next = xs.concat(batch);
       return next.length > MAX_LIVE_EVENTS
         ? next.slice(-MAX_LIVE_EVENTS)
         : next;
@@ -109,6 +137,7 @@ export function useChatRunStream({
   // Opening another conversation starts from a clean stream.
   useEffect(() => {
     setEvents([]);
+    eventBuffer.current = [];
     setStreamConnected(false);
     resetStreamBuffers();
   }, [conversationId, resetStreamBuffers]);
@@ -151,17 +180,44 @@ export function useChatRunStream({
     const invalidateMessages = () => {
       void qc.invalidateQueries({ queryKey: ["messages", conversationId] });
     };
-    const invalidateRun = () => {
-      void qc.invalidateQueries({ queryKey: ["run", runId] });
+    // A long tool loop emits several run/tool-call invalidations per second.
+    // Coalesce them into one refetch per window instead of a request storm.
+    const invalidationTimers = new Map<string, number>();
+    const scheduleInvalidate = (name: string, fn: () => void) => {
+      if (invalidationTimers.has(name)) return;
+      invalidationTimers.set(
+        name,
+        window.setTimeout(() => {
+          invalidationTimers.delete(name);
+          fn();
+        }, 250),
+      );
     };
+    const invalidateRun = () =>
+      scheduleInvalidate(
+        "run",
+        () => void qc.invalidateQueries({ queryKey: ["run", runId] }),
+      );
+    const invalidateToolCalls = () =>
+      scheduleInvalidate(
+        "tool-calls",
+        () =>
+          void qc.invalidateQueries({
+            queryKey: ["tool-calls", conversationId],
+          }),
+      );
     const finish = () => {
       clearTimeout(watchdog);
+      invalidationTimers.forEach((timer) => clearTimeout(timer));
+      invalidationTimers.clear();
       source.close();
+      flushEvents();
       flushStreamBuffers();
       finishRef.current();
       setStreamConnected(false);
       invalidateMessages();
-      invalidateRun();
+      void qc.invalidateQueries({ queryKey: ["run", runId] });
+      void qc.invalidateQueries({ queryKey: ["tool-calls", conversationId] });
     };
     const onActivity = (event: Event) => {
       if (!(event instanceof MessageEvent) || typeof event.data !== "string")
@@ -203,7 +259,7 @@ export function useChatRunStream({
       if (
         ["tool_started", "tool_result", "approval", "status"].includes(v.kind)
       )
-        void qc.invalidateQueries({ queryKey: ["tool-calls", conversationId] });
+        invalidateToolCalls();
       if (v.kind === "browser_frame")
         void qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
       if (
@@ -236,15 +292,23 @@ export function useChatRunStream({
     };
     return () => {
       clearTimeout(watchdog);
+      invalidationTimers.forEach((timer) => clearTimeout(timer));
+      invalidationTimers.clear();
       source.close();
       if (streamFrame.current !== null) {
         cancelAnimationFrame(streamFrame.current);
         streamFrame.current = null;
       }
+      if (eventFrame.current !== null) {
+        cancelAnimationFrame(eventFrame.current);
+        eventFrame.current = null;
+      }
+      eventBuffer.current = [];
       if (eventSourceRef.current === source) eventSourceRef.current = null;
     };
   }, [
     conversationId,
+    flushEvents,
     flushStreamBuffers,
     pushEvent,
     qc,

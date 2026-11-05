@@ -1,6 +1,6 @@
 # MIX-agent — ChatGPT / Codex 使用枠 対応計画
 
-> 状態: **Docker 版 実装済み（Phase 1 縦切り） / Desktop 版 未着手**
+> 状態: **Desktop 版・Docker 版とも実装済み（実アカウント検証待ち）**
 > 対象: Desktop 版（`apps/desktop`）と Docker 版（`apps/server` + `apps/web`）
 > 基準: 2026-11 時点の OpenAI Codex CLI `main` の実装を外部契約の正とする
 
@@ -31,7 +31,8 @@ Provider として推論に使い、同時に残量（5 時間枠・週次枠・
 > アカウント制限に抵触する可能性、仕様変更・遮断・予告なき停止のリスクがある。
 > 利用は **自己責任** とし、MIX-agent は動作・継続利用・アカウント状態を保証しない。
 > そのため、明示的なオプトイン（初回同意チェック + 設定で有効化）と、
-> API キー方式へのフォールバックを必須にする。既定では無効にする。
+> API キー方式へのフォールバックを必須にする。既定では無効にし、Providers 画面の
+> 「非公式ChatGPT連携を有効にする」をオンにした場合だけプリセットを表示・作成できる。
 
 ## 2. 外部契約（Codex CLI 準拠）
 
@@ -155,8 +156,8 @@ OpenAI 互換の `{ "data": [{ "id" }] }` ではないため、専用パーサ�
 
 - Desktop: `SecretStore` の `provider/<id>` / `oauth` スロット
 - Docker: 既存 `Secret` 行（AES-GCM）に JSON 文字列。`secret_id` は従来どおり
-- Provider 行にはトークンを書かない。`auth_mode` / `account_id`（マスク表示用）/
-  `plan_type` / `billing_mode` だけを持つ
+- Provider 行にはトークンを書かない。`auth: {account_id, email, plan_type}`
+  （表示用メタデータ）と `billing_mode` だけを持つ
 
 ### 3.2 トークン更新
 
@@ -188,45 +189,49 @@ QuotaSnapshot {
 - 推論ヘッダ / SSE イベントが来たらキャッシュを上書き
 - 15 分以上古い場合は UI に「古い情報」と表示（Codex の stale 閾値に合わせる）
 - `/wham/usage` が失敗しても推論は止めない。ヘッダ由来のキャッシュで表示を継続
+  （Desktop / Docker とも、認証エラー以外は最後のスナップショットを返す）
 
 ### 3.4 セキュリティ
 
-- PKCE S256、`state` の照合、コールバックは `127.0.0.1` のみにバインド
+- デバイスコード方式を既定にし、短寿命のワンタイムコードだけを画面に出す
+  （PKCE ブラウザフローを追加する場合は S256 + `state` 照合 + `127.0.0.1` バインド）
 - ログアウト時は `/oauth/revoke` を呼び、成功可否に関わらずローカル削除
 - トークン・ID トークン・認可コードをログ、エラー本文、診断画面、バックアップに出さない
 - Docker の OpenAPI / 生成型にトークンを含めない
-- 設定で「ChatGPT 連携（実験的）」を明示的に ON にした場合だけプリセットを表示
+- UI では「非公式・自己責任」の同意チェックなしに ChatGPT Provider を保存できない
+  （IPC / REST を直接叩く経路はオペレーターの自己責任とする）
 
 ## 4. Desktop 版の実装
 
-### 4.1 現状のギャップ
+### 4.1 実装前のギャップ（解消済み）
 
-- `apps/desktop/providers/src/openai.rs` は `chat/completions` のみ
-- `openai_compat_wire::WireApi::Responses` は未実装のスタブ
-- `ProviderKind` に ChatGPT がない
-- `ProviderRequest` に Responses 用の `session_id` / `prompt_cache_key` がない
-- アシスタントターンの reasoning アイテムを保持する場所がない
+- `apps/desktop/providers/src/openai.rs` は `chat/completions` のみだった
+- `openai_compat_wire::WireApi::Responses` は未実装のスタブだった
+- `ProviderKind` に ChatGPT がなかった
+- `ProviderRequest` に Responses 用の `session_id` / `prompt_cache_key` がなかった
+  （現在は `session_id` に会話 ID を渡し、`prompt_cache_key` と
+  `session-id` / `thread-id` の両方に使う）
+- アシスタントターンの reasoning アイテムを保持する場所がなかった
 
 ### 4.2 追加・変更するファイル
 
 | ファイル | 変更 |
 | :--- | :--- |
-| `providers/src/responses.rs` | 新規。Responses API の共通 SSE アダプター |
-| `providers/src/chatgpt.rs` | 新規。ChatGPT 認証・ヘッダ・クォータ・モデル一覧 |
-| `providers/src/lib.rs` | `ProviderKind::ChatGpt`、`QuotaSnapshot`、`Message.native`、`StreamEvent::NativeOutput`、`Provider::quota()` |
-| `providers/src/preset/mod.rs` | `chatgpt` プリセット（category「サブスクリプション」） |
-| `app/src/commands/chatgpt_auth.rs` | 新規。PKCE ログイン、デバイスコード、ログアウト、クォータ |
+| `providers/src/chatgpt.rs` | 新規。認証・トークン更新・クォータ・Responses ストリーム・モデル一覧 |
+| `providers/src/lib.rs` | `QuotaSnapshot`、`Message.native`、`StreamEvent::NativeOutput`、`Provider::quota()` / `billing()` |
+| `providers/src/preset/mod.rs` | `ProviderKind::ChatGpt` と `chatgpt` プリセット（category「サブスクリプション」） |
+| `app/src/commands/chatgpt.rs` | 新規。デバイスコード、クォータ、ログアウト |
 | `app/src/commands/providers.rs` | 認証方式・アカウント表示、ChatGPT 用モデル取得、削除時のトークン削除 |
-| `app/src/lib.rs` | `build_provider` / `register_adapter` の ChatGPT 分岐、コマンド登録 |
-| `core/src/runs/engine/execute.rs` | アシスタントメッセージへ native アイテムを付与 |
-| `core/src/runs/engine/execute_turn.rs` | `TurnResult.native_items`、`ProviderRequest.session_id` |
-| `ui/src/features/providers/ProvidersPane.tsx` | ログインカード、アカウント・プラン表示 |
-| `ui/src/features/chat/UsagePanel.tsx` | 5 時間 / 週次バー、リセット時刻、クレジット |
-| `ui/src/lib/i18n/en.ts` | 新規文言（日本語キー → 英語） |
+| `app/src/lib.rs` | `register_adapter` の ChatGPT 分岐、コマンド登録 |
+| `core/src/runs/engine/execute_turn.rs` | `TurnResult.native_items`、`NativeOutput` の収集 |
+| `core/src/runs/engine/execute.rs` | native アイテムをアシスタントメッセージへ付与、サブスク枠の $0 課金 |
+| `ui/src/features/providers/ChatGptPanel.tsx` | 新規。同意警告、デバイスコード、クォータバー |
+| `ui/src/features/providers/ProvidersPane.tsx` | ログイン導線、アカウント・プラン表示 |
+| `ui/src/lib/types.ts` / `api.ts` | 新しいビュー型とコマンド |
 
 ### 4.3 Responses アダプター
 
-`responses.rs` は ChatGPT 専用にせず、**公式 OpenAI Responses API でも再利用できる**
+`chatgpt.rs` 内の `request_body` / `event_stream` は ChatGPT 専用にせず、**公式 OpenAI Responses API でも再利用できる**
 汎用アダプターにする。ChatGPT 固有部分（認証・ヘッダ・Base URL）は `chatgpt.rs` に分離する。
 
 メッセージ変換:
@@ -259,47 +264,53 @@ SSE イベント対応:
 - `store: false` のため、reasoning を次ターンへ返さないと推論の連続性が落ちる
 - `Message` に `native: Vec<serde_json::Value>` を追加し、`response.output` を保持
 - `TurnResult` に `native_items` を追加し、ツール実行後の assistant メッセージへ付与
-- 会話履歴の JSON にも保存（`#[serde(default)]` で後方互換）
+- `HistoryMessage` にも `native` を保存し、resume 後も reasoning を含むツール
+  ターンをそのままリプレイする。1 ターン 256 KiB を超える場合は保存を諦め、
+  テキスト + function_call の再構成へフォールバックする
 - 他アダプターは `native` を無視する
 
 その他:
 
-- `ProviderRequest.session_id` を追加し、`run_id` を `prompt_cache_key` /
-  `session-id` / `thread-id` に使う
+- `ProviderRequest.session_id` を追加し、会話 ID を `prompt_cache_key` /
+  `session-id` / `thread-id` に使う。会話 ID が無い補助リクエスト
+  （メモリ抽出・要約・ツールプローブ）は安定した FNV-1a フォールバックを使う
 - `max_tokens` は `max_output_tokens` にマップ
 - `temperature` / `top_p` は ChatGPT バックエンドが拒否する場合があるため送らない
   （プリセット側で無効化）
-- ストリーム全体は既存の `transport::with_stream_deadline` で上限を設ける
+- ストリーム全体の上限は共有 HTTP クライアントの read timeout と Run の
+  キャンセルで打ち切る。`transport::with_stream_deadline` は現時点では未使用
 
 ### 4.4 OAuth（Desktop）
 
-`app/src/commands/chatgpt_auth.rs` に Tauri コマンドを追加:
+Desktop も **デバイスコード方式** を採用する。ローカル HTTP コールバックを
+必要とせず、ポート競合・プロキシ・将来のシークレット制限の影響を受けない。
+（PKCE ブラウザフローは将来の任意追加とする。）
+
+`app/src/commands/chatgpt.rs` の Tauri コマンド:
 
 | コマンド | 内容 |
 | :--- | :--- |
-| `chatgpt_login_start(provider_id)` | PKCE 生成、`127.0.0.1:1455` で待受、ブラウザを開く。`login_id` を返す |
-| `chatgpt_login_status(login_id)` | `pending` / `complete` / `error`。完了時にトークンを保存 |
-| `chatgpt_login_cancel(login_id)` | 待受を閉じる |
-| `chatgpt_login_device_start(provider_id)` | デバイスコード開始（ポート不可時のフォールバック） |
-| `chatgpt_login_device_poll(login_id)` | 認可完了をポーリング |
-| `chatgpt_logout(provider_id)` | revoke + ローカル削除 |
-| `chatgpt_quota(provider_id)` | キャッシュまたは `/wham/usage` を返す |
+| `chatgpt_device_start(provider_id)` | デバイスコードを取得し、`login_id` / URL / コードを返す |
+| `chatgpt_device_poll(login_id)` | 認可完了を 1 回確認。完了時にトークンを Secret へ保存し adapter を再登録 |
+| `chatgpt_device_cancel(login_id)` | 進行中のログインを破棄 |
+| `chatgpt_quota(provider_id, force)` | キャッシュまたは `/wham/usage` を返す |
+| `chatgpt_logout(provider_id)` | revoke + Secret 削除 + adapter 解除 |
 
 実装メモ:
 
-- `code_verifier` は 32 バイト乱数の base64url、`code_challenge` は SHA-256
-- `state` は 32 バイト乱数の base64url。コールバックで不一致なら 400
-- コールバック成功時は「MIX に戻ってください」の最小 HTML を返して閉じる
-- ポート 1455 が使用中なら 1457。両方不可ならデバイスコードへ誘導
-- 既存の `open` クレートでブラウザを開く（追加依存なし）
-- JWT の署名検証はしない（表示・account_id 抽出のみ。API 側で認証される）
+- ログイン状態はプロセス内の TTL 付き辞書（15 分）。アプリ再起動で失効する
+- トークンは `provider/<id>` / `oauth` にのみ保存する
+- `401/403` は adapter が 1 回だけ refresh して再試行する
+- ID トークンの署名検証はしない（表示・account_id 抽出のみ。API 側で認証される）
 
 ### 4.5 Provider 登録と UI
 
 - プリセット `chatgpt` を追加（`kind: "chatgpt"`, `api_key_required: false`）
-- `build_provider` は `ChatGptProvider::new(base_url, ChatGptAuth)` を返す
 - `register_adapter` は `chatgpt` のとき `api_key` ではなく `oauth` スロットを読む
-- `ProviderView` に `auth_mode` / `account_email` / `plan_type` / `billing_mode` を追加
+- `ProviderView` に `auth`（`account_id` / `email` / `plan_type`）・`status`・
+  `billing_mode` を追加
+- クレデンシャル保存は `CredentialStore` トレイトに分離し、`mixd-providers` は
+  `mixd-storage` に依存しない（実装はアプリ層が注入する）
 - `create_provider` 直後にログインを開始し、成功後に `connect_provider` でモデル取得
 - 未認証のままなら「ChatGPT でログイン」ボタンを出す（再ログインも同じ）
 - `delete_provider` は `api_key` と `oauth` の両スロットを削除
@@ -310,9 +321,12 @@ UI:
 - ProvidersPane: プリセット選択時に API キー欄を隠し、ログインカードを表示
   - アカウントのメール（マスク可）、プラン、最終更新、ログアウト
   - 未認証・期限切れ・失効の 3 状態を明示
-- UsagePanel: 5 時間枠と週次枠のバー、使用率、リセット時刻、クレジット残高
+- ChatGptPanel: 5 時間枠と週次枠のバー、残量、リセット時刻、クレジット残高
+  - リセット時刻は端末のタイムゾーンで表示し、UTC も併記する
   - サブスク枠のときはコスト欄を「サブスクリプション（従量課金なし）」に置換
-  - `refetchInterval: 60_000`、手動更新ボタン、15 分超で stale 表示
+  - `refetchInterval: 300_000`（推論ヘッダ / SSE で即時更新されるため）、
+    手動更新ボタン、15 分超で stale 表示
+    （Desktop / Docker とも `captured_at` から判定）
 - ModelPicker: ChatGPT のモデルには「ChatGPT 枠」バッジ（任意）
 
 ### 4.6 課金・統計
@@ -383,6 +397,8 @@ Docker 版はサーバーが遠隔にあるため、`localhost` コールバッ�
     - 認証 URL、ワンタイムコード、コピー、ポーリング、キャンセル
   - アカウント・プラン・最終更新・ログアウト
   - クォータカード（5 時間 / 週次 / クレジット、リセット時刻）
+    - リセット時刻は端末のタイムゾーンで表示する
+    - UTC の時刻も併記し、00:00 UTC のような境界を管理画面で確認できるようにする
 - `apps/web/src/lib/queries.ts`（または相当）に `useChatGptQuota` を追加
 - `apps/web/src/generated/api.ts` は `scripts/export-openapi.py` →
   `pnpm generate:api` で再生成
@@ -406,7 +422,9 @@ Docker 版はサーバーが遠隔にあるため、`localhost` コールバッ�
 | メモリ | `QuotaSnapshot`（60 秒キャッシュ） |
 
 SQLite のマイグレーションは不要（`data` は JSON）。`Message.native` は
-会話履歴 JSON に追加されるが、既存行は `default` で読める。
+`HistoryMessage.native` として会話履歴 JSON に保存され、既存行は `default` で
+読める。1 ターンあたり 256 KiB を超える場合は保存を諦め、再開時は
+テキスト + `function_call` の再構成へフォールバックする。
 
 ### Docker
 
@@ -426,7 +444,7 @@ DB マイグレーションは不要。
 | 1 | Docker 縦切り: `chatgpt_responses` + 認証 JSON + refresh + モデル取得 + クォータ。API で推論成功まで | 2〜3 日 |
 | 2 | Desktop Responses アダプター: `responses.rs` + native リプレイ + ツールループ + 単体テスト | 2〜3 日 |
 | 3 | Desktop OAuth + Provider 登録: PKCE、Keychain、401 再試行、デバイスコード fallback | 2 日 |
-| 4 | Desktop UI: ProvidersPane、UsagePanel、i18n、$0 課金表示 | 1〜2 日 |
+| 4 | Desktop UI: ProvidersPane、ChatGptPanel、i18n、$0 課金表示 | 1〜2 日 |
 | 5 | Docker OAuth + Web UI: デバイスコード API、モーダル、クォータカード、OpenAPI 再生成 | 2 日 |
 | 6 | 仕上げ: 両エディションの受け入れ試験、ドキュメント、リリースノート、障害時の縮退 | 1〜2 日 |
 
@@ -489,10 +507,14 @@ Phase 1 を先に置くのは、既存の OpenAI SDK 経由で外部 API の挙�
 ### Desktop
 
 - `providers` クレート: SSE イベント変換、ツール呼び出し、usage、native リプレイ
+  （`cg_sse_stream` に分離し、`response.completed` / `response.failed` /
+  `[DONE]` / `codex.rate_limits` をチャンク給餌でテスト）
 - `core` クレート: ツールループ 2 ターンで reasoning が保持されること
-- Tauri コマンド: PKCE 生成、state 不一致、ポート fallback、ログアウト
-- UI: ProvidersPane の 3 状態、UsagePanel のバーと stale 表示
+- Tauri コマンド: デバイスコード開始・ポーリング・キャンセル、ログアウト
+- UI: ProvidersPane の 3 状態、ChatGptPanel のバーと stale 表示
 - 既存の `cargo test --workspace` / `clippy -D warnings` / `ui:test` / `ui:typecheck`
+- `scripts/check-chatgpt-parity.py` で Rust / Python の定数・TTL・window 閾値・
+  refresh エラー分類のドリフトを検出する（CI の `memory-parity` ジョブ）
 
 ### Docker
 
@@ -523,29 +545,32 @@ Phase 1 を先に置くのは、既存の OpenAI SDK 経由で外部 API の挙�
 
 ## 13. 実装状況（2026-11-01）
 
-Docker 版の Phase 1 縦切りを実装済み。Desktop 版は未着手。
+Desktop 版・Docker 版とも実装済み。実アカウントでの疎通確認だけが残っている。
 
 ### 完了
 
 | 領域 | 実装 |
 | :--- | :--- |
-| カタログ | `providers/catalog.py` に `chatgpt` プリセット（`chatgpt_responses` / `chatgpt_models`） |
-| 認証 | `providers/chatgpt.py`（デバイスコード、refresh、revoke、ID トークン解析、Secret 保存） |
-| 推論 | `providers/adapters.py` の `chatgpt_responses`（Responses API、`prompt_cache_key`、reasoning include） |
-| モデル | `chatgpt_models`（`/models?client_version=`、`{models:[{slug}]}`） |
+| カタログ | Desktop `preset/mod.rs` / Docker `providers/catalog.py` に `chatgpt` プリセット |
+| 認証（Desktop） | `providers/src/chatgpt.rs` + `app/src/commands/chatgpt.rs`（デバイスコード、refresh、revoke、Secret 保存） |
+| 認証（Docker） | `providers/chatgpt.py`（デバイスコード、refresh、revoke、ID トークン解析、Secret 保存） |
+| 推論（Desktop） | `chatgpt.rs` の Responses ストリーム（native リプレイ、tool calls、usage、`codex.rate_limits`） |
+| 推論（Docker） | `providers/adapters.py` の `chatgpt_responses`（Responses API、`prompt_cache_key`、reasoning include） |
+| モデル | Desktop `discover_models` / Docker `chatgpt_models`（`/models?client_version=`、`{models:[{slug}]}`） |
 | 残量 | `GET /wham/usage`、`x-codex-*` ヘッダ、`codex.rate_limits` SSE、60 秒キャッシュ |
-| API | `api/routes_chatgpt.py`（デバイス開始/状態/中止、quota、logout） |
-| UI | `apps/web/.../ChatGptPanel.tsx`（同意チェック、デバイスコード、クォータバー） |
-| 課金 | `usage.record` が `billing_mode=subscription` を $0 として記録 |
+| API | Docker `api/routes_chatgpt.py`、Desktop Tauri コマンド 5 本 |
+| UI | Desktop `ChatGptPanel.tsx` / Docker `apps/web/.../ChatGptPanel.tsx`（同意警告、ログイン、クォータ） |
+| 課金 | Desktop `Provider::billing()` / Docker `usage.record` がサブスク枠を $0 として記録 |
 | 安全 | base URL を Codex バックエンドに固定、ログアウトで revoke、トークン非表示 |
-| テスト | `tests/unit/test_chatgpt.py`、`tests/integration/test_providers.py`（ChatGPT 追加分） |
+| テスト | Desktop `cargo test` / Docker `tests/unit/test_chatgpt.py` ほか |
 
 ### 未完了 / 次の作業
 
 - 実アカウントでの疎通確認（デバイスコード → `/responses` → `/wham/usage`）
-- Desktop 版（Responses アダプター、PKCE、Provider 登録、UI）
-- `docs/README.md` への本計画書の索引追加
 - 実機検証を `docs/verification.md` の先頭に追記
+- Desktop の `Message.native` は `HistoryMessage.native` として会話履歴に保存し、
+  Run 再開時も reasoning を含むツールターンをそのままリプレイする（256 KiB 上限）。
+  上限を超えたターンだけはテキスト + `function_call` の再構成にフォールバックする
 
 ### 実装上の注意
 

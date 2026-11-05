@@ -6,6 +6,7 @@
 # experiments.  Previously only `apps/server` was linted, which let the runners
 # and deploy helpers drift.
 line-length = 110
+target-version = "py312"
 
 [lint]
 select = [
@@ -13,12 +14,16 @@ select = [
   "E7",    # statement errors
   "E9",    # runtime errors
   "F",     # pyflakes
+  "B",     # flake8-bugbear
   "BLE",   # blind `except Exception`
   "S",     # bandit-style security
   "ASYNC", # async pitfalls (blocking calls, un-awaited tasks)
 ]
 ignore = [
   "S608",  # migrations build DDL from trusted literals
+  # API handlers deliberately drop the internal exception from the client-facing
+  # error; the log path records it separately.
+  "B904",
 ]
 
 [lint.per-file-ignores]
@@ -28,6 +33,7 @@ ignore = [
 "tests/conftest.py" = ["E402"]
 "tests/fixtures/chat_preview.py" = ["E402"]
 "tests/integration/test_mcp.py" = ["ASYNC240"]
+"tests/integration/test_core.py" = ["ASYNC109"]
 "experiments/**" = ["S101"]
 "scripts/**" = ["S101", "S603", "S607"]
 # Runners do one-shot token reads and touch container-local tmpfs paths; both

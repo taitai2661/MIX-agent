@@ -75,11 +75,20 @@ pub(crate) fn truncate_output(text: &str) -> String {
     if text.len() <= MAX_OUTPUT_BYTES {
         return text.to_string();
     }
-    let head = truncate_to_char_boundary(text, MAX_OUTPUT_BYTES);
-    let cut = head.len();
-    let kept_lines = head.lines().count();
+    // Keep both ends: the head carries the command's early context, while the
+    // tail usually carries the failing assertion and stack trace. Returning
+    // only the head used to hide exactly the lines the model needed to repair.
+    let head = truncate_to_char_boundary(text, TRUNCATED_HEAD_BYTES);
+    let head_len = head.len();
+    let tail_budget = MAX_OUTPUT_BYTES.saturating_sub(head_len);
+    let mut start = text.len().saturating_sub(tail_budget);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &text[start..];
     format!(
-        "{head}\n… [truncated: {cut} of {} bytes shown, {kept_lines} lines]",
+        "{head}\n… [truncated: {head_len} bytes of head and {} bytes of tail shown, {} bytes total] …\n{tail}",
+        tail.len(),
         text.len()
     )
 }

@@ -33,12 +33,24 @@ Docker 版にない Desktop 固有のコマンドは「—」として示しま�
 | `DELETE /providers/{key}` | `providers::delete_provider()` | 1 |
 | `GET /provider-presets` | `providers::provider_presets()` | 1 |
 | `POST /providers/{key}/{action}` | `providers::connect_provider()` | 1 |
+| `GET /providers/chatgpt/status`（専用） | `chatgpt::chatgpt_status()` | — |
+| `POST /providers/chatgpt/ensure`（専用） | `chatgpt::chatgpt_ensure()` | — |
+| `POST /providers/chatgpt/device/start` | `chatgpt::chatgpt_device_start()` | — |
+| `GET /providers/chatgpt/device/{login_id}` | `chatgpt::chatgpt_device_poll()` | — |
+| `POST /providers/chatgpt/device/{login_id}/cancel` | `chatgpt::chatgpt_device_cancel()` | — |
+| `GET /providers/{key}/quota` | `chatgpt::chatgpt_quota(force=false)` | — |
+| `POST /providers/{key}/quota/refresh` | `chatgpt::chatgpt_quota(force=true)` | — |
+| `POST /providers/{key}/logout` | `chatgpt::chatgpt_logout()` | — |
 | — | `discovery::scan_local_runtimes()` | 5 |
 | — | `discovery::probe_local_endpoint()` | 5 |
 | — | `discovery::import_local_runtime()` | 5 |
 
 `connect_provider()` は Docker 版 `{action}` のうち「モデル取得」だけを担います。
 接続テストに相当する操作はプロバイダの作成・更新時に行われます。
+
+ChatGPT 連携の 5 コマンドは非公式機能です。デバイスコードの進行状態は Desktop
+プロセス内（15 分 TTL）にあり、アプリ再起動で失効します。トークンは Secret
+ストアの `provider/<id>` / `oauth` にのみ保存し、API レスポンスには含めません。
 
 ## Local runtime
 
@@ -76,6 +88,7 @@ WebView に流れます。`local_runtime_snapshot()` は画面再表示時の補
 | Docker 版 | Desktop 版 | Phase |
 | --- | --- | --- |
 | `GET /conversations` | `conversations::list_conversations()` | 1 |
+| `GET /conversations?before=…` | `conversations::list_conversations_page()` | 6 |
 | `POST /conversations` | `conversations::create_conversation()` | 1 |
 | `PATCH /conversations/{key}` | `conversations::rename_conversation()` | 1 |
 | `POST /conversations/{key}/messages` | `conversations::send_message()` | 1 |
@@ -97,6 +110,8 @@ WebView に流れます。`local_runtime_snapshot()` は画面再表示時の補
 | `GET /runs/{key}/checkpoints` | `runs::list_checkpoints()` | 3 |
 | `POST /runs/{key}/resume` | `runs::resume_run()` | 3 |
 | `POST /runs/{key}/budget-extension` | `runs::budget_extension()` | 3 |
+| Docker 版に相当なし（Git baseline の差分） | `runs::run_workspace_changes()` | 6 |
+| Docker 版に相当なし（Git baseline のロールバック） | `runs::revert_run_workspace()` | 6 |
 
 Desktop 版は SSE ではなく `app::RunEvent` を `emit` で配信します。UI は
 `runs::list_run_events()` で過去分を補完し、`runs::replay_run_events()` で
@@ -189,6 +204,12 @@ Desktop も Docker 版と同じく、実行時に Chromium を導入・更新で
 | `GET /skills/{key}/resources` | `skills::list_skill_resources()` | 5 |
 | `GET /skills/{key}/resources/{path}` | `skills::read_skill_resource()` | 5 |
 
+両エディションとも `SKILL.md` の `license` / `compatibility` / `metadata` /
+`allowed-tools` を保存・エクスポートし、`scripts/` / `references/` / `assets/`
+を同梱ファイルとして保持します。Desktop 版はプロジェクトとホームディレクトリの
+Skills を自動探索し、`skill`（本文）と `skill_resource`（同梱ファイル）ツールで
+読み取ります。詳細は [`../agent-skills.md`](../agent-skills.md) を参照してください。
+
 ## Projects
 
 | Docker 版 | Desktop 版 | Phase |
@@ -236,6 +257,8 @@ Docker 版にはローカル作業フォルダを直接扱う equivalent がな�
 | --- | --- | --- |
 | `GET /settings` | `settings::get_settings()` | 1 |
 | `PUT /settings` | `settings::update_settings()` | 1 |
+| Docker 版に相当なし（ホストのサンドボックス可否） | `settings::sandbox_status()` | 6 |
+| Docker 版に相当なし（OS のログイン時起動） | `autostart::get_autostart()` / `set_autostart()` | 6 |
 
 ## Agents
 

@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from mix_agent.api import routes_messages, routes_providers
+from mix_agent.api import provider_sync, routes_messages, routes_providers
 from mix_agent.db.models import Message, Model, Provider, Run, Settings, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers import probing
@@ -272,6 +272,9 @@ def test_tool_probe_survives_model_edit_and_provider_sync(signed, monkeypatch):
 
     monkeypatch.setattr(probing, "Adapter", SyncAdapter)
     monkeypatch.setattr(routes_providers, "Adapter", SyncAdapter)
+    # `sync_provider_models` was extracted to its own module and imports its own
+    # `Adapter`, so patching the route module alone no longer reaches it.
+    monkeypatch.setattr(provider_sync, "Adapter", SyncAdapter)
     response = signed.post(f"/api/v1/providers/{provider_id}/sync-models")
     assert response.status_code == 200
     with SessionLocal() as db:

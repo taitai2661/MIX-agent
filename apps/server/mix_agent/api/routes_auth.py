@@ -30,6 +30,7 @@ from mix_agent.auth.security import (
     passwords,
     record_failed_attempt,
     throttle_attempt,
+    verify_password,
 )
 from mix_agent.client_ip import request_client_ip
 from mix_agent.db.models import LoginEvent, Settings, User, Workspace
@@ -44,9 +45,11 @@ def setup(db=Depends(get_db)):
 
 
 @router.post("/setup/admin")
-def setup_admin(body: Credentials, response: Response, db=Depends(get_db)):
+def setup_admin(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
     if db.scalar(select(User.id)):
         raise APIError(409, "setup.already_complete")
+    setup_key = "setup-admin:" + request_client_ip(request)
+    throttle_attempt(setup_key, LOGIN_IP_LIMIT, LOGIN_WINDOW_SECONDS)
     user = User(username=body.username, password_hash=passwords.hash(body.password))
     db.add(user)
     try:
@@ -67,6 +70,7 @@ def setup_admin(body: Credentials, response: Response, db=Depends(get_db)):
         db.commit()
     except IntegrityError:
         db.rollback()
+        record_failed_attempt(setup_key, LOGIN_WINDOW_SECONDS)
         raise APIError(409, "setup.admin_exists")
     return {"username": user.username, "csrf": session.csrf}
 
@@ -139,18 +143,15 @@ def change_password(body: PasswordChangeInput, response: Response, ctx=Depends(c
     change_key = "password-change:" + session.owner_id
     throttle_attempt(change_key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
     user = db.get(User, session.owner_id)
-    try:
-        valid = passwords.verify(user.password_hash, body.current_password)
-    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-        valid = False
-    if not valid:
+    if not verify_password(user, body.current_password):
         record_failed_attempt(change_key, ACCOUNT_CHANGE_WINDOW_SECONDS)
         raise APIError(401, "auth.current_password_invalid")
     clear_attempts(change_key)
     user.password_hash = passwords.hash(body.new_password)
     audit(db, user.id, "password_changed", "account")
+    # Revoke every other session: a stolen cookie must not survive this change.
+    revoke_sessions(db, user.id, None if body.revoke_all_sessions else session.id)
     if body.revoke_all_sessions:
-        revoke_sessions(db, user.id)
         db.commit()
         response.delete_cookie("mix_session")
         return {"ok": True, "relogin_required": True}
@@ -165,11 +166,7 @@ def change_username(body: UsernameChangeInput, ctx=Depends(context)):
     change_key = "username-change:" + session.owner_id
     throttle_attempt(change_key, ACCOUNT_CHANGE_LIMIT, ACCOUNT_CHANGE_WINDOW_SECONDS)
     user = db.get(User, session.owner_id)
-    try:
-        valid = passwords.verify(user.password_hash, body.current_password)
-    except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-        valid = False
-    if not valid:
+    if not verify_password(user, body.current_password):
         record_failed_attempt(change_key, ACCOUNT_CHANGE_WINDOW_SECONDS)
         raise APIError(401, "auth.current_password_invalid")
     clear_attempts(change_key)
@@ -178,6 +175,7 @@ def change_username(body: UsernameChangeInput, ctx=Depends(context)):
         raise APIError(409, "auth.username_taken")
     user.username = body.username
     audit(db, user.id, "username_changed", "account")
+    revoke_sessions(db, user.id, session.id)
     db.commit()
     return {"username": user.username, "csrf": session.csrf}
 

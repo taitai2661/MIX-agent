@@ -8,26 +8,41 @@ pub(super) const MAX_SNAPSHOT_RUNS: usize = 24;
 /// Resolve a Tool's path argument to an absolute key for the read fingerprint
 /// map. `std::path::absolute` folds `.` and makes relative/absolute spellings
 /// of the same file compare equal.
+///
+/// Returns `None` for paths outside the workspace: those are not snapshotted
+/// or fingerprinted, so a crafted path cannot turn Undo into an arbitrary
+/// read/write primitive.
 pub(super) fn normalize_tool_path(
     root: Option<&std::path::Path>,
     path: &str,
-) -> std::path::PathBuf {
-    let joined = resolve_snapshot_path(root, path);
-    std::path::absolute(&joined).unwrap_or(joined)
+) -> Option<std::path::PathBuf> {
+    let joined = resolve_snapshot_path(root, path)?;
+    Some(std::path::absolute(&joined).unwrap_or(joined))
 }
 
 /// Resolve a Tool's path argument against the workspace root.
+///
+/// Unlike the old implementation this does not return absolute paths verbatim
+/// and does not leave `..` components for the OS to resolve. It reuses the
+/// Files tool's resolver, which normalizes the path, follows in-workspace
+/// symlinks only, and rejects anything that escapes the root. Only regular
+/// files are accepted: `/dev/zero`, FIFOs and directories would otherwise make
+/// the pre-run snapshot read hang or exhaust memory.
 pub(super) fn resolve_snapshot_path(
     root: Option<&std::path::Path>,
     path: &str,
-) -> std::path::PathBuf {
-    let candidate = std::path::Path::new(path);
-    if candidate.is_absolute() {
-        return candidate.to_path_buf();
+) -> Option<std::path::PathBuf> {
+    let root = root?.canonicalize().ok()?;
+    let (resolved, writable) =
+        mixd_tools::files::FilesTool::resolve_target_in(&root, &[], path).ok()?;
+    if !writable {
+        return None;
     }
-    match root {
-        Some(root) => root.join(candidate),
-        None => candidate.to_path_buf(),
+    match std::fs::metadata(&resolved) {
+        Ok(meta) if !meta.is_file() => None,
+        Ok(_) => Some(resolved),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(resolved),
+        Err(_) => None,
     }
 }
 
@@ -47,7 +62,7 @@ pub(super) fn can_run_concurrently(name: &str, args: &serde_json::Value) -> bool
     let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
     match name {
         "files" => matches!(action, "read" | "list"),
-        "glob" | "grep" | "symbols" => true,
+        "glob" | "grep" | "symbols" | "lsp" | "skill" | "skill_resource" => true,
         "git" => matches!(action, "status" | "diff" | "log" | "show" | "blame"),
         "knowledge" => action == "search",
         _ => false,
@@ -111,6 +126,7 @@ pub(super) async fn summarize_turns(
         max_tokens: Some(SUMMARIZER_MAX_TOKENS),
         reasoning: None,
         stream: true,
+        session_id: None,
         context_window: None,
         keep_alive: None,
     };
@@ -148,6 +164,7 @@ pub(super) fn history_to_message(h: &HistoryMessage) -> Message {
         tool_call_id: h.tool_call_id.clone(),
         name: h.name.clone(),
         is_error: h.is_error,
+        native: h.native.clone(),
     }
 }
 
@@ -171,7 +188,31 @@ pub(super) async fn render_head(
     head
 }
 
+/// Per-turn ceiling for persisted Responses items. Encrypted reasoning is
+/// usually a few KiB; a runaway blob should not bloat the transcript or a
+/// checkpoint, and dropping it only costs reasoning continuity, not the turn.
+const NATIVE_HISTORY_MAX_BYTES: usize = 256 * 1024;
+
 pub(super) fn message_to_history(m: &Message) -> HistoryMessage {
+    let native = if m.native.is_empty() {
+        Vec::new()
+    } else {
+        match serde_json::to_vec(&m.native) {
+            Ok(encoded) if encoded.len() <= NATIVE_HISTORY_MAX_BYTES => m.native.clone(),
+            Ok(encoded) => {
+                tracing::warn!(
+                    bytes = encoded.len(),
+                    limit = NATIVE_HISTORY_MAX_BYTES,
+                    "dropping oversized native provider items from the transcript"
+                );
+                Vec::new()
+            }
+            Err(err) => {
+                tracing::warn!(%err, "could not encode native provider items");
+                Vec::new()
+            }
+        }
+    };
     HistoryMessage {
         role: m.role.clone(),
         content: m.content.clone(),
@@ -179,5 +220,42 @@ pub(super) fn message_to_history(m: &Message) -> HistoryMessage {
         name: m.name.clone(),
         tool_calls: m.tool_calls.clone(),
         is_error: m.is_error,
+        native,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "mixd-snapshot-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn snapshot_paths_stay_inside_the_workspace() {
+        let root = temp_root();
+        assert!(resolve_snapshot_path(Some(&root), "notes.txt").is_some());
+        assert!(resolve_snapshot_path(Some(&root), "sub/notes.txt").is_some());
+        // Traversal, absolute paths outside the root, and character devices
+        // are all refused instead of being read/restored verbatim.
+        assert!(resolve_snapshot_path(Some(&root), "../escape.txt").is_none());
+        assert!(resolve_snapshot_path(Some(&root), "/etc/passwd").is_none());
+        assert!(resolve_snapshot_path(Some(&root), "/dev/zero").is_none());
+        assert!(resolve_snapshot_path(None, "notes.txt").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_directory_is_not_snapshotted_as_a_file() {
+        let root = temp_root();
+        assert!(resolve_snapshot_path(Some(&root), ".").is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

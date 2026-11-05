@@ -1,8 +1,11 @@
-# MIX-agent Desktop — Architecture（2026-10-28 時点）
+# MIX-agent Desktop — Architecture
+
+> Desktop 版の**現行仕様**をまとめた文書です。設計判断の経緯と代替案は各 `*-plan.md` にあります。
+> Docker 版の全体構成は [`../architecture.md`](../architecture.md) を参照してください。
 
 ## 目的
 
-`docker/MIX-agent/` 版の中核機能（Provider Adapter / Run Engine / Tool Registry / Run イベントの `kind` 契約 / Capability 3 状態 / Checkpoint / Stagnation / Verification / Tiered Summary / Budget Extension / 暗号化 Secret）を **Tauri 2 + Rust + React 19** のネイティブアプリへ再実装する。`docker/` との **コード共有ゼロ**、仕様書のみで契約を結ぶ。
+Docker 版（`apps/server` + `apps/web`）の中核機能（Provider Adapter / Run Engine / Tool Registry / Run イベントの `kind` 契約 / Capability 3 状態 / Checkpoint / Stagnation / Verification / Tiered Summary / Budget Extension / 暗号化 Secret）を **Tauri 2 + Rust + React 19** のネイティブアプリへ再実装する。Docker 版との **コード共有ゼロ**、仕様書のみで契約を結ぶ。
 
 ## ディレクトリ
 
@@ -81,14 +84,17 @@ WebView からは `fs` / `shell` / `http` プラグインの権限を `app/capab
 | Checkpoint / Stagnation / Verification | `core::runs::{checkpoint_store,stagnation,verification}` | 仕様踏襲 |
 | Tiered Summary | `core::context` | 仕様踏襲 |
 | 暗号化 Secret (AES-GCM + AAD) | `storage::secrets` | 仕様踏襲 |
-| pg_trgm / JSONB Index | SQLite `json_extract` + FTS5 | 再実装 |
+| pg_trgm / JSONB Index | SQLite `json_extract` + FTS5（メッセージ・Knowledge・Memory） | 再実装 |
 | マルチユーザー / 管理者作成 | 単一ユーザー前提 | 削除 |
 | Docker container 群 | tokio runtime 上の in-proc タスク | 置換 |
 
 ### Run イベントの `kind` 差分
 
 `app/src/run_events.rs` は Docker 版が SSE で流すのと同じ JSON 形状を、
-Tauri の `run_event` というイベント名で emit します。
+Tauri の `run_event` というイベント名で emit します。トークン差分（`text` /
+`reasoning`）は 50ms または 64 件でまとめて `run_event_batch` として送り、
+マイルストーン（`status` / `tool_*` など）は遅延なく単独で送ります。UI は
+両方を同じ `applyRunEvent` に流します。
 ただし `kind` の一覧は **完全一致ではありません**。
 
 共通（両エディションが使う）: `text` / `reasoning` / `message` / `status` / `error` /
@@ -197,7 +203,7 @@ Chromium は **常に new headless** で起動します。以前は release だ�
   エージェント起因のオープンはフォーカスを奪いません。
 
 Chromium のメモリ対策として、同時に開くワークスペースは 2 個まで（LRU で
-退避）、15 分間ブラウザ呼び出しとライブ取得が無ければプロセスを閉じます。
+退避）、5 分間ブラウザ呼び出しとライブ取得が無ければプロセスを閉じます。
 パネルを開いている間は 60 秒ごとの軽量 keepalive が LRU を更新するため、
 ライブ表示を一時停止していても閉じられません。プロファイルはディスクに残るため、
 次回オープン時に Cookie / ログインは復元されます。上限は
@@ -233,9 +239,44 @@ cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURL
 モデルへ渡す `browser` tool の enum からは除外しています。CDP のリクエスト単位の
 強制はまだ未実装で、ページ内 JS 自体は引き続き自由にネットワークへ出られます。
 
+## ChatGPT（Codex 使用枠）— 非公式・自己責任
+
+> **警告**: OpenAI の公式 API ではなく、Codex CLI が利用する非公開バックエンドを
+> 呼び出す **非公式機能** です。利用規約・アカウント制限に抵触する可能性、予告なき
+> 停止のリスクがあります。利用は **自己責任** です。設定 ▸ **ChatGPT** の専用タブで
+> 有効化・ログインします。プロバイダーのプリセットには表示されず、汎用の Provider
+> 作成フォームからは行を作れません（`chatgpt_ensure` だけが専用行を作ります）。
+> 通常の API キー Provider はそのまま利用できます。
+
+- 接続は1つだけ。専用タブが `chatgpt_status` で行を読み、未作成なら
+  `chatgpt_ensure` が固定 URL・固定ラベルの行を作る。汎用 `create_provider` は
+  `chatgpt` を拒否する。
+- 認証は **デバイスコード方式**。`chatgpt_device_start` → `chatgpt_device_poll` で
+  トークンを取得し、`provider/<id>` / `oauth`（暗号化 Secret）にだけ保存する。
+  ポーリング間隔はサーバー側でも `interval` を強制する。
+- トークン更新は provider 行ごとのプロセス全体ロックで single-flight にし、
+  ロック取得後に Secret を再読込する。複数の adapter（実行・モデル取得・残量取得）が
+  同じ refresh token を同時に使ってローテーション負けするのを防ぐ。
+- 推論は `providers/src/chatgpt.rs` の Responses ストリーム。
+  `chatgpt-account-id` / `originator` を付け、`store: false`、
+  `reasoning.encrypted_content` を要求する。ツールターンでは `Message.native` に
+  保持した reasoning / function_call を次リクエストへ戻す。
+- 残量は `GET https://chatgpt.com/backend-api/wham/usage`。推論レスポンスの
+  `x-codex-*` ヘッダと `codex.rate_limits` SSE でもキャッシュを更新する（60 秒 TTL）。
+- サブスク枠の Run は `Provider::billing() == Subscription` として $0 で記録する。
+- ログアウトは `/oauth/revoke` を呼び、成功可否に関わらずローカル Secret を削除する。
+- 進行中のログイン状態はプロセス内のみ（15 分）。アプリ再起動でやり直しになる。
+- `originator` は既定 `mix_agent`。必要な場合のみ `MIX_CODEX_ORIGINATOR` で上書き
+  する（Codex CLI の値を指定するとクライアントを偽装することになる）。
+- `Message.native` は `HistoryMessage.native` として会話履歴にも保存し、Run 再開時も
+  reasoning を含むツールターンをそのままリプレイする。1 ターン 256 KiB を超えた場合
+  だけ保存を諦め、テキスト + function_call の再構成へフォールバックする。
+- 推論リクエストは `Accept: text/event-stream` を明示し、一時的な 5xx / 接続断 /
+  クォータ未達の 429 はバックオフ付きで再試行する。
+
 ## セキュリティ
 
-- **OS Keychain**: `keyring-rs` で Provider Key / DB 暗号化鍵 / MCP token / OAuth refresh token を用途別 AAD（`"{purpose}|{name}"`）で保存。
+- **Secret store**: macOS / Windows では **マスター seed を OS Keychain**（`keyring-rs`）に置き、AES-256-GCM の暗号文は `secrets.enc.json`（0600）に残します。これによりデータディレクトリだけを読んでも資格情報は復号できません。既存のファイル seed は「コピー → 読み戻し確認 → 削除」で自動移行します。`MIX_SECRET_BACKEND=file|keychain` で従来のファイル方式 / 全 Keychain 方式を強制できます。Linux は Secret Service が常にあるとは限らないため既定でファイル方式です。
 - **DB 暗号化設定 (Codex 互換)**: 標準は **OFF（平文 SQLite）** で動作し、所有者のみ読み書き可（0600）のアクセス権で保護されます（Codex parity）。設定（GeneralSettings）から保存時の暗号化を **ON / OFF** 切り替え可能で、ON に設定された場合は OS Keychain にマスター暗号化鍵（`db.master`）が生成・保管されます。診断画面（Diagnostics）でも暗号化状態が確認できます。
 - **Egress allowlist + private IP deny**: `tools::network` が reqwest 実行前に検査。allowlist が空なら公開ホストのみ許可し、private IP は常に拒否します。保存済みルールは `*.example.com` のようなワイルドカードに対応します。
 - **WebView CSP**: `app/tauri.conf.json` の `app.security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
@@ -248,7 +289,11 @@ cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURL
   カスタムタイトルバーだけを表示します。ネイティブ装飾を残すと OS のボタンと
   アプリ内のボタンが二重に表示されます。プラットフォーム別設定は配列ごと
   置き換わるため、ウィンドウ設定はすべての項目を両ファイルにも記載します。
-- **OS プロセス sandbox**: **未実装**。macOS `sandbox-exec` / Windows Job Object / Linux landlock + bubblewrap のいずれもコードに存在しません。`terminal` tool はユーザーの権限で任意のプロセスを起動でき、`browser` tool も外部 Chromium を無制限に操作できます。敵対的なコードを安全に実行する用途には使わないでください。
+- **OS プロセス sandbox**: 設定 `sandbox_terminal` で、次に起動するシェルを OS 機能で隔離します。
+  - **macOS**: `sandbox-exec` でワークスペース + 一時ディレクトリ + ビルドキャッシュ以外への書き込みを拒否。`sandbox_terminal_network` で `(deny network*)` も付与。
+  - **Linux**: `bubblewrap`（なければ `firejail`）でルートを読み取り専用にし、ワークスペースとビルドキャッシュだけを書き込み可能にします。ネットワーク遮断は `--unshare-net`。
+  - **Windows**: `Job Object` でシェルと子プロセスを束ね、プロセス数上限・アプリ終了時の一括停止を強制します。portable-pty がプロセス作成属性を公開しないため、**ファイルシステムの書き込み隔離は未対応**です（UI にも明記）。
+  - 利用できない環境（Linux で bwrap/firejail 未導入など）では設定を保存できず、理由を表示します。`browser` も外部 Chromium を操作できるため、敵対的なコードを安全に実行する用途には使わないでください。
 
 ## Managed Chromium（初回インストール方式）
 
@@ -422,7 +467,7 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 Phase 6 で Tauri updater を再有効化しました。`desktop-release.yml` は Apple Silicon／Intel macOS の ad-hoc 署名済み DMG、Windows x64 の未署名 NSIS/MSI、Linux x64 の AppImage/deb に加え、署名済みアップデータ（`.app.tar.gz` / `-setup.exe` / `.AppImage` と各 `.sig`）と `latest.json` を Release へ添付します。秘密鍵は GitHub Actions の Repository Secrets のみに置きます。
 Phase 7 は v0.5.1 / v0.5.2 で配布まで到達しました。各 OS 実機での更新適用確認は [`verification.md`](../verification.md) に記録します。
 
-## 空チャットの挨拶（2026-10-01 追記）
+## 空チャットの挨拶（2026-10-01）
 
 スレッドが空のときの挨拶は、`ui/src/features/chat/greeting/` が Signals から文を
 合成して表示します。入力は 4 系統です。
@@ -471,7 +516,7 @@ Desktop が実際に持つ機能（差分・テスト・ブラウザ・プロジ
   実行していません。
 - `localStorage` を保存できないプライベートモードでの実挙動は未確認です。
 
-## 自律性・記憶・ツール実行の強化（2026-10-05 追記）
+## 自律性・記憶・ツール実行の強化（2026-10-05）
 
 Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修正。
 
@@ -505,14 +550,81 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 
 ### 今回も未実装のもの
 
-- **Knowledge の embedding 検索 / FTS5**。Memory 側は hybrid 検索（lexical +
-  embedding、`retrieve_memories_hybrid`）実装済みだが、Knowledge は CJK 対応の
-  lexical 検索のみで、ベクトル列・FTS5 インデックスは未整備。
-- PTY の対話 terminal（stdin 送出）。timeout 上限のみ追加。
+- **Knowledge の embedding 検索**。Knowledge は FTS5（trigram）による lexical 検索に対応したが、ベクトル列と embedding 検索は未整備（Memory 側の hybrid 検索は実装済み）。
+- PTY の対話 terminal は `terminal` の `action: "send"`（実行中シェルへの stdin 送出 + 新規出力の取得）に対応。`send` は待ち時間だけ出力を集める方式で、専用の対話 UI は未実装。
 - `browser` の `evaluate` はページ内 `fetch` でローカル資源に到達し得る。`navigate` の
   egress は塞いだが、完全な隔離ではない。
 
-## UI/UX の改善（2026-10-05 追記）
+## 軽量化・起動・常駐リソース（2026-11）
+
+計画と経緯は [`performance-plan.md`](performance-plan.md) を参照。現行挙動は次のとおり。
+
+- **起動時のバックアップ**（`storage/src/db.rs`）。`VACUUM INTO` は
+  **マイグレーションが必要なときだけ** pool を開く前に実行します。通常起動では
+  `<data-dir>/mix-agent.backup-state` の時刻を見て、24 時間以上経過していれば
+  ウィンドウ表示後にバックグラウンドで 1 回だけ取得します。`PRAGMA quick_check(1)`
+  は 7 日ごと（マーカーが無い初回・復元後は必ず）実行します。
+- **起動スパン**。`target: "startup"` の `tracing` ログに storage の各段
+  （backup / open / integrity / schema / data migrations）と `build_app_state`
+  の各ブロックをミリ秒で出します。UI は `shell-ready` / `transcript-ready` の
+  `performance.mark` を残します。
+- **MCP の非同期接続**。設定の読み込み（SQLite）だけを起動時に行い、
+  `connect_all` はウィンドウ表示後にバックグラウンドで実行します。最初の Run は
+  `mcp_ready` を最大 3 秒待つので、接続直後の送信でも `mcp__*` ツールを落としません。
+  サーバーごとの接続タイムアウトは 10 秒です。
+- **Memory の FTS**（`0004_memory_search.sql`）。`memory_search`（trigram）を
+  トリガーで維持し、3 文字以上のクエリは FTS の上位 2000 件を候補にしてから
+  既存の `rank_score` で並べます。短いクエリと CJK の unigram/bigram は
+  従来どおり全件ストリームにフォールバックします。
+- **Run イベントの IPC バッチ**。`run_event_batch`（50ms / 64 件）に加え、
+  UI 側は `runStore` で 60ms ごとにまとめて reducer へ適用します。
+- **UI の購読境界**。`Sidebar` は `busyConversationIds` だけ、`ChatPane` は
+  run id / status / approval だけを購読し、トークンで変わる timeline は
+  `LiveBlock` だけが読みます。ストリーミング中の Markdown 描画は 120ms に間引きます。
+- **ポーリング**。health / approvals / local runtimes / git status は
+  `document.visibilityState` が `hidden` の間は止めます。`git status` は
+  ツリー向けに `-unormal`、Changes ペイン向けに `-uall` を使い分け、branch 名は
+  30 秒キャッシュします。
+- **常駐リソース**。Chromium のアイドル終了は 5 分。LSP は 10 分アイドルで
+  次のツール呼び出し時に破棄し、5 分ごとの housekeeping でも解放します。
+  ログは 14 日分、`run_events` は完了済み Run の 180 日超を起動後に削除します
+  （`messages` は削除しません）。`PRAGMA optimize` と passive checkpoint を
+  起動後に実行します。
+- **リリース最適化**。`profile.release` は `opt-level = 3`（速度優先）。
+- **バンドル予算**。`scripts/check-desktop-bundle.mjs` が初期 chunk 500kB /
+  JS 合計 1.5MB を CI で検査します。
+
+## LSP / worktree / ロールバック / 大規模履歴（2026-11）
+
+- **`lsp` ツール**（`tools/src/lsp.rs`）。rust-analyzer / typescript-language-server /
+  pyright・pylsp / gopls を (workspace, language) 単位で起動し、`diagnostics`
+  （LSP 3.17 の pull、未対応サーバーは `publishDiagnostics` 待ち）と `definition`
+  を返します。サーバーが無い場合は Run を失敗させず、導入方法を含むツールエラーに
+  します。`core/src/runs/stagnation.rs` では読み取り専用として扱い、plan モードでも
+  使用できます。
+- **サブエージェントの worktree 分離**（`tools/src/agent.rs`, `app/src/lib.rs`）。
+  `agent` の `tasks` は既に並列実行でしたが、同じワークスペースを共有していたため
+  並列編集が衝突しました。`isolate: true` で `git stash create` を基点にした
+  detached worktree を作り、終了後に `git diff --cached --binary` と変更ファイル一覧を
+  親へ返します。自動マージはせず、親が差分を確認して適用します。
+- **Git ベースの Run ロールバック**（`app/src/workspace_baseline.rs`）。
+  Run 開始時に作業ツリーを `refs/mix-agent/runs/<id>` に固定し、`revert_run_workspace`
+  でトラッキング済みの変更を復元、Run が作った untracked ファイルを削除します。
+  `edit` / `files` の in-memory スナップショットも従来どおり併用します。
+- **会話一覧のカーソルページング**（`list_conversations_page`）。カーソルは
+  `(updated_at, id)` の生テキストで、`Z` / `+00:00` の再整形によるページ境界の
+  取りこぼしを避けます。`0003_conversation_page.sql` が `(updated_at DESC, id DESC)`
+  のインデックスを追加します。
+- **トランスクリプト仮想化**（`ui/src/features/chat/Transcript.tsx`）。
+  40 メッセージ超で可視行 + overscan のみ描画し、古いページを先頭に足したときは
+  スクロール位置を補正します。
+- **コンテキスト圧縮の可視化**。`context_summary` の圧縮イベントを
+  `RunTimeline.contextCompactions` に畳み、LiveBlock / ActivityPanel に
+  「履歴を圧縮しました」カードを表示します。
+- **ログイン時起動**（`app/src/autostart.rs`）。macOS LaunchAgent / Windows Run キー /
+  Linux XDG autostart を直接管理し、`--hidden` でトレイ常駐起動します。
+
+## UI/UX の改善（2026-10-05）
 
 - **スレッドのサーフェス絞り込み**（`ui/src/features/shell/Sidebar.tsx`）。store には
   `threadFilter` / `setThreadFilter` が以前からありテストもあったが、UI が無く死んだ状態
@@ -543,16 +655,20 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 
 ## 既知の残タスク
 
-- Knowledge は lexical 検索のみ。embedding 検索は未実装（上記参照）。
+- Knowledge は FTS5（trigram）の lexical 検索に対応。embedding 検索は未実装。
 - Memory の自動生成（Run 後の抽出）は Phase 2 で実装済みだが、抽出品質の改善は継続課題（[`../memory-roadmap.md`](../memory-roadmap.md) Phase 2 参照）。
-- シグナル / PTY ベースの対話 terminal（現在は上限付きの実行のみ）。
-- OS プロセス sandbox（macOS / Windows / Linux とも未実装）。
+- 対話 terminal は `action: "send"` まで実装済み。専用のターミナル UI とシグナル送出は未実装。
+- Windows のサンドボックスは Job Object によるプロセスツリー隔離まで。ファイルシステムの
+  書き込み隔離（AppContainer / restricted token）は portable-pty の制約で未対応。
+- LSP は `lsp` ツールとして実装済み。対応言語は Rust / TypeScript / Python / Go で、
+  サーバーは PATH または `MIX_LSP_*` で指定する。
 - Database at-rest encryption（SQLCipher）は未配線。設定に互換用の
   `database_encryption` キーは残るが、常に `false` として読み書きし、UI でも
   「未対応」と表示する。実データは平文 SQLite + 所有者限定パーミッションのみ
   なので、OS のディスク暗号化（FileVault / BitLocker / LUKS）を前提とする。
-- Provider プリセットは Docker 版の 52 件中 50 件（`cloudflare` と
-  `azure-ai-foundry` が未移植）。
+- Provider プリセットは Docker 版の 53 件中 51 件（`cloudflare` と
+  `azure-ai-foundry` が未移植）。`chatgpt` はプリセットではなく、専用タブの
+  非公式連携として実装している。
 
 ## ライセンス
 
@@ -564,5 +680,17 @@ Desktop 側も `apps/desktop/LICENSE` と `apps/desktop/Cargo.toml` の `license
 
 ## 関連ドキュメント
 
-- [`docs/architecture.md`](../architecture.md)（アーキテクチャ概要）
-- [`apps/desktop/README.md`](../../apps/desktop/README.md)（Desktop 版入口・セットアップ / 開発フェーズ）
+- [`../README.md`](../README.md) — ドキュメント索引と役割の一覧
+- [`../architecture.md`](../architecture.md) — プロジェクト全体と Docker 版の構成
+- [`../memory-spec.md`](../memory-spec.md) — 両エディション共通の Memory 契約
+- [`api-mapping.md`](api-mapping.md) — Docker 版 REST と Tauri コマンドの対応表
+- [`ui-conventions.md`](ui-conventions.md) — UI プリミティブと表記の基準
+- [`update-signing.md`](update-signing.md) — アップデート署名鍵の運用
+- [`coding-agent-plan.md`](coding-agent-plan.md) — コーディングエージェント化の経緯と残計画
+- [`coding-eval.md`](coding-eval.md) — コーディングエージェントの評価ハーネス
+- [`local-runtime-plan.md`](local-runtime-plan.md) — ローカル LLM 連携の設計記録
+- [`chromium-on-demand-plan.md`](chromium-on-demand-plan.md) — Chromium 初回インストール方式の設計記録
+- [`performance-plan.md`](performance-plan.md) — 起動・描画・常駐リソースの軽量化計画
+- [`agent-speed-plan.md`](agent-speed-plan.md) — エージェント 1 ターンの高速化計画
+- [`../verification.md`](../verification.md) — 実機・Provider の検証記録
+- [`../../apps/desktop/README.md`](../../apps/desktop/README.md) — Desktop 版の入口・セットアップ・開発手順

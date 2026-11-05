@@ -3,7 +3,10 @@
 //! SQLite database — the same shape `dispatch_run` writes.
 
 use mix_agent_desktop::commands::conversations::{
-    fetch_conversation_summaries, fetch_messages, purge_temporary_run, truncate_messages_from,
+    fetch_conversation_stats, fetch_conversation_summaries, fetch_conversation_summaries_page,
+    fetch_conversation_summary, fetch_messages, fetch_messages_before, fork_conversation_with,
+    purge_temporary_run, search_conversation_summaries, search_messages_with,
+    truncate_messages_from,
 };
 use mix_agent_desktop::commands::runs::fetch_run_events;
 use mixd_storage::records::SINGLE_USER_ID;
@@ -138,6 +141,173 @@ async fn list_messages_limit_is_applied() {
     assert_eq!(limited[2].content, "4");
 }
 
+/// `seq` is the pagination cursor and pages never overlap or skip a row.
+#[tokio::test]
+async fn older_message_pages_use_the_row_cursor() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-page", "Paging").await;
+    for i in 0..5 {
+        insert_message(
+            pool,
+            &format!("m-{i}"),
+            "conv-page",
+            serde_json::json!({ "role": "user", "content": i.to_string(), "kind": "user" }),
+        )
+        .await;
+    }
+
+    let newest = fetch_messages(pool, "conv-page", 2).await.expect("page 1");
+    assert_eq!(
+        newest
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["3", "4"]
+    );
+    assert!(
+        newest.windows(2).all(|w| w[0].seq < w[1].seq),
+        "rows render oldest-first"
+    );
+
+    let middle = fetch_messages_before(pool, "conv-page", 2, Some(newest[0].seq))
+        .await
+        .expect("page 2");
+    assert_eq!(
+        middle
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1", "2"]
+    );
+
+    let oldest = fetch_messages_before(pool, "conv-page", 2, Some(middle[0].seq))
+        .await
+        .expect("page 3");
+    assert_eq!(
+        oldest
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["0"]
+    );
+
+    let exhausted = fetch_messages_before(pool, "conv-page", 2, Some(oldest[0].seq))
+        .await
+        .expect("page 4");
+    assert!(
+        exhausted.is_empty(),
+        "no duplicate row past the oldest page"
+    );
+}
+
+/// The command palette's transcript search joins the FTS index back to the
+/// live rows and returns the conversation needed to open the hit.
+#[tokio::test]
+async fn message_search_returns_the_conversation_and_a_snippet() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-search", "Search target").await;
+    insert_message(
+        pool,
+        "m-search",
+        "conv-search",
+        serde_json::json!({
+            "role": "assistant",
+            "content": "The retrieval pipeline uses a trigram index for Japanese text.",
+            "kind": "assistant"
+        }),
+    )
+    .await;
+
+    let hits = search_messages_with(pool, "trigram", Some(10))
+        .await
+        .expect("search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].conversation_id, "conv-search");
+    assert_eq!(hits[0].conversation_title, "Search target");
+    assert_eq!(hits[0].role, "assistant");
+    assert!(
+        hits[0].excerpt.contains("trigram"),
+        "snippet should include the match: {}",
+        hits[0].excerpt
+    );
+
+    // A 1–2 character query cannot use trigram; it must return cleanly rather
+    // than letting FTS surface a syntax error to the palette.
+    let short = search_messages_with(pool, "a", Some(10))
+        .await
+        .expect("short query");
+    assert!(short.is_empty());
+}
+
+/// Forking copies the prefix up to the chosen message, detaches it from the
+/// original run, and leaves the original untouched.
+#[tokio::test]
+async fn forking_a_conversation_copies_the_prefix_and_detaches_runs() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-fork", "Original").await;
+    insert_message(
+        pool,
+        "m-1",
+        "conv-fork",
+        serde_json::json!({ "role": "user", "content": "one", "kind": "user" }),
+    )
+    .await;
+    insert_message(
+        pool,
+        "m-2",
+        "conv-fork",
+        serde_json::json!({
+            "role": "assistant",
+            "content": "two",
+            "kind": "assistant",
+            "runId": "run-1"
+        }),
+    )
+    .await;
+    insert_message(
+        pool,
+        "m-3",
+        "conv-fork",
+        serde_json::json!({ "role": "user", "content": "three", "kind": "user" }),
+    )
+    .await;
+
+    let fork_id = fork_conversation_with(pool, "conv-fork", "m-2")
+        .await
+        .expect("fork");
+    assert_ne!(fork_id, "conv-fork");
+
+    let forked = fetch_messages(pool, &fork_id, 10).await.expect("forked");
+    assert_eq!(
+        forked
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["one", "two"],
+        "the fork stops at the selected message"
+    );
+    assert!(
+        forked[1].run_id.is_none(),
+        "the copied assistant turn must not point at the original run"
+    );
+    assert!(forked.iter().all(|m| m.id != "m-1" && m.id != "m-2"));
+
+    let original = fetch_messages(pool, "conv-fork", 10)
+        .await
+        .expect("original");
+    assert_eq!(original.len(), 3, "the source conversation is unchanged");
+    let title: String =
+        sqlx::query_scalar("SELECT json_extract(data, '$.title') FROM conversations WHERE id = ?")
+            .bind(&fork_id)
+            .fetch_one(pool)
+            .await
+            .expect("fork title");
+    assert_eq!(title, "Original (fork)");
+}
+
 #[tokio::test]
 async fn conversation_summaries_carry_preview_and_count() {
     let storage = temp_storage().await;
@@ -164,6 +334,39 @@ async fn conversation_summaries_carry_preview_and_count() {
     assert_eq!(conv.message_count, 2);
     // Preview comes from the newest message.
     assert_eq!(conv.preview.as_deref(), Some("最後の返答"));
+}
+
+#[tokio::test]
+async fn conversation_pages_use_a_stable_cursor_and_report_more() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    // Same `updatedAt` on purpose: the `id` tie-breaker is what stops a page
+    // boundary from repeating or skipping a row.
+    for id in ["conv-a", "conv-b", "conv-c"] {
+        insert_conversation(pool, id, id).await;
+    }
+    sqlx::query(
+        "UPDATE conversations SET data = json_set(data, '$.updatedAt', '2026-01-02T03:04:05Z')",
+    )
+    .execute(pool)
+    .await
+    .expect("pin timestamps");
+
+    let first = fetch_conversation_summaries_page(pool, 2, None, None)
+        .await
+        .expect("first page");
+    assert_eq!(first.items.len(), 2);
+    assert!(first.has_more, "a third row must set has_more");
+    let first_ids: Vec<&str> = first.items.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(first_ids, vec!["conv-c", "conv-b"]);
+
+    let tail = first.items.last().expect("cursor row");
+    let second = fetch_conversation_summaries_page(pool, 2, Some(&tail.cursor), Some(&tail.id))
+        .await
+        .expect("second page");
+    assert_eq!(second.items.len(), 1);
+    assert!(!second.has_more);
+    assert_eq!(second.items[0].id, "conv-a");
 }
 
 #[tokio::test]
@@ -614,4 +817,56 @@ async fn purge_temporary_run_deletes_a_thread_it_created() {
         .await
         .expect("count conversations");
     assert_eq!(conversations, 0, "a thread created for the turn is removed");
+}
+
+/// The palette/project/approval views no longer need the bounded
+/// `list_conversations`; these point lookups and the title search are what let
+/// them work past 200 threads.
+#[tokio::test]
+async fn conversation_lookup_search_and_stats_see_every_thread() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-a", "Release notes").await;
+    insert_conversation(pool, "conv-b", "Expense report").await;
+    insert_conversation(pool, "conv-c", "100% complete").await;
+    for (id, content) in [("m-a1", "one"), ("m-a2", "two")] {
+        insert_message(
+            pool,
+            id,
+            "conv-a",
+            serde_json::json!({ "role": "user", "content": content }),
+        )
+        .await;
+    }
+
+    let one = fetch_conversation_summary(pool, "conv-a")
+        .await
+        .expect("lookup")
+        .expect("found");
+    assert_eq!(one.title, "Release notes");
+    assert!(fetch_conversation_summary(pool, "absent")
+        .await
+        .expect("lookup")
+        .is_none());
+
+    let stats = fetch_conversation_stats(pool).await.expect("stats");
+    assert_eq!(stats.count, 3);
+    assert_eq!(stats.message_count, 2);
+    assert_eq!(
+        stats.last_activity_at.as_deref(),
+        Some("2026-01-02T03:04:05Z")
+    );
+
+    let hits = search_conversation_summaries(pool, "release", None)
+        .await
+        .expect("search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, "conv-a");
+
+    // LIKE wildcards in the user's query must be literal characters.
+    let literal = search_conversation_summaries(pool, "100%", None)
+        .await
+        .expect("search");
+    assert_eq!(literal.len(), 1);
+    assert_eq!(literal[0].id, "conv-c");
 }

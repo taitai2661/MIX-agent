@@ -128,7 +128,7 @@ def enqueue_scheduled_run(db, owner_id, job, scheduled):
             "auto_priority": settings.data.get("auto_priority", "balanced")
             if requested_model_id == "auto"
             else "balanced",
-            "provider": provider.data,
+            "provider": {**provider.data, "id": provider.id},
             "provider_record_id": provider.id,
             "tool_ids": tool_ids,
             "tools": [available[t] for t in tool_ids if t in available],

@@ -31,13 +31,13 @@ export default defineConfig({
     // Budget: the desktop WebView loads from disk, but the chat path still
     // owns the startup experience — keep the initial chunk small and push
     // everything else into named async chunks (see the `lazy` panes in
-    // App.tsx). Warn at 600 kB per chunk; the main chunk sits just under it
-    // (~590 kB: radix + tauri plugins + lucide icons + app code) and the
-    // markdown chunk (~160 kB) only loads with the transcript.
+    // App.tsx, including ChatPane itself). Warn at 600 kB per chunk; the main
+    // shell chunk is ~480 kB (radix + tauri plugins + lucide icons + shell
+    // code), ChatPane ~156 kB and markdown ~158 kB load as needed.
     // `reportCompressedSize` reports gzip sizes (the honest number for
-    // update-payload cost). Gate: `chunkSizeWarningLimit` fails CI's
-    // size check — do not raise it without moving the weight into a lazy
-    // chunk first (see `manualChunks` below and the `lazy` panes in App.tsx).
+    // update-payload cost). `chunkSizeWarningLimit` is a warning, not a hard
+    // CI failure; do not raise it without moving the weight into a lazy chunk
+    // first (see `manualChunks` below and the `lazy` panes in App.tsx).
     chunkSizeWarningLimit: 600,
     reportCompressedSize: true,
     rollupOptions: {

@@ -159,8 +159,10 @@ Both editions share a unified agent engine with enterprise-grade capabilities:
 - Connect existing MCP servers to expand agent abilities instantly.
 
 ### 5. Skills & Knowledge Base
-- Import and export standard `SKILL.md` (Agent Skills format).
+- Full support for standard `SKILL.md` ([Agent Skills specification](https://agentskills.io/specification)), preserving `license`, `compatibility`, `metadata` and `allowed-tools` through import and export.
+- Discovers `.mix/skills`, `.claude/skills` and `.agents/skills` in the project and in the home directory. `scripts/`, `references/` and `assets/` are read on demand through `skill_resource`; bundled scripts are never executed automatically.
 - Chunk-based text knowledge search and project-specific instructions.
+- See [docs/agent-skills.md](docs/agent-skills.md).
 
 ---
 
@@ -212,6 +214,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 | :--- | :--- |
 | [Documentation Index](docs/README.md) | Full index of `docs/`, placement constraints, and release notes |
 | [Memory Specification](docs/memory-spec.md) | Memory contract shared by both editions |
+| [Agent Skills](docs/agent-skills.md) | Supported `SKILL.md` features, discovery paths, bundled files, and validation |
 | [Desktop README](apps/desktop/README.md) | Desktop edition internals, tool specifications, and packaging |
 | [Architecture Overview](docs/architecture.md) | High-level monorepo architecture and design philosophy |
 | [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) internals, security, and updates |

@@ -56,6 +56,27 @@ def test_budget_extension_to_running_is_valid(signed):
         assert run.status == "running"
 
 
+def test_granted_budget_extension_requeues(signed):
+    # The API path re-queues because ``drive`` refuses running -> running.
+    run_id = _make_run(status="budget_extension_pending")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert transition_run(db, run, "queued", expected_from="budget_extension_pending") is True
+        db.commit()
+    with SessionLocal() as db:
+        assert db.get(Run, run_id).status == "queued"
+
+
+def test_denied_budget_extension_can_complete(signed):
+    run_id = _make_run(status="budget_extension_pending")
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert transition_run(db, run, "completed", expected_from="budget_extension_pending") is True
+        db.commit()
+    with SessionLocal() as db:
+        assert db.get(Run, run_id).status == "completed"
+
+
 def test_terminal_to_budget_extension_is_rejected(signed):
     run_id = _make_run(status="completed")
     with SessionLocal() as db:

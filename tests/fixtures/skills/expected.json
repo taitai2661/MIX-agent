@@ -1,0 +1,51 @@
+{
+  "minimal": {
+    "name": "minimal",
+    "description": "A minimal skill used to pin the parser.",
+    "license": "",
+    "compatibility": "",
+    "metadata": {},
+    "allowed_tools": [],
+    "resources": []
+  },
+  "optional-fields": {
+    "name": "optional-fields",
+    "description": "Extracts data. Use when the task mentions extraction.",
+    "license": "Apache-2.0",
+    "compatibility": "Requires python3 and network access",
+    "metadata": {
+      "author": "example-org",
+      "version": "1.0"
+    },
+    "allowed_tools": ["Read", "Write", "Bash(git:*)"],
+    "resources": []
+  },
+  "multiline": {
+    "name": "multiline",
+    "description": "Draft release notes from a git log. Use when preparing a release.",
+    "license": "",
+    "compatibility": "",
+    "metadata": {},
+    "allowed_tools": [],
+    "resources": []
+  },
+  "bundled": {
+    "name": "bundled",
+    "description": "A skill with scripts, references and assets.",
+    "license": "",
+    "compatibility": "",
+    "metadata": {},
+    "allowed_tools": [],
+    "resources": ["assets/logo.bin", "references/GUIDE.md", "scripts/run.py"]
+  },
+  "legacy": {
+    "name": "legacy-skill",
+    "description": "A legacy plain-Markdown skill.",
+    "license": "",
+    "compatibility": "",
+    "metadata": {},
+    "allowed_tools": [],
+    "resources": [],
+    "desktop_only": true
+  }
+}

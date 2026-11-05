@@ -38,15 +38,20 @@ struct ScriptedProvider {
     /// Every request the engine sent, for asserting on the composed prompt.
     seen: Arc<std::sync::Mutex<Vec<ProviderRequest>>>,
     name: String,
+    billing: mixd_providers::BillingMode,
 }
 
 impl ScriptedProvider {
-    fn new(turns: Vec<Vec<StreamEvent>>) -> Self {
+    fn new_with_billing(
+        turns: Vec<Vec<StreamEvent>>,
+        billing: mixd_providers::BillingMode,
+    ) -> Self {
         Self {
             turns: std::sync::Mutex::new(turns),
             calls: AtomicUsize::new(0),
             seen: Arc::new(std::sync::Mutex::new(Vec::new())),
             name: "scripted".to_string(),
+            billing,
         }
     }
 
@@ -117,6 +122,9 @@ impl Provider for ScriptedProvider {
             reasoning: false,
             streaming: true,
         }
+    }
+    fn billing(&self) -> mixd_providers::BillingMode {
+        self.billing
     }
     async fn stream(&self, req: ProviderRequest) -> anyhow::Result<StreamBox> {
         let index = self.calls.fetch_add(1, Ordering::SeqCst);
@@ -213,6 +221,13 @@ struct Harness {
 
 impl Harness {
     async fn new(turns: Vec<Vec<StreamEvent>>) -> Self {
+        Self::new_with_billing(turns, mixd_providers::BillingMode::Metered).await
+    }
+
+    async fn new_with_billing(
+        turns: Vec<Vec<StreamEvent>>,
+        billing: mixd_providers::BillingMode,
+    ) -> Self {
         let unique = format!(
             "mixd-engine-test-{}-{:?}",
             std::process::id(),
@@ -233,7 +248,7 @@ impl Harness {
             Arc::new(SecretStore::new()),
             tools,
         ));
-        let provider = Arc::new(ScriptedProvider::new(turns));
+        let provider = Arc::new(ScriptedProvider::new_with_billing(turns, billing));
         engine
             .providers
             .register("p1".to_string(), provider.clone())
@@ -342,6 +357,28 @@ async fn a_turn_without_tool_calls_ends_the_run() {
         harness.provider.request_count(),
         1,
         "no extra turn after the answer"
+    );
+}
+
+#[tokio::test]
+async fn a_subscription_provider_records_zero_cost() {
+    let harness = Harness::new_with_billing(
+        vec![text_turn("covered by the subscription")],
+        mixd_providers::BillingMode::Subscription,
+    )
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let outcome = harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.usage.expect("usage").input_tokens, 10);
+    assert_eq!(
+        outcome.totals.estimated_cost_usd,
+        Some(0.0),
+        "a subscription turn must not invent metered cost"
     );
 }
 
@@ -846,6 +883,7 @@ async fn checkpointing_trims_to_its_limit() {
                 name: None,
                 tool_calls: Vec::new(),
                 is_error: false,
+                native: Vec::new(),
             }],
         };
         store
@@ -879,18 +917,25 @@ async fn a_history_message_round_trips_through_serde() {
         name: None,
         tool_calls: vec![call],
         is_error: false,
+        native: vec![serde_json::json!({
+            "type": "reasoning",
+            "encrypted_content": "sealed"
+        })],
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: HistoryMessage = serde_json::from_str(&json).unwrap();
     assert_eq!(back.tool_calls.len(), 1);
     assert_eq!(back.tool_calls[0].id, "c1");
     assert_eq!(back.tool_calls[0].function.name, "edit");
+    assert_eq!(back.native.len(), 1);
+    assert_eq!(back.native[0]["encrypted_content"], "sealed");
 
     // A row written before the field existed must still parse.
     let legacy = r#"{"role":"tool","content":"x","toolCallId":"c1"}"#;
     let back: HistoryMessage = serde_json::from_str(legacy).unwrap();
     assert!(back.tool_calls.is_empty());
     assert!(!back.is_error);
+    assert!(back.native.is_empty());
 }
 
 #[tokio::test]
@@ -906,6 +951,7 @@ async fn resuming_replays_the_checkpointed_history() {
                 name: None,
                 tool_calls: Vec::new(),
                 is_error: false,
+                native: Vec::new(),
             },
             HistoryMessage {
                 role: "assistant".to_string(),
@@ -914,6 +960,10 @@ async fn resuming_replays_the_checkpointed_history() {
                 name: None,
                 tool_calls: Vec::new(),
                 is_error: false,
+                native: vec![serde_json::json!({
+                    "type": "reasoning",
+                    "encrypted_content": "sealed"
+                })],
             },
         ],
     };
@@ -930,6 +980,14 @@ async fn resuming_replays_the_checkpointed_history() {
             .iter()
             .any(|m| m.content == "earlier answer"),
         "the checkpointed history must be replayed: {:?}",
+        seen[0].messages
+    );
+    assert!(
+        seen[0].messages.iter().any(|m| m
+            .native
+            .iter()
+            .any(|item| item["encrypted_content"] == "sealed")),
+        "native provider items must survive a resume: {:?}",
         seen[0].messages
     );
 }
@@ -957,6 +1015,7 @@ async fn a_restored_history_reaches_the_provider_with_its_tool_calls() {
                 name: None,
                 tool_calls: Vec::new(),
                 is_error: false,
+                native: Vec::new(),
             },
             HistoryMessage {
                 role: "assistant".to_string(),
@@ -965,6 +1024,7 @@ async fn a_restored_history_reaches_the_provider_with_its_tool_calls() {
                 name: None,
                 tool_calls: vec![call.clone()],
                 is_error: false,
+                native: Vec::new(),
             },
             HistoryMessage {
                 role: "tool".to_string(),
@@ -973,6 +1033,7 @@ async fn a_restored_history_reaches_the_provider_with_its_tool_calls() {
                 name: Some("glob".to_string()),
                 tool_calls: Vec::new(),
                 is_error: false,
+                native: Vec::new(),
             },
         ],
     };
@@ -1018,6 +1079,7 @@ async fn a_dangling_tool_result_is_pruned_rather_than_sent() {
             tool_call_id: Some("orphan".to_string()),
             name: Some("glob".to_string()),
             is_error: false,
+            native: Vec::new(),
         },
     ];
     let keep = mixd_providers::resolved_history_indices(&messages);
@@ -1071,7 +1133,9 @@ async fn chat_mode_is_offered_no_tools() {
             || s.name == "image_vision"
             || s.name == "git"
             || s.name == "symbols"
+            || s.name == "lsp"
             || s.name == "skill"
+            || s.name == "skill_resource"
             || s.name == "agent"),
         "unexpected tools advertised: {:?}",
         seen.iter().map(|s| &s.name).collect::<Vec<_>>()
@@ -1504,7 +1568,7 @@ impl mixd_tools::skill::SkillSource for RootEchoSkills {
             name: "scoped".into(),
             description: format!("root={}", root.unwrap_or("<none>")),
             body_markdown: "body".into(),
-            allowed_tools: Vec::new(),
+            ..mixd_tools::skill::SkillSummary::default()
         }])
     }
 }

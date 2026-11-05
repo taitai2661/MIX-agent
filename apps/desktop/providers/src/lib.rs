@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
 pub mod anthropic;
+pub mod chatgpt;
 pub mod discovery;
 pub mod dsml;
 pub mod gemini;
@@ -50,6 +51,14 @@ pub struct ProviderRequest {
     pub reasoning: Option<ReasoningControl>,
     #[serde(default)]
     pub stream: bool,
+    /// Stable conversation identity for transports that need it.
+    ///
+    /// The ChatGPT/Codex transport uses this for `session-id` / `thread-id` and
+    /// as the prompt-cache key. Other adapters ignore it. Keeping it separate
+    /// from `model`/messages means two conversations that start with the same
+    /// text never share a provider-side thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     /// Context window the engine wants this turn to use. Only the native
     /// Ollama transport can honour it per request (`options.num_ctx`); other
     /// adapters ignore it.
@@ -77,6 +86,15 @@ pub struct Message {
     /// and the stagnation detector uses it to notice a stuck agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_error: bool,
+    /// Raw provider items for an assistant turn. The Responses transport needs
+    /// its reasoning/function-call items replayed on the next tool turn; other
+    /// adapters ignore this field.
+    ///
+    /// Persisted through `HistoryMessage.native` (with a size cap) so a resumed
+    /// conversation can replay the same items instead of reconstructing a tool
+    /// turn without the reasoning item the provider requires.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native: Vec<serde_json::Value>,
 }
 
 impl Message {
@@ -88,6 +106,7 @@ impl Message {
             tool_call_id: None,
             name: None,
             is_error: false,
+            native: Vec::new(),
         }
     }
 
@@ -103,7 +122,14 @@ impl Message {
             tool_call_id: None,
             name: None,
             is_error: false,
+            native: Vec::new(),
         }
+    }
+
+    /// Attach raw Responses items to an assistant turn.
+    pub fn with_native(mut self, native: Vec<serde_json::Value>) -> Self {
+        self.native = native;
+        self
     }
 
     /// The result of executing one tool call.
@@ -119,6 +145,7 @@ impl Message {
             tool_call_id: Some(call.id.clone()),
             name: Some(call.function.name.clone()),
             is_error,
+            native: Vec::new(),
         }
     }
 }
@@ -236,6 +263,8 @@ pub enum StreamEvent {
         name: String,
         arguments: String,
     },
+    /// Raw items from a Responses completion, replayed on the next tool turn.
+    NativeOutput(Vec<serde_json::Value>),
     Finished {
         finish_reason: String,
         usage: Option<Usage>,
@@ -270,6 +299,43 @@ pub struct ProviderCapabilities {
     pub tool_calling: bool,
     pub reasoning: bool,
     pub streaming: bool,
+}
+
+/// How a provider bills a turn. A subscription turn records $0 for the cost
+/// meter while still reporting token counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BillingMode {
+    #[default]
+    Metered,
+    Subscription,
+}
+
+/// One usage window from a ChatGPT/Codex quota snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct QuotaWindow {
+    pub id: String,
+    pub used_percent: f64,
+    pub window_minutes: u64,
+    pub window_seconds: u64,
+    pub resets_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct QuotaCredits {
+    pub has_credits: bool,
+    pub unlimited: bool,
+    pub balance: String,
+}
+
+/// Normalized remaining-usage snapshot shown by the Desktop UI.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct QuotaSnapshot {
+    pub plan_type: String,
+    /// Unix seconds when MIX fetched this snapshot.
+    pub captured_at: u64,
+    pub windows: Vec<QuotaWindow>,
+    pub credits: Option<QuotaCredits>,
+    pub limit_reached: bool,
 }
 
 /// Returned by [`Provider::embed`] when a transport has no embeddings endpoint.
@@ -307,6 +373,21 @@ pub trait Provider: Send + Sync {
     fn label(&self) -> &str;
     fn capabilities(&self) -> ProviderCapabilities;
     async fn stream(&self, req: ProviderRequest) -> anyhow::Result<StreamBox>;
+
+    /// How this provider bills a turn. Defaults to metered API pricing.
+    fn billing(&self) -> BillingMode {
+        BillingMode::Metered
+    }
+
+    /// Latest ChatGPT/Codex usage snapshot, when the transport supports it.
+    async fn quota(&self) -> anyhow::Result<Option<QuotaSnapshot>> {
+        Ok(None)
+    }
+
+    /// Force a fresh quota read, bypassing the transport's cache.
+    async fn refresh_quota(&self) -> anyhow::Result<Option<QuotaSnapshot>> {
+        self.quota().await
+    }
 
     /// Embed `texts` with `model`, returning one vector per input, in order.
     ///
@@ -360,6 +441,7 @@ pub async fn probe_tool_calling(provider: &dyn Provider, model: &str) -> anyhow:
         max_tokens: Some(64),
         reasoning: None,
         stream: true,
+        session_id: None,
         context_window: None,
         keep_alive: None,
     };

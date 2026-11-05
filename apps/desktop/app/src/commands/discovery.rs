@@ -305,6 +305,7 @@ pub async fn import_local_runtime(
                 state.secrets.as_ref(),
                 &id,
                 &stored_kind,
+                stored_preset.as_deref(),
                 &base_url,
                 true,
             )
@@ -318,6 +319,10 @@ pub async fn import_local_runtime(
             enabled,
             has_api_key: false,
             preset: stored_preset.or(Some(slug.clone())),
+            auth: None,
+            status: None,
+            billing_mode: None,
+            dedicated: false,
         }
     } else {
         // `insert_provider` writes the row *and* puts the adapter in the live

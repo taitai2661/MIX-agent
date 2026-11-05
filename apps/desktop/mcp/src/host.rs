@@ -573,10 +573,16 @@ impl McpHost {
 
     /// Connect every enabled session and report the aggregated tool count.
     pub async fn connect_all(&self) -> anyhow::Result<usize> {
+        /// One unreachable server must not hold the whole background pass.
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
         let sessions: Vec<Arc<Session>> = self.sessions.read().await.values().cloned().collect();
         let mut total = 0;
         for session in sessions {
-            match session.connect().await {
+            let result = match timeout(CONNECT_TIMEOUT, session.connect()).await {
+                Ok(result) => result.map_err(|reason| reason.to_string()),
+                Err(_) => Err("connect timed out".to_string()),
+            };
+            match result {
                 Ok(()) => {
                     total += session.tools.read().await.len();
                 }
@@ -586,9 +592,7 @@ impl McpHost {
                         %reason,
                         "MCP session could not be connected"
                     );
-                    *session.status.write().await = ConnectionStatus::Failed {
-                        reason: reason.to_string(),
-                    };
+                    *session.status.write().await = ConnectionStatus::Failed { reason };
                 }
             }
         }

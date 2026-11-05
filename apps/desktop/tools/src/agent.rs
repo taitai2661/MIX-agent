@@ -35,7 +35,7 @@ pub struct AgentProfile {
 }
 
 /// A finished sub-run, handed back to the parent.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct DelegateResult {
     pub agent: String,
     pub text: String,
@@ -43,6 +43,17 @@ pub struct DelegateResult {
     pub tool_calls: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Temporary worktree the sub-agent ran in, when the implementation keeps
+    /// one. The built-in isolated delegate removes its worktree before
+    /// returning, so it reports `None` and relies on `diff`/`changed_files`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    /// Unified diff produced in that worktree (truncated for the transcript).
+    /// The parent can apply it or review the changed files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_files: Vec<String>,
 }
 
 /// Supplies the saved profiles. Implemented by the app shell.
@@ -61,6 +72,18 @@ pub trait AgentRunner: Send + Sync {
         profile: &AgentProfile,
         task: &str,
     ) -> anyhow::Result<DelegateResult>;
+
+    /// Run in a throwaway git worktree. The default falls back to `delegate`
+    /// so a runner without git support still works; the app runner overrides
+    /// it and reports the diff.
+    async fn delegate_isolated(
+        &self,
+        parent: &ToolContext,
+        profile: &AgentProfile,
+        task: &str,
+    ) -> anyhow::Result<DelegateResult> {
+        self.delegate(parent, profile, task).await
+    }
 }
 
 pub struct AgentTool {
@@ -148,6 +171,10 @@ impl Tool for AgentTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Several independent tasks to run in parallel. Prefer this over repeated calls when the sub-tasks do not depend on each other."
+                },
+                "isolate": {
+                    "type": "boolean",
+                    "description": "Run in a throwaway git worktree so parallel edits cannot collide. Defaults to true when `tasks` is used. The parent receives the diff and changed file list; nothing is merged automatically."
                 }
             }
         })
@@ -225,9 +252,18 @@ impl Tool for AgentTool {
             });
         }
 
+        // Fan-out almost always means independent edits; isolate those by
+        // default. A single delegation stays in the parent workspace unless the
+        // caller asks otherwise (a worktree round-trip is measurable on a large
+        // repository and pointless for a read-only explorer).
+        let isolate = args
+            .get("isolate")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(tasks.len() > 1);
+
         if tasks.len() == 1 {
             let task = tasks.remove(0);
-            return Ok(self.delegate_one(&ctx, profile, task).await);
+            return Ok(self.delegate_one(&ctx, profile, task, isolate).await);
         }
 
         // Fan-out: independent sub-tasks run at the same time. Each one still
@@ -240,7 +276,9 @@ impl Tool for AgentTool {
             let mut in_flight = futures_util::stream::FuturesUnordered::new();
             for task in chunk {
                 in_flight.push(async move {
-                    let outcome = self.delegate_one(ctx_ref, profile, task.clone()).await;
+                    let outcome = self
+                        .delegate_one(ctx_ref, profile, task.clone(), isolate)
+                        .await;
                     (task.clone(), outcome)
                 });
             }
@@ -270,8 +308,14 @@ impl AgentTool {
         ctx: &ToolContext,
         profile: &AgentProfile,
         task: String,
+        isolate: bool,
     ) -> ToolResult {
-        match self.runner.delegate(ctx, profile, &task).await {
+        let outcome = if isolate {
+            self.runner.delegate_isolated(ctx, profile, &task).await
+        } else {
+            self.runner.delegate(ctx, profile, &task).await
+        };
+        match outcome {
             Ok(result) => {
                 let failed = result.error.is_some();
                 ToolResult {
@@ -324,6 +368,7 @@ mod tests {
                 steps: 3,
                 tool_calls: vec!["grep".into()],
                 error: None,
+                ..Default::default()
             })
         }
     }
@@ -344,6 +389,7 @@ mod tests {
                 steps: 0,
                 tool_calls: Vec::new(),
                 error: Some(format!("{} ran out of budget", profile.name)),
+                ..Default::default()
             })
         }
     }

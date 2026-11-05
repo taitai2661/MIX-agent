@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import {
   Archive,
+  Bot,
   BookOpen,
   Brain,
   Globe,
@@ -34,6 +35,7 @@ import { GeneralSettings } from "./GeneralSettings";
 import { NetworkSettings } from "./NetworkSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { BackupSettings } from "./BackupSettings";
+import { ChatGptPane } from "@/features/providers/ChatGptPane";
 import { ProvidersPane } from "@/features/providers/ProvidersPane";
 import { ModelsPane } from "@/features/providers/ModelsPane";
 import { ToolsPane } from "@/features/tools/ToolsPane";
@@ -66,6 +68,7 @@ const SETTINGS_NAV: { title: string; tabs: SettingsTabEntry[] }[] = [
   {
     title: "構成",
     tabs: [
+      { id: "chatgpt", label: "ChatGPT", icon: <Bot size={15} /> },
       { id: "providers", label: "プロバイダー", icon: <Layers size={15} /> },
       { id: "models", label: "モデル", icon: <Sparkles size={15} /> },
       { id: "tools", label: "ツール", icon: <Wrench size={15} /> },
@@ -272,6 +275,7 @@ export function SettingsPane() {
             {activeTab === "network" && <NetworkSettings />}
             {activeTab === "updates" && <UpdateSettings />}
             {activeTab === "backup" && <BackupSettings />}
+            {activeTab === "chatgpt" && <ChatGptPane />}
             {activeTab === "providers" && <ProvidersPane />}
             {activeTab === "models" && <ModelsPane />}
             {activeTab === "tools" && <ToolsPane />}

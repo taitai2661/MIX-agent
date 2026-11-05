@@ -16,6 +16,7 @@
 //! stored, and that is the same "no key configured" state these tests want.
 
 use mix_agent_desktop::commands::models::{delete_models_for_provider, fetch_models};
+use mix_agent_desktop::commands::providers::provider_presets;
 use mix_agent_desktop::{register_adapter, resolve_provider_for_model};
 use mixd_core::runs::engine::ProviderRegistry;
 use mixd_storage::records::SINGLE_USER_ID;
@@ -82,6 +83,7 @@ async fn registering_an_adapter_makes_the_models_prefix_resolvable() {
         &secrets,
         &id,
         "compatible",
+        None,
         "http://127.0.0.1:9/v1",
         true,
     )
@@ -96,6 +98,31 @@ async fn registering_an_adapter_makes_the_models_prefix_resolvable() {
             .await
             .expect("resolve");
     assert_eq!(resolved, id);
+}
+
+/// A legacy row can carry `kind: openai` (the Docker catalogue's shape) and
+/// still be the ChatGPT integration via `preset: chatgpt`; routing on `kind`
+/// alone used to build an API-key adapter for it. New rows use
+/// `kind: chatgpt`, but existing installations must keep working.
+#[tokio::test]
+async fn a_legacy_chatgpt_preset_row_is_registered_with_the_chatgpt_adapter() {
+    let secrets = SecretStore::new();
+    let registry = ProviderRegistry::default();
+    let id = Uuid::new_v4().to_string();
+
+    register_adapter(
+        &registry,
+        &secrets,
+        &id,
+        "openai",
+        Some("chatgpt"),
+        mixd_providers::chatgpt::BASE_URL,
+        true,
+    )
+    .await;
+
+    let provider = registry.get(&id).await.expect("adapter registered");
+    assert_eq!(provider.label(), "ChatGPT (Codex)");
 }
 
 /// The reported failure: a provider that exists in the table but was never put
@@ -140,6 +167,7 @@ async fn a_disabled_provider_is_neither_registered_nor_hydrated() {
         &secrets,
         &id,
         "compatible",
+        None,
         "http://127.0.0.1:9/v1",
         false,
     )
@@ -171,6 +199,7 @@ async fn disabling_takes_the_live_adapter_out_of_the_registry() {
         &secrets,
         &id,
         "compatible",
+        None,
         "http://127.0.0.1:9/v1",
         true,
     )
@@ -182,6 +211,7 @@ async fn disabling_takes_the_live_adapter_out_of_the_registry() {
         &secrets,
         &id,
         "compatible",
+        None,
         "http://127.0.0.1:9/v1",
         false,
     )
@@ -229,6 +259,7 @@ async fn a_bare_model_id_falls_back_to_a_registered_provider() {
         &secrets,
         &id,
         "compatible",
+        None,
         "http://127.0.0.1:9/v1",
         true,
     )
@@ -384,4 +415,16 @@ async fn a_tagged_local_model_is_stored_and_removed_as_whole() {
         .await
         .expect("delete");
     assert!(fetch_models(storage.pool()).await.expect("list").is_empty());
+}
+
+/// ChatGPT is a dedicated connection, not a provider preset. A preset entry
+/// made it possible to create a second row from the generic form with a
+/// different label/base URL and no acknowledgement.
+#[tokio::test]
+async fn chatgpt_is_not_a_provider_preset() {
+    let presets = provider_presets().await.expect("presets");
+    assert!(
+        !presets.iter().any(|preset| preset.slug == "chatgpt"),
+        "the ChatGPT integration must live in its own settings tab"
+    );
 }

@@ -9,7 +9,10 @@ import { ProjectsPane } from "./ProjectsPane";
 vi.mock("@/lib/api", () => ({
   api: {
     listProjects: vi.fn(async () => []),
-    listConversations: vi.fn(async () => []),
+    listConversationsForProject: vi.fn(async () => ({
+      items: [],
+      has_more: false,
+    })),
     createProject: vi.fn(async () => ({
       id: "p1",
       name: "demo",

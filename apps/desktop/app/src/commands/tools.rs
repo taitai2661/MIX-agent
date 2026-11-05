@@ -236,6 +236,9 @@ pub struct PendingApprovalView {
     /// to a task the user cannot identify.
     pub conversation_id: Option<String>,
     pub conversation_title: Option<String>,
+    /// Mode of the thread so the UI can switch to the right surface without
+    /// looking the conversation up in a bounded list.
+    pub conversation_mode: Option<String>,
 }
 
 #[tauri::command]
@@ -248,8 +251,9 @@ pub async fn list_pending_approvals(
         let run_id = p.run_id.to_string();
         // One point lookup per pending prompt (there are only ever a handful).
         // The join is what gives the approval queue its task context.
-        let context: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT r.conversation_id, json_extract(c.data, '$.title') \
+        let context: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT r.conversation_id, json_extract(c.data, '$.title'), \
+                    json_extract(c.data, '$.mode') \
              FROM runs r LEFT JOIN conversations c ON c.id = r.conversation_id \
              WHERE r.id = ?",
         )
@@ -257,7 +261,8 @@ pub async fn list_pending_approvals(
         .fetch_optional(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
-        let (conversation_id, conversation_title) = context.unwrap_or((None, None));
+        let (conversation_id, conversation_title, conversation_mode) =
+            context.unwrap_or((None, None, None));
         out.push(PendingApprovalView {
             approval_id: p.approval_id,
             run_id,
@@ -268,6 +273,7 @@ pub async fn list_pending_approvals(
             expires_at: p.expires_at.to_rfc3339(),
             conversation_id,
             conversation_title,
+            conversation_mode,
         });
     }
     Ok(out)

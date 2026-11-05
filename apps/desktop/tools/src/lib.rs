@@ -17,6 +17,7 @@ pub mod files;
 pub mod git;
 pub mod image_vision;
 pub mod knowledge;
+pub mod lsp;
 pub mod memory;
 pub mod network;
 pub mod pdf;
@@ -125,6 +126,13 @@ pub trait Tool: Send + Sync {
 
     async fn invoke(&self, ctx: ToolContext, args: serde_json::Value)
         -> anyhow::Result<ToolResult>;
+
+    /// Release resources that have been idle for a while.
+    ///
+    /// Called by a low-frequency housekeeping loop, not on the tool path.
+    /// Tools that hold a subprocess (the language server) override it; the
+    /// default is a no-op.
+    async fn idle_sweep(&self) {}
 }
 
 pub use egress::EgressPolicy;

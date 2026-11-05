@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.5.5
+Run with: python scripts/render_zimaos_compose.py v0.5.6
 PyYAML is required for this maintainer-only script.
 """
 
@@ -20,6 +20,7 @@ OUTS = (ROOT / "apps/MIX-agent/docker-compose.yml",)
 PACKAGE = "ghcr.io/taitai2661/mix-agent"
 TARGETS = {
     "init": "init",
+    "migrate": "app",
     "app": "app",
     "execution-runner": "execution",
     "browser-runner": "browser-runner",
@@ -41,6 +42,22 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
+    "v0.5.6": {
+        "update_at": "2026-11-04",
+        "notes": {
+            "en_US": (
+                "Feature release: unofficial ChatGPT/Codex subscription support, "
+                "language-server diagnostics, Agent Skills resources, launch at "
+                "login, Git-backed run rollback, conversation search and paging, "
+                "and UI performance work."
+            ),
+            "ja_JP": (
+                "機能リリース。ChatGPT/Codex使用枠の非公式連携、言語サーバー診断、"
+                "Agent Skillsの同梱ファイル対応、ログイン時起動、Git連携のRun取り消し、"
+                "会話検索とページング、UIの高速化を追加。"
+            ),
+        },
+    },
     "v0.5.5": {
         "update_at": "2026-10-31",
         "notes": {

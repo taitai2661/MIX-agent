@@ -28,8 +28,8 @@ use crate::runs::verification::{
     destructive_reason, exit_code_of, mutated_paths, VerificationLedger,
 };
 use mixd_providers::{
-    AssistantToolCall, AssistantToolCallFn, Message, Provider, ProviderRequest, ReasoningControl,
-    StreamEvent, ToolSpec, Usage,
+    AssistantToolCall, AssistantToolCallFn, BillingMode, Message, Provider, ProviderRequest,
+    ReasoningControl, StreamEvent, ToolSpec, Usage,
 };
 use mixd_storage::Storage;
 use mixd_tools::approval::ApprovalOutcome;
@@ -404,6 +404,13 @@ pub struct HistoryMessage {
     /// view of what went wrong.
     #[serde(default)]
     pub is_error: bool,
+    /// Raw Responses items for an assistant turn (encrypted reasoning plus the
+    /// function calls it requested). Only the ChatGPT/Codex transport reads
+    /// them, and they are persisted so a resumed conversation can replay the
+    /// same items instead of reconstructing a tool turn without its reasoning.
+    /// Empty for every other provider and for rows written before this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native: Vec<serde_json::Value>,
 }
 
 #[derive(Debug)]

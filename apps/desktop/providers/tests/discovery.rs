@@ -32,13 +32,20 @@ async fn serve(routes: HashMap<&'static str, String>) -> (u16, tokio::task::Join
                     .and_then(|line| line.split_whitespace().nth(1))
                     .unwrap_or("/")
                     .to_string();
+                // `connection: close` matters: this fixture closes the socket
+                // after one response, but without the header reqwest treats it
+                // as a keep-alive connection and may reuse it for the next
+                // probe, which intermittently failed with a reset/404.
                 let response = match routes.get(path.as_str()) {
                     Some(body) => format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
                         body.len(),
                         body
                     ),
-                    None => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".to_string(),
+                    None => {
+                        "HTTP/1.1 404 Not Found\r\nconnection: close\r\ncontent-length: 0\r\n\r\n"
+                            .to_string()
+                    }
                 };
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.flush().await;

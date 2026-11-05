@@ -186,11 +186,32 @@ async fn run_git(root: &std::path::Path, args: &[&str]) -> Result<std::process::
     // the two in step; see the cross-reference there.
     use tokio::process::Command;
     let mut cmd = Command::new("git");
-    cmd.args(args)
+    cmd.arg("-c")
+        .arg("core.fsmonitor=false")
+        .arg("-c")
+        .arg("core.hooksPath=/dev/null")
+        .arg("-c")
+        .arg("core.untrackedCache=false")
+        .args(args)
         .current_dir(root)
+        // A repository's own `.git/config` is attacker-controlled when the
+        // user opens an untrusted project. `core.fsmonitor` would run an
+        // arbitrary program on every `git status`; hooks and the environment
+        // variables below are the other code-execution paths into git.
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_EXTERNAL_DIFF")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("GIT_SSH_COMMAND")
+        .env_remove("GIT_PROXY_COMMAND")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -204,19 +225,71 @@ async fn run_git(root: &std::path::Path, args: &[&str]) -> Result<std::process::
     .map_err(crate::error::cmd_err)
 }
 
+/// Branch names are re-read at most this often. `git status` is polled every
+/// 15 s, and `rev-parse` used to be a second subprocess on every poll even
+/// though the branch changes far less often.
+const BRANCH_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn branch_cache() -> &'static std::sync::Mutex<
+    std::collections::HashMap<std::path::PathBuf, (std::time::Instant, String)>,
+> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<
+            std::collections::HashMap<std::path::PathBuf, (std::time::Instant, String)>,
+        >,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+async fn current_branch(root: &std::path::Path) -> Option<String> {
+    if let Ok(cache) = branch_cache().lock() {
+        if let Some((at, branch)) = cache.get(root) {
+            if at.elapsed() < BRANCH_CACHE_TTL {
+                return Some(branch.clone());
+            }
+        }
+    }
+    let branch = run_git(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())?;
+    if branch.is_empty() {
+        return None;
+    }
+    if let Ok(mut cache) = branch_cache().lock() {
+        cache.insert(
+            root.to_path_buf(),
+            (std::time::Instant::now(), branch.clone()),
+        );
+    }
+    Some(branch)
+}
+
 /// `git status --porcelain` for the file tree decorations.
+///
+/// `all_untracked` controls `-uall` (one record per untracked file) versus
+/// `-unormal` (untracked directories collapsed to one entry). The file tree
+/// and titlebar only need the directory marker, so they use the cheap form;
+/// the Changes pane opts into `-uall` because it lists individual files.
 #[tauri::command]
 pub async fn git_status(
     app: AppHandle,
     state: State<'_, AppState>,
     root_path: String,
+    all_untracked: Option<bool>,
 ) -> Result<GitStatusView, String> {
     let root = resolve_root(&app, &state, &root_path).await?;
     // `-z` returns paths verbatim (space-separated records are NUL terminated).
     // Without it git C-quotes names with spaces or non-ASCII characters
     // (`"my notes.md"`, `"\346\227\245..."`); the UI then displayed the quotes
     // and passed them back to `git diff`, which matched nothing.
-    let output = match run_git(&root, &["status", "--porcelain=v1", "-z", "-uall"]).await {
+    let untracked = if all_untracked.unwrap_or(false) {
+        "-uall"
+    } else {
+        "-unormal"
+    };
+    let output = match run_git(&root, &["status", "--porcelain=v1", "-z", untracked]).await {
         Ok(output) => output,
         Err(_) => {
             return Ok(GitStatusView {
@@ -234,11 +307,7 @@ pub async fn git_status(
             entries: Vec::new(),
         });
     }
-    let branch = run_git(&root, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .await
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let branch = current_branch(&root).await;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(GitStatusView {
@@ -314,7 +383,7 @@ pub async fn git_diff(
     path: Option<String>,
 ) -> Result<GitDiffView, String> {
     let root = resolve_root(&app, &state, &root_path).await?;
-    let mut args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-color"];
+    let mut args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
     let path = path.filter(|p| !p.trim().is_empty());
     match scope.as_str() {
         "staged" => args.push("--cached"),

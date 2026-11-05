@@ -8,4 +8,10 @@
 **/dist
 **/__pycache__
 **/.pytest_cache
+**/target
+**/coverage
+**/.ruff_cache
 test-results
+playwright-report
+**/*.log
+.DS_Store

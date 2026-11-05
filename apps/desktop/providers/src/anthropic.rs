@@ -761,6 +761,7 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             stream: true,
+            session_id: None,
             context_window: None,
             keep_alive: None,
         }
@@ -899,6 +900,7 @@ mod tests {
                 tool_call_id: Some("missing".into()),
                 name: Some("edit".into()),
                 is_error: false,
+                native: Vec::new(),
             },
         ]));
         assert_eq!(messages.len(), 1);

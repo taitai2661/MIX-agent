@@ -35,6 +35,52 @@ pub async fn revert_run(state: State<'_, AppState>, run_id: String) -> Result<us
         .map_err(crate::error::cmd_err)
 }
 
+/// What a Git-backed rollback would touch for this Run.
+///
+/// `available: false` means the workspace is not a Git repository or the Run
+/// predates baseline capture; the activity panel then keeps the old
+/// edit/files-only wording.
+#[tauri::command]
+pub async fn run_workspace_changes(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<crate::workspace_baseline::WorkspaceChanges, String> {
+    let id = crate::workspace_baseline::parse_run_id(&run_id)?;
+    crate::workspace_baseline::changes(state.storage.pool(), id).await
+}
+
+/// Revert the Run through the Git baseline first, then the engine's in-memory
+/// edit/files snapshots.
+///
+/// The Git pass is what makes terminal-created files and renames recoverable.
+/// It restores the whole worktree to the pre-Run snapshot, so the UI must warn
+/// that edits made after the Run are lost as well.
+#[tauri::command]
+pub async fn revert_run_workspace(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<usize, String> {
+    let id = crate::workspace_baseline::parse_run_id(&run_id)?;
+    let live: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM runs WHERE id = ? AND status IN \
+         ('queued','running','waiting_approval','budget_extension_pending')",
+    )
+    .bind(id.to_string())
+    .fetch_optional(state.storage.pool())
+    .await
+    .map_err(crate::error::cmd_err)?;
+    if live.is_some() {
+        return Err("実行中のRunは取り消せません。先に停止してください。".to_string());
+    }
+    let git_touched = crate::workspace_baseline::revert(state.storage.pool(), id).await?;
+    let file_touched = state
+        .engine
+        .revert_run(id)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    Ok(git_touched + file_touched)
+}
+
 #[tauri::command]
 pub async fn get_run(state: State<'_, AppState>, id: String) -> Result<RunView, String> {
     let run_id = Uuid::parse_str(&id).map_err(crate::error::cmd_err)?;
@@ -271,6 +317,16 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
     let project =
         crate::commands::projects::load_project_runtime(state.storage.pool(), &conversation_id)
             .await?;
+
+    // A resumed Run that never had a baseline (it predates the feature, or the
+    // original workspace was not a Git repo) gets one now, so the part that
+    // this resume changes is still revertible.
+    crate::workspace_baseline::capture_and_store(
+        state.storage.pool(),
+        project.root_path.as_deref(),
+        run_id,
+    )
+    .await;
 
     let context_window =
         crate::commands::projects::context_window_for(state.storage.pool(), &model_id).await;

@@ -71,6 +71,18 @@ fn output_is_capped_with_a_visible_marker() {
 }
 
 #[test]
+fn truncating_keeps_the_end_where_errors_live() {
+    let mut text = "start\n".to_string();
+    text.push_str(&"a".repeat(MAX_OUTPUT_BYTES * 2));
+    text.push_str("\nFINAL ERROR: boom\n");
+    let out = truncate_output(&text);
+    assert!(out.starts_with("start"));
+    assert!(out.ends_with("FINAL ERROR: boom\n"));
+    assert!(out.contains("[truncated:"));
+    assert!(out.len() < text.len());
+}
+
+#[test]
 fn truncating_multibyte_output_does_not_panic() {
     // Byte `MAX_OUTPUT_BYTES` is not a character boundary when the output is
     // Japanese, and slicing there panicked — the release profile aborts.
@@ -349,6 +361,67 @@ async fn two_runs_in_one_workspace_do_not_share_a_shell() {
     assert!(
         third_out.contains("sub"),
         "the first Run must keep its own cwd, got {third_out:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn send_input_writes_to_the_live_shell_and_returns_new_output() {
+    let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+    let tool = TerminalTool::default();
+    let (context, dir) = ctx_for("send-input");
+
+    let first = tool
+        .invoke(
+            context.clone(),
+            serde_json::json!({
+                "command": "printf 'ready\\n'",
+                "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
+            }),
+        )
+        .await
+        .expect("start shell");
+    if first.content["persistent"] != true {
+        std::fs::remove_dir_all(&dir).ok();
+        return; // no PTY on this platform
+    }
+
+    let sent = tool
+        .invoke(
+            context.clone(),
+            serde_json::json!({
+                "action": "send",
+                "input": "echo interactive-ok",
+                "wait_ms": 750,
+            }),
+        )
+        .await
+        .expect("send");
+    assert!(sent.ok, "send failed: {:?}", sent.error);
+    let output = sent.content["output"].as_str().unwrap_or_default();
+    assert!(
+        output.contains("interactive-ok"),
+        "send must return the shell's new output, got {output:?}"
+    );
+
+    // A second send must not replay the first send's bytes.
+    let sent_again = tool
+        .invoke(
+            context,
+            serde_json::json!({
+                "action": "send",
+                "input": "echo second-ok",
+                "wait_ms": 750,
+            }),
+        )
+        .await
+        .expect("second send");
+    let output_again = sent_again.content["output"].as_str().unwrap_or_default();
+    assert!(output_again.contains("second-ok"));
+    assert!(
+        !output_again.contains("interactive-ok"),
+        "send returned already-consumed output: {output_again:?}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -677,5 +750,21 @@ fn windows_paths_are_normalized_at_the_git_bash_boundary() {
     assert_eq!(
         normalize_windows_path(unc_path),
         PathBuf::from(r"\\server\share\project")
+    );
+}
+
+#[test]
+fn send_action_exposes_its_input_to_pattern_rules() {
+    let tool = TerminalTool::default();
+    assert_eq!(
+        tool.pattern_target(&serde_json::json!({
+            "action": "send",
+            "input": "rm -rf build"
+        })),
+        Some("rm -rf build".to_string())
+    );
+    assert_eq!(
+        tool.pattern_target(&serde_json::json!({"command": "cargo test"})),
+        Some("cargo test".to_string())
     );
 }

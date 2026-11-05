@@ -65,6 +65,36 @@ export const ERROR_CODES_EN: Record<string, string> = {
   "auth.login_required": "Please sign in.",
   "mcp.local_only": "This action is available only for local MCP servers.",
   "provider.unknown_preset": "Unknown provider preset.",
+  "provider.chatgpt_not_provider":
+    "This provider is not the ChatGPT integration.",
+  "provider.chatgpt_url_locked":
+    "The ChatGPT connection URL cannot be changed.",
+  "provider.chatgpt_consent_required":
+    "The ChatGPT integration is unofficial. Accept the risk before creating it.",
+  "provider.chatgpt_consent_required_update":
+    "The ChatGPT integration is unofficial. Accept the risk before saving it.",
+  "provider.chatgpt_disabled":
+    "Enable the unofficial ChatGPT integration in Settings before using it.",
+  "provider.chatgpt_login_not_found":
+    "The ChatGPT sign-in session could not be found. Please sign in again.",
+  "provider.chatgpt_quota_unavailable":
+    "ChatGPT usage is not available right now.",
+  "provider.chatgpt_auth_required": "ChatGPT needs you to sign in again.",
+  "provider.chatgpt_auth_expired":
+    "The ChatGPT sign-in expired. Please sign in again.",
+  "provider.chatgpt_device_unavailable":
+    "Device-code sign-in is not available for this ChatGPT account.",
+  "provider.chatgpt_device_failed":
+    "Could not start the ChatGPT sign-in. Please try again.",
+  "provider.chatgpt_login_failed": "ChatGPT sign-in failed.",
+  "provider.chatgpt_login_expired":
+    "The sign-in expired. Please sign in again.",
+  "provider.chatgpt_quota_failed": "Could not read the usage windows.",
+  "provider.chatgpt_rate_limited": "The ChatGPT usage limit has been reached.",
+  "provider.chatgpt_refresh_failed": "Could not refresh the ChatGPT sign-in.",
+  "provider.chatgpt_credentials_save_failed":
+    "Could not save the ChatGPT credentials.",
+  "provider.chatgpt_failed": "The ChatGPT request failed.",
   "run.resume_interrupted_only": "Only interrupted runs can be resumed.",
   "run.not_awaiting_budget": "This run is not waiting for a budget extension.",
   "mcp.retained_data_unavailable":

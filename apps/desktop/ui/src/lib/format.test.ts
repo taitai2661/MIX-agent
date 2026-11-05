@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatTokens,
   relativeTime,
+  resetTime,
   threadGroup,
 } from "./format";
 import { setLanguage } from "./i18n";
@@ -36,6 +37,28 @@ describe("relativeTime", () => {
 
   it("returns empty for invalid input", () => {
     expect(relativeTime("not-a-date")).toBe("");
+  });
+});
+
+describe("resetTime", () => {
+  it("renders UTC reset boundaries in the requested zone with the UTC clock", () => {
+    // 2026-01-01T00:00:00Z is 09:00 on the same day in Japan.
+    const label = resetTime(1767225600, "Asia/Tokyo");
+    expect(label).toContain("09:00");
+    expect(label).toContain("Asia/Tokyo");
+    expect(label).toContain("UTC 00:00");
+  });
+
+  it("rolls the calendar day forward when UTC is still the previous day", () => {
+    // 2026-01-01T15:00:00Z is 2026-01-02 00:00 in Japan.
+    const label = resetTime(1767279600, "Asia/Tokyo");
+    expect(label).toContain("01/02");
+    expect(label).toContain("UTC 15:00");
+  });
+
+  it("returns an empty label for an unknown reset time", () => {
+    expect(resetTime(0)).toBe("");
+    expect(resetTime(Number.NaN)).toBe("");
   });
 });
 

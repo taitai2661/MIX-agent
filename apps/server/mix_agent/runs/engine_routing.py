@@ -75,7 +75,7 @@ async def reroute_after_provider_error(db, run, request_key, error, classificati
         **snapshot,
         "model_id": model.data["model_id"],
         "model_record_id": model.id,
-        "provider": provider.data,
+        "provider": {**provider.data, "id": provider.id},
         "provider_record_id": provider.id,
         "reasoning": reasoning,
     }
@@ -231,7 +231,7 @@ def _reevaluate_auto_model(db, run, snapshot, available):
             **snapshot,
             "model_id": model.data["model_id"],
             "model_record_id": model.id,
-            "provider": provider.data,
+            "provider": {**provider.data, "id": provider.id},
             "provider_record_id": provider.id,
             "reasoning": reasoning,
             "context_window_info": context_budget.resolve_window(model.data, snapshot),

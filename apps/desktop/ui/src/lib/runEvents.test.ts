@@ -460,6 +460,38 @@ describe("replay truncation", () => {
   });
 });
 
+describe("context compaction", () => {
+  it("records a summary event and ignores retrieval statistics", () => {
+    let timeline = createTimeline("run-1");
+    timeline = applyRunEvent(
+      timeline,
+      event("context_summary", { memories: 3, knowledge: 1 }),
+    );
+    expect(timeline.contextCompactions).toHaveLength(0);
+
+    timeline = applyRunEvent(
+      timeline,
+      event("context_summary", {
+        compressed: true,
+        activeChars: 1200,
+        archiveRows: 4,
+        messages: 6,
+        sourceMessages: 18,
+        evictedToolResults: 2,
+      }),
+    );
+    expect(timeline.contextCompactions).toHaveLength(1);
+    expect(timeline.contextCompactions[0]).toMatchObject({
+      compressed: true,
+      activeChars: 1200,
+      archiveRows: 4,
+      messages: 6,
+      sourceMessages: 18,
+      evictedToolResults: 2,
+    });
+  });
+});
+
 describe("isFileWrite", () => {
   it("detects files write with path and content", () => {
     expect(

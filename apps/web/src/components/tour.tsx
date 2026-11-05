@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/button";
+import { useModalDialog } from "@/components/modal";
 import {
   X,
   MessageSquare,
@@ -52,19 +53,20 @@ const steps = [
 
 export function Tour({ onClose }: { onClose: () => void }) {
   const [current, setCurrent] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useModalDialog(panelRef, onClose);
   const step = steps[current];
   const Icon = step.icon;
 
   return (
-    <div
-      className="mcp-install-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label="ツアー"
-    >
+    <div className="mcp-install-backdrop" role="presentation">
       <div
+        ref={panelRef}
         className="card mcp-install-panel"
         style={{ maxWidth: 480, padding: 32 }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tour-title"
       >
         <div
           style={{
@@ -77,7 +79,7 @@ export function Tour({ onClose }: { onClose: () => void }) {
             <p className="eyebrow">
               STEP {current + 1} OF {steps.length}
             </p>
-            <h2>{t(step.title)}</h2>
+            <h2 id="tour-title">{t(step.title)}</h2>
           </div>
           <button
             type="button"

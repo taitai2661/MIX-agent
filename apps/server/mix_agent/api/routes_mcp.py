@@ -2,11 +2,10 @@ import hashlib
 import json
 import secrets
 import time
-from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from mix_agent.api.common import (
     audit,
@@ -20,6 +19,13 @@ from mix_agent.api.schemas import (
     MCPOAuthStartInput,
     MCPUninstallInput,
 )
+from mix_agent.api.helpers.mcp_auth import (
+    create_transient_secret,
+    delete_auth_state,
+    purge_expired_auth_states,
+    replace_connection_secret,
+)
+from mix_agent.api.helpers.mcp_connections import create_connection, update_connection
 from mix_agent.auth.security import (
     read_secret,
     store_secret,
@@ -29,7 +35,6 @@ from mix_agent.db.models import (
     MCPConnection,
     Secret,
     Tool,
-    now,
 )
 from mix_agent.db.session import get_db
 from mix_agent.mcp import oauth as mcp_oauth
@@ -180,11 +185,11 @@ async def start_mcp_oauth(key: str, body: MCPOAuthStartInput, ctx=Depends(contex
             discovery, {"client_id": body.client_id, "client_secret": body.client_secret}
         )
         state, verifier = mcp_oauth.new_state()
-        transient_secret = store_secret(
+        transient_secret = create_transient_secret(
             db,
             s.owner_id,
-            json.dumps({"verifier": verifier, "client_secret": registration.pop("client_secret", "")}),
-            "mcp-oauth-state",
+            verifier,
+            registration.pop("client_secret", ""),
         )
         auth = MCPAuthState(
             owner_id=s.owner_id,
@@ -216,8 +221,9 @@ async def mcp_oauth_callback(
 ):
     digest = hashlib.sha256(state.encode()).hexdigest()
     # Authorization states are single-use and expire after ten minutes; purge
-    # abandoned ones so this unauthenticated endpoint stays bounded.
-    db.execute(delete(MCPAuthState).where(MCPAuthState.created_at < now() - timedelta(hours=1)))
+    # abandoned ones (and their transient client secret) so this unauthenticated
+    # endpoint stays bounded.
+    purge_expired_auth_states(db)
     db.commit()
     auth = db.scalar(select(MCPAuthState).where(MCPAuthState.state_hash == digest))
     if (
@@ -242,7 +248,9 @@ async def mcp_oauth_callback(
             "oauth_registration": registration,
             "headers": {"Authorization": "Bearer " + token["access_token"]},
         }
-        secret_id = store_secret(db, row.owner_id, json.dumps(credential), "mcp")
+        secret_id = replace_connection_secret(
+            db, row.owner_id, credential, row.data.get("secret_id")
+        )
         row.data = {
             **row.data,
             "secret_id": secret_id,
@@ -250,7 +258,7 @@ async def mcp_oauth_callback(
             "authorization_required": False,
             "oauth_registration": registration["method"],
         }
-        db.delete(auth)
+        delete_auth_state(db, auth)
         audit(db, row.owner_id, "mcp.oauth.authorized", row.id)
         db.commit()
         return RedirectResponse("/settings/mcp?oauth=success", status_code=303)
@@ -261,12 +269,7 @@ async def mcp_oauth_callback(
 @router.post("/mcp/connections")
 def create_mcp(body: MCPInput, ctx=Depends(context)):
     db, s = ctx
-    data = body.model_dump(exclude={"credentials"})
-    if body.credentials:
-        data["secret_id"] = store_secret(db, s.owner_id, json.dumps(body.credentials), "mcp")
-    row = MCPConnection(owner_id=s.owner_id, data=data)
-    db.add(row)
-    db.flush()
+    row = create_connection(db, s.owner_id, body)
     audit(db, s.owner_id, "mcp.create", row.id)
     db.commit()
     return public(row)
@@ -275,16 +278,7 @@ def create_mcp(body: MCPInput, ctx=Depends(context)):
 @router.patch("/mcp/connections/{key}")
 def update_mcp(key: str, body: MCPInput, ctx=Depends(context)):
     db, s = ctx
-    row = own(db, MCPConnection, key, s.owner_id)
-    data = body.model_dump(exclude={"credentials"})
-    data["secret_id"] = row.data.get("secret_id")
-    if body.credentials is not None:
-        data["secret_id"] = store_secret(db, s.owner_id, json.dumps(body.credentials), "mcp")
-    row.data = data
-    # Connection edits invalidate all previously discovered definitions and grants.
-    for tool in db.scalars(select(Tool).where(Tool.owner_id == s.owner_id)):
-        if tool.data.get("source_ref") == key:
-            tool.data = {**tool.data, "enabled": False}
+    row = update_connection(db, s.owner_id, key, body)
     db.commit()
     return public(row)
 

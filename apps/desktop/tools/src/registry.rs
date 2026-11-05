@@ -15,11 +15,12 @@ use crate::files::FilesTool;
 use crate::git::GitTool;
 use crate::image_vision::ImageVisionTool;
 use crate::knowledge::{KnowledgeDispatch, KnowledgeTool};
+use crate::lsp::LspTool;
 use crate::memory::{MemoryDispatch, MemoryTool};
 use crate::network::{NetworkTool, WebSearchTool};
 use crate::pdf::WebFetchPdfTool;
 use crate::search::{GlobTool, GrepTool};
-use crate::skill::{SkillSource, SkillTool};
+use crate::skill::{SkillResourceTool, SkillSource, SkillTool};
 use crate::symbols::SymbolsTool;
 use crate::terminal::TerminalTool;
 use crate::todo::{TodoStore, TodoTool};
@@ -89,6 +90,7 @@ impl ToolRegistry {
         let terminal = Arc::new(TerminalTool::default());
         tools.insert("terminal".to_string(), terminal.clone());
         tools.insert("symbols".to_string(), Arc::new(SymbolsTool));
+        tools.insert("lsp".to_string(), Arc::new(LspTool::default()));
         tools.insert("git".to_string(), Arc::new(GitTool));
         tools.insert("workspace_check".to_string(), Arc::new(WorkspaceCheckTool));
         tools.insert("image_vision".to_string(), Arc::new(ImageVisionTool));
@@ -125,11 +127,28 @@ impl ToolRegistry {
         }
     }
 
-    /// Attach the skill catalogue so the `skill` Tool becomes available.
+    /// Kill the live PTY shells owned by a cancelled Run.
+    pub async fn cancel_run(&self, run_id: &str) {
+        if let Some(tool) = &self.terminal_tool {
+            tool.cancel_run(run_id).await;
+        }
+    }
+
+    /// Also deny network inside the terminal sandbox (macOS only today).
+    pub fn set_terminal_sandbox_network(&self, enabled: bool) {
+        if let Some(tool) = &self.terminal_tool {
+            tool.set_sandbox_network(enabled);
+        }
+    }
+
+    /// Attach the skill catalogue so the `skill` and `skill_resource` Tools
+    /// become available.
     pub fn with_skills(mut self, source: Arc<dyn SkillSource>) -> Self {
-        let tool = Arc::new(SkillTool::new(source));
+        let tool = Arc::new(SkillTool::new(source.clone()));
         self.tools.insert(tool.id().to_string(), tool.clone());
         self.skill_tool = Some(tool);
+        let resources = Arc::new(SkillResourceTool::new(source));
+        self.tools.insert(resources.id().to_string(), resources);
         self
     }
 
@@ -208,6 +227,14 @@ impl ToolRegistry {
 
     pub fn mcp_specs(&self) -> Vec<crate::ToolSpec> {
         self.mcp_specs.as_ref().clone()
+    }
+
+    /// Let tools release idle subprocesses. Called by the app's housekeeping
+    /// loop; never on the request path.
+    pub async fn sweep_idle(&self) {
+        for tool in self.tools.values() {
+            tool.idle_sweep().await;
+        }
     }
 
     pub fn list(&self) -> Vec<Arc<dyn Tool>> {
@@ -636,7 +663,7 @@ mod tests {
                 name: "expense-report".into(),
                 description: "Build expense reports".into(),
                 body_markdown: "1. Collect receipts".into(),
-                allowed_tools: Vec::new(),
+                ..SkillSummary::default()
             }])
         }
     }
@@ -655,6 +682,10 @@ mod tests {
     async fn skill_is_registered_and_dispatchable() {
         let registry = ToolRegistry::new(EgressPolicy::default()).with_skills(Arc::new(OneSkill));
         assert!(registry.get("skill").is_some(), "skill tool not registered");
+        assert!(
+            registry.get("skill_resource").is_some(),
+            "skill_resource tool not registered"
+        );
         assert!(
             registry.specs().iter().any(|s| s.name == "skill"),
             "skill spec not advertised"
@@ -687,6 +718,7 @@ mod tests {
             "edit",
             "glob",
             "grep",
+            "lsp",
             "terminal",
             "workspace_check",
             "web_search",

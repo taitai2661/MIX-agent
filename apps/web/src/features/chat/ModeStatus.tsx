@@ -47,7 +47,11 @@ export function ModeStatus({
     (mode === "agent"
       ? (agentData?.max_tool_calls ?? policy.calls)
       : policy.calls);
-  const budget = `${seconds / 60}分・${steps}ステップ・${calls} Tool Call`;
+  const budget = t("{minutes}分・{steps}ステップ・{calls} Tool Call", {
+    minutes: seconds / 60,
+    steps,
+    calls,
+  });
   return (
     <p className="mode-status" role="status">
       {mode === "chat"

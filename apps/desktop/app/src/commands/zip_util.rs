@@ -5,24 +5,37 @@
 //! user round-trip `SKILL.md` plus its `scripts/`, `references/`, and
 //! `assets/` files.
 
-use mixd_core::skills::{render_skill, Skill, SkillResource};
+use base64::Engine as _;
+use mixd_core::skills::discovery::IGNORED_NAMES;
+use mixd_core::skills::{
+    render_skill, Skill, SkillResource, FILES_COUNT_MAX, FILES_TOTAL_MAX, FILE_MAX,
+};
 
 /// Read `SKILL.md` and bundled resources out of a zip archive.
 pub fn unzip_skill(bytes: &[u8]) -> Result<(String, Vec<SkillResource>), String> {
     let mut body: Option<String> = None;
     let mut resources = Vec::new();
+    let mut total = 0usize;
     for entry in read_entries(bytes)? {
         if entry.is_dir {
             continue;
         }
-        let path = entry.name.replace('\\', "/");
-        if path == "SKILL.md" || path.ends_with("/SKILL.md") {
-            body = Some(String::from_utf8_lossy(&entry.data).to_string());
-        } else {
-            resources.push(SkillResource {
-                path,
-                content: String::from_utf8_lossy(&entry.data).to_string(),
-            });
+        let path = safe_relative_path(&entry.name.replace('\\', "/"))?;
+        if path.split('/').any(|part| IGNORED_NAMES.contains(&part)) {
+            continue;
+        }
+        if path.eq_ignore_ascii_case("SKILL.md") || path.to_ascii_lowercase().ends_with("/skill.md")
+        {
+            let text = String::from_utf8(entry.data)
+                .map_err(|_| "SKILL.md must be UTF-8 text".to_string())?;
+            body = Some(text);
+            continue;
+        }
+        resources.push(encode_resource(path, entry.data, &mut total)?);
+        if resources.len() > FILES_COUNT_MAX {
+            return Err(format!(
+                "a skill may bundle at most {FILES_COUNT_MAX} files"
+            ));
         }
     }
     let body = body.ok_or("SKILL.md not found in archive")?;
@@ -31,40 +44,115 @@ pub fn unzip_skill(bytes: &[u8]) -> Result<(String, Vec<SkillResource>), String>
 }
 
 /// Read `SKILL.md` and bundled resources from a directory on disk.
+///
+/// Every file below the skill directory is included, not only the conventional
+/// `scripts/`, `references/` and `assets/` directories: the specification
+/// allows any additional files, and silently dropping them would make an
+/// imported skill incomplete.
 pub fn read_skill_dir(dir: &str) -> Result<(String, Vec<SkillResource>), String> {
     let root = std::path::PathBuf::from(dir);
     let skill_path = root.join("SKILL.md");
     let body = std::fs::read_to_string(&skill_path)
         .map_err(|e| format!("cannot read {}: {}", skill_path.display(), e))?;
     let mut resources = Vec::new();
-    for sub in ["scripts", "references", "assets"] {
-        let subdir = root.join(sub);
-        if !subdir.is_dir() {
-            continue;
-        }
-        collect_files(&subdir, &root, &mut resources);
-    }
+    let mut total = 0usize;
+    collect_files(&root, &root, &mut resources, &mut total)?;
     resources.sort_by(|a, b| a.path.cmp(&b.path));
     Ok((body, resources))
 }
 
-fn collect_files(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<SkillResource>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files(&path, root, out);
-        } else if let Ok(content) = std::fs::read_to_string(&path) {
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            out.push(SkillResource { path: rel, content });
-        }
+fn safe_relative_path(name: &str) -> Result<String, String> {
+    let candidate = std::path::Path::new(name);
+    if candidate.is_absolute()
+        || name.is_empty()
+        || candidate
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!("unsafe path in skill package: {name}"));
     }
+    Ok(name.to_string())
+}
+
+fn encode_resource(path: String, raw: Vec<u8>, total: &mut usize) -> Result<SkillResource, String> {
+    if raw.len() > FILE_MAX {
+        return Err(format!(
+            "bundled file {path:?} exceeds the {FILE_MAX}-byte limit"
+        ));
+    }
+    *total = total.saturating_add(raw.len());
+    if *total > FILES_TOTAL_MAX {
+        return Err(format!(
+            "bundled files exceed the {FILES_TOTAL_MAX}-byte limit"
+        ));
+    }
+    let size = raw.len();
+    match String::from_utf8(raw) {
+        Ok(content) => Ok(SkillResource {
+            path,
+            content,
+            binary: false,
+            size,
+        }),
+        Err(err) => Ok(SkillResource {
+            path,
+            content: base64::engine::general_purpose::STANDARD.encode(err.as_bytes()),
+            binary: true,
+            size,
+        }),
+    }
+}
+
+fn collect_files(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    out: &mut Vec<SkillResource>,
+    total: &mut usize,
+) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    let mut paths: Vec<std::path::PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_symlink() {
+            continue;
+        }
+        if path.file_name().is_some_and(|name| {
+            IGNORED_NAMES
+                .iter()
+                .any(|ignored| name.to_string_lossy().as_ref() == *ignored)
+        }) {
+            continue;
+        }
+        if path.is_dir() {
+            collect_files(&path, root, out, total)?;
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        if path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("skill.md"))
+        {
+            continue;
+        }
+        if out.len() >= FILES_COUNT_MAX {
+            return Err(format!(
+                "a skill may bundle at most {FILES_COUNT_MAX} files"
+            ));
+        }
+        let raw =
+            std::fs::read(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| format!("{} is outside the skill directory", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        out.push(encode_resource(relative, raw, total)?);
+    }
+    Ok(())
 }
 
 /// Write a Skill back out as a zip archive.
@@ -72,7 +160,14 @@ pub fn zip_skill(skill: &Skill) -> Result<Vec<u8>, String> {
     let mut entries: Vec<(String, Vec<u8>)> =
         vec![("SKILL.md".to_string(), render_skill(skill).into_bytes())];
     for resource in &skill.resources {
-        entries.push((resource.path.clone(), resource.content.as_bytes().to_vec()));
+        let raw = if resource.binary {
+            base64::engine::general_purpose::STANDARD
+                .decode(resource.content.as_bytes())
+                .map_err(|e| format!("cannot decode bundled file {:?}: {e}", resource.path))?
+        } else {
+            resource.content.as_bytes().to_vec()
+        };
+        entries.push((resource.path.clone(), raw));
     }
     write_zip(&entries)
 }
@@ -531,6 +626,72 @@ mod tests {
         assert_eq!(body, "name: demo\n");
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].path, "scripts/run.py");
+    }
+
+    #[test]
+    fn round_trips_binary_resources() {
+        let raw = vec![0xffu8, 0x00, 0xfe];
+        let skill = Skill {
+            name: "demo".into(),
+            description: "binary".into(),
+            body_markdown: "body".into(),
+            resources: vec![
+                SkillResource {
+                    path: "assets/logo.bin".into(),
+                    content: base64::engine::general_purpose::STANDARD.encode(&raw),
+                    binary: true,
+                    size: raw.len(),
+                },
+                SkillResource {
+                    path: "references/GUIDE.md".into(),
+                    content: "hello".into(),
+                    binary: false,
+                    size: 5,
+                },
+            ],
+            ..Skill::default()
+        };
+        let bytes = zip_skill(&skill).expect("write");
+        let (_body, resources) = unzip_skill(&bytes).expect("read");
+        assert_eq!(resources.len(), 2);
+        let binary = resources
+            .iter()
+            .find(|r| r.path == "assets/logo.bin")
+            .expect("binary");
+        assert!(binary.binary);
+        assert_eq!(binary.size, 3);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(binary.content.as_bytes())
+                .expect("decode"),
+            raw
+        );
+        let text = resources
+            .iter()
+            .find(|r| r.path == "references/GUIDE.md")
+            .expect("text");
+        assert!(!text.binary);
+        assert_eq!(text.content, "hello");
+    }
+
+    #[test]
+    fn archive_entries_cannot_escape_the_skill_directory() {
+        let entries = vec![
+            ("SKILL.md".to_string(), b"name: demo\n".to_vec()),
+            ("../secret.txt".to_string(), b"secret".to_vec()),
+        ];
+        let bytes = write_zip(&entries).expect("write");
+        assert!(unzip_skill(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_bundled_file_over_the_size_limit_is_rejected() {
+        let entries = vec![
+            ("SKILL.md".to_string(), b"name: demo\n".to_vec()),
+            ("assets/huge.bin".to_string(), vec![0u8; FILE_MAX + 1]),
+        ];
+        let bytes = write_zip(&entries).expect("write");
+        assert!(unzip_skill(&bytes).is_err());
     }
 
     #[test]

@@ -111,18 +111,22 @@ async fn check_python_syntax(
         anyhow::bail!("A Python file path is required");
     }
     let workspace_root = FilesTool::resolve_context_root(root_path.as_deref())?;
-    let (resolved, _) = FilesTool::resolve_target_in(&workspace_root, &additional, path)?;
+    let (resolved, writable) = FilesTool::resolve_target_in(&workspace_root, &additional, path)?;
+    if !writable {
+        anyhow::bail!("追加フォルダは読み取り専用です: {path}");
+    }
     if !resolved.is_file() {
         anyhow::bail!("file not found: {path}");
     }
     // Validate via the system interpreter when present (`ast.parse`
-    // equivalent). Without python3 there is nothing trustworthy to check with,
-    // so fail loudly rather than claim success.
+    // equivalent). `-I` isolates from PYTHON* env vars and the caller's
+    // sys.path, and `-B` stops `__pycache__` writes into the workspace.
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(CHECK_TIMEOUT_SECS),
         TokioCommand::new("python3")
-            .args(["-m", "py_compile"])
+            .args(["-I", "-B", "-m", "py_compile"])
             .arg(&resolved)
+            .current_dir(&workspace_root)
             .kill_on_drop(true)
             .output(),
     )

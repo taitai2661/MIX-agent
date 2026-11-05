@@ -68,6 +68,38 @@ impl FileBackend {
         }
     }
 
+    /// Read the seed if it already exists. Unlike [`SecretBackend::master_seed`]
+    /// this never creates one, so the hybrid backend can tell "first launch"
+    /// apart from "an existing file-seed install".
+    fn existing_seed(&self) -> anyhow::Result<Option<String>> {
+        if !self.seed_path.exists() {
+            return Ok(None);
+        }
+        let seed = std::fs::read_to_string(&self.seed_path)
+            .with_context(|| format!("reading master seed from {}", self.seed_path.display()))?;
+        let trimmed = seed.trim().to_string();
+        Ok(if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        })
+    }
+
+    /// Remove the on-disk seed after it has been copied into the OS keychain.
+    /// Best-effort: a failure leaves the copy behind, which is the safe
+    /// direction (the seed is still recoverable), so it is only logged.
+    fn remove_seed(&self) {
+        if let Err(err) = std::fs::remove_file(&self.seed_path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    %err,
+                    path = %self.seed_path.display(),
+                    "could not remove the file-backed master seed after keychain migration"
+                );
+            }
+        }
+    }
+
     fn ensure_loaded(&self) -> anyhow::Result<()> {
         let needs_load = {
             let read = self
@@ -148,30 +180,14 @@ impl SecretBackend for FileBackend {
     }
 
     fn master_seed(&self) -> anyhow::Result<String> {
-        #[cfg(test)]
-        {
-            if let Some(seed) = test_seed() {
-                return Ok(seed);
-            }
-        }
-        if self.seed_path.exists() {
-            let seed = std::fs::read_to_string(&self.seed_path).with_context(|| {
-                format!("reading master seed from {}", self.seed_path.display())
-            })?;
-            let trimmed = seed.trim().to_string();
-            if !trimmed.is_empty() {
-                return Ok(trimmed);
-            }
+        if let Some(seed) = self.existing_seed()? {
+            return Ok(seed);
         }
         if !self.dir.exists() {
             std::fs::create_dir_all(&self.dir)
                 .with_context(|| format!("creating directory {}", self.dir.display()))?;
         }
-        use rand::RngCore;
-        let mut rng = rand::thread_rng();
-        let mut buf = [0u8; 32];
-        rng.fill_bytes(&mut buf);
-        let seed = BASE64.encode(buf);
+        let seed = generate_seed();
         atomic_write_file(&self.seed_path, seed.as_bytes())
             .with_context(|| format!("writing master seed to {}", self.seed_path.display()))?;
         Ok(seed)
@@ -191,6 +207,29 @@ impl SecretBackend for FileBackend {
 
 /// OS Keychain backend (legacy / optional).
 pub struct KeychainBackend;
+
+impl KeychainBackend {
+    /// Read the keychain seed without creating one. `None` means "this install
+    /// has never used the keychain"; an error means the keychain is reachable
+    /// but refused (locked / permission denied), which callers must not treat
+    /// as "first launch".
+    fn existing_master_seed(&self) -> anyhow::Result<Option<String>> {
+        let entry = Entry::new(SERVICE, MASTER_SEED_SLOT)?;
+        match entry.get_password() {
+            Ok(seed) if seed.trim().is_empty() => Ok(None),
+            Ok(seed) => Ok(Some(seed)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(err) => Err(anyhow!(err).context("reading the master seed from the Keychain")),
+        }
+    }
+
+    fn store_master_seed(&self, seed: &str) -> anyhow::Result<()> {
+        let entry = Entry::new(SERVICE, MASTER_SEED_SLOT)?;
+        entry
+            .set_password(seed)
+            .context("storing the master seed in the Keychain")
+    }
+}
 
 impl SecretBackend for KeychainBackend {
     fn put(&self, slot: &str, encrypted_value: &str) -> anyhow::Result<()> {
@@ -222,22 +261,12 @@ impl SecretBackend for KeychainBackend {
                 return Ok(seed);
             }
         }
-        let entry = Entry::new(SERVICE, MASTER_SEED_SLOT)?;
-        match entry.get_password() {
-            Ok(seed) => Ok(seed),
-            Err(keyring::Error::NoEntry) => {
-                use rand::RngCore;
-                let mut rng = rand::thread_rng();
-                let mut buf = [0u8; 32];
-                rng.fill_bytes(&mut buf);
-                let seed = BASE64.encode(buf);
-                entry
-                    .set_password(&seed)
-                    .context("storing the master seed in the Keychain")?;
-                Ok(seed)
-            }
-            Err(err) => Err(anyhow!(err).context("reading the master seed from the Keychain")),
+        if let Some(seed) = self.existing_master_seed()? {
+            return Ok(seed);
         }
+        let seed = generate_seed();
+        self.store_master_seed(&seed)?;
+        Ok(seed)
     }
 
     fn probe(&self) -> anyhow::Result<()> {
@@ -247,6 +276,14 @@ impl SecretBackend for KeychainBackend {
             Err(err) => Err(anyhow!("Keychain is not reachable: {err}")),
         }
     }
+}
+
+fn generate_seed() -> String {
+    use rand::RngCore;
+    let mut rng = rand::thread_rng();
+    let mut buf = [0u8; 32];
+    rng.fill_bytes(&mut buf);
+    BASE64.encode(buf)
 }
 
 fn atomic_write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
@@ -275,6 +312,161 @@ fn atomic_write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Keychain-preferred backend.
+///
+/// Secret *values* stay in the AES-GCM file (so reading a provider key never
+/// opens a Keychain prompt), but the **master seed** lives in the OS Keychain.
+/// This closes the main weakness of the plain file backend: the seed used to
+/// sit in `.master_seed` next to `secrets.enc.json`, so anyone who could read
+/// the data directory could decrypt every stored credential.
+///
+/// Migration is automatic and idempotent. An existing file seed is copied into
+/// the Keychain, read back to prove the write worked, and only then removed
+/// from disk. If the Keychain is unavailable the file seed is used (when it
+/// still exists); when it does not, the error is returned instead of silently
+/// minting a new seed that would make existing secrets undecryptable.
+/// The part of the keychain backend the hybrid needs. Keeping this narrow lets
+/// unit tests exercise the migration with an in-memory seed store instead of a
+/// real Keychain prompt.
+trait SeedStore: Send + Sync {
+    fn existing_master_seed(&self) -> anyhow::Result<Option<String>>;
+    fn store_master_seed(&self, seed: &str) -> anyhow::Result<()>;
+    fn probe(&self) -> anyhow::Result<()>;
+}
+
+impl SeedStore for KeychainBackend {
+    fn existing_master_seed(&self) -> anyhow::Result<Option<String>> {
+        KeychainBackend::existing_master_seed(self)
+    }
+
+    fn store_master_seed(&self, seed: &str) -> anyhow::Result<()> {
+        KeychainBackend::store_master_seed(self, seed)
+    }
+
+    fn probe(&self) -> anyhow::Result<()> {
+        SecretBackend::probe(self)
+    }
+}
+
+pub struct KeychainSeedBackend {
+    file: FileBackend,
+    keychain: Arc<dyn SeedStore>,
+}
+
+impl KeychainSeedBackend {
+    pub fn new(dir: impl AsRef<Path>) -> Self {
+        Self {
+            file: FileBackend::new(dir),
+            keychain: Arc::new(KeychainBackend),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_seed_store(dir: impl AsRef<Path>, keychain: Arc<dyn SeedStore>) -> Self {
+        Self {
+            file: FileBackend::new(dir),
+            keychain,
+        }
+    }
+}
+
+impl SecretBackend for KeychainSeedBackend {
+    fn put(&self, slot: &str, encrypted_value: &str) -> anyhow::Result<()> {
+        self.file.put(slot, encrypted_value)
+    }
+
+    fn get(&self, slot: &str) -> anyhow::Result<Option<String>> {
+        self.file.get(slot)
+    }
+
+    fn delete(&self, slot: &str) -> anyhow::Result<()> {
+        self.file.delete(slot)
+    }
+
+    fn master_seed(&self) -> anyhow::Result<String> {
+        match self.keychain.existing_master_seed() {
+            Ok(Some(seed)) => {
+                // A stale copy is a recovery aid, not a second source of
+                // truth. Keep it when it differs (so a manual rollback is
+                // possible) and warn loudly; remove it when it matches.
+                match self.file.existing_seed() {
+                    Ok(Some(file_seed)) if file_seed != seed => {
+                        tracing::warn!(
+                            "file-backed and keychain master seeds differ; using the keychain seed. \
+                             Existing secrets sealed with the file seed will fail to decrypt."
+                        );
+                    }
+                    Ok(Some(_)) => self.file.remove_seed(),
+                    Ok(None) => {}
+                    Err(err) => {
+                        tracing::warn!(%err, "could not inspect the file-backed master seed");
+                    }
+                }
+                Ok(seed)
+            }
+            Ok(None) => {
+                if let Some(seed) = self.file.existing_seed()? {
+                    self.keychain.store_master_seed(&seed)?;
+                    match self.keychain.existing_master_seed() {
+                        Ok(Some(read)) if read == seed => {
+                            self.file.remove_seed();
+                            tracing::info!(
+                                "migrated the master seed from the data directory into the OS keychain"
+                            );
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                "keychain seed read-back did not match; keeping the file copy"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(%err, "could not verify the keychain seed; keeping the file copy");
+                        }
+                    }
+                    return Ok(seed);
+                }
+                let seed = generate_seed();
+                self.keychain.store_master_seed(&seed)?;
+                match self.keychain.existing_master_seed() {
+                    Ok(Some(read)) if read == seed => Ok(seed),
+                    Ok(_) => Err(anyhow!(
+                        "the OS keychain did not return the master seed it just stored"
+                    )),
+                    Err(err) => Err(anyhow!(
+                        "the OS keychain could not be read back after storing the master seed: {err}"
+                    )),
+                }
+            }
+            Err(err) => match self.file.existing_seed() {
+                Ok(Some(seed)) => {
+                    tracing::warn!(
+                        %err,
+                        "OS keychain unavailable; falling back to the file-backed master seed"
+                    );
+                    Ok(seed)
+                }
+                Ok(None) => Err(anyhow!(
+                    "the OS keychain is unavailable ({err}) and no file-backed master seed exists. \
+                     Unlock the keychain and restart, or set MIX_SECRET_BACKEND=file to start over."
+                )),
+                Err(file_err) => Err(file_err),
+            },
+        }
+    }
+
+    fn probe(&self) -> anyhow::Result<()> {
+        match self.keychain.probe() {
+            Ok(()) => Ok(()),
+            Err(keychain_err) => self
+                .file
+                .probe()
+                .map_err(|file_err| anyhow!(
+                    "neither the OS keychain ({keychain_err}) nor the data directory ({file_err}) is usable"
+                )),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SecretStore {
     backend: Arc<dyn SecretBackend>,
@@ -299,14 +491,28 @@ macro_rules! offload {
 
 impl SecretStore {
     /// Create a secret store explicitly backed by a data directory.
-    /// By default uses `FileBackend` (AES-GCM encrypted file, 0600 mode) to avoid
-    /// macOS Keychain permission prompts. Set `MIX_SECRET_BACKEND=keychain` to force
-    /// OS Keychain usage.
+    ///
+    /// macOS and Windows keep the master seed in the OS keychain while the
+    /// encrypted values stay in the 0600 data file (`KeychainSeedBackend`).
+    /// Linux defaults to the file backend because Secret Service is not
+    /// guaranteed to be present; set `MIX_SECRET_BACKEND=keychain` to opt in,
+    /// or `MIX_SECRET_BACKEND=file` to force the legacy layout on any OS.
     pub fn open(data_dir: impl AsRef<Path>) -> Self {
+        let data_dir = data_dir.as_ref();
         let backend: Arc<dyn SecretBackend> = match std::env::var("MIX_SECRET_BACKEND").as_deref() {
             Ok("keychain") => Arc::new(KeychainBackend),
+            Ok("file") => Arc::new(FileBackend::new(data_dir)),
+            _ if cfg!(any(target_os = "macos", target_os = "windows")) => {
+                Arc::new(KeychainSeedBackend::new(data_dir))
+            }
             _ => Arc::new(FileBackend::new(data_dir)),
         };
+        Self::with_backend(backend)
+    }
+
+    /// Construct with an explicit backend. Tests use this so they never touch
+    /// a developer's real keychain.
+    pub fn open_with_backend(backend: Arc<dyn SecretBackend>) -> Self {
         Self::with_backend(backend)
     }
 
@@ -595,7 +801,7 @@ mod tests {
     #[tokio::test]
     async fn file_backend_round_trip_and_persistence() {
         let temp_dir = std::env::temp_dir().join(format!("mixd_test_fb_{}", uuid::Uuid::new_v4()));
-        let store = SecretStore::open(&temp_dir);
+        let store = SecretStore::open_with_backend(Arc::new(FileBackend::new(&temp_dir)));
 
         // Probe should succeed
         store.probe().await.expect("probe");
@@ -619,7 +825,7 @@ mod tests {
         assert_eq!(store.db_key_status().await, Some(true));
 
         // Re-open from same dir to verify persistence
-        let store2 = SecretStore::open(&temp_dir);
+        let store2 = SecretStore::open_with_backend(Arc::new(FileBackend::new(&temp_dir)));
         let value2 = store2
             .get_string("provider/openai", "api_key")
             .await
@@ -638,5 +844,90 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[derive(Default)]
+    struct MemorySeedStore {
+        seed: std::sync::Mutex<Option<String>>,
+        fail: bool,
+    }
+
+    impl SeedStore for MemorySeedStore {
+        fn existing_master_seed(&self) -> anyhow::Result<Option<String>> {
+            if self.fail {
+                anyhow::bail!("keychain is locked");
+            }
+            Ok(self.seed.lock().unwrap().clone())
+        }
+
+        fn store_master_seed(&self, seed: &str) -> anyhow::Result<()> {
+            if self.fail {
+                anyhow::bail!("keychain is locked");
+            }
+            *self.seed.lock().unwrap() = Some(seed.to_string());
+            Ok(())
+        }
+
+        fn probe(&self) -> anyhow::Result<()> {
+            if self.fail {
+                anyhow::bail!("keychain is locked");
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn hybrid_moves_the_seed_into_the_keychain_and_keeps_secrets_readable() {
+        let dir = std::env::temp_dir().join(format!("mixd_test_hybrid_{}", uuid::Uuid::new_v4()));
+
+        // Legacy install: encrypted value + seed on disk.
+        let legacy = SecretStore::open_with_backend(Arc::new(FileBackend::new(&dir)));
+        legacy
+            .put("provider/openai", "api_key", b"sk-legacy")
+            .await
+            .expect("seed the legacy store");
+        let seed_file = dir.join(".master_seed");
+        assert!(seed_file.is_file(), "file backend writes the seed");
+
+        // First launch with the hybrid backend migrates the seed.
+        let keychain = Arc::new(MemorySeedStore::default());
+        let hybrid = KeychainSeedBackend::with_seed_store(&dir, keychain.clone());
+        let migrated = hybrid.master_seed().expect("migrate seed");
+        assert_eq!(
+            keychain.seed.lock().unwrap().as_deref(),
+            Some(migrated.as_str())
+        );
+        assert!(
+            !seed_file.exists(),
+            "the on-disk seed is removed after migration"
+        );
+
+        // Values stay in the file and remain decryptable under the migrated seed.
+        let store = SecretStore::open_with_backend(Arc::new(hybrid));
+        assert_eq!(
+            store
+                .get_string("provider/openai", "api_key")
+                .await
+                .expect("decrypt with migrated seed"),
+            "sk-legacy"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn hybrid_refuses_to_mint_a_new_seed_when_the_keychain_is_locked() {
+        let dir =
+            std::env::temp_dir().join(format!("mixd_test_hybrid_locked_{}", uuid::Uuid::new_v4()));
+        let backend = KeychainSeedBackend::with_seed_store(
+            &dir,
+            Arc::new(MemorySeedStore {
+                fail: true,
+                ..Default::default()
+            }),
+        );
+        let err = backend.master_seed().expect_err("must not mint a new seed");
+        assert!(err.to_string().contains("keychain"), "unexpected: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -53,6 +53,8 @@ def test_terminal_states():
         ("waiting_approval", "cancelled"),
         ("waiting_approval", "failed"),
         ("waiting_approval", "interrupted"),
+        ("budget_extension_pending", "queued"),
+        ("budget_extension_pending", "completed"),
         ("interrupted", "queued"),
         ("interrupted", "cancelled"),
     ],

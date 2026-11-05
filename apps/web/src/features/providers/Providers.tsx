@@ -7,6 +7,7 @@ import { KeyRound, Plus, RefreshCw, Server } from "lucide-react";
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 
 import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
+import { queryKeys, useSettings } from "@/lib/queries";
 import {
   ChatGptLoginCard,
   ChatGptQuotaCard,
@@ -90,6 +91,8 @@ function PresetChips({
 export function Providers() {
   const rows = useRows("/providers"),
     qc = useQueryClient();
+  const setting = useSettings<{ data: { chatgpt_enabled?: boolean } }>();
+  const chatgptEnabled = setting.data?.data.chatgpt_enabled === true;
   const presets = useQuery<ProviderPreset[]>({
     queryKey: ["/provider-presets"],
     queryFn: () => api("/provider-presets"),
@@ -112,17 +115,22 @@ export function Providers() {
     () =>
       FEATURED_PRESET_IDS.map((id) =>
         presets.data?.find((preset) => preset.id === id),
-      ).filter(Boolean) as ProviderPreset[],
-    [presets.data],
+      ).filter(
+        (preset): preset is ProviderPreset =>
+          Boolean(preset) && (preset!.id !== "chatgpt" || chatgptEnabled),
+      ),
+    [presets.data, chatgptEnabled],
   );
   const filtered = useMemo(() => {
     const needle = filter.trim().toLocaleLowerCase();
-    const all = presets.data || [];
+    const all = (presets.data || []).filter(
+      (preset) => preset.id !== "chatgpt" || chatgptEnabled,
+    );
     if (!needle) return all;
     return all.filter((preset) =>
       (preset.name + preset.category).toLocaleLowerCase().includes(needle),
     );
-  }, [filter, presets.data]);
+  }, [filter, presets.data, chatgptEnabled]);
   function applyPreset(preset: ProviderPreset | null) {
     setSelectedPreset(preset);
     setFilter("");
@@ -145,6 +153,9 @@ export function Providers() {
       const preset =
         presets.data?.find((item) => item.id === row.data.preset_id) || null;
       setSelectedPreset(preset);
+      // Editing an existing ChatGPT row already carries the user's earlier
+      // consent; the server only re-prompts when switching *into* it.
+      setConsent(preset?.id === "chatgpt");
       setName(row.data.name || "");
       setKind(row.data.kind || "compatible");
       setBaseUrl(row.data.base_url || "");
@@ -222,6 +233,7 @@ export function Providers() {
     try {
       await api(`/providers/${row.id}/logout`, "POST");
       setNotice(t("ログアウトしました"));
+      qc.removeQueries({ queryKey: ["/providers", row.id, "quota"] });
       void qc.invalidateQueries({ queryKey: ["/providers"] });
       void qc.invalidateQueries({ queryKey: ["/models"] });
     } catch (e) {
@@ -273,6 +285,8 @@ export function Providers() {
               f.get("extra_config." + field.key) || "",
             ]),
           ),
+          acknowledge_unofficial:
+            selectedPreset?.id === "chatgpt" ? consent : false,
         },
       );
       setOpen(false);
@@ -364,6 +378,31 @@ export function Providers() {
         <KeyRound size={16} />
         {t("API Keyは暗号化して保存され、保存後は再表示されません。")}
       </div>
+      <section className="card provider-consent">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={chatgptEnabled}
+            onChange={async (event) => {
+              setError(null);
+              try {
+                await api("/settings", "PUT", {
+                  chatgpt_enabled: event.target.checked,
+                });
+                await qc.invalidateQueries({ queryKey: queryKeys.settings });
+              } catch (cause) {
+                setError(cause);
+              }
+            }}
+          />
+          {t("非公式ChatGPT連携を有効にする")}
+        </label>
+        <p className="provider-form-hint">
+          {t(
+            "Codex CLI の非公開バックエンドを使う連携です。有効にするとプリセットに表示されます。",
+          )}
+        </p>
+      </section>
       <ErrorBox error={error || rows.error} />
       {rows.data?.some((row) => row.data.preset_id === "chatgpt") && (
         <ChatGptWarning />
@@ -625,6 +664,10 @@ export function Providers() {
         const preset = presets.data?.find(
           (item) => item.id === row.data.preset_id,
         );
+        const chatgptConnected =
+          row.data.preset_id === "chatgpt" &&
+          (row.data.status === "ready" ||
+            (row.data.status == null && Boolean(row.data.auth)));
         return (
           <div className="provider-block" key={row.id}>
             <div className="card provider-card">
@@ -637,10 +680,10 @@ export function Providers() {
                   {preset?.name || row.data.kind}
                   <span> · </span>
                   {row.data.preset_id === "chatgpt" ? (
-                    row.data.auth?.account_id ? (
+                    chatgptConnected ? (
                       <>
-                        {row.data.auth.email || t("ログイン済み")}
-                        {row.data.auth.plan_type
+                        {row.data.auth?.email || t("ログイン済み")}
+                        {row.data.auth?.plan_type
                           ? ` · ${row.data.auth.plan_type}`
                           : ""}
                       </>
@@ -657,7 +700,8 @@ export function Providers() {
               </div>
               <div className="row-actions">
                 {row.data.preset_id === "chatgpt" &&
-                !row.data.auth?.account_id ? (
+                !chatgptConnected &&
+                chatgptEnabled ? (
                   <Button
                     variant="outline"
                     disabled={busy}
@@ -706,6 +750,7 @@ export function Providers() {
             {row.data.preset_id === "chatgpt" ? (
               <ChatGptQuotaCard
                 row={row}
+                loginEnabled={chatgptEnabled}
                 onLogin={() => void startChatGptLogin(row.id)}
                 onLogout={() => void logout(row)}
               />

@@ -9,7 +9,9 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
+import { formatBytes } from "@/lib/format";
 import { t, tf } from "@/lib/i18n";
+import { useApplySettings, useSettingsForm } from "@/lib/settings";
 import { CodeBlock } from "@/components/CopyButton";
 import { Card, Row, Section } from "@/components/layout";
 import {
@@ -24,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { Spinner } from "@/components/ui/spinner";
 import { Input, Textarea } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { SkillResourceView, SkillView } from "@/lib/types";
 
 type Source = "paste" | "zip" | "directory";
@@ -39,6 +42,8 @@ const SOURCE_LABEL: Record<Source, string> = {
 export function SkillsPane() {
   const queryClient = useQueryClient();
   const skills = useQuery({ queryKey: ["skills"], queryFn: api.listSkills });
+  const { data: settings } = useSettingsForm();
+  const applySettings = useApplySettings();
   const [source, setSource] = useState<Source>("paste");
   const [paste, setPaste] = useState("");
   const [directory, setDirectory] = useState("");
@@ -127,6 +132,28 @@ export function SkillsPane() {
 
   return (
     <Section>
+      <Card title={t("プロジェクト外の Skills")} icon={<Sparkles size={13} />}>
+        <Row align="between" className="gap-4">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-sm text-fg">
+              {t("ホームディレクトリの Skills を読み込む")}
+            </span>
+            <span className="text-xs text-muted">
+              {t(
+                "~/.mix/skills、~/.claude/skills、~/.agents/skills をプロジェクトの Skills に続けて探索します。同名はプロジェクト側が優先されます。",
+              )}
+            </span>
+          </div>
+          <Switch
+            checked={settings.discover_user_skills}
+            onCheckedChange={(checked) =>
+              void applySettings({ discover_user_skills: checked })
+            }
+            aria-label={t("ホームディレクトリの Skills を読み込む")}
+          />
+        </Row>
+      </Card>
+
       <Card title={t("取り込む")} icon={<Upload size={13} />}>
         <Segmented
           aria-label={t("取り込み元")}
@@ -261,6 +288,25 @@ export function SkillsPane() {
               </Row>
             </Row>
             <p className="m-0 text-xs text-muted">{s.description}</p>
+            {(s.license ||
+              s.compatibility ||
+              s.allowed_tools.length > 0 ||
+              Object.keys(s.metadata).length > 0) && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-faint">
+                {s.license && <span>license: {s.license}</span>}
+                {s.compatibility && (
+                  <span>compatibility: {s.compatibility}</span>
+                )}
+                {s.allowed_tools.length > 0 && (
+                  <span>allowed-tools: {s.allowed_tools.join(", ")}</span>
+                )}
+                {Object.entries(s.metadata).map(([key, value]) => (
+                  <span key={key}>
+                    {key}: {value}
+                  </span>
+                ))}
+              </div>
+            )}
             <pre className={`${payloadBlock} max-h-60`}>{s.body_markdown}</pre>
             {selected === s.name && <ResourceList name={s.name} />}
           </Card>
@@ -311,8 +357,18 @@ function ResourceList({ name }: { name: string }) {
               className="shrink-0 transition-transform group-open:rotate-90"
             />
             {r.path}
+            <span className="ml-auto shrink-0 text-faint">
+              {formatBytes(r.size)}
+              {r.binary ? " · binary" : ""}
+            </span>
           </summary>
-          <CodeBlock language="" code={r.content} />
+          {r.binary ? (
+            <p className="m-0 px-4 py-2 text-xs text-faint">
+              {t("バイナリファイルはプレビューできません。")}
+            </p>
+          ) : (
+            <CodeBlock language="" code={r.content} />
+          )}
         </details>
       ))}
     </div>

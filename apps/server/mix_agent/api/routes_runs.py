@@ -480,7 +480,8 @@ def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=De
                 "extensions_max": max_ext,
             },
         )
-        transition_run(db, run, "running", expected_from="budget_extension_pending")
+        # Re-queue: ``drive`` refuses to "transition" an already-running Run.
+        transition_run(db, run, "queued", expected_from="budget_extension_pending")
         db.commit()
         launch(run.id)
         return {
@@ -494,7 +495,6 @@ def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=De
         }
     # Denied: stop the run cleanly so the user can inspect the outcome.
     from mix_agent.runs.engine import finish
-
     run.data = {**run.data, "budget_extension_request": None}
     emit(db, run.id, "budget_extension_resolved", {"grant": False})
     finish(db, run, "completed", "予算の延長が許可されなかったため、Runは取得済みの結果で終了しました。")

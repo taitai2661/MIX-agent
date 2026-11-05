@@ -78,6 +78,16 @@ async def create(db, password):
                     row["data"]["enabled"] = False
         tables[table.name] = rows
     files = {}
+    # Fail before reading every artifact into memory: base64 adds ~33%, so a
+    # directory slightly below MAX_SIZE already builds an over-limit payload
+    # after hundreds of files have been slurped.
+    artifact_bytes = sum(
+        file.stat().st_size
+        for file in config.ARTIFACTS.iterdir()
+        if file.is_file() and not file.is_symlink()
+    )
+    if artifact_bytes > MAX_SIZE * 3 // 4:
+        raise ValueError("初期版のバックアップ上限は256MBです")
     for file in config.ARTIFACTS.iterdir():
         if file.is_file() and not file.is_symlink():
             files[file.name] = base64.b64encode(file.read_bytes()).decode()

@@ -2,7 +2,7 @@
 name: mix-agent
 services:
   init:
-    image: ghcr.io/taitai2661/mix-agent-init:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-init:v0.5.6
     entrypoint:
     - python
     - /bootstrap.py
@@ -48,8 +48,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-  app:
-    restart: unless-stopped
+  migrate:
+    restart: 'no'
     read_only: true
     cap_drop: &id001
     - ALL
@@ -63,6 +63,28 @@ services:
         max-file: '3'
     tmpfs: &id004
     - /tmp:size=256m,mode=1777
+    environment:
+      DB_PASSWORD_FILE: /db-secret/password
+    volumes:
+    - db-secret:/db-secret:ro
+    networks:
+    - database
+    command:
+    - alembic
+    - upgrade
+    - head
+    depends_on:
+      db:
+        condition: service_healthy
+    image: ghcr.io/taitai2661/mix-agent-app:v0.5.6
+  app:
+    restart: unless-stopped
+    read_only: true
+    cap_drop: *id001
+    security_opt: *id002
+    pids_limit: 128
+    logging: *id003
+    tmpfs: *id004
     ports:
     - 8080:8080
     environment:
@@ -92,8 +114,7 @@ services:
     - -c
     - mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token
       /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export
-      RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080
-      --workers 1
+      RUNNER_KEYS=/tmp/runner-keys && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1
     networks:
     - database
     - execution
@@ -117,7 +138,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    image: ghcr.io/taitai2661/mix-agent-app:v0.5.5
+      migrate:
+        condition: service_completed_successfully
+    image: ghcr.io/taitai2661/mix-agent-app:v0.5.6
   execution-runner:
     restart: unless-stopped
     read_only: true
@@ -142,7 +165,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.6
   browser-runner:
     restart: unless-stopped
     read_only: true
@@ -166,7 +189,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.6
   browser-provisioner:
     restart: unless-stopped
     read_only: true
@@ -189,7 +212,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.6
   mcp-runner:
     restart: unless-stopped
     read_only: true
@@ -215,7 +238,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.6
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     restart: unless-stopped
@@ -256,13 +279,13 @@ services:
     pids_limit: 128
     logging: *id003
     tmpfs: *id004
-    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.6
     user: 1000:1000
     environment:
       TOKEN_FILE: /tokens/manager.token
       POLICY_FILE: /policy/mcp-policy.json
       DOCKER_HOST: http://docker-socket-proxy:2375
-      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.5
+      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.6
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
     - manager-token:/tokens:ro
@@ -282,7 +305,7 @@ services:
       init:
         condition: service_completed_successfully
       egress-proxy:
-        condition: service_started
+        condition: service_healthy
       docker-socket-proxy:
         condition: service_started
   egress-proxy:
@@ -304,10 +327,20 @@ services:
     - internet
     mem_limit: 256m
     cpus: 0.5
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import socket; s=socket.create_connection(('127.0.0.1', 3128), 3); s.close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.5
+    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.6
     container_name: mix-agent-egress-proxy-1
 networks:
   database:
@@ -360,9 +393,9 @@ x-casaos:
   category: AI
   architectures:
   - amd64
-  version: 0.5.5
-  update_at: '2026-10-31'
+  version: 0.5.6
+  update_at: '2026-11-04'
   release_notes:
-    en_US: 'Hardening release: tighter browser egress, secret redaction, backup and restore improvements, and run
-      replay limits. Happy Halloween!'
-    ja_JP: 安定化リリース。ブラウザ通信の制限強化、秘密情報のマスク、バックアップと復元の改善、実行ログの上限対応など。
+    en_US: 'Feature release: unofficial ChatGPT/Codex subscription support, language-server diagnostics, Agent Skills
+      resources, launch at login, Git-backed run rollback, conversation search and paging, and UI performance work.'
+    ja_JP: 機能リリース。ChatGPT/Codex使用枠の非公式連携、言語サーバー診断、Agent Skillsの同梱ファイル対応、ログイン時起動、Git連携のRun取り消し、会話検索とページング、UIの高速化を追加。

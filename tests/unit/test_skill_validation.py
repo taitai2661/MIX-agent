@@ -37,6 +37,22 @@ def test_the_error_names_every_problem_at_once():
     assert "description" in message
 
 
+def test_an_empty_compatibility_is_rejected():
+    with pytest.raises(package.SkillFormatError, match="compatibility"):
+        package.parse_skill_md("---\nname: ok\ndescription: ok\ncompatibility: ''\n---\nbody")
+
+
+def test_scan_directory_report_rejects_a_name_that_does_not_match_the_folder(tmp_path):
+    skill = tmp_path / "alpha"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("---\nname: beta\ndescription: copied\n---\nbody", encoding="utf-8")
+
+    packages, failures = package.scan_directory_report(tmp_path)
+    assert packages == []
+    assert len(failures) == 1
+    assert "must match" in failures[0]["reason"]
+
+
 def test_scan_directory_report_returns_failures(tmp_path):
     good = tmp_path / "good-skill"
     good.mkdir()

@@ -1,6 +1,6 @@
-//! Provider preset catalogue. Phase 1 ports the 52 presets from the Docker
-//! edition into a single const slice so the UI can render the "Add Provider"
-//! picker without any hardcoded JS arrays.
+//! Provider preset catalogue. Phase 1 ports the Docker edition's presets into
+//! a single const slice so the UI can render the "Add Provider" picker without
+//! any hardcoded JS arrays.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
@@ -11,6 +11,7 @@ pub enum ProviderKind {
     Ollama,
     LMStudio,
     Compatible,
+    ChatGpt,
 }
 
 #[derive(Debug, Clone)]
@@ -577,6 +578,7 @@ impl ProviderKind {
             ProviderKind::Ollama => "ollama",
             ProviderKind::LMStudio => "lmstudio",
             ProviderKind::Compatible => "compatible",
+            ProviderKind::ChatGpt => "chatgpt",
         }
     }
 
@@ -589,6 +591,7 @@ impl ProviderKind {
             "ollama" => Some(Self::Ollama),
             "lmstudio" => Some(Self::LMStudio),
             "compatible" => Some(Self::Compatible),
+            "chatgpt" => Some(Self::ChatGpt),
             _ => None,
         }
     }
@@ -610,7 +613,7 @@ impl ProviderKind {
             Self::Gemini => Some("text-embedding-004"),
             Self::Ollama => Some("nomic-embed-text"),
             Self::LMStudio => Some("text-embedding-nomic-embed-text-v1.5"),
-            Self::Anthropic => None,
+            Self::Anthropic | Self::ChatGpt => None,
         }
     }
 }

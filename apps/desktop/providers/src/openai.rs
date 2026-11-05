@@ -562,6 +562,7 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             stream: true,
+            session_id: None,
             context_window: None,
             keep_alive: None,
         }
@@ -608,6 +609,7 @@ mod tests {
                 tool_call_id: Some("call_1".into()),
                 name: Some("edit".into()),
                 is_error: false,
+                native: Vec::new(),
             },
         ]);
         let messages = build_messages(&req);

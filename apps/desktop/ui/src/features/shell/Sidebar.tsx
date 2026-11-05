@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -36,12 +36,11 @@ import { useUi, surfaceForMode, type View } from "@/lib/ui";
 import type { ConversationSummary } from "@/lib/types";
 import {
   CONVERSATIONS_QUERY_KEY,
-  useConversations,
+  useConversationPages,
   usePendingApprovals,
   useProjects,
 } from "@/lib/queries";
 import { useApplySettings } from "@/lib/settings";
-import { isBusy } from "@/lib/runEvents";
 import { useRunEvents } from "@/lib/runStore";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +57,7 @@ import { Input, SearchField } from "@/components/ui/input";
 import { NavRow, SectionLabel } from "@/components/layout";
 import { SearchEmptyState } from "@/components/common";
 import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
+import { Spinner } from "@/components/ui/spinner";
 import { useNewThread } from "./useShellEvents";
 import { panelStyle } from "./usePanelCap";
 
@@ -157,21 +157,25 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const projects = useProjects();
   const activeProject =
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
-  const conversations = useConversations();
+  const conversations = useConversationPages();
+  const conversationRows = useMemo(
+    () => conversations.data?.pages.flatMap((page) => page.items) ?? [],
+    [conversations.data],
+  );
   const approvals = usePendingApprovals();
   const newThread = useNewThread();
   // A run keeps streaming after the user opens another thread. Without this
   // marker the work simply vanished from the UI: the transcript stopped
   // receiving events and nothing else in the shell said a task was still live.
-  const liveByConversation = useRunEvents((s) => s.byConversation);
+  //
+  // Subscribe to the derived *set* instead of `byConversation`: the latter is
+  // re-created on every 60 ms flush, which re-rendered this whole list 16×/s
+  // while tokens streamed. `busyConversationIds` only changes on a status
+  // transition.
+  const busyConversationIds = useRunEvents((s) => s.busyConversationIds);
   const runningConversationIds = useMemo(
-    () =>
-      new Set(
-        Object.entries(liveByConversation)
-          .filter(([, entry]) => isBusy(entry.timeline.status))
-          .map(([id]) => id),
-      ),
-    [liveByConversation],
+    () => new Set(busyConversationIds),
+    [busyConversationIds],
   );
 
   const rename = useMutation({
@@ -238,7 +242,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
 
   const threads = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
-    const list = (conversations.data ?? []).filter((c) => {
+    const list = conversationRows.filter((c) => {
       // Natural separation by active surface:
       if (surfaceForMode(c.mode) !== surface) {
         return false;
@@ -263,12 +267,44 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
       }
     }
     return groups;
-  }, [conversations.data, deferredSearch, pinnedSet, surface]);
+  }, [conversationRows, deferredSearch, pinnedSet, surface]);
 
   const pendingCount = approvals.data?.length ?? 0;
-  const hasThreads = (conversations.data ?? []).some(
+  const hasThreads = conversationRows.some(
     (c) => surfaceForMode(c.mode) === surface,
   );
+  const {
+    hasNextPage: hasMoreThreads,
+    isFetchingNextPage,
+    isPending: conversationsPending,
+    fetchNextPage,
+  } = conversations;
+  const loadMore = () => {
+    if (hasMoreThreads && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  };
+
+  // Opening a surface whose newest page happens to contain only the *other*
+  // surface must not show an empty history: fetch until this surface has at
+  // least one row (or the history really is exhausted). A client-side search
+  // disables the automatic walk so typing cannot pull every page at once.
+  useEffect(() => {
+    if (conversationsPending || deferredSearch.trim()) return;
+    if (conversationRows.some((c) => surfaceForMode(c.mode) === surface))
+      return;
+    if (hasMoreThreads && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [
+    conversationRows,
+    conversationsPending,
+    deferredSearch,
+    fetchNextPage,
+    hasMoreThreads,
+    isFetchingNextPage,
+    surface,
+  ]);
   const filteredThreadCount = [...threads.values()].reduce(
     (n, items) => n + items.length,
     0,
@@ -400,9 +436,15 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
       <div
         ref={threadListRef}
         onKeyDown={onThreadListKeyDown}
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+            loadMore();
+          }
+        }}
         className="stable-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 pt-1.5"
       >
-        {hasThreads ? (
+        {hasThreads || hasMoreThreads ? (
           <>
             {GROUP_ORDER.map((group) => {
               const items = threads.get(group);
@@ -420,7 +462,12 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                   </SectionLabel>
                   <ul className="flex flex-col gap-0.5">
                     {items.map((c) => (
-                      <li key={c.id}>
+                      // Off-screen rows skip layout/paint. The intrinsic size
+                      // keeps the scrollbar honest until a row is measured.
+                      <li
+                        key={c.id}
+                        className="[content-visibility:auto] [contain-intrinsic-size:auto_64px]"
+                      >
                         {/* A real `<button>`, not a `div role="button"`. The row
                             also holds rename / export / delete buttons, so the
                             title stretches over the row with a pseudo-element. */}
@@ -602,7 +649,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                 </section>
               );
             })}
-            {filteredThreadCount === 0 && (
+            {filteredThreadCount === 0 && !hasMoreThreads && (
               <SearchEmptyState
                 compact
                 title={
@@ -612,6 +659,23 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                 }
                 onClear={() => setSearch("")}
               />
+            )}
+            {hasMoreThreads && (
+              <div className="flex justify-center pt-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={loadMore}
+                  disabled={isFetchingNextPage}
+                  className="text-muted"
+                >
+                  {isFetchingNextPage ? (
+                    <Spinner size={11} label={t("読み込み中…")} />
+                  ) : (
+                    t("以前のスレッドを読み込む")
+                  )}
+                </Button>
+              </div>
             )}
           </>
         ) : conversations.isError ? (

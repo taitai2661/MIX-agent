@@ -39,7 +39,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     agents = useRows<ChatAgent>("/agents"),
     tools = useQuery<Tool[]>({
       queryKey: ["/tools"],
-      queryFn: () => api("/tools"),
+      queryFn: ({ signal }) =>
+        api("/tools", "GET", undefined, undefined, { signal }),
     }),
     permissionRules = useRows<PermissionRule>("/permission-rules");
   const settings = useSettings<{ data: { default_model_id?: string } }>();
@@ -78,7 +79,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const reconciledRun = useRef<string | null>(null);
   const history = useQuery<ConversationHistory>({
     queryKey: ["messages", id],
-    queryFn: () => api("/conversations/" + id + "/messages"),
+    queryFn: ({ signal }) =>
+      api("/conversations/" + id + "/messages", "GET", undefined, undefined, {
+        signal,
+      }),
     enabled: !!id,
   });
   const { streamText, reasoning, events, streamConnected } = useChatRunStream({
@@ -90,7 +94,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   });
   const run = useQuery<Run>({
     queryKey: ["run", runId],
-    queryFn: () => api("/runs/" + runId),
+    queryFn: ({ signal }) =>
+      api("/runs/" + runId, "GET", undefined, undefined, { signal }),
     enabled: !!runId,
     refetchInterval: (q) =>
       !streamConnected &&
@@ -101,7 +106,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const runActive = ACTIVE_RUN_STATUSES.includes(run.data?.status as RunStatus);
   const toolHistory = useQuery<ToolCallHistory[]>({
     queryKey: ["tool-calls", id],
-    queryFn: () => api("/conversations/" + id + "/tool-calls"),
+    queryFn: ({ signal }) =>
+      api("/conversations/" + id + "/tool-calls", "GET", undefined, undefined, {
+        signal,
+      }),
     enabled: !!id,
     refetchInterval: !streamConnected && runActive ? 5000 : false,
   });
@@ -147,7 +155,10 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   }, [id]);
   useEffect(() => {
     const latestRun = history.data?.runs?.at(-1);
-    if (latestRun) setRunId(latestRun.id);
+    // Only seed the selected Run. Unconditionally assigning the latest Run on
+    // every history refetch let a slow response overwrite the Run the user had
+    // just started (and the stream reconnected to the wrong one).
+    if (latestRun) setRunId((current) => current || latestRun.id);
     if (id && history.data && restoredConversation.current !== id) {
       restoredConversation.current = id;
       setSelectedProject(

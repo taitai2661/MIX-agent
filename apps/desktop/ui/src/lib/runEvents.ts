@@ -37,6 +37,22 @@ export interface VerificationNotice {
   outstanding: string[];
 }
 
+/** One automatic context-compaction event emitted mid-Run.
+ *
+ *  The engine keeps the most recent turns verbatim and summarises the rest as
+ *  the context window fills. The transcript used to look unchanged after that
+ *  happened, so a model that had "forgotten" an early instruction looked
+ *  broken rather than compressed. */
+export interface ContextCompaction {
+  at: string;
+  compressed: boolean;
+  activeChars: number;
+  archiveRows: number;
+  messages: number;
+  sourceMessages: number;
+  evictedToolResults: number;
+}
+
 export interface RunTimeline {
   runId: string;
   text: string;
@@ -56,6 +72,8 @@ export interface RunTimeline {
   error: string | null;
   /** The agent's own checklist, most recent state. */
   todos: TodoItem[];
+  /** Context compactions applied to this Run, oldest first. */
+  contextCompactions: ContextCompaction[];
   /** True when the backend stopped a replay at its event window. */
   replayTruncated?: boolean;
   /** How many middle events the replay window omitted. */
@@ -84,6 +102,7 @@ export function createTimeline(runId: string): RunTimeline {
     approval: null,
     error: null,
     todos: [],
+    contextCompactions: [],
   };
 }
 
@@ -319,6 +338,25 @@ export function applyRunEvent(
       next.verificationFailed =
         optString(d.reason) ?? "an unconfirmed change was left";
       break;
+    // Two shapes share this kind: retrieval statistics (`memories` /
+    // `knowledge`, no compaction fields) and the mid-Run summary. Only the
+    // latter belongs in the compaction timeline.
+    case "context_summary": {
+      if (d.messages === undefined && d.activeChars === undefined) break;
+      next.contextCompactions = [
+        ...next.contextCompactions,
+        {
+          at: event.created_at,
+          compressed: d.compressed === true,
+          activeChars: optNumber(d.activeChars) ?? 0,
+          archiveRows: optNumber(d.archiveRows) ?? 0,
+          messages: optNumber(d.messages) ?? 0,
+          sourceMessages: optNumber(d.sourceMessages) ?? 0,
+          evictedToolResults: optNumber(d.evictedToolResults) ?? 0,
+        },
+      ];
+      break;
+    }
     case "replay_truncated":
       next.replayTruncated = true;
       next.replayOmitted = optNumber(d.omitted) ?? null;

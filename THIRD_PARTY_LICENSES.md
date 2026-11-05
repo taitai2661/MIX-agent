@@ -4,9 +4,9 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 722 crates
+- **Rust Dependencies**: 724 crates
 - **Python Dependencies**: 82 packages
-- **Node.js / Web Dependencies**: 47 packages
+- **Node.js / Web Dependencies**: 48 packages
 
 ## 2. Special Notices & Disclosures
 
@@ -126,6 +126,7 @@ This document lists third-party software components and dependencies used by MIX
 | `@radix-ui/react-tooltip` | `^1.2.16` | npm |
 | `@tailwindcss/vite` | `^4.1.7` | npm |
 | `@tanstack/react-query` | `^5.80.0` | npm |
+| `@tanstack/react-virtual` | `^3.14.25` | npm |
 | `@tauri-apps/api` | `^2.1.1` | npm |
 | `@tauri-apps/plugin-notification` | `^2.0.1` | npm |
 | `@tauri-apps/plugin-os` | `^2.0.0` | npm |
@@ -163,7 +164,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 722 crates compiled into Desktop binaries.
+Total: 724 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -628,6 +629,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `serde_urlencoded` | `0.7.1` | Rust |
 | `serde_with` | `3.24.0` | Rust |
 | `serde_with_macros` | `3.24.0` | Rust |
+| `serde_yaml_ng` | `0.10.0` | Rust |
 | `serde-untagged` | `0.1.9` | Rust |
 | `serial` | `0.4.0` | Rust |
 | `serial-core` | `0.4.0` | Rust |
@@ -754,6 +756,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `unicode-properties` | `0.1.4` | Rust |
 | `unicode-segmentation` | `1.13.3` | Rust |
 | `universal-hash` | `0.5.1` | Rust |
+| `unsafe-libyaml` | `0.2.11` | Rust |
 | `untrusted` | `0.9.0` | Rust |
 | `url` | `2.5.8` | Rust |
 | `urlpattern` | `0.6.0` | Rust |

@@ -359,6 +359,7 @@ mod tests {
             max_tokens: Some(128),
             reasoning: None,
             stream: true,
+            session_id: None,
             context_window: Some(8192),
             keep_alive: Some("5m".into()),
         }

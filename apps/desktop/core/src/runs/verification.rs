@@ -153,7 +153,7 @@ impl VerificationLedger {
             }
             // Broad searches and fetches are not path-specific; treat them as
             // confirming the outstanding set rather than pinning the agent.
-            "glob" | "grep" | "web_fetch" | "web_fetch_pdf" | "web_search" | "network"
+            "glob" | "grep" | "lsp" | "web_fetch" | "web_fetch_pdf" | "web_search" | "network"
             | "image_vision" | "workspace_check" => {
                 self.outstanding.clear();
             }
@@ -189,10 +189,22 @@ fn command_arg(args: &serde_json::Value) -> Option<&str> {
     args.get("command").and_then(|v| v.as_str())
 }
 
+/// The text a `terminal` call actually feeds to the shell.
+///
+/// `action: "send"` types `input` into the live shell, so permission patterns
+/// and destructive detection must look at it instead of the absent `command`.
+fn terminal_input(args: &serde_json::Value) -> &str {
+    if args.get("action").and_then(|v| v.as_str()) == Some("send") {
+        args.get("input").and_then(|v| v.as_str()).unwrap_or("")
+    } else {
+        command_arg(args).unwrap_or("")
+    }
+}
+
 /// A stable key for the effect a destructive call leaves behind.
 fn effect_key(tool: &str, args: &serde_json::Value) -> String {
     match tool {
-        "terminal" => format!("cmd:{}", command_arg(args).unwrap_or_default()),
+        "terminal" => format!("cmd:{}", terminal_input(args)),
         _ => format!("path:{}", path_arg(args).unwrap_or_default()),
     }
 }
@@ -267,7 +279,7 @@ pub fn destructive_reason(tool: &str, args: &serde_json::Value) -> Option<String
             _ => None,
         },
         "edit" => Some("edit changed a file on disk".to_string()),
-        "terminal" => shell_destructive_reason(command_arg(args).unwrap_or("")),
+        "terminal" => shell_destructive_reason(terminal_input(args)),
         _ => None,
     }
 }
@@ -442,6 +454,9 @@ pub fn is_read_tool(tool: &str) -> bool {
         "files"
             | "glob"
             | "grep"
+            | "lsp"
+            | "skill"
+            | "skill_resource"
             | "image_vision"
             | "web_fetch"
             | "web_fetch_pdf"
@@ -737,5 +752,19 @@ mod tests {
         assert!(
             destructive_reason("terminal", &serde_json::json!({"command": "git status"})).is_none()
         );
+    }
+
+    #[test]
+    fn send_input_is_treated_as_the_command() {
+        assert!(destructive_reason(
+            "terminal",
+            &serde_json::json!({"action": "send", "input": "rm -rf build"})
+        )
+        .is_some());
+        assert!(destructive_reason(
+            "terminal",
+            &serde_json::json!({"action": "send", "input": "echo ok"})
+        )
+        .is_none());
     }
 }

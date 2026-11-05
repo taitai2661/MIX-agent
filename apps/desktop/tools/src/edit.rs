@@ -259,18 +259,7 @@ fn first_difference(before: &[&str], after: &[&str]) -> Option<usize> {
 
 /// Write `content` to `path` through a temp file so a crash cannot truncate it.
 fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = super::files::temp_sibling(path);
-    if let Err(err) = std::fs::write(&tmp, content) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(err.into());
-    }
-    if let Err(err) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(err.into());
-    }
+    super::files::atomic_write_bytes(path, content.as_bytes())?;
     Ok(())
 }
 

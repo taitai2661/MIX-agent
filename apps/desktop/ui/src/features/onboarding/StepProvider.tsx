@@ -152,7 +152,7 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
     <div className="flex flex-col gap-3">
       <Alert tone="info">
         {t(
-          "API キーは OS の資格情報ストレージに保存され、設定画面には表示されません。",
+          "API キーのマスター鍵は OS の資格情報ストレージ（macOS Keychain / Windows Credential Manager）に保存され、API キー本体は AES-256-GCM で暗号化してローカルに保存されます。設定画面には表示されません。",
         )}
       </Alert>
 

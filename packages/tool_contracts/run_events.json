@@ -34,6 +34,7 @@
     "tool_approval_requested": "Desktop's request half of an approval; Docker emits the single `approval` kind.",
     "tool_approval_resolved": "Desktop's resolution half of an approval; Docker emits the single `approval` kind.",
     "tool_denied": "Desktop emits a dedicated denial event; Docker returns a tool_result carrying error/code `tool_denied`.",
+    "usage": "Desktop streams a cumulative usage snapshot after each provider turn for the per-turn token/cost meter. Docker records usage in the message/status payload instead of a dedicated event.",
     "verification_failed": "Desktop emits a failed verification. Docker reports verification_required/stagnation_detected plus the terminal status instead."
   }
 }

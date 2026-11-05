@@ -107,6 +107,48 @@ pub fn redact_value(value: &mut Value) {
     }
 }
 
+/// Mask tool *arguments* before they are persisted, emitted, or shown in an
+/// approval card.
+///
+/// `redact_value` only recognises shaped/labelled credentials, which leaves
+/// free-form values such as `terminal send { input: "hunter2" }` or
+/// `browser type { text: "..." }` untouched. Those fields are masked whole;
+/// the raw arguments still go to the Tool itself.
+pub fn redact_arguments(value: &mut Value) {
+    redact_value(value);
+    let Value::Object(map) = value else {
+        return;
+    };
+    for key in ["input", "password", "passwd", "secret", "token"] {
+        if let Some(Value::String(text)) = map.get_mut(key) {
+            if !text.is_empty() {
+                *text = MASK.to_string();
+            }
+        }
+    }
+    // `browser type` uses `text`; `network` may carry an Authorization header.
+    if let Some(Value::String(text)) = map.get_mut("text") {
+        if !text.is_empty() {
+            *text = MASK.to_string();
+        }
+    }
+    if let Some(Value::Object(headers)) = map.get_mut("headers") {
+        for (name, header) in headers.iter_mut() {
+            let lower = name.to_ascii_lowercase();
+            if lower.contains("auth")
+                || lower.contains("cookie")
+                || lower.contains("token")
+                || lower.contains("key")
+                || lower.contains("secret")
+            {
+                if let Value::String(text) = header {
+                    *text = MASK.to_string();
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +186,24 @@ mod tests {
         let rendered = value.to_string();
         assert!(!rendered.contains("ghp_"));
         assert!(!rendered.contains("sk-abcdefghijklmnopqrstuvwxyz"));
+    }
+
+    #[test]
+    fn free_form_tool_arguments_are_masked() {
+        let mut value = serde_json::json!({
+            "command": "login",
+            "input": "hunter2hunter2",
+            "text": "typed secret",
+            "headers": {
+                "Authorization": "Bearer abcdefghijklmnop",
+                "Accept": "application/json"
+            }
+        });
+        redact_arguments(&mut value);
+        assert_eq!(value["command"], "login");
+        assert_eq!(value["input"], MASK);
+        assert_eq!(value["text"], MASK);
+        assert_eq!(value["headers"]["Authorization"], MASK);
+        assert_eq!(value["headers"]["Accept"], "application/json");
     }
 }

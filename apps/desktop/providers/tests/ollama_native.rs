@@ -40,6 +40,7 @@ fn request() -> ProviderRequest {
         max_tokens: Some(64),
         reasoning: Some(mixd_providers::ReasoningControl::High),
         stream: true,
+        session_id: None,
         context_window: Some(8192),
         keep_alive: Some("5m".into()),
     }

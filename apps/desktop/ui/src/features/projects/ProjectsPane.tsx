@@ -16,7 +16,7 @@ import { relativeTime } from "@/lib/format";
 import {
   CONVERSATIONS_QUERY_KEY,
   PROJECTS_QUERY_KEY,
-  useConversations,
+  useConversationsForProject,
   useProjects,
 } from "@/lib/queries";
 import { pruneStaleActiveProject, useUi } from "@/lib/ui";
@@ -51,7 +51,6 @@ export function ProjectsPane() {
   const { confirm, dialog } = useConfirm();
 
   const projects = useProjects();
-  const conversations = useConversations();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -64,6 +63,7 @@ export function ProjectsPane() {
   const [verifyDraft, setVerifyDraft] = useState<string | null>(null);
   const [formatDraft, setFormatDraft] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
+  const conversations = useConversationsForProject(selectedId);
 
   const list = projects.data ?? [];
   const selected = list.find((p) => p.id === selectedId) ?? null;
@@ -74,9 +74,7 @@ export function ProjectsPane() {
   useEffect(() => {
     if (projects.data) pruneStaleActiveProject(projects.data.map((p) => p.id));
   }, [projects.data]);
-  const linked = selected
-    ? (conversations.data ?? []).filter((c) => c.project_id === selected.id)
-    : [];
+  const linked = selected ? (conversations.data?.items ?? []) : [];
 
   // Keep the command drafts in step with the saved project. Keyed on the saved
   // values rather than every render, so typing is not overwritten by a refetch

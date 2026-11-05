@@ -11,6 +11,8 @@ from mix_agent.db.models import (
     Permission,
     Provider,
     Run,
+    RunCheckpoint,
+    MemoryProcessingJob,
     ToolCall,
     User,
     uid,
@@ -78,6 +80,38 @@ def test_purge_temporary_run_removes_local_records():
         db.commit()
 
         assert db.get(Run, run.id) is None
+
+
+def test_purge_conversation_removes_run_children():
+    from mix_agent.storage.cleanup import purge_conversation
+
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        conversation = Conversation(owner_id=owner, data={"title": "Permanent"})
+        db.add(conversation)
+        db.flush()
+        run = Run(
+            owner_id=owner,
+            conversation_id=conversation.id,
+            request_key=uid(),
+            status="completed",
+            data={},
+        )
+        db.add(run)
+        db.flush()
+        # Every completed Run gets a MemoryProcessingJob; a checkpoint may also
+        # exist. Both have a plain FK to runs.id, so omitting them made the
+        # purge fail with an IntegrityError at flush().
+        db.add(MemoryProcessingJob(owner_id=owner, run_id=run.id, status="completed", data={}))
+        db.add(RunCheckpoint(owner_id=owner, run_id=run.id, step=1, tool_count=0, data={}))
+        db.commit()
+
+        purge_conversation(db, conversation)
+        db.commit()
+
+        assert db.get(Run, run.id) is None
+        assert db.scalar(select(MemoryProcessingJob).where(MemoryProcessingJob.run_id == run.id)) is None
+        assert db.scalar(select(RunCheckpoint).where(RunCheckpoint.run_id == run.id)) is None
         assert db.get(Conversation, conversation.id) is None
 
 

@@ -35,6 +35,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { CopyButton } from "@/components/CopyButton";
 import { ErrorBadge } from "@/components/shared";
 import { ApprovalCard } from "./ApprovalCard";
+import { ContextCompactionNotice } from "./ContextCompaction";
+import { useThrottledValue } from "@/lib/useThrottledValue";
 
 export const Reasoning = memo(function Reasoning({
   text,
@@ -189,6 +191,9 @@ export const LiveBlock = memo(function LiveBlock({
   // Waiting on an approval is still "in flight": the spinner has to stay, and
   // the transcript must not be retired while a card is waiting for an answer.
   const busy = isBusy(live.status);
+  // Re-parsing accumulated Markdown 16×/s gets more expensive as the answer
+  // grows; 120 ms still reads as "live" while halving the parse work.
+  const renderedText = useThrottledValue(live.text, 120);
   return (
     <div className="flex gap-3">
       <span
@@ -240,10 +245,13 @@ export const LiveBlock = memo(function LiveBlock({
         {live.todos && live.todos.length > 0 && (
           <InlineTodoList todos={live.todos} />
         )}
+        {live.contextCompactions.length > 0 && (
+          <ContextCompactionNotice items={live.contextCompactions} />
+        )}
         {live.tools.length > 0 && <InlineTools tools={live.tools} />}
-        {live.text ? (
+        {renderedText ? (
           <div className="text-sm text-fg">
-            <Markdown>{stripLeakedMarkup(live.text)}</Markdown>
+            <Markdown>{stripLeakedMarkup(renderedText)}</Markdown>
           </div>
         ) : (
           busy && (

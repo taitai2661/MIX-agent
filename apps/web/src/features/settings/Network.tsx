@@ -1,6 +1,7 @@
 import { api } from "@/app/api";
 import { queryKeys, useSettings } from "@/lib/queries";
 import { Button } from "@/components/button";
+import { PageLoading } from "@/components/loading";
 import { ErrorBox, Field, Title } from "@/components/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -12,7 +13,8 @@ export function NetworkSettings() {
     qc = useQueryClient();
   const [error, setError] = useState<unknown>(null),
     [saved, setSaved] = useState(false);
-  if (!setting.data) return <ErrorBox error={setting.error} />;
+  if (!setting.data)
+    return setting.error ? <ErrorBox error={setting.error} /> : <PageLoading />;
   return (
     <>
       <Title

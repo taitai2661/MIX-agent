@@ -6,7 +6,23 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-10-31 → 2026-10-29 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-11-03 → 2026-10-31 → 2026-10-29 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [実装] Desktop の信頼性・検索・長い会話対応（2026-11-03）
+
+- **秘密情報の保存**: macOS / Windows の既定を `KeychainSeedBackend` に変更した。AES-256-GCM の暗号文は従来どおり 0600 の `secrets.enc.json` に置き、マスター seed だけを OS Keychain に移す。既存の `.master_seed` は Keychain へコピーし、読み戻しが一致した場合だけ削除する。Keychain がロックされていてファイル seed が無い場合は、新しい seed を作らずエラーにした。`MIX_SECRET_BACKEND=file|keychain` で明示的に切り替えられる。オンボーディング / README / architecture の「OS Keychain に API キー本体を保存」という説明も実装に合わせた。
+- **DB 起動時検査と panic ログ**: `Storage::open` が `PRAGMA quick_check` を実行し、破損時はバックアップからの復旧手順を含むエラーで停止する。release の `panic = "unwind"` を前提に、グローバル panic hook が場所とメッセージを tracing と stderr の両方へ出す。
+- **FTS5 全文検索**: migration `0002_search.sql` を追加。`messages` / `knowledge` の JSON を trigram FTS5 にミラーし、insert / update / delete トリガーで同期する。`retrieve_knowledge` は 3 文字以上のクエリで FTS5 の候補集合を使い、短いクエリは従来の lexical scan にフォールバックする（順位は従来の `QueryTerms` スコアのまま）。`search_messages` コマンドを追加し、コマンドパレットから全スレッドのメッセージ本文を検索できるようにした。
+- **会話一覧の索引**: `conversations.updated_at` / `messages.role` / `messages.content` を生成列にし、`conversations_updated_idx` / `messages_conv_role_idx` を追加。`list_conversations` の相関サブクエリは生成列と rowid を使う形に変更した。
+- **長い会話のページング**: `list_messages` に `before`（rowid カーソル）を追加し、既定ページを 100 件（上限 500）にした。`MessageView.seq` をカーソルとして返し、UI は「以前のメッセージを読み込む」で古いページを取得する。従来は 500 件を超えると古いメッセージが無表示・読み込み導線なしだった。
+- **repo_map**: `symbols` ツールに `map` アクションを追加。`.gitignore` を尊重し、vendored / generated ディレクトリを除いたうえで、source > other > test の順、シンボル密度順にファイルと定義名を返す。
+- **CLI 診断**: `--version` / `--help` / `--doctor [--json]` を追加。`--doctor` はデータディレクトリの書き込み可否、DB の `user_version` と `quick_check`、秘密情報バックエンドの到達性を読み取り専用で表示する。
+- **対話 terminal（第一歩）**: `terminal` ツールに `action: "send"` を追加。永続シェルへ stdin を送り、待ち時間中に届いた新規出力だけを返す。REPL / `ssh` / パスワードプロンプトの入口になる。専用のターミナル UI、Ctrl-C などのシグナル送出は未実装。
+- **ターミナル sandbox のネットワーク制限**: macOS の `sandbox-exec` profile に `sandbox_terminal_network`（既定 OFF）を追加。ON のとき `(deny network*)` を付与し、書き込み制限と併用できる。UI の設定 ▸ 一般にトグルを追加し、macOS 以外では API 側でも拒否する。
+- **会話の fork**: メッセージ単位で「このメッセージから分岐」を追加。会話の prefix を新しいスレッドへコピーし、元の Run への参照は外す（元スレッドの実行履歴は変更しない）。assistant の Run イベント・承認は複製しない。
+- **検証**: `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`（全 suite 成功）、Desktop UI の `pnpm typecheck` / `pnpm lint` / `pnpm test`（48ファイル354テスト）が成功。追加テストは Keychain seed 移行、ロック時の fail-closed、FTS5 の日本語/英語部分一致と更新・削除、v1→v2 の backfill、メッセージページング、repo_map のランキング、メッセージ検索、対話 send、会話 fork を対象にした。
+- **未実施**: 実 macOS Keychain を空にした状態での GUI 目視（CI ではメモリ上の seed store で検証）、Windows / Linux 実機、`trigram` を持たない SQLite ビルドへのフォールバック確認。SQLCipher による DB 暗号化、hooks、headless `run` / `exec`、Tauri WebView E2E、ターミナル UI は今回の範囲外。
+
 
 ## [実装] コーディングエージェント評価ハーネス（2026-10-31）
 
@@ -25,6 +41,27 @@
 - 設定 ▸ アップデートの注意書きを OS 別にした。macOS は Gatekeeper、Windows は SmartScreen、Linux は deb の手動更新だけを表示する。設定 ▸ 一般のターミナルサンドボックスは macOS のみ有効とし、Windows / Linux では無効化して理由を表示する。
 - 検証: Desktop UI の `pnpm typecheck` / `pnpm lint` / `pnpm exec prettier --check`、`pnpm test`（40ファイル317テスト）、Web の `pnpm build` と `pnpm test`（24ファイル172テスト）、`git diff --check` が成功。
 - 未実施: Windows / Linux 実機での目視確認。OS 判定は UA と `plugin-os`、表示切り替えは Vitest の unit test のみで確認した。
+
+## [追記] 品質・セキュリティ改善（2026-10-29）
+
+- Desktop: 未配線だった at-rest encryption トグルを「未対応」と明示し、`update_settings` は `database_encryption=true` を拒否、旧行は `false` として読むようにした。SQLCipher は未導入のため、DB は平文 SQLite + 所有者限定パーミッションのまま（`apps/desktop/app/tests/settings.rs`）。
+- Desktop: Browser の各ページターゲットに CDP `Fetch` 傍受を常時適用。リクエストごとにホストを解決し、private / loopback / link-local / cloud metadata を遮断する。実 Chromium の統合テスト4件（navigate / local opt-in / profile / screencast）が成功。
+- Desktop: Windows の PTY テスト2件を `#[cfg_attr(windows, ignore)]` で明示的にスキップ。macOS では従来どおり実行し、`cargo test --workspace` が成功。
+- Docker: `MIX_LOG_FORMAT=json` で構造化ログを選択可能にした（`mix_agent/logging_setup.py`、ユニットテスト2件）。
+- Docker: scheduler の同期DBメンテナンス処理を `asyncio.to_thread` へ移し、イベントループを塞がないようにした（run の起動はIDを収集してループ上で実行）。
+- Docker: `/memories*` 10ルートを `api/routes_memories.py` へ分割し、`docs/openapi.json` と `apps/web/src/generated/api.ts` を再生成した。
+- Web: ESLint（`--max-warnings 0`, react-hooks, jsx-a11y）と Prettier を CI に追加。`any` を生成型へ置換し、条件付き Hook 3件を修正。カバレッジ下限を lines/statements 34%、functions 57.5% へ引き上げた。E2E に「送信 → SSE text → done」を追加。
+- CI: 外部 Action をコミット SHA に固定（`dtolnay/rust-toolchain@master` を含む）。
+- 検証: `pytest` 605 passed / 1 skipped、`cargo test --workspace` 全 suite 成功、`cargo clippy --workspace --all-targets -D warnings`、`ruff check` / `ruff format --check`、pyright budget（0 errors / 45 warnings）、Web lint / format / 198 tests / coverage 41.2% lines・79.9% branches・60.36% functions / build / Playwright 3 tests、Desktop UI lint / typecheck / 317 tests / build が成功。
+- 未実施: Developer ID / Authenticode 署名（証明書が無いため。手順は `docs/release-checklist.md`）、SQLCipher 実装。
+- 巨大ファイル分割（2026-10-29）:
+  - `api/routes.py` 3,520行 → 集約33行 + `routes_{settings,statistics,schedules,conversations,messages,runs,memories,skills,mcp,collections}.py`。
+  - `runs/engine.py` 2,444行 → `engine.py`（起動・駆動・scheduler）+ `engine_support/tools/context/routing/provider.py`。
+  - Desktop `core/src/runs/engine.rs` 3,499行 → `engine.rs` 690行 + `engine/{event_bus,query,execute,execute_turn,execute_tools,execute_budget,finish,helpers}.rs`。
+  - Desktop `tools/src/terminal.rs` 1,992行 → `terminal.rs` 632行 + `terminal/{shell,session,parsing,sandbox,tests}.rs`。
+  - Web `features/chat/Chat.tsx` 1,123行 → 438行 + `useChatRunStream` / `useChatActions` / `ChatTranscript` / `ChatMessage` / `ChatComposer` / `ChatRunPanels` / `ChatWelcome` / `ChatMarkdown`。
+  - Desktop UI `Composer.tsx` 1,110行 → 317行 + `useComposerState` / `ComposerToolbar` / `ComposerAttachments` / `composerTypes` / `composerModes`。
+  - 確認: `cargo test --workspace` / `clippy -D warnings` / `cargo fmt --check`、Docker `pytest` 605 passed / 1 skipped、Web lint / format / 198 tests / coverage 41.2% lines・79.9% branches・60.36% functions / build / E2E 3 tests、Desktop UI lint / typecheck / 317 tests / build / format をすべて再実行して成功。
 
 ## [修正] ブラウザ操作の境界とライブ表示の改善（2026-10-28）
 
@@ -291,24 +328,3 @@ Dockerビルド中にホストの空き容量が約1.8GiBまで低下したた�
 - Knowledgeはテキストのチャンク検索に対応。外部同期や検索品質の実環境評価は未完了。MCP OAuthは実装済みですが、実Serverでの受入確認は別途必要です。画像生成・編集、Registry Store、OpenAI Compatible公開APIは未実装。
 
 再実行コマンドはREADME参照。実Provider・Docker・実機で未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と扱わない。
-
-## [追記] 品質・セキュリティ改善（2026-10-29）
-
-- Desktop: 未配線だった at-rest encryption トグルを「未対応」と明示し、`update_settings` は `database_encryption=true` を拒否、旧行は `false` として読むようにした。SQLCipher は未導入のため、DB は平文 SQLite + 所有者限定パーミッションのまま（`apps/desktop/app/tests/settings.rs`）。
-- Desktop: Browser の各ページターゲットに CDP `Fetch` 傍受を常時適用。リクエストごとにホストを解決し、private / loopback / link-local / cloud metadata を遮断する。実 Chromium の統合テスト4件（navigate / local opt-in / profile / screencast）が成功。
-- Desktop: Windows の PTY テスト2件を `#[cfg_attr(windows, ignore)]` で明示的にスキップ。macOS では従来どおり実行し、`cargo test --workspace` が成功。
-- Docker: `MIX_LOG_FORMAT=json` で構造化ログを選択可能にした（`mix_agent/logging_setup.py`、ユニットテスト2件）。
-- Docker: scheduler の同期DBメンテナンス処理を `asyncio.to_thread` へ移し、イベントループを塞がないようにした（run の起動はIDを収集してループ上で実行）。
-- Docker: `/memories*` 10ルートを `api/routes_memories.py` へ分割し、`docs/openapi.json` と `apps/web/src/generated/api.ts` を再生成した。
-- Web: ESLint（`--max-warnings 0`, react-hooks, jsx-a11y）と Prettier を CI に追加。`any` を生成型へ置換し、条件付き Hook 3件を修正。カバレッジ下限を lines/statements 34%、functions 57.5% へ引き上げた。E2E に「送信 → SSE text → done」を追加。
-- CI: 外部 Action をコミット SHA に固定（`dtolnay/rust-toolchain@master` を含む）。
-- 検証: `pytest` 605 passed / 1 skipped、`cargo test --workspace` 全 suite 成功、`cargo clippy --workspace --all-targets -D warnings`、`ruff check` / `ruff format --check`、pyright budget（0 errors / 45 warnings）、Web lint / format / 198 tests / coverage 41.2% lines・79.9% branches・60.36% functions / build / Playwright 3 tests、Desktop UI lint / typecheck / 317 tests / build が成功。
-- 未実施: Developer ID / Authenticode 署名（証明書が無いため。手順は `docs/release-checklist.md`）、SQLCipher 実装。
-- 巨大ファイル分割（2026-10-29）:
-  - `api/routes.py` 3,520行 → 集約33行 + `routes_{settings,statistics,schedules,conversations,messages,runs,memories,skills,mcp,collections}.py`。
-  - `runs/engine.py` 2,444行 → `engine.py`（起動・駆動・scheduler）+ `engine_support/tools/context/routing/provider.py`。
-  - Desktop `core/src/runs/engine.rs` 3,499行 → `engine.rs` 690行 + `engine/{event_bus,query,execute,execute_turn,execute_tools,execute_budget,finish,helpers}.rs`。
-  - Desktop `tools/src/terminal.rs` 1,992行 → `terminal.rs` 632行 + `terminal/{shell,session,parsing,sandbox,tests}.rs`。
-  - Web `features/chat/Chat.tsx` 1,123行 → 438行 + `useChatRunStream` / `useChatActions` / `ChatTranscript` / `ChatMessage` / `ChatComposer` / `ChatRunPanels` / `ChatWelcome` / `ChatMarkdown`。
-  - Desktop UI `Composer.tsx` 1,110行 → 317行 + `useComposerState` / `ComposerToolbar` / `ComposerAttachments` / `composerTypes` / `composerModes`。
-  - 確認: `cargo test --workspace` / `clippy -D warnings` / `cargo fmt --check`、Docker `pytest` 605 passed / 1 skipped、Web lint / format / 198 tests / coverage 41.2% lines・79.9% branches・60.36% functions / build / E2E 3 tests、Desktop UI lint / typecheck / 317 tests / build / format をすべて再実行して成功。

@@ -62,7 +62,9 @@ impl RunEngine {
                 return;
             }
             for path in paths {
-                let resolved = resolve_snapshot_path(root.as_deref(), path);
+                let Some(resolved) = resolve_snapshot_path(root.as_deref(), path) else {
+                    continue;
+                };
                 if entry.iter().any(|snapshot| snapshot.path == resolved)
                     || needed.contains(&resolved)
                 {
@@ -125,7 +127,9 @@ impl RunEngine {
         }
         let root = root.map(std::path::Path::new);
         for path in paths {
-            let key = normalize_tool_path(root, &path);
+            let Some(key) = normalize_tool_path(root, &path) else {
+                continue;
+            };
             let Some(expected) = known.get(&key).copied() else {
                 continue;
             };
@@ -214,6 +218,12 @@ impl RunEngine {
     pub async fn set_terminal_sandbox(&self, enabled: bool) {
         let registry = self.tools.read().await.clone();
         registry.set_terminal_sandbox(enabled);
+    }
+
+    /// Also deny network inside the terminal sandbox.
+    pub async fn set_terminal_sandbox_network(&self, enabled: bool) {
+        let registry = self.tools.read().await.clone();
+        registry.set_terminal_sandbox_network(enabled);
     }
 
     pub async fn cancel(&self, run_id: RunId) {
@@ -439,6 +449,7 @@ impl RunEngine {
             "toolCallId": message.tool_call_id,
             "name": message.name,
             "isError": message.is_error,
+            "native": message.native,
             "kind": message.role,
             "createdAt": chrono::Utc::now().to_rfc3339(),
         });

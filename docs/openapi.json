@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MIX agent",
-    "version": "0.5.5"
+    "version": "0.5.6"
   },
   "paths": {
     "/health": {
@@ -9818,6 +9818,11 @@
             ],
             "title": "Rate Limit Period",
             "default": "minute"
+          },
+          "acknowledge_unofficial": {
+            "type": "boolean",
+            "title": "Acknowledge Unofficial",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -10685,6 +10690,11 @@
           "memory_link_embedding_neighbors": {
             "type": "boolean",
             "title": "Memory Link Embedding Neighbors",
+            "default": false
+          },
+          "chatgpt_enabled": {
+            "type": "boolean",
+            "title": "Chatgpt Enabled",
             "default": false
           }
         },

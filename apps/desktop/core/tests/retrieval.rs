@@ -437,3 +437,94 @@ async fn the_vector_term_decides_between_equally_lexical_rows() {
         assert!(hit.score >= MIN_SCORE, "{} scored {}", hit.id, hit.score);
     }
 }
+
+/// The FTS5 index is the fast path for Knowledge, but ranking must stay the
+/// same lexical overlap: a Japanese query has to find the chunk, and an
+/// unrelated chunk must not appear just because it was returned by SQLite.
+#[tokio::test]
+async fn knowledge_retrieval_uses_the_fts_index_and_keeps_lexical_ranking() {
+    use mixd_core::retrieval::retrieve_knowledge;
+
+    let dir = std::env::temp_dir().join(format!("mixd-k-fts-{}", uuid::Uuid::new_v4()));
+    let storage = Storage::open(&dir).await.expect("open storage");
+    for (id, text) in [
+        ("k1", "ローカルエージェントの設計メモ。検証ループについて。"),
+        ("k2", "unrelated cooking notes"),
+    ] {
+        sqlx::query("INSERT INTO knowledge (id, owner_id, data) VALUES (?, 'local', ?)")
+            .bind(id)
+            .bind(format!(
+                r#"{{"docId":"{id}","filename":"{id}.md","text":"{text}"}}"#
+            ))
+            .execute(storage.pool())
+            .await
+            .expect("insert knowledge");
+    }
+
+    let hits = retrieve_knowledge(&storage, "エージェント", 10)
+        .await
+        .expect("retrieve");
+    assert_eq!(hits.len(), 1, "only the matching chunk should be returned");
+    assert_eq!(hits[0].id, "k1");
+    assert!(hits[0].score > 0.0);
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+/// Memory recall uses the same candidate-narrowing contract as Knowledge: the
+/// index decides which rows are read, the lexical scorer still decides how
+/// they rank, and a row that exists only in `memories` is still found.
+#[tokio::test]
+async fn memory_retrieval_uses_the_fts_index_and_keeps_lexical_ranking() {
+    let storage = temp_storage().await;
+    let updated = Utc::now().to_rfc3339();
+    insert_memory(
+        &storage,
+        "m1",
+        "Alpha",
+        "the quick brown fox jumps over the lazy dog",
+        &updated,
+        None,
+    )
+    .await;
+    insert_memory(
+        &storage,
+        "m2",
+        "Beta",
+        "unrelated cooking notes",
+        &updated,
+        None,
+    )
+    .await;
+
+    let hits = retrieve_memories(&storage, "quick brown", 8)
+        .await
+        .expect("retrieve");
+    assert_eq!(ids(&hits), vec!["m1"]);
+
+    // The trigger is what keeps the index current for rows written after the
+    // migration ran; insert_memory above went through the same path.
+    let indexed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_search WHERE memory_id = 'm1'")
+            .fetch_one(storage.pool())
+            .await
+            .expect("count indexed memories");
+    assert_eq!(indexed, 1);
+
+    // Updating the document must replace, not duplicate, its index row.
+    sqlx::query("UPDATE memories SET data = ? WHERE id = 'm1'")
+        .bind(r#"{"title":"Alpha","content":"a completely different subject"}"#)
+        .execute(storage.pool())
+        .await
+        .expect("update memory");
+    let indexed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_search WHERE memory_id = 'm1'")
+            .fetch_one(storage.pool())
+            .await
+            .expect("count indexed memories after update");
+    assert_eq!(indexed, 1);
+    let hits = retrieve_memories(&storage, "quick brown", 8)
+        .await
+        .expect("retrieve after update");
+    assert!(hits.is_empty(), "the old text must no longer match");
+}

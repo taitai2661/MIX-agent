@@ -2854,6 +2854,11 @@ export interface components {
              * @enum {string}
              */
             rate_limit_period: "minute" | "second";
+            /**
+             * Acknowledge Unofficial
+             * @default false
+             */
+            acknowledge_unofficial: boolean;
         };
         /** ProviderView */
         ProviderView: {
@@ -3233,6 +3238,11 @@ export interface components {
              * @default false
              */
             memory_link_embedding_neighbors: boolean;
+            /**
+             * Chatgpt Enabled
+             * @default false
+             */
+            chatgpt_enabled: boolean;
         };
         /** SkillImportInput */
         SkillImportInput: {

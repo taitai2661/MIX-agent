@@ -52,6 +52,29 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  preflight:
+    name: Require green CI for the tagged SHA
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check the CI conclusion
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$GITHUB_SHA" --limit 1 --json conclusion,status,url)"
+          echo "$runs"
+          conclusion="$(printf '%s' "$runs" | jq -r '.[0].conclusion // ""')"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI for $GITHUB_SHA is '$conclusion'. Refusing to publish installers."
+            exit 1
+          fi
+
   # The browser is downloaded by the app, not by this workflow, so this job is
   # the remaining supply-chain gate: it re-downloads every pinned archive and
   # compares URL, size and SHA-256 with `chromium-manifest.json`.
@@ -69,7 +92,12 @@ jobs:
 
   bundle:
     name: ${{ matrix.target }}
-    needs: verify-chromium-pin
+    needs: [verify-chromium-pin, preflight]
+    # `preflight` is skipped for workflow_dispatch; that must not skip bundling.
+    if: >
+      always() &&
+      needs.verify-chromium-pin.result == 'success' &&
+      (needs.preflight.result == 'success' || needs.preflight.result == 'skipped')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

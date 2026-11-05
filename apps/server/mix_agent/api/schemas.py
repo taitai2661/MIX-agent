@@ -389,6 +389,9 @@ class ProviderInput(Input):
     allow_private: bool = False
     rate_limit_rpm: int = Field(default=0, ge=0, le=10000)
     rate_limit_period: Literal["minute", "second"] = "minute"
+    # Explicit consent for the unofficial ChatGPT / Codex integration. Checked
+    # only when creating that preset; ordinary API-key providers ignore it.
+    acknowledge_unofficial: bool = False
 
 
 class ChatGptDeviceStart(Input):
@@ -699,6 +702,10 @@ class SettingsInput(Input):
     # §4 source (3): §5 embedding neighbours become links only when this is on
     # (spec §4: "(3) は既定オフ").
     memory_link_embedding_neighbors: bool = False
+    # Opt-in for the unofficial ChatGPT / Codex integration. Off by default:
+    # the provider preset stays hidden and the device flow refuses to start
+    # until the operator acknowledges the risk in the Providers pane.
+    chatgpt_enabled: bool = False
 
 
 class FeedbackInput(Input):

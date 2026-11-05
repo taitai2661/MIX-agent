@@ -27,13 +27,18 @@ export const DEFAULT_SETTINGS: SettingsView = {
   // The backend defaults this to `true` too (memory spec §6): a row read
   // before it arrives must not render as "off".
   memory_auto_formation: true,
+  // Personal skills apply across projects; the backend default is `true` too.
+  discover_user_skills: true,
   // Memory spec §4 「(3) は既定オフ」 — the one setting here whose honest
   // default is `false`. Seeding it `true` would both mis-render the switch and,
   // if the seeded value ever reached a save, turn on a source §4 keeps off.
   memory_link_embedding_neighbors: false,
+  // The unofficial integration is off until the user enables it in Providers.
+  chatgpt_enabled: false,
   verify_command: null,
   format_command: null,
   sandbox_terminal: false,
+  sandbox_terminal_network: false,
   // SQLCipher is not wired yet; the only honest value is `false`.
   database_encryption: false,
   onboarding_completed: null,

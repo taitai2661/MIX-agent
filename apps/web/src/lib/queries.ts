@@ -33,6 +33,7 @@ export const SETTINGS_QUERY_KEY = queryKeys.settings;
 export function useSettings<T = Row>() {
   return useQuery<T>({
     queryKey: queryKeys.settings,
-    queryFn: () => api<T>("/settings"),
+    queryFn: ({ signal }) =>
+      api<T>("/settings", "GET", undefined, undefined, { signal }),
   });
 }

@@ -10,7 +10,14 @@ import type {
   BrowserProfileView,
   BrowserStatus,
   CheckpointView,
+  ChatGptDeviceStart,
+  ChatGptDeviceStatus,
+  ChatGptStatus,
+  ConversationPage,
+  ConversationStats,
   ConversationSummary,
+  SandboxStatus,
+  WorkspaceChanges,
   DiagnosticsExport,
   DiagnosticsReport,
   DirEntryView,
@@ -32,6 +39,7 @@ import type {
   MemoryRevisionView,
   MemorySearchHit,
   MemoryView,
+  MessageSearchHit,
   MessageView,
   ModelView,
   PendingApprovalView,
@@ -39,6 +47,7 @@ import type {
   ProjectView,
   ProviderPresetView,
   ProviderView,
+  QuotaSnapshot,
   RunEventView,
   RunView,
   ScheduleJobView,
@@ -68,6 +77,7 @@ export const api = {
     base_url: string | null;
     api_key: string | null;
     enabled: boolean | null;
+    acknowledge_unofficial?: boolean;
   }) => invoke<ProviderView>("create_provider", { input }),
   updateProvider: (input: {
     id: string;
@@ -79,6 +89,19 @@ export const api = {
   deleteProvider: (id: string) => invoke<void>("delete_provider", { id }),
   connectProvider: (id: string) =>
     invoke<number>("connect_provider", { input: { id, discover: true } }),
+
+  chatgptStatus: () => invoke<ChatGptStatus>("chatgpt_status"),
+  chatgptEnsure: () => invoke<ProviderView>("chatgpt_ensure"),
+  chatgptDeviceStart: (providerId: string) =>
+    invoke<ChatGptDeviceStart>("chatgpt_device_start", { providerId }),
+  chatgptDevicePoll: (loginId: string) =>
+    invoke<ChatGptDeviceStatus>("chatgpt_device_poll", { loginId }),
+  chatgptDeviceCancel: (loginId: string) =>
+    invoke<void>("chatgpt_device_cancel", { loginId }),
+  chatgptQuota: (providerId: string, force = false) =>
+    invoke<QuotaSnapshot | null>("chatgpt_quota", { providerId, force }),
+  chatgptLogout: (providerId: string) =>
+    invoke<{ ok: boolean }>("chatgpt_logout", { providerId }),
 
   scanLocalRuntimes: () => invoke<LocalScanView>("scan_local_runtimes"),
   probeLocalEndpoint: (baseUrl: string) =>
@@ -128,7 +151,32 @@ export const api = {
   setMessageFeedback: (messageId: string, value: string | null) =>
     invoke<string | null>("set_message_feedback", { messageId, value }),
 
-  listConversations: () => invoke<ConversationSummary[]>("list_conversations"),
+  getSandboxStatus: () => invoke<SandboxStatus>("sandbox_status"),
+  getAutostart: () => invoke<boolean>("get_autostart"),
+  setAutostart: (enabled: boolean) =>
+    invoke<boolean>("set_autostart", { enabled }),
+
+  listConversationsPage: (
+    limit: number,
+    before?: { cursor: string; id: string } | null,
+  ) =>
+    invoke<ConversationPage>("list_conversations_page", {
+      limit,
+      beforeUpdatedAt: before?.cursor ?? null,
+      beforeId: before?.id ?? null,
+    }),
+  getConversation: (id: string) =>
+    invoke<ConversationSummary | null>("get_conversation", { id }),
+  latestConversation: (modes: string[]) =>
+    invoke<ConversationSummary | null>("latest_conversation", { modes }),
+  listConversationsForProject: (projectId: string, limit = 500) =>
+    invoke<ConversationPage>("list_conversations_for_project", {
+      projectId,
+      limit,
+    }),
+  searchConversations: (query: string, limit = 50) =>
+    invoke<ConversationSummary[]>("search_conversations", { query, limit }),
+  conversationStats: () => invoke<ConversationStats>("conversation_stats"),
   createConversation: (input: {
     mode: string;
     model_id: string;
@@ -166,13 +214,21 @@ export const api = {
     mode: string | null;
     reasoning: string | null;
   }) => invoke<SendMessageOutput>("edit_message", { input }),
-  listMessages: (conversationId: string, limit?: number) =>
+  listMessages: (conversationId: string, limit?: number, before?: number) =>
     invoke<MessageView[]>("list_messages", {
       conversationId,
+      limit: limit ?? null,
+      before: before ?? null,
+    }),
+  searchMessages: (query: string, limit?: number) =>
+    invoke<MessageSearchHit[]>("search_messages", {
+      query,
       limit: limit ?? null,
     }),
   renameConversation: (id: string, title: string) =>
     invoke<void>("rename_conversation", { id, title }),
+  forkConversation: (conversationId: string, messageId: string) =>
+    invoke<string>("fork_conversation", { conversationId, messageId }),
   deleteConversation: (id: string) =>
     invoke<void>("delete_conversation", { id }),
   exportMarkdown: (id: string, includeToolCalls: boolean) =>
@@ -185,6 +241,10 @@ export const api = {
     invoke<boolean>("steer_run", { runId, content }),
   /** Restores files the Run changed via edit/files; returns the count. */
   revertRun: (runId: string) => invoke<number>("revert_run", { runId }),
+  revertRunWorkspace: (runId: string) =>
+    invoke<number>("revert_run_workspace", { runId }),
+  runWorkspaceChanges: (runId: string) =>
+    invoke<WorkspaceChanges>("run_workspace_changes", { runId }),
   getRun: (id: string) => invoke<RunView>("get_run", { id }),
   listRuns: (conversationId: string) =>
     invoke<RunView[]>("list_runs", { conversationId }),
@@ -402,8 +462,8 @@ export const api = {
     }),
   readWorkspaceFile: (rootPath: string, path: string) =>
     invoke<FileContentView>("read_workspace_file", { rootPath, path }),
-  gitStatus: (rootPath: string) =>
-    invoke<GitStatusView>("git_status", { rootPath }),
+  gitStatus: (rootPath: string, allUntracked = false) =>
+    invoke<GitStatusView>("git_status", { rootPath, allUntracked }),
   gitDiff: (rootPath: string, scope: string, path: string | null) =>
     invoke<GitDiffView>("git_diff", { rootPath, scope, path }),
   gitRestore: (rootPath: string, path: string, staged: boolean = false) =>
@@ -545,5 +605,16 @@ export interface RunEventPayload {
 export async function listenRunEvents(
   handler: (event: RunEventPayload) => void,
 ): Promise<UnlistenFn> {
-  return listen<RunEventPayload>("run_event", (e) => handler(e.payload));
+  // The Rust bridge emits single events for milestones and batches for token
+  // deltas. Both feed the same reducer; the batch is applied in arrival order,
+  // which is also sequence order within a Run.
+  const unlisteners = await Promise.all([
+    listen<RunEventPayload>("run_event", (e) => handler(e.payload)),
+    listen<RunEventPayload[]>("run_event_batch", (e) => {
+      for (const event of e.payload) handler(event);
+    }),
+  ]);
+  return () => {
+    for (const unlisten of unlisteners) unlisten();
+  };
 }

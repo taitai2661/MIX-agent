@@ -124,6 +124,7 @@
   --line: #e5e5e9;
   --accent: #1f8a70;
   --accent-soft: #e7f5ef;
+  --on-accent: #ffffff;
   --danger: #c23b3b;
   --shadow: 0 10px 35px #00000016;
 }
@@ -140,6 +141,7 @@
   --line: #424242;
   --accent: #36b48e;
   --accent-soft: #163f34;
+  --on-accent: #0b1f18;
   --danger: #ff8181;
   --shadow: 0 10px 35px #00000055;
 }
@@ -2096,7 +2098,7 @@ body {
   width: 32px;
   height: 32px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .topbar {
   height: 60px;
@@ -2149,7 +2151,7 @@ body {
   border: 0;
   border-radius: 17px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent, #fff);
   box-shadow: 0 10px 25px #167c5b29;
 }
 .eyebrow {
@@ -2233,7 +2235,7 @@ body {
   height: 26px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .markdown {
   font-size: 14px;
@@ -2296,7 +2298,7 @@ body {
   height: 36px;
   border-radius: 12px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .send:not(:disabled):hover {
   background: var(--accent-strong);
@@ -5720,7 +5722,7 @@ body {
 }
 .usage-range button.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .usage-overview {
   grid-template-columns: repeat(5, 1fr);

@@ -433,8 +433,11 @@ impl RunEngine {
                 totals.record(usage);
                 // Price the cumulative totals, not the last turn: a Run that
                 // made ten cheap turns must not report only the final one.
-                totals.estimated_cost_usd =
-                    crate::pricing::estimate_cost_usd(request.wire_model(), &totals.as_usage());
+                totals.estimated_cost_usd = if provider.billing() == BillingMode::Subscription {
+                    Some(0.0)
+                } else {
+                    crate::pricing::estimate_cost_usd(request.wire_model(), &totals.as_usage())
+                };
                 self.emit(
                     run_id,
                     "usage",
@@ -642,7 +645,8 @@ impl RunEngine {
 
             // Assistant turn requested Tools — record it and execute them.
             let assistant_message =
-                Message::assistant_with_tools(turn.text.clone(), turn.tool_calls.clone());
+                Message::assistant_with_tools(turn.text.clone(), turn.tool_calls.clone())
+                    .with_native(turn.native_items.clone());
             self.append_message(
                 request.conversation_id,
                 run_id,
@@ -712,12 +716,14 @@ impl RunEngine {
                 let effect = destructive_reason(&call.function.name, args);
                 destructive[index] = effect.clone();
                 if self.policy.strict_verification && effect.is_some() {
+                    let mut redacted_args = args.clone();
+                    mixd_tools::redact::redact_arguments(&mut redacted_args);
                     self.emit(
                         run_id,
                         "destructive_tool_called",
                         serde_json::json!({
                             "tool": call.function.name,
-                            "arguments": args,
+                            "arguments": redacted_args,
                             "reason": effect.clone().unwrap_or_default(),
                         }),
                     )
@@ -804,6 +810,9 @@ impl RunEngine {
                     biased;
                     _ = cancellation.cancelled_signal() => {
                         tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
+                        // Drop the tool future, then make sure a persistent
+                        // terminal shell does not keep executing the command.
+                        self.tools.read().await.cancel_run(&run_id.to_string()).await;
                         break;
                     }
                     result = self.dispatch_tool(run_id, &request, call, args) => result,
@@ -851,16 +860,17 @@ impl RunEngine {
                             .and_then(|value| value.as_u64()),
                     ) {
                         if fingerprint != 0 {
-                            let key = normalize_tool_path(
+                            if let Some(key) = normalize_tool_path(
                                 request.root_path.as_deref().map(std::path::Path::new),
                                 path,
-                            );
-                            self.read_fingerprints
-                                .lock()
-                                .await
-                                .entry(run_id)
-                                .or_default()
-                                .insert(key, fingerprint);
+                            ) {
+                                self.read_fingerprints
+                                    .lock()
+                                    .await
+                                    .entry(run_id)
+                                    .or_default()
+                                    .insert(key, fingerprint);
+                            }
                         }
                     }
                 }

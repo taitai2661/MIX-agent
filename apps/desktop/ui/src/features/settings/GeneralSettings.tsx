@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Brain,
+  Clock3,
   Compass,
   Keyboard,
   Lock,
@@ -8,8 +10,10 @@ import {
   Trash2,
   Zap,
 } from "lucide-react";
+import { api } from "@/lib/api";
+import { ErrorBadge } from "@/components/shared";
 import { t, tf } from "@/lib/i18n";
-import { isMacPlatform, modKey } from "@/lib/platform";
+import { modKey } from "@/lib/platform";
 import { useUi } from "@/lib/ui";
 import { useOnboardingGate } from "@/features/onboarding/useOnboardingGate";
 import { Card, Field, Row, Section } from "@/components/layout";
@@ -34,10 +38,27 @@ export function GeneralSettings() {
   const { confirm, dialog } = useConfirm();
   const [historyCount, setHistoryCount] = useState(() => promptHistoryCount());
   const [draftCount, setDraftCount] = useState(() => countComposerDrafts());
+  const queryClient = useQueryClient();
+  // The OS is the source of truth for autostart (a user may have deleted the
+  // launch agent by hand), so read it back instead of storing a second copy in
+  // app_settings that could disagree.
+  const autostart = useQuery({
+    queryKey: ["autostart"],
+    queryFn: api.getAutostart,
+    staleTime: Infinity,
+  });
+  const sandbox = useQuery({
+    queryKey: ["sandbox_status"],
+    queryFn: api.getSandboxStatus,
+    staleTime: Infinity,
+  });
+  const autostartMutation = useMutation({
+    mutationFn: api.setAutostart,
+    onSuccess: (value) => queryClient.setQueryData(["autostart"], value),
+  });
   const modifierSendLabel = tf("{shortcut}+Enter で送信 (Enter で改行)", {
     shortcut: modKey(),
   });
-  const macPlatform = isMacPlatform();
 
   const clearHistory = async () => {
     if (historyCount === 0) return;
@@ -147,22 +168,72 @@ export function GeneralSettings() {
         </div>
       </Card>
 
+      <Card title={t("バックグラウンド実行")} icon={<Clock3 size={13} />}>
+        <ToggleRow
+          label={t("ログイン時に起動")}
+          hint={t(
+            "OS のログイン時に MIX-agent をトレイ常駐で起動します。スケジュールをアプリ未起動のまま実行するために必要です。",
+          )}
+          checked={autostart.data ?? false}
+          disabled={autostart.isPending || autostartMutation.isPending}
+          onChange={(next) => autostartMutation.mutate(next)}
+        />
+        {autostartMutation.isError && (
+          <ErrorBadge error={autostartMutation.error} />
+        )}
+        <p className="m-0 text-xs text-muted">
+          {t(
+            "ウィンドウを閉じてもトレイに残り、スケジュールと実行中のタスクは継続します。完全に終了するにはトレイメニューの「Quit」を使います。",
+          )}
+        </p>
+      </Card>
+
       <Card title={t("ターミナルのサンドボックス")} icon={<Lock size={13} />}>
         <ToggleRow
           label={t("シェルをサンドボックス内で実行")}
           hint={
-            macPlatform
+            sandbox.data?.platform === "linux"
               ? t(
-                  "macOS では sandbox-exec を使い、ワークスペースと一時ディレクトリ以外への書き込みを拒否します。次に起動するシェルから適用されます（Linux / Windows では未対応）。",
+                  "bubblewrap (bwrap) を使い、ワークスペースとビルドキャッシュ以外への書き込みを拒否します。次に起動するシェルから適用されます。",
                 )
-              : t(
-                  "この機能はmacOSでのみ利用できます。Windows / Linux では無効です。",
-                )
+              : sandbox.data?.platform === "windows"
+                ? t(
+                    "Job Object でシェルとその子プロセスを束ね、プロセス数の上限とアプリ終了時の一括停止を強制します。ファイルシステムの書き込み隔離はOSレベルでは未対応です。",
+                  )
+                : t(
+                    "macOS では sandbox-exec を使い、ワークスペースと一時ディレクトリ以外への書き込みを拒否します。次に起動するシェルから適用されます。",
+                  )
           }
           checked={data.sandbox_terminal}
-          onChange={(next) => patch({ sandbox_terminal: next })}
-          disabled={!macPlatform}
+          onChange={(next) =>
+            patch({
+              sandbox_terminal: next,
+              // The network profile only means anything with the sandbox on;
+              // turning the parent off clears it in the same save.
+              ...(next ? {} : { sandbox_terminal_network: false }),
+            })
+          }
+          disabled={!sandbox.data?.available}
         />
+        <ToggleRow
+          label={t("シェルからのネットワーク通信も拒否")}
+          hint={t(
+            "パッケージ導入やテストが通らなくなるため既定はOFFです。信頼できないコードを動かすときだけ有効にしてください。",
+          )}
+          checked={data.sandbox_terminal_network}
+          onChange={(next) => patch({ sandbox_terminal_network: next })}
+          disabled={
+            !sandbox.data?.available ||
+            !sandbox.data?.network_supported ||
+            !data.sandbox_terminal
+          }
+        />
+        {sandbox.data && !sandbox.data.available && (
+          <p className="m-0 text-xs text-danger">
+            {sandbox.data.reason ??
+              t("この環境ではサンドボックスを利用できません。")}
+          </p>
+        )}
       </Card>
 
       <Card title={t("メッセージ送信キー")} icon={<Keyboard size={13} />}>
@@ -317,7 +388,7 @@ export function GeneralSettings() {
         <ToggleRow
           label={t("保存時の暗号化")}
           hint={t(
-            "このビルドでは未対応です。データベースは平文SQLiteのため、OSのディスク暗号化（FileVault / BitLocker / LUKS）で保護してください。APIキーなどの秘密情報は別途OSのKeychainに暗号化して保存されます。",
+            "このビルドでは未対応です。データベースは平文SQLiteのため、OSのディスク暗号化（FileVault / BitLocker / LUKS）で保護してください。APIキーなどの秘密情報はマスター鍵（OSのKeychain）で暗号化してローカルに保存されます。",
           )}
           checked={false}
           disabled

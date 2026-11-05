@@ -8,12 +8,33 @@ bundled scripts, matching the project's untrusted-content boundary.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 import zipfile
 import zlib
 from pathlib import Path, PurePosixPath
 
 import yaml
+
+LOGGER = logging.getLogger(__name__)
+
+# Files and directories that are never skill resources: walking a repository's
+# VCS metadata or a package cache would exhaust the bundle cap with artefacts
+# the author never meant to ship.
+IGNORED_NAMES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".DS_Store",
+        "Thumbs.db",
+        "__pycache__",
+        "__MACOSX",
+        "node_modules",
+        ".venv",
+        "venv",
+    }
+)
 
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 NAME_MAX = 64
@@ -72,9 +93,9 @@ def validate_meta(meta: dict) -> list[str]:
         errors.append("description must be at most 1024 characters")
     compatibility = meta.get("compatibility")
     if compatibility is not None and (
-        not isinstance(compatibility, str) or len(compatibility) > COMPATIBILITY_MAX
+        not isinstance(compatibility, str) or not compatibility or len(compatibility) > COMPATIBILITY_MAX
     ):
-        errors.append("compatibility must be a string of at most 500 characters")
+        errors.append("compatibility must be a non-empty string of at most 500 characters")
     if meta.get("metadata") is not None and not isinstance(meta["metadata"], dict):
         errors.append("metadata must be a mapping")
     allowed = meta.get("allowed-tools")
@@ -131,6 +152,36 @@ def safe_relative_path(name: str) -> str:
     return str(path)
 
 
+def iter_skill_files(root: Path) -> list[Path]:
+    """Every regular file below a skill directory, pruning ignored subtrees.
+
+    ``Path.rglob("*")`` enumerates ``node_modules``/``.git`` before the caller
+    can filter them, which is both slow and can exhaust the bundle cap with
+    files that then get dropped. This walker skips those directories before
+    descending, skips symlinks (so a repository cannot point outside itself),
+    and returns deterministic path order.
+    """
+    out: list[Path] = []
+
+    def walk(directory: Path) -> None:
+        try:
+            entries = sorted(directory.iterdir(), key=lambda path: path.name)
+        except OSError:
+            return
+        for path in entries:
+            if path.name in IGNORED_NAMES:
+                continue
+            if path.is_symlink():
+                continue
+            if path.is_dir():
+                walk(path)
+            elif path.is_file():
+                out.append(path)
+
+    walk(root)
+    return out
+
+
 def _read_entry(bundle: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
     """Read one entry with a hard cap on the *decompressed* size.
 
@@ -168,6 +219,8 @@ def parse_archive(raw: bytes) -> list[dict]:
             if info.is_dir():
                 continue
             name = safe_relative_path(info.filename)
+            if any(part in IGNORED_NAMES for part in PurePosixPath(name).parts):
+                continue
             if len(entries) >= FILES_COUNT_MAX + 20:
                 raise SkillFormatError("archive contains too many files")
             declared_total += info.file_size
@@ -204,6 +257,16 @@ def parse_archive(raw: bytes) -> list[dict]:
         if skill_md is None:
             continue
         package = parse_skill_md(skill_md.decode("utf-8", errors="replace"))
+        directory = PurePosixPath(root).name if root else ""
+        if directory and directory != package["name"]:
+            # A GitHub-style ``repo-main/`` wrapper is common, so this is a
+            # warning rather than a rejection; the stored skill is keyed by the
+            # frontmatter name, not by the archive folder.
+            LOGGER.warning(
+                "archive folder %r does not match skill name %r",
+                directory,
+                package["name"],
+            )
         files: dict[str, dict] = {}
         total = 0
         for name, payload in entries.items():
@@ -252,10 +315,19 @@ def scan_directory_report(root: str | Path) -> tuple[list[dict], list[dict]]:
         except UnicodeDecodeError as exc:
             failures.append({"path": str(skill_md), "reason": f"SKILL.md is not UTF-8: {exc}"})
             continue
+        directory = skill_md.parent.name
+        if package["name"] != directory:
+            failures.append(
+                {
+                    "path": str(skill_md),
+                    "reason": (f"skill name {package['name']!r} must match its directory name {directory!r}"),
+                }
+            )
+            continue
         files: dict[str, dict] = {}
         total = 0
-        for path in sorted(skill_md.parent.rglob("*")):
-            if path.is_symlink() or not path.is_file() or path == skill_md:
+        for path in iter_skill_files(skill_md.parent):
+            if path == skill_md:
                 continue
             try:
                 payload = path.read_bytes()

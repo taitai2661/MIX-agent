@@ -84,7 +84,7 @@ async def lifespan(app):
 # formatter when MIX_LOG_FORMAT=json is set.
 configure_logging()
 
-app = FastAPI(title="MIX agent", version="0.5.5", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.5.6", lifespan=lifespan)
 LOGGER = logging.getLogger("mix_agent.http")
 
 
@@ -146,6 +146,30 @@ def _openapi_with_errors():
 app.openapi = _openapi_with_errors
 
 
+def _request_body_too_large(request: Request) -> bool:
+    """Reject an oversized body from its declared Content-Length.
+
+    This is the cheap first line: it stops a non-chunked giant JSON request
+    before FastAPI reads it into memory. Backup restore legitimately accepts a
+    much larger file than a normal JSON request.
+    """
+    raw = request.headers.get("content-length")
+    if not raw:
+        return False
+    try:
+        size = int(raw)
+    except ValueError:
+        return True
+    from mix_agent.storage import backup
+
+    limit = (
+        backup.MAX_SIZE
+        if request.url.path.startswith("/api/v1/backups")
+        else config.MAX_REQUEST_BODY
+    )
+    return size > limit
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     from mix_agent.storage import backup
@@ -161,6 +185,11 @@ async def security_headers(request: Request, call_next):
             response = JSONResponse(
                 {"detail": "バックアップ／復元処理中です", "code": "common.backup_in_progress"},
                 status_code=503,
+            )
+        elif request.method not in ("GET", "HEAD", "OPTIONS") and _request_body_too_large(request):
+            response = JSONResponse(
+                {"detail": "リクエストボディが大きすぎます", "code": "common.request_too_large"},
+                status_code=413,
             )
         elif request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("origin")
@@ -231,7 +260,11 @@ async def security_headers(request: Request, call_next):
 @app.exception_handler(RequestValidationError)
 async def validation_error(request, exc):
     return JSONResponse(
-        {"detail": [{"loc": e["loc"], "msg": e["msg"]} for e in exc.errors()]}, status_code=422
+        {
+            "detail": [{"loc": e["loc"], "msg": e["msg"]} for e in exc.errors()],
+            "code": "common.validation_failed",
+        },
+        status_code=422,
     )
 
 
@@ -256,6 +289,23 @@ async def http_error(request, exc: StarletteHTTPException):
     if code:
         body["code"] = code
     return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request, exc: Exception):
+    """Log unhandled failures with the request id the client was given."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    LOGGER.exception(
+        "unhandled error request_id=%s method=%s path=%s",
+        request_id,
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        {"detail": "サーバー内部エラーが発生しました", "code": "common.internal_error"},
+        status_code=500,
+        headers={"X-Request-ID": request_id},
+    )
 
 
 @app.get("/health")

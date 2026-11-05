@@ -217,7 +217,9 @@ export function ChangesPanel({
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
   const [scope, setScope] = useState<Scope>("unstaged");
 
-  const status = useGitStatus(root);
+  // The changes list needs one row per file, including files inside untracked
+  // directories; the tree and titlebar use the collapsed (`-unormal`) form.
+  const status = useGitStatus(root, true);
 
   const diff = useQuery({
     queryKey: ["git_diff", root, scope, gitDiffPath],

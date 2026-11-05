@@ -45,7 +45,7 @@ def parse(expression):
     if len(parts) != 5:
         raise ValueError("Cron式は5フィールドで入力してください")
     try:
-        return [_part(part, *bounds) for part, bounds in zip(parts, FIELDS)]
+        return [_part(part, *bounds) for part, bounds in zip(parts, FIELDS, strict=False)]
     except (ValueError, TypeError):
         raise ValueError("Cron式が不正です")
 

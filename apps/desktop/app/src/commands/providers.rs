@@ -1,4 +1,5 @@
 use crate::AppState;
+use mixd_providers::chatgpt::{is_chatgpt, ChatGptCredentials, BASE_URL};
 use mixd_providers::preset as preset_catalog;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -12,10 +13,26 @@ pub struct ProviderView {
     pub enabled: bool,
     pub has_api_key: bool,
     pub preset: Option<String>,
+    pub auth: Option<serde_json::Value>,
+    pub status: Option<String>,
+    pub billing_mode: Option<String>,
+    /// True for the single dedicated ChatGPT integration row. Generic
+    /// provider lists hide these; the ChatGPT settings tab owns them.
+    pub dedicated: bool,
 }
 
-/// `(id, kind, label, base_url, enabled, preset)`
-type ProviderRow = (String, String, String, Option<String>, i64, Option<String>);
+/// `(id, kind, label, base_url, enabled, preset, auth, status, billing_mode)`
+type ProviderRow = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// Whether a provider row targets a runtime on this machine.
 ///
@@ -98,20 +115,60 @@ pub async fn provider_is_local(pool: &sqlx::Pool<sqlx::Sqlite>, provider_id: &st
 
 #[tauri::command]
 pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<ProviderView>, String> {
+    provider_views(&state).await
+}
+
+/// Shared by `list_providers`, `chatgpt_status` and the dedicated ChatGPT
+/// command family. The ChatGPT row is returned (models and the run engine need
+/// its id) but marked `dedicated` so the generic provider UI can hide it.
+pub async fn provider_views(state: &AppState) -> Result<Vec<ProviderView>, String> {
     let pool = state.storage.pool();
     let rows: Vec<ProviderRow> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.kind') AS kind, json_extract(data, '$.label') AS label, \
          json_extract(data, '$.baseUrl') AS base_url, json_extract(data, '$.enabled') AS enabled, \
-         json_extract(data, '$.preset') AS preset \
+         json_extract(data, '$.preset') AS preset, json_extract(data, '$.auth') AS auth, \
+         json_extract(data, '$.status') AS status, json_extract(data, '$.billingMode') AS billing_mode \
          FROM providers ORDER BY created_at DESC",
     )
     .fetch_all(pool)
     .await
     .map_err(crate::error::cmd_err)?;
     let mut out = Vec::new();
-    for (id, kind, label, base_url, enabled, preset) in rows {
+    for (id, kind, label, base_url, enabled, preset, auth, status, billing_mode) in rows {
+        let kind = kind.unwrap_or_default();
         let key_purpose = format!("provider/{}", id);
-        let has_api_key = state.secrets.get(&key_purpose, "api_key").await.is_ok();
+        let chatgpt = is_chatgpt(preset.as_deref(), &kind);
+        // One secret read per row, not two: a ChatGPT row only has an OAuth
+        // credential, and every other kind only has an API key. Reading both
+        // for every provider turned opening Settings into a burst of decrypt
+        // jobs on the secret store.
+        let oauth_raw = if chatgpt {
+            state.secrets.get_string(&key_purpose, "oauth").await.ok()
+        } else {
+            None
+        };
+        let has_api_key = if chatgpt {
+            false
+        } else {
+            state.secrets.get(&key_purpose, "api_key").await.is_ok()
+        };
+        // The stored `status` can go stale if a background refresh failed.
+        // Derive it from the credential blob for ChatGPT rows so "sign in
+        // again" appears without waiting for a manual DB update.
+        let status = if chatgpt {
+            let creds = ChatGptCredentials::from_secret(oauth_raw.as_deref());
+            Some(
+                if creds.connected() && !creds.auth_failed {
+                    "ready"
+                } else {
+                    "needs_login"
+                }
+                .to_string(),
+            )
+        } else {
+            status
+        };
+        let auth = auth.and_then(|raw| serde_json::from_str(&raw).ok());
         out.push(ProviderView {
             id,
             kind,
@@ -120,6 +177,10 @@ pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<ProviderVi
             enabled: enabled != 0,
             has_api_key,
             preset,
+            auth,
+            status,
+            billing_mode,
+            dedicated: chatgpt,
         });
     }
     Ok(out)
@@ -133,6 +194,8 @@ pub struct ProviderCreate {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub enabled: Option<bool>,
+    /// Explicit acknowledgement of the unofficial ChatGPT integration.
+    pub acknowledge_unofficial: Option<bool>,
 }
 
 #[tauri::command]
@@ -140,8 +203,12 @@ pub async fn create_provider(
     state: State<'_, AppState>,
     input: ProviderCreate,
 ) -> Result<ProviderView, String> {
-    let base_url = input.base_url.clone();
-    let view = insert_provider(
+    if is_chatgpt(input.preset_slug.as_deref(), &input.kind) {
+        return Err(
+            "ChatGPT is not a provider preset; configure it in Settings → ChatGPT".to_string(),
+        );
+    }
+    insert_provider(
         &state,
         input.preset_slug,
         &input.kind,
@@ -150,8 +217,7 @@ pub async fn create_provider(
         input.api_key.as_deref(),
         input.enabled,
     )
-    .await?;
-    Ok(ProviderView { base_url, ..view })
+    .await
 }
 
 /// Write a provider row and, when a key is given, its Keychain entry.
@@ -168,6 +234,13 @@ pub async fn insert_provider(
     enabled: Option<bool>,
 ) -> Result<ProviderView, String> {
     validate_provider_input(kind, label, base_url)?;
+    let chatgpt = is_chatgpt(preset_slug.as_deref(), kind);
+    let kind = if chatgpt { "chatgpt" } else { kind };
+    let base_url = if chatgpt {
+        BASE_URL
+    } else {
+        base_url.trim().trim_end_matches('/')
+    };
     // Labels identify providers in the UI; a duplicate silently splits models
     // across two rows with the same name.
     let duplicate: Option<String> =
@@ -183,7 +256,6 @@ pub async fn insert_provider(
         ));
     }
     let id = uuid::Uuid::new_v4().to_string();
-    let base_url = base_url.trim().trim_end_matches('/');
     let enabled = enabled.unwrap_or(true);
     // A local provider carries the runtime identity even before the first scan
     // sees it again, so the Start button works without re-discovering. No
@@ -212,7 +284,7 @@ pub async fn insert_provider(
             "executable": executable,
         })
     });
-    let data = serde_json::json!({
+    let mut data = serde_json::json!({
         "kind": kind,
         "label": label,
         "baseUrl": if base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(base_url.to_string()) },
@@ -221,6 +293,10 @@ pub async fn insert_provider(
         "extra": {},
         "local": local,
     });
+    if chatgpt {
+        data["billingMode"] = serde_json::Value::String("subscription".to_string());
+        data["status"] = serde_json::Value::String("needs_login".to_string());
+    }
     sqlx::query("INSERT INTO providers (id, owner_id, data) VALUES (?, ?, ?)")
         .bind(&id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
@@ -228,16 +304,20 @@ pub async fn insert_provider(
         .execute(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
-    let has_api_key = match api_key {
-        Some(key) if !key.is_empty() => {
-            state
-                .secrets
-                .put(&format!("provider/{}", id), "api_key", key.as_bytes())
-                .await
-                .map_err(crate::error::cmd_err)?;
-            true
+    let has_api_key = if chatgpt {
+        false
+    } else {
+        match api_key {
+            Some(key) if !key.is_empty() => {
+                state
+                    .secrets
+                    .put(&format!("provider/{}", id), "api_key", key.as_bytes())
+                    .await
+                    .map_err(crate::error::cmd_err)?;
+                true
+            }
+            _ => false,
         }
-        _ => false,
     };
     // The Run Engine only knows about adapters in the live registry, so a
     // provider that is merely in the table is unusable until the next launch.
@@ -248,6 +328,7 @@ pub async fn insert_provider(
         state.secrets.as_ref(),
         &id,
         kind,
+        preset_slug.as_deref(),
         base_url,
         enabled,
     )
@@ -264,6 +345,10 @@ pub async fn insert_provider(
         enabled,
         has_api_key,
         preset: preset_slug,
+        auth: None,
+        status: chatgpt.then(|| "needs_login".to_string()),
+        billing_mode: chatgpt.then(|| "subscription".to_string()),
+        dedicated: chatgpt,
     })
 }
 
@@ -334,7 +419,14 @@ pub async fn update_provider(
         }
         data["label"] = serde_json::Value::String(label.clone());
     }
+    let chatgpt = is_chatgpt(
+        data.get("preset").and_then(|v| v.as_str()),
+        data.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+    );
     if let Some(url) = &input.base_url {
+        if chatgpt && url.trim().trim_end_matches('/') != BASE_URL {
+            return Err("the ChatGPT connection URL cannot be changed".to_string());
+        }
         validate_provider_input(
             data.get("kind")
                 .and_then(|v| v.as_str())
@@ -344,10 +436,21 @@ pub async fn update_provider(
                 .unwrap_or("provider"),
             url,
         )?;
-        data["baseUrl"] = serde_json::Value::String(url.clone());
+        data["baseUrl"] = serde_json::Value::String(if chatgpt {
+            BASE_URL.to_string()
+        } else {
+            url.clone()
+        });
     }
     if let Some(enabled) = input.enabled {
         data["enabled"] = serde_json::Value::Bool(enabled);
+    }
+    if chatgpt {
+        // Repair rows written before the preset/kind gate was unified, and make
+        // the invariant explicit even on an edit that omits base_url.
+        data["kind"] = serde_json::Value::String("chatgpt".to_string());
+        data["baseUrl"] = serde_json::Value::String(BASE_URL.to_string());
+        data["billingMode"] = serde_json::Value::String("subscription".to_string());
     }
     sqlx::query("UPDATE providers SET data = ? WHERE id = ?")
         .bind(data.to_string())
@@ -356,13 +459,15 @@ pub async fn update_provider(
         .await
         .map_err(crate::error::cmd_err)?;
     tx.commit().await.map_err(crate::error::cmd_err)?;
-    if let Some(key) = input.api_key.as_deref() {
-        if !key.is_empty() {
-            state
-                .secrets
-                .put(&format!("provider/{}", input.id), "api_key", key.as_bytes())
-                .await
-                .map_err(crate::error::cmd_err)?;
+    if !chatgpt {
+        if let Some(key) = input.api_key.as_deref() {
+            if !key.is_empty() {
+                state
+                    .secrets
+                    .put(&format!("provider/{}", input.id), "api_key", key.as_bytes())
+                    .await
+                    .map_err(crate::error::cmd_err)?;
+            }
         }
     }
     let kind = data
@@ -370,6 +475,10 @@ pub async fn update_provider(
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    let preset = data
+        .get("preset")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let base_url = data
         .get("baseUrl")
         .and_then(|v| v.as_str())
@@ -389,6 +498,7 @@ pub async fn update_provider(
         state.secrets.as_ref(),
         &input.id,
         &kind,
+        preset.as_deref(),
         &base_url,
         enabled,
     )
@@ -406,15 +516,45 @@ pub async fn update_provider(
             .to_string(),
         base_url: (!base_url.is_empty()).then_some(base_url),
         enabled,
-        has_api_key: state
-            .secrets
-            .get(&format!("provider/{}", input.id), "api_key")
-            .await
-            .is_ok(),
+        has_api_key: if chatgpt {
+            false
+        } else {
+            state
+                .secrets
+                .get(&format!("provider/{}", input.id), "api_key")
+                .await
+                .is_ok()
+        },
         preset: data
             .get("preset")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        auth: data.get("auth").cloned().filter(|v| !v.is_null()),
+        status: if chatgpt {
+            let oauth_raw = state
+                .secrets
+                .get_string(&format!("provider/{}", input.id), "oauth")
+                .await
+                .ok();
+            let creds = ChatGptCredentials::from_secret(oauth_raw.as_deref());
+            Some(
+                if creds.connected() && !creds.auth_failed {
+                    "ready"
+                } else {
+                    "needs_login"
+                }
+                .to_string(),
+            )
+        } else {
+            data.get("status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        },
+        billing_mode: data
+            .get("billingMode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        dedicated: chatgpt,
     })
 }
 
@@ -448,6 +588,23 @@ pub async fn delete_provider(state: State<'_, AppState>, id: String) -> Result<(
         .await
     {
         tracing::error!(provider = %id, %err, "removing the stored API key failed");
+    }
+    // Deleting the row must not leave a usable refresh token on OpenAI's side.
+    // Best-effort: a network failure still lets the local delete complete.
+    if let Ok(raw) = state
+        .secrets
+        .get_string(&format!("provider/{}", id), "oauth")
+        .await
+    {
+        let creds = ChatGptCredentials::from_secret(Some(&raw));
+        let _ = mixd_providers::chatgpt::revoke_credentials(&creds).await;
+    }
+    if let Err(err) = state
+        .secrets
+        .delete(&format!("provider/{}", id), "oauth")
+        .await
+    {
+        tracing::error!(provider = %id, %err, "removing the stored OAuth credentials failed");
     }
     // The deleted row may have been the cached embedding source; the next
     // recall falls back to another provider or to lexical ranking.
@@ -528,16 +685,17 @@ pub async fn connect_provider(
         input_token_limit: Option<u32>,
     }
 
-    let row: Option<(String, Option<String>, Option<i64>)> = sqlx::query_as(
+    type Row = (String, Option<String>, Option<i64>, Option<String>);
+    let row: Option<Row> = sqlx::query_as(
         "SELECT json_extract(data, '$.kind') AS kind, json_extract(data, '$.baseUrl') AS base_url, \
-         json_extract(data, '$.enabled') AS enabled \
+         json_extract(data, '$.enabled') AS enabled, json_extract(data, '$.preset') AS preset \
          FROM providers WHERE id = ?",
     )
     .bind(&input.id)
     .fetch_optional(state.storage.pool())
     .await
     .map_err(crate::error::cmd_err)?;
-    let (kind, base_url, enabled) = row.ok_or("provider not found")?;
+    let (kind, base_url, enabled, preset) = row.ok_or("provider not found")?;
     let enabled = enabled.unwrap_or(1) != 0;
     let base_url = base_url.ok_or("provider has no base url")?;
     let api_key = state
@@ -545,6 +703,59 @@ pub async fn connect_provider(
         .get_string(&format!("provider/{}", input.id), "api_key")
         .await
         .ok();
+
+    if is_chatgpt(preset.as_deref(), &kind) {
+        if !input.discover {
+            crate::register_adapter(
+                &state.engine.providers,
+                state.secrets.as_ref(),
+                &input.id,
+                "chatgpt",
+                Some("chatgpt"),
+                &base_url,
+                enabled,
+            )
+            .await;
+            return Ok(0);
+        }
+        let raw = state
+            .secrets
+            .get_string(&format!("provider/{}", input.id), "oauth")
+            .await
+            .ok();
+        let provider = mixd_providers::chatgpt::ChatGptProvider::new(
+            input.id.clone(),
+            base_url.clone(),
+            crate::chatgpt_credential_store(state.secrets.as_ref(), &input.id),
+            raw.as_deref(),
+        );
+        let discovered = provider
+            .discover_models()
+            .await
+            .map_err(|err| format!("model discovery failed: {err}"))?;
+        if discovered.is_empty() {
+            return Err("provider returned no models".into());
+        }
+        let _ = sqlx::query(
+            "UPDATE providers SET data = json_set(data, '$.status', 'ready') WHERE id = ?",
+        )
+        .bind(&input.id)
+        .execute(state.storage.pool())
+        .await;
+        let written =
+            super::models::sync_models(state.storage.pool(), &input.id, &discovered).await?;
+        crate::register_adapter(
+            &state.engine.providers,
+            state.secrets.as_ref(),
+            &input.id,
+            "chatgpt",
+            Some("chatgpt"),
+            &base_url,
+            enabled,
+        )
+        .await;
+        return Ok(written.len());
+    }
 
     // Model discovery differs per API family: the path *and* the auth header
     // are not interchangeable (Anthropic uses /v1/models + x-api-key, Gemini
@@ -651,6 +862,7 @@ pub async fn connect_provider(
         state.secrets.as_ref(),
         &input.id,
         &kind,
+        preset.as_deref(),
         &base_url,
         enabled,
     )

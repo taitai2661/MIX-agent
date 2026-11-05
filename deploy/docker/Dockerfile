@@ -24,7 +24,7 @@ COPY apps/server/ /app/
 COPY --from=web /web/dist /web
 ENV WEB_DIST=/web MIX_DATA=/data MIX_KEYS=/keys PYTHONPATH=/app
 USER 1000:1000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
+CMD ["uvicorn", "mix_agent.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
 
 FROM runtime AS test
 RUN uv sync --frozen --dev --no-install-project

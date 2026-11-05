@@ -1,6 +1,8 @@
 """Provider-specific wire formats stay here; the run engine sees normalized events."""
 
+import asyncio
 import hashlib
+import json
 import logging
 from urllib.parse import quote, urlsplit
 
@@ -8,7 +10,13 @@ import httpx
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from openai import APIStatusError, AsyncOpenAI, BadRequestError, UnprocessableEntityError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AsyncOpenAI,
+    BadRequestError,
+    UnprocessableEntityError,
+)
 
 from mix_agent.providers import chatgpt as chatgpt_oauth
 from mix_agent.providers.capability_probe import VISION_DATA_URL
@@ -19,7 +27,50 @@ from mix_agent.providers.reasoning import request_options, show_summary
 
 PROVIDER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
+# Raw provider items are persisted in run history so a tool turn can replay the
+# reasoning item. An oversized blob is dropped rather than bloating every
+# checkpoint; losing it only costs reasoning continuity, not the turn.
+NATIVE_HISTORY_MAX_BYTES = 256 * 1024
+
 LOGGER = logging.getLogger(__name__)
+
+
+def _bounded_native(items) -> list:
+    if not isinstance(items, list) or not items:
+        return []
+    try:
+        encoded = json.dumps(items, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        LOGGER.warning("could not encode native provider items; dropping them")
+        return []
+    if len(encoded) > NATIVE_HISTORY_MAX_BYTES:
+        LOGGER.warning(
+            "dropping oversized native provider items (%s bytes > %s)",
+            len(encoded),
+            NATIVE_HISTORY_MAX_BYTES,
+        )
+        return []
+    return items
+
+
+def _chatgpt_quota_exhausted(headers) -> bool:
+    """Whether a 429 means "subscription window exhausted" or a transient limit.
+
+    The Codex backend sets ``x-codex-rate-limit-reached-type`` only for the
+    former. Treating every 429 as exhausted hid a momentary rate limit behind a
+    misleading "usage limit reached" error and skipped the retry that would have
+    recovered it.
+    """
+    value = str((headers or {}).get("x-codex-rate-limit-reached-type") or "")
+    return value.strip().lower() not in {"", "none", "false", "0"}
+
+
+def _retry_after_seconds(headers) -> float:
+    try:
+        return min(20.0, max(0.5, float((headers or {}).get("retry-after"))))
+    except (TypeError, ValueError):
+        return 0.0
+
 
 DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -313,7 +364,10 @@ class Adapter:
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             response = await client.get(url, headers=headers)
             if response.status_code in {401, 403}:
-                await self.chatgpt.refresh()
+                # The server just rejected the access token, so force the
+                # refresh even when `auth_failed` is set or the advertised
+                # expiry is still in the future.
+                await self.chatgpt.refresh(force=True)
                 response = await client.get(url, headers=self.chatgpt.headers())
             response.raise_for_status()
             body = response.json()
@@ -375,11 +429,21 @@ class Adapter:
 
     def embedding_model(self):
         """Embedding model id for this provider, or ``None`` when it has none."""
+        if (
+            self.transport_id in {"anthropic_messages", "chatgpt_responses"}
+            or self.preset.get("id") == "chatgpt"
+            # Also catch legacy rows that predate the preset and only carry the
+            # Codex URL.
+            or "chatgpt.com/backend-api/codex" in str(self.url or "")
+        ):
+            # Neither transport exposes an embeddings endpoint, so an override
+            # cannot conjure one. In particular, ChatGPT shares kind="openai"
+            # with the public API; checking the kind alone sent every Memory
+            # embedding to the Codex backend.
+            return None
         configured = str(self.provider.get("embedding_model") or "").strip()
         if configured:
             return configured
-        if self.transport_id == "anthropic_messages":
-            return None
         return EMBEDDING_DEFAULT_MODELS.get(self.kind)
 
     async def embed(self, texts):
@@ -611,11 +675,21 @@ class Adapter:
                 yield event
 
     async def _chatgpt_responses(self, args, mode, settings):
-        """One Responses turn with ChatGPT OAuth, refreshing once on 401/403."""
+        """One Responses turn with ChatGPT OAuth.
+
+        Auth failures refresh once. Server errors and transport failures retry
+        with backoff, and a 429 is only reported as "usage exhausted" when the
+        backend says so; a bare 429 is a transient rate limit and is retried
+        like any other overload.
+        """
         if self.chatgpt is None:
             raise ProviderConfigurationError("ChatGPT transport is not configured")
-        for attempt in range(2):
-            token = await self.chatgpt.token(force_refresh=attempt > 0)
+        auth_retried = False
+        force_refresh = False
+        transient_attempts = 0
+        while True:
+            token = await self.chatgpt.token(force_refresh=force_refresh)
+            force_refresh = False
             headers = self.chatgpt.headers(settings.get("_session_id"))
             async with AsyncOpenAI(
                 api_key=token,
@@ -627,8 +701,50 @@ class Adapter:
                 try:
                     stream = await client.responses.create(**args)
                 except APIStatusError as exc:
-                    if attempt == 0 and exc.status_code in {401, 403}:
-                        await self.chatgpt.refresh()
+                    response = getattr(exc, "response", None)
+                    response_headers = getattr(response, "headers", {}) or {}
+                    # Rate-limit headers are most useful exactly when the call
+                    # fails; observe them before classifying the error.
+                    self.chatgpt.observe_headers(response)
+                    status = exc.status_code
+                    if status in {401, 403} and not auth_retried:
+                        # Let `token(force_refresh=True)` perform the refresh on
+                        # the next iteration, so the rotated credentials are
+                        # persisted exactly once. Later transient retries reuse
+                        # that token rather than refreshing on every attempt.
+                        auth_retried = True
+                        force_refresh = True
+                        continue
+                    if status in {401, 403}:
+                        raise chatgpt_oauth.ChatGptError(
+                            chatgpt_oauth.AUTH_EXPIRED,
+                            f"ChatGPT rejected the token ({status})",
+                        ) from exc
+                    exhausted = status == 429 and _chatgpt_quota_exhausted(response_headers)
+                    retryable = status in {408, 425} or status >= 500 or (status == 429 and not exhausted)
+                    if retryable and transient_attempts < 2:
+                        transient_attempts += 1
+                        delay = _retry_after_seconds(response_headers) or 0.5 * 2 ** (transient_attempts - 1)
+                        await asyncio.sleep(delay)
+                        continue
+                    if status == 429:
+                        reset = response_headers.get("x-codex-primary-reset-at") or response_headers.get(
+                            "retry-after"
+                        )
+                        reason = (
+                            "ChatGPT usage limit reached"
+                            if exhausted
+                            else "ChatGPT is rate limiting this account"
+                        )
+                        raise chatgpt_oauth.ChatGptError(
+                            "chatgpt_rate_limited",
+                            reason + (f"; reset at {reset}" if reset else ""),
+                        ) from exc
+                    raise
+                except APIConnectionError:
+                    if transient_attempts < 2:
+                        transient_attempts += 1
+                        await asyncio.sleep(0.5 * 2 ** (transient_attempts - 1))
                         continue
                     raise
                 self.chatgpt.observe_headers(getattr(stream, "response", None))
@@ -646,7 +762,9 @@ class Adapter:
                 self.chatgpt.observe_rate_limit(event)
             elif event.type == "response.completed":
                 response = event.response
-                native = [x.model_dump(mode="json", exclude_none=True) for x in response.output]
+                native = _bounded_native(
+                    [x.model_dump(mode="json", exclude_none=True) for x in response.output]
+                )
                 calls = [
                     {"id": x.call_id, "name": x.name, "arguments": x.arguments}
                     for x in response.output
@@ -869,7 +987,7 @@ class Adapter:
             final = await stream.get_final_message()
         if final.stop_reason not in ("end_turn", "tool_use", "stop_sequence"):
             raise RuntimeError("Provider stopped before completion")
-        native = [x.model_dump(mode="json", exclude_none=True) for x in final.content]
+        native = _bounded_native([x.model_dump(mode="json", exclude_none=True) for x in final.content])
         yield {
             "kind": "response",
             "message": {

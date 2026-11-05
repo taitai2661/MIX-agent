@@ -29,6 +29,8 @@ KNOWN_ASYNC_DB_ENDPOINTS = {
     # upstream call; the outbound HTTP dominates, so they stay async.
     "chatgpt_device_start",
     "chatgpt_device_status",
+    # Revokes the ChatGPT refresh token before deleting the local row.
+    "delete_provider",
     "delete_conversation",
     "edit_memory",
     "edit_message",

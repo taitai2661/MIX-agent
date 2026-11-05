@@ -6,16 +6,23 @@ impl ShellSession {
         cwd: &str,
         id: &str,
         sandbox_root: Option<&std::path::Path>,
+        sandbox_network: bool,
     ) -> Option<Arc<Self>> {
         let config = detect_shell();
         let config = match sandbox_root {
-            Some(root) => sandboxed_shell_config(&config, root).unwrap_or_else(|| {
-                tracing::warn!(
-                    "terminal sandbox is requested but unavailable on this platform; \
-                     the shell will run unsandboxed"
-                );
-                config
-            }),
+            Some(root) => match sandboxed_shell_config(&config, root, sandbox_network) {
+                Some(sandboxed) => sandboxed,
+                None => {
+                    // Windows attaches a Job Object after spawn instead of
+                    // wrapping the command, so this is expected there.
+                    #[cfg(not(windows))]
+                    tracing::warn!(
+                        "terminal sandbox is requested but unavailable; \
+                         the shell will run unsandboxed"
+                    );
+                    config
+                }
+            },
             None => config,
         };
         let pty_system = portable_pty::native_pty_system();
@@ -40,6 +47,17 @@ impl ShellSession {
             std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()),
         );
         let mut child = pair.slave.spawn_command(cmd).ok()?;
+        // Windows has no `sandbox-exec`-style pre-exec hook reachable through
+        // portable-pty, so the job is attached to the live process. Every
+        // descendant joins it; closing the job kills the tree.
+        #[cfg(windows)]
+        let sandbox_job = if sandbox_root.is_some() {
+            child
+                .as_raw_handle()
+                .and_then(|handle| attach_job_object(handle as _, 64))
+        } else {
+            None
+        };
         let killer = child.clone_killer();
         drop(pair.slave);
         let writer = pair.master.take_writer().ok()?;
@@ -79,13 +97,20 @@ impl ShellSession {
             cwd: Arc::new(Mutex::new(cwd.to_string())),
             id: id.to_string(),
             killer: std::sync::Mutex::new(killer),
+            #[cfg(windows)]
+            sandbox_job: std::sync::Mutex::new(sandbox_job),
             config,
+            busy: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
     /// Stop the shell process. Called when the session is evicted so a timed
     /// out command cannot keep running — or keep writing its exit code into a
     /// status file a replacement shell now owns.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.busy.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub(crate) fn kill(&self) {
         let mut killer = match self.killer.lock() {
             Ok(k) => k,
@@ -93,6 +118,12 @@ impl ShellSession {
         };
         if let Err(err) = killer.kill() {
             tracing::debug!(session = %self.id, %err, "shell kill failed");
+        }
+        #[cfg(windows)]
+        if let Ok(mut job) = self.sandbox_job.lock() {
+            if let Some(job) = job.as_mut() {
+                job.close();
+            }
         }
     }
 
@@ -112,6 +143,14 @@ impl ShellSession {
         command: &str,
         max_ms: u64,
     ) -> Result<(String, Option<i32>, String), String> {
+        struct BusyGuard<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for BusyGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        self.busy.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _busy = BusyGuard(&self.busy);
         // A command that names the protocol markers could forge its own
         // completion / cwd lines and smuggle a fake exit code. The markers
         // below are random per call, and any command reaching for the

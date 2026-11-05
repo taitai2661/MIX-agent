@@ -8,6 +8,9 @@ pub struct SkillView {
     pub name: String,
     pub description: String,
     pub body_markdown: String,
+    pub license: String,
+    pub compatibility: String,
+    pub metadata: std::collections::BTreeMap<String, String>,
     pub allowed_tools: Vec<String>,
     pub resource_paths: Vec<String>,
     pub updated_at: String,
@@ -20,6 +23,9 @@ impl From<Skill> for SkillView {
             name: s.name,
             description: s.description,
             body_markdown: s.body_markdown,
+            license: s.license,
+            compatibility: s.compatibility,
+            metadata: s.metadata,
             allowed_tools: s.allowed_tools,
             updated_at: s.updated_at.to_rfc3339(),
         }
@@ -88,12 +94,28 @@ pub async fn import_skill(
                 "参照",
             )
             .await?;
+            let expected_name = std::path::Path::new(&dir)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string());
             let (skill_md, extra) = tokio::task::spawn_blocking(move || {
                 crate::commands::zip_util::read_skill_dir(&dir)
             })
             .await
             .map_err(crate::error::cmd_err)?
             .map_err(crate::error::cmd_err)?;
+            // The Agent Skills rule is that `name` matches the parent folder.
+            // Discovery enforces it; the import path must too, or a folder can
+            // be imported under a different identity than the one on disk.
+            let parsed =
+                mixd_core::skills::parse_skill(&skill_md).map_err(crate::error::cmd_err)?;
+            if let Some(expected) = expected_name {
+                if parsed.name != expected {
+                    return Err(format!(
+                        "skill name {:?} must match its directory name {:?}",
+                        parsed.name, expected
+                    ));
+                }
+            }
             resources = extra;
             skill_md
         }
@@ -155,6 +177,8 @@ pub async fn delete_skill(state: State<'_, AppState>, name: String) -> Result<()
 pub struct SkillResourceView {
     pub path: String,
     pub content: String,
+    pub binary: bool,
+    pub size: usize,
 }
 
 /// Every resource bundled with a skill, so the UI can list them without
@@ -174,6 +198,8 @@ pub async fn list_skill_resources(
         .map(|r| SkillResourceView {
             path: r.path,
             content: r.content,
+            binary: r.binary,
+            size: r.size,
         })
         .collect())
 }
@@ -195,6 +221,8 @@ pub async fn read_skill_resource(
         .map(|r| SkillResourceView {
             path: r.path,
             content: r.content,
+            binary: r.binary,
+            size: r.size,
         })
         .ok_or_else(|| format!("resource not found: {}", path))
 }

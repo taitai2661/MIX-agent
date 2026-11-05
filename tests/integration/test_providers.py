@@ -1,7 +1,7 @@
 import httpx
 import pytest
 from mix_agent.api import routes_providers
-from mix_agent.db.models import Model, Provider, Settings, User
+from mix_agent.db.models import Model, Provider, Secret, Settings, User
 from mix_agent.db.session import SessionLocal
 from mix_agent.providers import chatgpt
 from mix_agent.providers.adapters import Adapter
@@ -725,7 +725,13 @@ async def test_session_header_reaches_the_openai_client(monkeypatch):
     assert captured["default_headers"] == {"x-opencode-session": "conversation-1"}
 
 
+def _enable_chatgpt(signed):
+    response = signed.put("/api/v1/settings", json={"chatgpt_enabled": True})
+    assert response.status_code == 200, response.text
+
+
 def _create_chatgpt_provider(signed, name="ChatGPT"):
+    _enable_chatgpt(signed)
     return signed.post(
         "/api/v1/providers",
         json={
@@ -734,6 +740,7 @@ def _create_chatgpt_provider(signed, name="ChatGPT"):
             "base_url": "",
             "api_key": None,
             "allow_private": True,
+            "acknowledge_unofficial": True,
         },
     )
 
@@ -747,6 +754,20 @@ def test_chatgpt_provider_create_skips_model_sync_and_has_no_secret(signed):
     assert body["data"]["billing_mode"] == "subscription"
     assert body["data"]["status"] == "needs_login"
     assert body["data"]["has_secret_id"] is False
+
+
+def test_chatgpt_provider_requires_explicit_acknowledgement(signed):
+    _enable_chatgpt(signed)
+    response = signed.post(
+        "/api/v1/providers",
+        json={
+            "name": "No consent",
+            "preset_id": "chatgpt",
+            "base_url": "",
+            "allow_private": True,
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_chatgpt_provider_refuses_a_custom_base_url(signed):
@@ -763,6 +784,92 @@ def test_chatgpt_provider_refuses_a_custom_base_url(signed):
         },
     )
     assert patched.status_code == 422
+
+
+def test_chatgpt_patch_requires_consent_and_drops_the_api_key_secret(signed, monkeypatch):
+    async def no_models(self):
+        return []
+
+    monkeypatch.setattr(Adapter, "list_models", no_models)
+    created = signed.post(
+        "/api/v1/providers",
+        json={
+            "name": "Switch me",
+            "preset_id": "groq",
+            "base_url": "",
+            "api_key": "sk-old",
+            "allow_private": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+    key = created.json()["id"]
+    with SessionLocal() as db:
+        old_secret = db.get(Provider, key).data.get("secret_id")
+    assert old_secret
+
+    _enable_chatgpt(signed)
+    denied = signed.patch(
+        f"/api/v1/providers/{key}",
+        json={
+            "name": "Switch me",
+            "preset_id": "chatgpt",
+            "base_url": "",
+            "allow_private": True,
+        },
+    )
+    assert denied.status_code == 422
+
+    allowed = signed.patch(
+        f"/api/v1/providers/{key}",
+        json={
+            "name": "Switch me",
+            "preset_id": "chatgpt",
+            "base_url": "",
+            "allow_private": True,
+            "acknowledge_unofficial": True,
+        },
+    )
+    assert allowed.status_code == 200, allowed.text
+    data = allowed.json()["data"]
+    assert data["kind"] == "openai"
+    assert data["billing_mode"] == "subscription"
+    assert data["status"] == "needs_login"
+    assert data["has_secret_id"] is False
+    # There is no credential yet, so a sync attempt could only fail; the UI
+    # calls sync-models after the device flow completes.
+    assert allowed.json()["model_sync"]["status"] == "skipped"
+    with SessionLocal() as db:
+        assert db.get(Secret, old_secret) is None
+
+
+def test_chatgpt_provider_is_disabled_until_the_setting_is_enabled(signed):
+    response = signed.post(
+        "/api/v1/providers",
+        json={
+            "name": "Disabled",
+            "preset_id": "chatgpt",
+            "base_url": "",
+            "allow_private": True,
+            "acknowledge_unofficial": True,
+        },
+    )
+    assert response.status_code == 422
+    assert "有効化" in response.json()["detail"]
+
+
+def test_chatgpt_patch_without_a_preset_keeps_the_integration(signed):
+    created = _create_chatgpt_provider(signed)
+    key = created.json()["id"]
+
+    renamed = signed.patch(
+        f"/api/v1/providers/{key}",
+        json={"name": "Renamed ChatGPT"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    data = renamed.json()["data"]
+    assert data["preset_id"] == "chatgpt"
+    assert data["billing_mode"] == "subscription"
+    assert data["kind"] == "openai"
 
 
 def test_chatgpt_device_start_returns_the_code_and_url(signed, monkeypatch):

@@ -21,7 +21,13 @@ vi.mock("@/lib/api", () => ({
   api: {
     listMessages: vi.fn(),
     listRuns: vi.fn(),
-    listConversations: vi.fn(),
+    latestConversation: vi.fn(async () => null),
+    getConversation: vi.fn(async () => null),
+    conversationStats: vi.fn(async () => ({
+      count: 0,
+      message_count: 0,
+      last_activity_at: null,
+    })),
     listModels: vi.fn(),
     listProviders: vi.fn(),
     listProjects: vi.fn(),
@@ -51,6 +57,7 @@ function userMessage(
     kind: "user",
     created_at: new Date().toISOString(),
     attachments: [],
+    seq: 1,
   };
 }
 
@@ -61,6 +68,7 @@ function conversationSummary(id: string) {
     mode: "chat",
     model_id: "auto",
     updated_at: new Date().toISOString(),
+    cursor: new Date().toISOString(),
     preview: null,
     message_count: 1,
     project_id: null,
@@ -113,7 +121,7 @@ beforeEach(() => {
   useRunEvents.getState().clear();
   mocked.listMessages.mockResolvedValue([]);
   mocked.listRuns.mockResolvedValue([]);
-  mocked.listConversations.mockResolvedValue([]);
+  mocked.latestConversation.mockResolvedValue(null);
   mocked.listModels.mockResolvedValue([]);
   mocked.listProviders.mockResolvedValue([]);
   mocked.listProjects.mockResolvedValue([]);
@@ -213,7 +221,7 @@ describe("ChatPane send/edit/retry", () => {
   });
 
   it("creates a new conversation on first send after New chat", async () => {
-    mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
+    mocked.latestConversation.mockResolvedValue(conversationSummary("conv-1"));
     mocked.createConversation.mockResolvedValue(
       conversationSummary("conv-new"),
     );
@@ -245,7 +253,7 @@ describe("ChatPane send/edit/retry", () => {
   });
 
   it("shows the empty state instead of a skeleton for a new chat", async () => {
-    mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
+    mocked.latestConversation.mockResolvedValue(conversationSummary("conv-1"));
     const { container } = renderPane();
 
     await screen.findByPlaceholderText("MIX-agent に話しかける…");
@@ -261,7 +269,7 @@ describe("ChatPane send/edit/retry", () => {
   });
 
   it("keeps a blank draft when the first send fails", async () => {
-    mocked.listConversations.mockResolvedValue([conversationSummary("conv-1")]);
+    mocked.latestConversation.mockResolvedValue(conversationSummary("conv-1"));
     mocked.createConversation.mockResolvedValue(
       conversationSummary("conv-new"),
     );

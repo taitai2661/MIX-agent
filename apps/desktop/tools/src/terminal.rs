@@ -42,7 +42,11 @@ const DEFAULT_MAX_WALL_CLOCK_MS: u64 = 30_000;
 /// days.
 const MAX_WALL_CLOCK_MS: u64 = 600_000;
 /// How much output to return. A runaway `yes` must not fill the context window.
-const MAX_OUTPUT_BYTES: usize = 200 * 1024;
+const MAX_OUTPUT_BYTES: usize = 48 * 1024;
+/// When output is capped, keep this much of the beginning (build progress,
+/// the failing assertion's context) and spend the rest on the end, where stack
+/// traces and the final error usually are.
+const TRUNCATED_HEAD_BYTES: usize = 16 * 1024;
 /// How many completed commands to retain. Each record can hold `MAX_OUTPUT_BYTES`
 /// of output, so an unbounded history is an unbounded memory leak over a long
 /// session.
@@ -58,6 +62,21 @@ pub struct TerminalTool {
     /// `sandbox-exec` with writes confined to the workspace and temp dirs).
     /// Shared so a settings change reaches the registry's clone.
     sandbox: Arc<std::sync::atomic::AtomicBool>,
+    /// Also deny network access inside the sandbox. Opt-in: package installs
+    /// and test suites commonly need the network.
+    sandbox_network: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Whether this machine can actually enforce the terminal sandbox.
+///
+/// Exposed to the settings pane so it can disable the toggle (and say why)
+/// instead of accepting a setting that would silently run unsandboxed.
+pub fn os_sandbox_available() -> bool {
+    sandbox::sandbox_available()
+}
+
+pub fn os_sandbox_unavailable_reason() -> Option<&'static str> {
+    sandbox::sandbox_unavailable_reason()
 }
 
 impl Default for TerminalTool {
@@ -67,6 +86,7 @@ impl Default for TerminalTool {
             history: Arc::new(Mutex::new(Vec::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             sandbox: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sandbox_network: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -81,6 +101,18 @@ impl TerminalTool {
 
     pub fn sandbox_enabled(&self) -> bool {
         self.sandbox.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Also deny network inside the sandbox. Takes effect for shells spawned
+    /// after this call.
+    pub fn set_sandbox_network(&self, enabled: bool) {
+        self.sandbox_network
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn sandbox_network_enabled(&self) -> bool {
+        self.sandbox_network
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -125,7 +157,14 @@ struct ShellSession {
     /// kept here: without it a timed-out command kept running for the rest of
     /// the session.
     killer: std::sync::Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    /// Windows only: kill-on-close Job Object holding the shell's process
+    /// tree. Dropping/closing it terminates every descendant.
+    #[cfg(windows)]
+    sandbox_job: std::sync::Mutex<Option<SandboxJob>>,
     config: ShellLaunchConfig,
+    /// True while a command owns this shell. Eviction must not kill a shell
+    /// another Run is actively using.
+    busy: std::sync::atomic::AtomicBool,
 }
 
 pub fn truncate_to_char_boundary(text: &str, max_bytes: usize) -> &str {
@@ -148,15 +187,32 @@ impl Tool for TerminalTool {
         "Run a shell command in the workspace. The shell is persistent: `cd`, environment \
          variables and shell state carry over between calls, so `cd src` followed by \
          `ls` works. Prefer `command` as a single string (`cargo test --workspace`) rather \
-         than `args`; a bare executable with no shell features can use `args`."
+         than `args`; a bare executable with no shell features can use `args`. Use \
+         action: \"send\" with `input` to type into an interactive program (a REPL, a \
+         password prompt, `ssh`) that is already running in the same shell."
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["run", "send"],
+                    "default": "run",
+                    "description": "run: execute command. send: write input to the live shell and return new output."
+                },
                 "command": {
                     "type": "string",
-                    "description": "Shell command, interpreted by the workspace shell."
+                    "description": "Shell command, interpreted by the workspace shell (required for action: run)."
+                },
+                "input": {
+                    "type": "string",
+                    "description": "Text to send to the live shell (action: send). A trailing newline is added when missing."
+                },
+                "wait_ms": {
+                    "type": "integer",
+                    "default": 500,
+                    "description": "How long to collect output after send (action: send), capped at 5000 ms."
                 },
                 "args": {
                     "type": "array",
@@ -168,11 +224,19 @@ impl Tool for TerminalTool {
                     "description": "Optional subdirectory of the workspace to run in. Must stay inside the workspace root; anything outside is rejected."
                 },
                 "max_wall_clock_ms": { "type": "integer", "default": 30000 }
-            },
-            "required": ["command"]
+            }
         })
     }
     fn pattern_target(&self, args: &serde_json::Value) -> Option<String> {
+        // `send` types `input` into the live shell, so a deny rule such as
+        // "rm *" must match that text too instead of falling through to the
+        // tool-level allow.
+        if args.get("action").and_then(|v| v.as_str()) == Some("send") {
+            return args
+                .get("input")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+        }
         args.get("command")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
@@ -183,10 +247,15 @@ impl Tool for TerminalTool {
         ctx: ToolContext,
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("run")
+            .to_string();
         let command = args
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("command required"))?
+            .unwrap_or("")
             .to_string();
         let cmd_args: Vec<String> = args
             .get("args")
@@ -268,6 +337,31 @@ impl Tool for TerminalTool {
             }
         };
 
+        if action == "send" {
+            let input = args
+                .get("input")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("input is required for action: send"))?;
+            let wait_ms = args
+                .get("wait_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(500)
+                .min(5_000);
+            return Ok(self
+                .send_input(
+                    &workdir,
+                    &session_dir,
+                    &ctx.run_id.to_string(),
+                    input,
+                    wait_ms,
+                )
+                .await);
+        }
+        if command.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "command is required for action: run (use action: send to type into a live shell)"
+            ));
+        }
         let started = chrono::Utc::now();
         let (stdout, exit_code, cwd, persistent) = if cmd_args.is_empty() {
             self.run_in_shell(
@@ -282,7 +376,12 @@ impl Tool for TerminalTool {
             // `args` means a direct exec, so state must not carry over. It still
             // has to go through the sandbox, or `terminal` with `args` would be
             // the one unconfined escape hatch in an otherwise sandboxed run.
-            match sandboxed_exec(&command, &cmd_args, &workdir) {
+            match sandboxed_exec(
+                &command,
+                &cmd_args,
+                &workdir,
+                self.sandbox_network_enabled(),
+            ) {
                 Some((program, args)) => self.run_once(&session_dir, &program, &args, max_ms).await,
                 None => {
                     return Ok(ToolResult {
@@ -349,7 +448,11 @@ impl Tool for TerminalTool {
 fn evict_excess_shells(sessions: &mut HashMap<String, Arc<ShellSession>>, keep: &str) {
     const MAX_SHELL_SESSIONS: usize = 24;
     while sessions.len() > MAX_SHELL_SESSIONS {
-        let Some(victim) = sessions.keys().find(|k| k.as_str() != keep).cloned() else {
+        let Some(victim) = sessions
+            .iter()
+            .find(|(k, session)| k.as_str() != keep && !session.is_busy())
+            .map(|(k, _)| k.clone())
+        else {
             break;
         };
         if let Some(session) = sessions.remove(&victim) {
@@ -363,6 +466,162 @@ fn evict_excess_shells(sessions: &mut HashMap<String, Arc<ShellSession>>, keep: 
 }
 
 impl TerminalTool {
+    /// Kill every live shell belonging to `run_id`.
+    ///
+    /// Dropping the dispatch future on cancellation does not signal the PTY:
+    /// the command (e.g. `npm install`) kept running and the next Run reused a
+    /// contaminated shell. The key format is `"{run_id}|{session_dir}"`.
+    pub async fn cancel_run(&self, run_id: &str) {
+        let prefix = format!("{run_id}|");
+        let mut sessions = self.sessions.lock().await;
+        let victims: Vec<String> = sessions
+            .keys()
+            .filter(|key| key.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for key in victims {
+            if let Some(session) = sessions.remove(&key) {
+                session.kill();
+            }
+        }
+    }
+
+    /// Get or create the persistent shell for this (Run, directory).
+    ///
+    /// A failed spawn is not cached: every later call would otherwise degrade
+    /// permanently. `None` also means the PTY itself is unavailable, which the
+    /// caller distinguishes from a sandbox failure via `sandbox_enabled`.
+    async fn acquire_session(
+        &self,
+        session_dir: &std::path::Path,
+        run_scope: &str,
+    ) -> Option<Arc<ShellSession>> {
+        let key = format!("{run_scope}|{}", session_dir.to_string_lossy());
+        let mut sessions = self.sessions.lock().await;
+        match sessions.get(&key) {
+            Some(existing) => Some(existing.clone()),
+            None => {
+                // A per-session nonce: the id feeds both the sentinel and the
+                // exit-status file, and a replacement shell for the same
+                // workspace used to inherit the orphaned one's path, so a late
+                // `printf > status` overwrote the new command's code.
+                static SESSION_SEQ: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let session_id = format!(
+                    "{}-{}-{}",
+                    key.len(),
+                    stable_hash(&key),
+                    SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                );
+                let sandbox_root = self.sandbox_enabled().then_some(session_dir);
+                let spawned = ShellSession::spawn(
+                    &key,
+                    &session_id,
+                    sandbox_root,
+                    self.sandbox_network_enabled(),
+                );
+                if let Some(session) = &spawned {
+                    sessions.insert(key.clone(), session.clone());
+                    evict_excess_shells(&mut sessions, &key);
+                }
+                spawned
+            }
+        }
+    }
+
+    /// Send a line to a live shell and return the output that arrived while
+    /// waiting. This is what makes interactive tools (REPLs, `ssh`, prompts
+    /// that read stdin) usable; `run` alone can only execute a whole command
+    /// and wait for it to exit.
+    async fn send_input(
+        &self,
+        project_root: &std::path::Path,
+        session_dir: &std::path::Path,
+        run_scope: &str,
+        input: &str,
+        wait_ms: u64,
+    ) -> ToolResult {
+        let Some(session) = self.acquire_session(session_dir, run_scope).await else {
+            return ToolResult {
+                ok: false,
+                content: serde_json::json!({ "cwd": session_dir.to_string_lossy() }),
+                error: Some(
+                    "no live shell is available for this workspace; run a command first"
+                        .to_string(),
+                ),
+            };
+        };
+        // Same containment rule as `run`: a previous `cd` outside the project
+        // must not become the directory an interactive command runs in.
+        if !cwd_inside(&session.cwd().await, project_root) {
+            let home = if session.config.is_posix {
+                posix_path_expression(session_dir)
+            } else {
+                powershell_quote(&session_dir.to_string_lossy())
+            };
+            let cd_cmd = if session.config.is_posix {
+                format!("cd {home}")
+            } else {
+                format!("Set-Location {home}")
+            };
+            let mut writer = session.writer.lock().await;
+            if writer
+                .write_all(format!("{cd_cmd}\n").as_bytes())
+                .and_then(|_| writer.flush())
+                .is_err()
+            {
+                return ToolResult {
+                    ok: false,
+                    content: serde_json::json!({}),
+                    error: Some("could not move the shell back into the workspace".to_string()),
+                };
+            }
+        }
+
+        let before = session.output.lock().await.len();
+        {
+            let mut writer = session.writer.lock().await;
+            // A caller-supplied newline is tolerated rather than doubled.
+            let line = if input.ends_with('\n') {
+                input.to_string()
+            } else {
+                format!("{input}\n")
+            };
+            if let Err(err) = writer
+                .write_all(line.as_bytes())
+                .and_then(|_| writer.flush())
+            {
+                return ToolResult {
+                    ok: false,
+                    content: serde_json::json!({}),
+                    error: Some(format!("could not write to the shell: {err}")),
+                };
+            }
+        }
+        // There is no sentinel for free-form input, so the wait is bounded and
+        // explicit. Five seconds is enough for a REPL banner or a password
+        // prompt and short enough not to park the Run.
+        tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+        let output = {
+            let buffer = session.output.lock().await;
+            buffer
+                .get(before.min(buffer.len())..)
+                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                .unwrap_or_default()
+        };
+        let output = strip_terminal_escape_sequences(&output);
+        let cwd = session.cwd().await;
+        ToolResult {
+            ok: true,
+            content: serde_json::json!({
+                "output": truncate_to_char_boundary(&output, MAX_OUTPUT_BYTES),
+                "cwd": cwd,
+                "persistent": true,
+            }),
+            error: None,
+        }
+    }
+
     /// Get or create the persistent shell for this workspace and run `command`.
     ///
     /// `project_root` is the workspace boundary; `session_dir` is where this
@@ -382,35 +641,7 @@ impl TerminalTool {
         // conversation in another window could silently move the parent's
         // shell, and the parent's next command ran somewhere it did not expect.
         let key = format!("{run_scope}|{}", session_dir.to_string_lossy());
-        // A failed spawn must not be cached, or every later call in this
-        // workspace is permanently degraded.
-        let session = {
-            let mut sessions = self.sessions.lock().await;
-            match sessions.get(&key) {
-                Some(existing) => Some(existing.clone()),
-                None => {
-                    // A per-session nonce: the id feeds both the sentinel and
-                    // the exit-status file, and a replacement shell for the same
-                    // workspace used to inherit the orphaned one's path, so a
-                    // late `printf > status` overwrote the new command's code.
-                    static SESSION_SEQ: std::sync::atomic::AtomicU64 =
-                        std::sync::atomic::AtomicU64::new(0);
-                    let session_id = format!(
-                        "{}-{}-{}",
-                        key.len(),
-                        stable_hash(&key),
-                        SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                    );
-                    let sandbox_root = self.sandbox_enabled().then_some(session_dir);
-                    let spawned = ShellSession::spawn(&key, &session_id, sandbox_root);
-                    if let Some(session) = &spawned {
-                        sessions.insert(key.clone(), session.clone());
-                        evict_excess_shells(&mut sessions, &key);
-                    }
-                    spawned
-                }
-            }
-        };
+        let session = self.acquire_session(session_dir, run_scope).await;
         let Some(session) = session else {
             // A sandbox was explicitly requested: degrading to an unsandboxed
             // one-shot child would quietly defeat the setting, so fail instead.

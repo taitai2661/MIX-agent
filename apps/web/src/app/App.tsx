@@ -1,5 +1,6 @@
 import { api, setCSRF, type Row } from "@/app/api";
 import { queryKeys } from "@/lib/queries";
+import { safeStorage } from "@/lib/storage";
 import { BrowserInstallNotifier } from "@/app/browser-install-notifier";
 import { ja } from "@/app/strings";
 import { getLanguage, setLanguage, t, useLanguage } from "@/app/i18n";
@@ -122,11 +123,11 @@ export function App() {
     [sessionExpired, setSessionExpired] = useState(false),
     [sidebar, setSidebar] = useState(false),
     [collapsed, setCollapsed] = useState(
-      () => localStorage.getItem("mix-agent-sidebar-collapsed") === "1",
+      () => safeStorage.get("mix-agent-sidebar-collapsed") === "1",
     ),
     [resizingSidebar, setResizingSidebar] = useState(false),
     [sidebarWidth, setSidebarWidth] = useState(() => {
-      const stored = Number(localStorage.getItem("mix-agent-sidebar-width"));
+      const stored = Number(safeStorage.get("mix-agent-sidebar-width"));
       return Number.isFinite(stored) &&
         stored >= sidebarMinimum &&
         stored <= sidebarMaximum
@@ -161,14 +162,15 @@ export function App() {
   );
   const folders = useQuery<Row[]>({
     queryKey: ["/conversation-folders"],
-    queryFn: () => api("/conversation-folders"),
+    queryFn: ({ signal }) =>
+      api("/conversation-folders", "GET", undefined, undefined, { signal }),
     enabled: !!user,
   });
   useEffect(() => {
-    localStorage.setItem("mix-agent-sidebar-width", String(sidebarWidth));
+    safeStorage.set("mix-agent-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
   useEffect(() => {
-    localStorage.setItem("mix-agent-sidebar-collapsed", collapsed ? "1" : "0");
+    safeStorage.set("mix-agent-sidebar-collapsed", collapsed ? "1" : "0");
   }, [collapsed]);
   useEffect(() => {
     // iOS Safari keeps `100dvh` at the pre-keyboard height. Publish the visual
@@ -248,7 +250,7 @@ export function App() {
         }
         setReady(true);
         // 初回ログイン時にツアーを表示
-        if (me && !localStorage.getItem("mix-agent-tour-done")) {
+        if (me && !safeStorage.get("mix-agent-tour-done")) {
           setShowTour(true);
         }
       })
@@ -256,7 +258,10 @@ export function App() {
   }, []);
   const conversations = useQuery<Row[]>({
     queryKey: ["/conversations"],
-    queryFn: () => api("/conversations?state=active"),
+    queryFn: ({ signal }) =>
+      api("/conversations?state=active", "GET", undefined, undefined, {
+        signal,
+      }),
     enabled: !!user,
   });
   useEffect(() => {
@@ -986,7 +991,7 @@ export function App() {
             <Tour
               onClose={() => {
                 setShowTour(false);
-                localStorage.setItem("mix-agent-tour-done", "1");
+                safeStorage.set("mix-agent-tour-done", "1");
               }}
             />
           )}

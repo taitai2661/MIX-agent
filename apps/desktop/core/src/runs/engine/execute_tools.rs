@@ -50,13 +50,15 @@ impl RunEngine {
         // this takes the decoded form and copies it into the record it has to
         // persist.
         let arguments = args.clone();
+        let mut display_arguments = arguments.clone();
+        mixd_tools::redact::redact_arguments(&mut display_arguments);
         let tool_name = call.function.name.clone();
         let tool_call_id = call.id.clone();
 
         let mut record = RunToolCall {
             id: tool_call_id.clone(),
             name: tool_name.clone(),
-            arguments: arguments.clone(),
+            arguments: display_arguments.clone(),
             result: None,
             error: None,
             approval_id: None,
@@ -124,7 +126,7 @@ impl RunEngine {
                     run_id,
                     &tool_call_id,
                     &tool_name,
-                    arguments.clone(),
+                    display_arguments.clone(),
                     "awaiting_approval",
                     None,
                     None,
@@ -136,7 +138,7 @@ impl RunEngine {
                     run_id,
                     &tool_call_id,
                     &tool_name,
-                    arguments.clone(),
+                    display_arguments.clone(),
                     Some(request.workspace_id),
                     pattern_target.clone(),
                 )
@@ -170,7 +172,7 @@ impl RunEngine {
                     "tool_call_id": tool_call_id,
                     "approval_id": record.approval_id,
                     "name": tool_name,
-                    "arguments": arguments,
+                    "arguments": display_arguments,
                     // The prompt auto-denies at this instant. Without the
                     // deadline the card looked answerable forever and the run
                     // silently continued as "denied" while the user was away.
@@ -219,7 +221,7 @@ impl RunEngine {
             serde_json::json!({
                 "tool_call_id": tool_call_id,
                 "name": tool_name,
-                "arguments": arguments,
+                "arguments": display_arguments,
             }),
         )
         .await;

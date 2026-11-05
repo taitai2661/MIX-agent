@@ -160,8 +160,10 @@ docker compose up -d --build
 - 外部 MCP サーバーが提供するツールをシームレスに Agent から利用可能。
 
 ### 5. Skills とナレッジ管理
-- `SKILL.md`（Agent Skills 仕様）のインポート・エクスポートに対応。
+- `SKILL.md`（[Agent Skills 仕様](https://agentskills.io/specification)）に対応。`license` / `compatibility` / `metadata` / `allowed-tools` を保持したままインポート・エクスポートできます。
+- プロジェクトの `.mix/skills` / `.claude/skills` / `.agents/skills` と、ホームディレクトリの同じパスを自動探索。`scripts/` / `references/` / `assets/` は必要時に `skill_resource` で読み取ります（スクリプトは自動実行しません）。
 - 外部ドキュメントのチャンク検索（Knowledge）や、プロジェクト固有の指示書連携。
+- 詳細は [docs/agent-skills.md](docs/agent-skills.md)。
 
 ---
 
@@ -171,7 +173,7 @@ docker compose up -d --build
 
 ### Desktop 版のセキュリティモデル
 - **OS 権限**: ログイン中のローカルユーザーの権限でネイティブ動作します。
-- **秘密情報**: API Key や認証情報は、OS 標準の安全なストレージ（macOS Keychain, Windows Credential Manager, Linux Secret Service）に暗号化して保管されます。
+- **秘密情報**: API Key や認証情報は AES-256-GCM で暗号化してローカルに保存し、マスター鍵は OS 標準の安全なストレージ（macOS Keychain / Windows Credential Manager / Linux Secret Service）に保管します。
 - **権限ゲート**: ファイル書き込み、コマンド実行、ブラウザ操作などは既定で確認ダイアログ（`Ask`）が表示され、許可したパスやコマンドのみが実行されます。
 
 ### Docker 版のセキュリティモデル
@@ -212,6 +214,7 @@ docker compose --profile test run --rm test # バックエンドテスト
 | :--- | :--- |
 | [ドキュメント索引](docs/README.md) | docs/ 全体の索引・配置制約・リリースノート一覧 |
 | [Memory 仕様](docs/memory-spec.md) | 両エディション共通の Memory 契約 |
+| [Agent Skills](docs/agent-skills.md) | `SKILL.md` の対応範囲・探索パス・同梱ファイル・検証 |
 | [Desktop 版 README](apps/desktop/README.md) | Desktop 版の構成、ツール仕様、ビルド手順の詳細 |
 | [システムアーキテクチャ](docs/architecture.md) | プロジェクト全体の構造とエディションの設計思想 |
 | [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計・セキュリティ・更新方法 |

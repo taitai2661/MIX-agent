@@ -6,27 +6,60 @@
 //! over SSE.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use mixd_core::runs::engine::{RunEngine, RunEvent};
 use tauri::{AppHandle, Emitter, Runtime};
 
+/// Token deltas are coalesced for this long before crossing the IPC boundary.
+/// The UI already batches its own renders, but every `app.emit` is still one
+/// WebView message; a fast model used to produce hundreds per second.
+const IPC_BATCH_WINDOW: Duration = Duration::from_millis(50);
+const IPC_BATCH_MAX: usize = 64;
+
 pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Arc<RunEngine>) {
     tauri::async_runtime::spawn(async move {
         let mut receiver = engine.subscribe();
+        let mut pending: Vec<RunEvent> = Vec::new();
         loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    if let Err(err) = app.emit("run_event", &event) {
-                        tracing::warn!(?err, "failed to emit run_event to WebView");
+            // Milestone events are flushed immediately; only the token stream
+            // waits for the window, so a tool card or status change is never
+            // delayed behind buffered text.
+            match tokio::time::timeout(IPC_BATCH_WINDOW, receiver.recv()).await {
+                Ok(Ok(event)) => {
+                    let stream = matches!(event.kind.as_str(), "text" | "reasoning");
+                    pending.push(event);
+                    if !stream || pending.len() >= IPC_BATCH_MAX {
+                        flush(&app, &mut pending);
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
                     tracing::warn!(skipped, "run event receiver lagged");
+                    flush(&app, &mut pending);
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                    flush(&app, &mut pending);
+                    break;
+                }
+                Err(_) => flush(&app, &mut pending),
             }
         }
     });
+}
+
+fn flush<R: Runtime>(app: &AppHandle<R>, pending: &mut Vec<RunEvent>) {
+    if pending.is_empty() {
+        return;
+    }
+    let result = if pending.len() == 1 {
+        app.emit("run_event", &pending[0])
+    } else {
+        app.emit("run_event_batch", &*pending)
+    };
+    if let Err(err) = result {
+        tracing::warn!(?err, "failed to emit run events to WebView");
+    }
+    pending.clear();
 }
 
 /// Replay the persisted event log for a Run so a UI that just attached can
@@ -49,6 +82,10 @@ pub async fn replay(app: &AppHandle<impl Runtime>, engine: &RunEngine, run_id: &
     let omitted = window.omitted(limit);
 
     let mut last_sequence = 0;
+    // Replay a long Run in chunks rather than one WebView message per row.
+    // The UI reducer is the same for a batch and a single event.
+    const REPLAY_CHUNK: usize = 500;
+    let mut batch: Vec<RunEvent> = Vec::with_capacity(REPLAY_CHUNK);
     for (raw_id, sequence, kind, raw_data, raw_created) in window.rows {
         let run_id = match uuid::Uuid::parse_str(&raw_id) {
             Ok(id) => id,
@@ -69,7 +106,14 @@ pub async fn replay(app: &AppHandle<impl Runtime>, engine: &RunEngine, run_id: &
                 .unwrap_or_else(|_| chrono::Utc::now()),
         };
         last_sequence = last_sequence.max(parsed.sequence);
-        let _ = app.emit("run_event", &parsed);
+        batch.push(parsed);
+        if batch.len() >= REPLAY_CHUNK {
+            let _ = app.emit("run_event_batch", &batch);
+            batch.clear();
+        }
+    }
+    if !batch.is_empty() {
+        let _ = app.emit("run_event_batch", &batch);
     }
     if omitted > 0 {
         let marker = RunEvent {

@@ -14,7 +14,6 @@ vi.mock("@/lib/api", () => ({
     listModels: vi.fn(async () => []),
     providerPresets: vi.fn(async () => []),
     listProjects: vi.fn(async () => []),
-    listConversations: vi.fn(async () => []),
     pickFolder: vi.fn(async () => "/tmp/demo"),
     getSettings: vi.fn(async () => ({ ...DEFAULT_SETTINGS })),
     updateSettings: vi.fn(async (input: SettingsView) => input),

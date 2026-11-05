@@ -2,6 +2,12 @@ name: Validate release candidate
 
 on:
   pull_request:
+    paths:
+      - "deploy/**"
+      - "compose.yaml"
+      - "apps/MIX-agent/**"
+      - "scripts/**"
+      - ".github/workflows/validate-release.yml"
   workflow_dispatch:
 
 permissions:

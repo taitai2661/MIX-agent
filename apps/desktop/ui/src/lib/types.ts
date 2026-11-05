@@ -14,6 +14,55 @@ export interface ProviderView {
   enabled: boolean;
   has_api_key: boolean;
   preset: string | null;
+  auth?: {
+    account_id?: string;
+    email?: string;
+    plan_type?: string;
+  } | null;
+  status?: string | null;
+  billing_mode?: string | null;
+  /** Dedicated integration rows (ChatGPT) are hidden from the generic list. */
+  dedicated?: boolean;
+}
+
+export interface QuotaWindow {
+  id: string;
+  used_percent: number;
+  window_minutes: number;
+  window_seconds: number;
+  resets_at: number;
+}
+
+export interface QuotaSnapshot {
+  plan_type: string;
+  captured_at: number;
+  windows: QuotaWindow[];
+  credits: {
+    has_credits: boolean;
+    unlimited: boolean;
+    balance: string;
+  } | null;
+  limit_reached: boolean;
+}
+
+export interface ChatGptDeviceStart {
+  login_id: string;
+  verification_url: string;
+  user_code: string;
+  expires_in: number;
+  interval: number;
+}
+
+export interface ChatGptStatus {
+  enabled: boolean;
+  provider: ProviderView | null;
+  models: number;
+}
+
+export interface ChatGptDeviceStatus {
+  status: "pending" | "complete" | "error" | "expired";
+  error: string | null;
+  account: { email?: string; plan_type?: string; account_id?: string } | null;
 }
 
 export interface ProviderPresetView {
@@ -157,16 +206,56 @@ export interface ConversationSummary {
   mode: string;
   model_id: string;
   updated_at: string;
+  /** Raw timestamp used as the pagination cursor; do not re-format it. */
+  cursor: string;
   preview: string | null;
   message_count: number;
   project_id: string | null;
   workspace_id: string | null;
 }
 
+export interface WorkspaceChange {
+  path: string;
+  status: string;
+}
+
+export interface WorkspaceChanges {
+  available: boolean;
+  files: WorkspaceChange[];
+}
+
+export interface SandboxStatus {
+  available: boolean;
+  reason: string | null;
+  platform: "macos" | "linux" | "windows" | "other";
+  network_supported: boolean;
+}
+
+export interface ConversationPage {
+  items: ConversationSummary[];
+  has_more: boolean;
+}
+
+export interface ConversationStats {
+  count: number;
+  message_count: number;
+  last_activity_at: string | null;
+}
+
 export interface MessageAttachmentView {
   kind: string;
   mime_type: string;
   filename: string | null;
+}
+
+export interface MessageSearchHit {
+  message_id: string;
+  conversation_id: string;
+  conversation_title: string;
+  conversation_mode: string;
+  role: string;
+  excerpt: string;
+  created_at: string;
 }
 
 export interface MessageView {
@@ -179,6 +268,8 @@ export interface MessageView {
   kind: string;
   created_at: string;
   attachments: MessageAttachmentView[];
+  /** Monotonic row cursor used to page older messages. */
+  seq: number;
 }
 
 export interface RunEventView {
@@ -229,6 +320,8 @@ export interface SettingsView {
   project_doc_fallback_filenames: string[];
   /** Post-response memory auto formation (memory spec §6). Ships enabled. */
   memory_auto_formation: boolean;
+  /** Discover personal skills under the user's home. Ships enabled. */
+  discover_user_skills: boolean;
   /**
    * §4 source (3): also write embedding-neighbour links after extraction.
    *
@@ -238,12 +331,15 @@ export interface SettingsView {
    * threw.
    */
   memory_link_embedding_neighbors: boolean;
+  /** Unofficial ChatGPT / Codex opt-in. Ships off; hidden until enabled. */
+  chatgpt_enabled: boolean;
   /** App-wide default for the project's own `verify` gate (Rust `Option<String>`). */
   verify_command: string | null;
   /** App-wide default formatter/lint command reported to the model. */
   format_command: string | null;
   /** Refuse shell commands that write outside the workspace. */
   sandbox_terminal: boolean;
+  sandbox_terminal_network: boolean;
   /**
    * Reserved for the future SQLCipher migration; always `false` today.
    * The database is plain SQLite, so the UI must not present this as an
@@ -383,6 +479,11 @@ export interface SkillView {
   name: string;
   description: string;
   body_markdown: string;
+  license: string;
+  compatibility: string;
+  metadata: Record<string, string>;
+  allowed_tools: string[];
+  resource_paths: string[];
   updated_at: string;
 }
 
@@ -480,6 +581,7 @@ export interface PendingApprovalView {
   expires_at: string;
   conversation_id: string | null;
   conversation_title: string | null;
+  conversation_mode: string | null;
 }
 
 export interface RunView {
@@ -632,6 +734,8 @@ export interface KnowledgeSearchHit {
 export interface SkillResourceView {
   path: string;
   content: string;
+  binary: boolean;
+  size: number;
 }
 
 export interface DirEntryView {

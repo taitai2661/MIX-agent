@@ -51,6 +51,7 @@ export type SettingsTab =
   | "network"
   | "updates"
   | "backup"
+  | "chatgpt"
   | "providers"
   | "models"
   | "tools"
@@ -293,6 +294,7 @@ const SETTING_TABS: SettingsTab[] = [
   "network",
   "updates",
   "backup",
+  "chatgpt",
   "providers",
   "models",
   "tools",

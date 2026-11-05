@@ -45,6 +45,9 @@ MODELS_DEV_URL = (
     os.getenv("MIX_MODELS_DEV_URL") or os.getenv("MIX_MODEL_INFO_URL") or "https://models.dev/api.json"
 ).rstrip("/")
 MAX_UPLOAD = 20 * 1024 * 1024
+# Upper bound for a normal JSON request (attachments are base64, so this is
+# larger than MAX_UPLOAD). Backup uploads have their own, larger limit.
+MAX_REQUEST_BODY = 64 * 1024 * 1024
 # Bump when the capability-probe semantics change so previously stored
 # "unsupported"/"unknown" verdicts are not treated as authoritative.
 TOOL_PROBE_VERSION = 3

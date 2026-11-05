@@ -88,6 +88,23 @@ export function ChatTranscript({
   // not yank the viewport away from a user who scrolled up to read history.
   const [atBottom, setAtBottom] = useState(true);
   const atBottomRef = useRef(true);
+  // Announce the streamed answer at most once every two seconds. Flushing the
+  // last 500 characters on every animation frame made screen readers repeat
+  // half-sentences continuously and drowned out navigation.
+  const [announcement, setAnnouncement] = useState("");
+  const latestStream = useRef(streamText);
+  latestStream.current = streamText;
+  useEffect(() => {
+    if (!active) {
+      setAnnouncement("");
+      return;
+    }
+    const timer = window.setInterval(
+      () => setAnnouncement(latestStream.current.slice(-400)),
+      2000,
+    );
+    return () => window.clearInterval(timer);
+  }, [active]);
 
   useEffect(() => {
     if (!atBottomRef.current) return;
@@ -189,7 +206,7 @@ export function ChatTranscript({
         aria-live="polite"
         aria-atomic="false"
       >
-        {active ? streamText.slice(-500) : ""}
+        {active ? announcement : ""}
       </span>
       {!atBottom && (
         <button

@@ -149,7 +149,7 @@ def settings_statistics(ctx=Depends(context)):
         item["_completion_sum"] += float(completion_sum or 0)
         item["_completion_count"] += int(completion_count or 0)
     total_tps_sum = total_tps_count = 0
-    for model_id, provider_id, scope, count, tps_sum, tps_count in perf_rows:
+    for model_id, provider_id, scope, _count, tps_sum, tps_count in perf_rows:
         item = group(model_id, provider_id, scope)
         item["_tps_sum"] += float(tps_sum or 0)
         item["_tps_count"] += int(tps_count or 0)

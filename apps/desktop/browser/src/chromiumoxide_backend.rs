@@ -42,6 +42,9 @@ use crate::interface::{
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// A navigation that never settles must not park the whole workspace forever.
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(30);
+/// A user/agent script must not be able to park the CDP connection (and the
+/// workspace lock held by the operator) indefinitely.
+const EVALUATE_TIMEOUT: Duration = Duration::from_secs(10);
 /// History navigation and reload are best-effort: a page that does not emit a
 /// navigation event still needs to return so the agent can inspect it.
 const HISTORY_WAIT: Duration = Duration::from_secs(5);
@@ -121,7 +124,12 @@ async fn blocked_request(
             .then(|| format!("private address {ip}"));
     }
 
-    let addrs = cache.resolve(bare, port).await?;
+    let Some(addrs) = cache.resolve(bare, port).await else {
+        // The resolver timed out or failed. Returning `None` here means
+        // "allow" to the caller, which let an attacker bypass the guard by
+        // making DNS fail. Fail closed instead.
+        return Some(format!("dns resolution failed for {bare}"));
+    };
     addrs
         .iter()
         .find(|ip| crate::interface::is_forbidden_ip(ip, allow_local))
@@ -763,7 +771,14 @@ impl ChromiumBackend {
             return Ok(BrowserResponse::err(format!("script rejected: {err:#}")));
         }
         let page = self.current_page().await?;
-        let result = page.evaluate(script).await?;
+        // A page that returns `new Promise(() => {})` would otherwise hold the
+        // workspace lock forever, blocking every later browser call, close_idle
+        // and LRU eviction for that workspace.
+        let result = timeout(EVALUATE_TIMEOUT, page.evaluate(script))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("evaluate timed out after {}s", EVALUATE_TIMEOUT.as_secs())
+            })??;
         let value = result.value().cloned().unwrap_or(Value::Null);
         Ok(BrowserResponse::ok(value))
     }
@@ -1321,6 +1336,12 @@ mod tests {
         assert!(blocked_request("data:text/plain,hi", false, &mut cache)
             .await
             .is_none());
+        // A resolver failure must block, not fall through as "allowed".
+        assert!(
+            blocked_request("http://mix-agent.invalid/", false, &mut cache)
+                .await
+                .is_some()
+        );
     }
 
     #[test]
