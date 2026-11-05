@@ -1,0 +1,5 @@
+# The web edition owns its own workspace and lockfile. Without this file pnpm
+# walks up to the repository-root workspace, which deliberately excludes
+# apps/web, and installs nothing here (so `pnpm lint` cannot find eslint).
+packages:
+  - "."

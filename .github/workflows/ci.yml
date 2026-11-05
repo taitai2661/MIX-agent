@@ -206,7 +206,9 @@ jobs:
         run: pip install uv==0.12.7
       - name: Export locked runtime requirements
         working-directory: apps/server
-        run: uv export --frozen --no-dev --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+        # Exclude the project itself: pip-audit cannot install an editable
+        # requirement when it is asked to verify hashes.
+        run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
       - name: Audit
         run: uvx pip-audit==2.10.1 --requirement "$RUNNER_TEMP/requirements.txt" --strict
       # An SBOM turns "which versions were in v0.5.4?" into an artifact instead
@@ -406,6 +408,9 @@ jobs:
       - name: Build Windows installers
         working-directory: apps/desktop
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles nsis,msi
       - name: Verify installers were produced
         working-directory: apps/desktop

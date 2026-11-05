@@ -32,8 +32,6 @@ ERROR_CODES: dict[str, str] = {
     "Push購読キーが不正です": "push.key_invalid",
     "Registry MCPではありません": "mcp.not_registry",
     "Registry MCPは導入済みです": "mcp.registry_already_installed",
-    "SearXNGのURLが長すぎます": "search.url_too_long",
-    "SearXNGのURLは公開HTTPSエンドポイントを指定してください": "search.url_invalid",
     "Tool定義が変更されています": "tool.definition_changed",
     "Vision対応モデルを選択してください": "model.vision_required",
     "このMCPは導入済みです": "mcp.already_installed",
@@ -117,6 +115,8 @@ ERROR_CODES: dict[str, str] = {
     "調査モードはAgentモードで実行してください": "agent.research_requires_agent",
     "資料テキストは合計5万文字以内にしてください": "knowledge.text_too_long",
     "通信許可先は正確なドメイン名で指定してください": "network.exact_domain_required",
+    "サーバー内部エラーが発生しました": "common.internal_error",
+    "リクエストボディが大きすぎます": "common.request_too_large",
 }
 
 

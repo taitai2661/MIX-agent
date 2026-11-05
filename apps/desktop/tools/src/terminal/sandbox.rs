@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(target_os = "macos")]
 pub(crate) fn sandbox_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

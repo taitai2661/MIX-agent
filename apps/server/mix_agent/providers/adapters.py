@@ -66,8 +66,11 @@ def _chatgpt_quota_exhausted(headers) -> bool:
 
 
 def _retry_after_seconds(headers) -> float:
+    value = (headers or {}).get("retry-after")
+    if value is None:
+        return 0.0
     try:
-        return min(20.0, max(0.5, float((headers or {}).get("retry-after"))))
+        return min(20.0, max(0.5, float(value)))
     except (TypeError, ValueError):
         return 0.0
 
@@ -204,10 +207,10 @@ class Adapter:
         # conversation exists (probes, memory jobs); a config-derived value
         # keeps those requests on the same routing path across restarts.
         self.session_id = hashlib.sha256(self.url.encode()).hexdigest()[:32]
-        self.preset = get_preset(provider.get("preset_id"))
+        preset = get_preset(provider.get("preset_id"))
         # Records created before presets retain a deliberate legacy mapping.
-        if not self.preset:
-            self.preset = get_preset(
+        if not preset:
+            preset = get_preset(
                 {
                     "openai": "openai",
                     "anthropic": "anthropic",
@@ -217,8 +220,11 @@ class Adapter:
                     "lmstudio": "lmstudio",
                 }.get(self.kind, "custom")
             )
-        if not self.preset:
+        if not preset:
             raise ValueError("Provider preset has no transport configuration")
+        # Annotate the attribute so later methods see a concrete mapping rather
+        # than `dict | None`; the guard above already rejects an empty preset.
+        self.preset: dict = preset
         self.transport_id = self.preset["transport_id"]
         self.discovery_id = self.preset["discovery_id"]
         missing = [
@@ -307,7 +313,7 @@ class Adapter:
         result = []
         for item in body.get("data", body.get("models", [])):
             model_id = item.get("id", item.get("name", "")).removeprefix("models/")
-            caps = {k: None for k in CAPABILITIES}
+            caps: dict[str, bool | None] = {k: None for k in CAPABILITIES}
             caps["chat"] = chat_capability(self.kind, model_id)
             parameters = item.get("supported_parameters", [])
             if parameters:
@@ -357,18 +363,19 @@ class Adapter:
         than the OpenAI-compatible ``{"data": [{"id"}]}`` shape, and it needs the
         ChatGPT identity headers plus ``client_version``.
         """
-        if self.chatgpt is None:
+        chatgpt = self.chatgpt
+        if chatgpt is None:
             raise ProviderConfigurationError("ChatGPT transport is not configured")
         url = self.url.rstrip("/") + "/models?client_version=" + quote(_client_version())
-        headers = self.chatgpt.headers()
+        headers = chatgpt.headers()
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             response = await client.get(url, headers=headers)
             if response.status_code in {401, 403}:
                 # The server just rejected the access token, so force the
                 # refresh even when `auth_failed` is set or the advertised
                 # expiry is still in the future.
-                await self.chatgpt.refresh(force=True)
-                response = await client.get(url, headers=self.chatgpt.headers())
+                await chatgpt.refresh(force=True)
+                response = await client.get(url, headers=chatgpt.headers())
             response.raise_for_status()
             body = response.json()
         items = body.get("models") if isinstance(body, dict) else None
@@ -381,7 +388,7 @@ class Adapter:
             model_id = str(item.get("slug") or item.get("id") or item.get("name") or "")
             if not model_id:
                 continue
-            caps = {key: None for key in CAPABILITIES}
+            caps: dict[str, bool | None] = {key: None for key in CAPABILITIES}
             caps.update(
                 chat=chat_capability(self.kind, model_id),
                 tools=True,

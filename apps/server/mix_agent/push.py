@@ -102,6 +102,8 @@ def encrypt(payload, client_key, auth):
 
 def headers(endpoint):
     key = private_key()
+    if not isinstance(key, ec.EllipticCurvePrivateKey):
+        raise RuntimeError("Web Push VAPID key must be an EC private key")
     point = public_key()
     origin = f"https://{urlsplit(endpoint).hostname}"
     head = b64(b'{"typ":"JWT","alg":"ES256"}')

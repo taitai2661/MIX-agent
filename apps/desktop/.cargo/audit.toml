@@ -1,0 +1,6 @@
+[advisories]
+# `sqlx` locks its optional MySQL driver even though the workspace enables
+# only the SQLite runtime (`features = ["sqlite", ...]`). That optional driver
+# pulls in `rsa 0.9.10`, which has no fixed release. The MySQL code is never
+# compiled, so the timing side channel cannot be reached from this app.
+ignore = ["RUSTSEC-2023-0071"]

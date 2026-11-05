@@ -31,8 +31,6 @@ export const ERROR_CODES_EN: Record<string, string> = {
   "mcp.not_registry": "This MCP server is not from the Registry.",
   "mcp.registry_already_installed":
     "This Registry MCP server is already installed.",
-  "search.url_too_long": "The SearXNG URL is too long.",
-  "search.url_invalid": "Enter a public HTTPS endpoint for SearXNG.",
   "tool.definition_changed": "The tool definition has changed.",
   "model.vision_required": "Choose a model that supports vision.",
   "mcp.already_installed": "This MCP server is already installed.",
@@ -141,6 +139,8 @@ export const ERROR_CODES_EN: Record<string, string> = {
     "A backup or restore is in progress. Try again when it finishes.",
   "common.origin_not_allowed": "This request came from an unapproved origin.",
   "common.cross_site_blocked": "Cross-site requests are blocked.",
+  "common.internal_error": "The server encountered an error.",
+  "common.request_too_large": "The request body is too large.",
   "auth.too_many_attempts": "Too many attempts. Wait a moment and try again.",
   "agent.research_tools_required":
     "Research mode needs web search or the browser tool.",
