@@ -1,4 +1,4 @@
-FROM node:22.16.0-bookworm-slim@sha256:048ed02c5fd52e86fda6fbd2f6a76cf0d4492fd6c6fee9e2c463ed5108da0e34 AS web
+FROM node:26.13-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS web
 WORKDIR /web
 RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
 COPY apps/web/package.json apps/web/pnpm-lock.yaml ./
