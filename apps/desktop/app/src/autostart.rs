@@ -156,7 +156,7 @@ mod platform {
             .join("mix-agent-desktop.desktop"))
     }
 
-    fn quote_exec(value: &str) -> String {
+    pub(super) fn quote_exec(value: &str) -> String {
         // Desktop Entry Exec quoting: wrap when the path contains whitespace
         // and escape embedded quotes/backslashes.
         if value

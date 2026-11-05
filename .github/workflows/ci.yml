@@ -214,7 +214,7 @@ jobs:
       # An SBOM turns "which versions were in v0.5.4?" into an artifact instead
       # of a rebuild. CycloneDX is the format Docker/Grype/Trivy ingest.
       - name: Generate Python SBOM (CycloneDX)
-        run: uvx --from cyclonedx-bom==7.6.0 cyclonedx-py requirements --input-file "$RUNNER_TEMP/requirements.txt" --output-format JSON --output-file "$RUNNER_TEMP/sbom-python.json"
+        run: uvx --from cyclonedx-bom==7.6.0 cyclonedx-py requirements "$RUNNER_TEMP/requirements.txt" --of JSON -o "$RUNNER_TEMP/sbom-python.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-python
