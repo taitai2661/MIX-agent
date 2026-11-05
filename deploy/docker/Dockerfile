@@ -6,7 +6,7 @@ RUN pnpm install --frozen-lockfile
 COPY apps/web/ ./
 RUN pnpm build
 
-FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS runtime
+FROM python:3.15.0-slim-bookworm@sha256:0e019bbdfb5d9874cb2389f1c2884b64aa2ac97c99960b5bc521cef978c0617d AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY LICENSE NOTICE /app/
@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir uv==0.12.7 && uv sync --frozen --no-dev --no-inst
 ENV PATH="/app/.venv/bin:$PATH"
 RUN useradd -u 1000 -m mix
 
-FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS init
+FROM python:3.15.0-slim-bookworm@sha256:0e019bbdfb5d9874cb2389f1c2884b64aa2ac97c99960b5bc521cef978c0617d AS init
 COPY deploy/docker/bootstrap.py /bootstrap.py
 ENTRYPOINT ["python", "/bootstrap.py"]
 
