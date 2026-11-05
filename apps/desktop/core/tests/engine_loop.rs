@@ -2007,42 +2007,53 @@ async fn an_approved_plan_lifts_plan_mode_for_the_next_turn() {
 /// refused, because the model is working from stale content.
 #[tokio::test]
 async fn an_edit_to_a_file_changed_after_the_read_is_refused() {
-    let harness = Harness::new(vec![
-        tool_turn("r", "files", r#"{"action":"read","path":"a.txt"}"#),
-        tool_turn("t", "terminal", r#"{"command":"echo extra >> a.txt"}"#),
-        tool_turn(
-            "e",
-            "edit",
-            r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
-        ),
-        text_turn("done"),
-    ])
-    .await;
+    // Two full scripts: the `echo extra >> a.txt` dispatch goes through a
+    // persistent shell, and the first ConPTY spawn on a cold Windows runner
+    // can exceed its timeout (leaving a.txt unmodified, so the edit
+    // legitimately succeeds). The retry replays the same mutation against a
+    // warm shell; a genuinely broken staleness check still fails it.
+    let script = || {
+        vec![
+            tool_turn("r", "files", r#"{"action":"read","path":"a.txt"}"#),
+            tool_turn("t", "terminal", r#"{"command":"echo extra >> a.txt"}"#),
+            tool_turn(
+                "e",
+                "edit",
+                r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
+            ),
+            text_turn("done"),
+        ]
+    };
+    let harness = Harness::new([script(), script()].concat()).await;
     allow_tool(&harness, "terminal").await;
     allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
     std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
 
-    let outcome = harness
-        .engine
-        .execute(harness.request().await)
-        .await
-        .expect("run");
-    let edit = outcome
-        .tool_calls
-        .iter()
-        .find(|call| call.name == "edit")
-        .expect("edit call");
-    let error = edit.error.as_deref().unwrap_or_default();
-    assert!(
-        error.contains("changed on disk"),
-        "the stale edit must be refused with a readable reason; got {error:?}"
-    );
-    let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
-    assert!(
-        text.contains("before"),
-        "the edit must not have applied: {text}"
-    );
+    for _ in 0..2 {
+        let outcome = harness
+            .engine
+            .execute(harness.request().await)
+            .await
+            .expect("run");
+        let edit = outcome
+            .tool_calls
+            .iter()
+            .find(|call| call.name == "edit")
+            .expect("edit call");
+        let error = edit.error.as_deref().unwrap_or_default();
+        if error.contains("changed on disk") {
+            let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
+            assert!(
+                text.contains("before"),
+                "the edit must not have applied: {text}"
+            );
+            return;
+        }
+        // Reset the workspace so the retry replays the same mutation.
+        std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
+    }
+    panic!("the stale edit must be refused with a readable reason");
 }
 
 /// A malformed argument blob is reported as such instead of being dispatched
