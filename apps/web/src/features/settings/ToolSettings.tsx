@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Row } from "@/app/api";
 import { queryKeys } from "@/lib/queries";
 import { Button } from "@/components/button";
+import { PageLoading } from "@/components/loading";
 import { ErrorBox, Field, Title } from "@/components/shared";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -23,7 +24,8 @@ export function BrowserSettings() {
   const qc = useQueryClient();
   const [error, setError] = useState<unknown>(null);
   const [startingInstall, setStartingInstall] = useState(false);
-  if (!query.data) return <ErrorBox error={query.error} />;
+  if (!query.data)
+    return query.error ? <ErrorBox error={query.error} /> : <PageLoading />;
   const data = query.data.data;
   const status = startingInstall
     ? "installing"
@@ -234,7 +236,8 @@ export function WebSearchSettings() {
   const [backend, setBackend] = useState<Backend>(
     (query.data?.data.web_search_backend as Backend | undefined) || "ddgs",
   );
-  if (!query.data) return <ErrorBox error={query.error} />;
+  if (!query.data)
+    return query.error ? <ErrorBox error={query.error} /> : <PageLoading />;
   const data = query.data.data;
   const payload = (form: FormData) => ({
     default_model_id: data.default_model_id || "",

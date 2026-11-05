@@ -27,10 +27,16 @@ fn full_settings() -> SettingsView {
         verify_command: Some("cargo test --workspace".into()),
         format_command: Some("cargo fmt".into()),
         sandbox_terminal: true,
+        sandbox_terminal_network: cfg!(target_os = "macos"),
         memory_auto_formation: false,
+        // Non-default on purpose: the default is `true`, so carrying `false`
+        // proves the key survived rather than being re-derived.
+        discover_user_skills: false,
         // Non-default on purpose: `true` is what proves the round trip carried
         // the key rather than re-deriving §4's `false`.
         memory_link_embedding_neighbors: true,
+        // Non-default on purpose so the round trip proves the key survives.
+        chatgpt_enabled: true,
         // Not available yet: only `false` is accepted, so the round trip must
         // carry the honest value rather than re-deriving it.
         database_encryption: false,
@@ -60,6 +66,10 @@ async fn a_missing_row_reads_back_as_the_defaults() {
     );
     // Memory spec §6: auto formation ships enabled; `false` is an opt-out.
     assert!(read.memory_auto_formation, "auto formation defaults to on");
+    assert!(
+        read.discover_user_skills,
+        "personal skills ship enabled; only an explicit false disables them"
+    );
     // Memory spec §4 「(3) は既定オフ」: the embedding-neighbour source ships
     // disabled, so `false` is the contract rather than a derived accident.
     assert!(

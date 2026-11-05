@@ -50,6 +50,17 @@ pub struct SettingsView {
     /// Refuse shell commands that write outside the workspace, and any
     /// privilege-escalation wrapper, instead of merely flagging them.
     pub sandbox_terminal: bool,
+    /// Also deny network inside the macOS terminal sandbox. Off by default:
+    /// package installs and test suites need it. Only takes effect when
+    /// `sandbox_terminal` is on and the platform is macOS.
+    pub sandbox_terminal_network: bool,
+    /// Whether skills under the user's home (`~/.mix/skills`,
+    /// `~/.claude/skills`, `~/.agents/skills`) are discovered and offered to
+    /// the agent. Project skills are always discovered.
+    ///
+    /// Defaults to `true`: a personal skill should apply across projects, and
+    /// a row written before this key existed has no explicit `false`.
+    pub discover_user_skills: bool,
     /// Whether finished turns are mined for durable Memory afterwards
     /// (memory spec §6 自動形成).
     ///
@@ -71,6 +82,12 @@ pub struct SettingsView {
     /// replaces the stored document wholesale, so a key the struct does not
     /// carry would be dropped from the row the next time Settings was saved.
     pub memory_link_embedding_neighbors: bool,
+    /// Opt-in for the unofficial ChatGPT / Codex integration.
+    ///
+    /// Defaults to `false`: the preset is hidden and the device flow refuses
+    /// to start until the operator turns it on in the Providers pane. Existing
+    /// rows stay visible so they can be logged out or deleted.
+    pub chatgpt_enabled: bool,
     /// Reserved for the future SQLCipher migration; **not available yet**.
     ///
     /// Kept in the document so the key survives a round trip and an older
@@ -140,12 +157,17 @@ impl Default for SettingsView {
             verify_command: None,
             format_command: None,
             sandbox_terminal: false,
+            sandbox_terminal_network: false,
+            // Personal skills apply across projects; explicit opt-out only.
+            discover_user_skills: true,
             // Memory auto formation ships on (memory spec §6): only an
             // explicit `false` in the stored document stops it, and a
             // document written before the key existed has no such `false`.
             memory_auto_formation: true,
             // §4 「(3) は既定オフ」 — off until this row says otherwise.
             memory_link_embedding_neighbors: false,
+            // Unofficial integration: explicit opt-in, off by default.
+            chatgpt_enabled: false,
             // Codex parity: defaults to false (plain SQLite).
             database_encryption: false,
             onboarding_completed: None,
@@ -192,11 +214,59 @@ pub async fn update_settings(
         .engine
         .set_terminal_sandbox(view.sandbox_terminal)
         .await;
+    state
+        .engine
+        .set_terminal_sandbox_network(view.sandbox_terminal_network)
+        .await;
     Ok(view)
+}
+
+/// What the host can actually enforce, so the settings pane can disable a
+/// toggle instead of accepting one that would silently run unsandboxed.
+#[derive(Serialize)]
+pub struct SandboxStatus {
+    pub available: bool,
+    pub reason: Option<String>,
+    /// `macos` | `linux` | `windows` | `other`
+    pub platform: String,
+    /// Whether the stricter no-network profile is supported on this platform.
+    pub network_supported: bool,
+}
+
+#[tauri::command]
+pub fn sandbox_status() -> SandboxStatus {
+    let platform = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "other"
+    };
+    SandboxStatus {
+        available: mixd_tools::terminal::os_sandbox_available(),
+        reason: mixd_tools::terminal::os_sandbox_unavailable_reason().map(str::to_string),
+        platform: platform.to_string(),
+        network_supported: cfg!(any(target_os = "macos", target_os = "linux")),
+    }
 }
 
 /// Reject empty, huge or malformed values before they reach the store.
 fn validate_settings(input: &SettingsView) -> Result<(), String> {
+    if input.sandbox_terminal && !mixd_tools::terminal::os_sandbox_available() {
+        return Err(mixd_tools::terminal::os_sandbox_unavailable_reason()
+            .unwrap_or("the terminal sandbox is unavailable on this machine")
+            .to_string());
+    }
+    if input.sandbox_terminal_network && !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return Err(
+            "the terminal network sandbox is only available on macOS and Linux".to_string(),
+        );
+    }
+    if input.sandbox_terminal_network && !input.sandbox_terminal {
+        return Err("enable the terminal sandbox before denying its network".to_string());
+    }
     // At-rest encryption is staged but not wired (see `mixd_storage::db`):
     // SQLCipher is not applied to the connection, so accepting `true` here
     // would tell the user their database is encrypted while it stays plaintext.

@@ -21,6 +21,19 @@ pub async fn decide_approval(
     state: State<'_, AppState>,
     input: ApprovalDecision,
 ) -> Result<(), String> {
+    // Ownership check: the approval must still be pending. Without this a
+    // compromised renderer could resolve an arbitrary id (another Run's
+    // prompt, an already-expired row) and launder a tool call through it.
+    let pending = state.engine.executor.list_pending().await;
+    if !pending.iter().any(|p| p.approval_id == input.id) {
+        return Err(format!("unknown or expired approval {}", input.id));
+    }
+    // Durable `remember` persists an allow rule; it must never be set on a
+    // deny, which would otherwise silently lock the tool down (or, if the
+    // outcome mapping ever flips, silently open it).
+    if input.remember && !input.grant {
+        return Err("remember requires an approval grant".to_string());
+    }
     // The rule must be keyed on the Tool, not on this one-off approval id.
     let tool_name = state
         .engine

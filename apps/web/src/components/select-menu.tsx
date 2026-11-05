@@ -1,6 +1,6 @@
 import { t } from "@/app/i18n";
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 export type SelectOption = {
   value: string;
@@ -32,6 +32,7 @@ export function SelectMenu({
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const listId = useId();
   const selected = options.find((option) => option.value === value);
 
   useEffect(() => {
@@ -82,6 +83,14 @@ export function SelectMenu({
       event.preventDefault();
       setActive((index) => Math.max(index - 1, 0));
     }
+    if (event.key === "Home") {
+      event.preventDefault();
+      setActive(0);
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setActive(Math.max(options.length - 1, 0));
+    }
     if (event.key === "Enter" && options[active]) {
       event.preventDefault();
       choose(options[active]);
@@ -97,8 +106,13 @@ export function SelectMenu({
         ref={trigger}
         type="button"
         className="select-trigger"
+        role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={
+          open && options[active] ? `${listId}-${active}` : undefined
+        }
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => setOpen((shown) => !shown)}
@@ -109,12 +123,19 @@ export function SelectMenu({
         <ChevronDown size={15} />
       </button>
       {open && (
-        <div className="select-menu-pop" role="listbox" aria-label={ariaLabel}>
+        <div
+          id={listId}
+          className="select-menu-pop"
+          role="listbox"
+          aria-label={ariaLabel}
+        >
           {options.map((option, index) => (
             <button
               key={option.value}
+              id={`${listId}-${index}`}
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={option.value === value}
               className={index === active ? "active" : ""}
               onMouseEnter={() => setActive(index)}

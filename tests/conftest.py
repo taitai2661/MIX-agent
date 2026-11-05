@@ -18,6 +18,13 @@ from mix_agent.db.session import engine
 from mix_agent.main import app
 
 
+# Test isolation model (deliberately minimal, do not grow this file):
+# - `database` drops/recreates every table per test: integration tests get a
+#   fresh PostgreSQL schema and never see each other's rows.
+# - `client`/`signed` build on `database`, so pure unit tests that need no DB
+#   must NOT take these fixtures — they run without Docker (see CI
+#   `docker-backend` vs host-only unit runs). If this file gains more than
+#   fixtures (helpers, factories), move them to tests/helpers/.
 @pytest.fixture
 def database():
     # Only tests that exercise the API (client/signed) require PostgreSQL;

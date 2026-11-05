@@ -11,6 +11,8 @@
 //! does not match. `TAURI_SIGNING_PRIVATE_KEY` / `…_PASSWORD` live only in
 //! GitHub Actions Repository Secrets.
 
+use std::time::Duration;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
@@ -19,6 +21,14 @@ use tauri_plugin_updater::UpdaterExt;
 pub const PROGRESS_EVENT: &str = "update://progress";
 /// Emitted once the payload has been verified and installed.
 pub const INSTALLED_EVENT: &str = "update://installed";
+
+/// A manifest fetch must not leave the "更新を確認" button spinning forever
+/// when GitHub is unreachable or a proxy silently drops the connection.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(60);
+/// The updater's HTTP client has no timeout by default. A stalled download
+/// would otherwise pin the pane at "ダウンロード中… 1%" and disable the check
+/// button until the app is force-quit.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateInfo {
@@ -39,6 +49,11 @@ pub struct UpdateProgress {
     pub downloaded: u64,
     /// `None` when the server does not send a `Content-Length`.
     pub total: Option<u64>,
+    /// `"downloading"` while bytes arrive, then `"installing"` once the
+    /// signature has been verified and the bundle is being written. Without
+    /// this, the pane kept saying "ダウンロード中… 100%" while the installer
+    /// could take minutes.
+    pub stage: &'static str,
 }
 
 /// The running app version, so the pane can show it without a second plugin.
@@ -53,7 +68,11 @@ pub fn app_version(app: AppHandle) -> String {
 /// as such instead of a red banner.
 #[tauri::command]
 pub async fn check_for_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let updater = app.updater().map_err(crate::error::cmd_err)?;
+    let updater = app
+        .updater_builder()
+        .timeout(CHECK_TIMEOUT)
+        .build()
+        .map_err(crate::error::cmd_err)?;
     let update = updater.check().await.map_err(crate::error::cmd_err)?;
     Ok(update.map(|update| info_from_update(&update)))
 }
@@ -73,7 +92,11 @@ pub async fn install_update(app: AppHandle) -> Result<UpdateInfo, String> {
                 .to_string(),
         );
     }
-    let updater = app.updater().map_err(crate::error::cmd_err)?;
+    let updater = app
+        .updater_builder()
+        .timeout(DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(crate::error::cmd_err)?;
     let update = updater
         .check()
         .await
@@ -83,6 +106,7 @@ pub async fn install_update(app: AppHandle) -> Result<UpdateInfo, String> {
 
     let progress_handle = app.clone();
     let mut downloaded = 0u64;
+    let finish_handle = app.clone();
     update
         .download_and_install(
             move |chunk_len, content_length| {
@@ -92,10 +116,20 @@ pub async fn install_update(app: AppHandle) -> Result<UpdateInfo, String> {
                     UpdateProgress {
                         downloaded,
                         total: content_length,
+                        stage: "downloading",
                     },
                 );
             },
-            || {},
+            move || {
+                let _ = finish_handle.emit(
+                    PROGRESS_EVENT,
+                    UpdateProgress {
+                        downloaded: 0,
+                        total: None,
+                        stage: "installing",
+                    },
+                );
+            },
         )
         .await
         .map_err(crate::error::cmd_err)?;

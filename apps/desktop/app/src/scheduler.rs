@@ -192,6 +192,21 @@ pub async fn tick(state: &AppState) -> usize {
         // permanently broken job does not retry on every tick.
         match target_conversation(state, &job).await {
             Ok(conversation_id) => {
+                // Single-flight per conversation: a job whose previous Run is
+                // still executing (a five-minute Run on a one-minute cron)
+                // used to start a second Run, interleaving both transcripts.
+                let busy: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM runs WHERE conversation_id = ? AND status IN \
+                     ('queued','running','waiting_approval','budget_extension_pending')",
+                )
+                .bind(&conversation_id)
+                .fetch_one(state.storage.pool())
+                .await
+                .unwrap_or(0);
+                if busy > 0 {
+                    tracing::info!(job = %job.name, "scheduled run skipped: previous run still active");
+                    continue;
+                }
                 let input = crate::commands::conversations::SendMessageInput {
                     conversation_id,
                     content: job.prompt.clone(),
@@ -327,9 +342,15 @@ fn install_memory_jobs<R: Runtime>(app: &AppHandle<R>) {
                 let runner = JobRunner::new(state.storage.clone(), state.engine.providers.clone())
                     .with_embedding(embedding);
                 let due = mixd_core::memory_jobs::due_jobs(state.storage.as_ref(), JOB_BATCH).await;
+                // Extraction can spend up to 90 s on a provider call. A
+                // foreground Run must win that contention, so while one is
+                // active only a single extraction runs; the rest wait for the
+                // next tick after the answer lands.
+                let foreground = !state.engine.active.lock().await.is_empty();
+                let concurrency = if foreground { 1 } else { MAX_CONCURRENT_JOBS };
                 for job in due {
                     let mut in_flight = active.lock().await;
-                    if in_flight.len() >= MAX_CONCURRENT_JOBS {
+                    if in_flight.len() >= concurrency {
                         break;
                     }
                     if !in_flight.insert(job.id.clone()) {

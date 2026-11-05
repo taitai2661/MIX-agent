@@ -22,6 +22,52 @@ export function relativeTime(iso: string, now: Date = new Date()): string {
   return then.toLocaleDateString(locale, { month: "short", day: "numeric" });
 }
 
+/**
+ * Render a quota reset timestamp in the viewer's time zone, with UTC alongside.
+ *
+ * The provider reports epoch seconds in UTC, but the reset is most useful in
+ * the operator's own zone. The scheduler already follows the device zone, so
+ * hard-coding `Asia/Tokyo` here made two screens disagree. `timeZone` is
+ * injectable for deterministic tests.
+ */
+export function resetTime(seconds: number, timeZone = localTimeZone()): string {
+  if (!seconds) return "";
+  const at = new Date(seconds * 1000);
+  if (Number.isNaN(at.getTime())) return "";
+  const locale = getLanguage() === "en" ? "en-US" : "ja-JP";
+  let local: string;
+  try {
+    local = at.toLocaleString(locale, {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    // An unknown zone must not blank the row; UTC is still useful.
+    return `${at.toISOString()} (UTC)`;
+  }
+  const utc = at.toLocaleString("en-GB", {
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `${local} (${timeZone} / UTC ${utc})`;
+}
+
+/** The browser/OS zone, falling back to UTC when Intl cannot report one. */
+export function localTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 /** Full localized timestamp for a tooltip / accessible label. */
 export function absoluteTime(iso: string): string {
   const then = new Date(iso);
@@ -123,6 +169,31 @@ export function formatContext(tokens: number): string {
   if (tokens >= 1_000_000) return `${trim(tokens / 1_000_000)}M`;
   if (tokens >= 1000) return `${trim(tokens / 1000)}K`;
   return String(tokens);
+}
+
+/** Compact token count for the usage meter.
+ *
+ *  Unlike `formatContext` (which is pinned to K/M because model rows are a
+ *  dense fixed-width table), this follows the display language's units so the
+ *  Japanese UI reads `6万` and the English UI `60K` — the same number the
+ *  status line shows. */
+export function formatTokens(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return "0";
+  const locale = getLanguage() === "en" ? "en-US" : "ja-JP";
+  return new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(tokens);
+}
+
+/** Estimated spend: `$0.00`, `$0.0123`, `$1.23`. `null` (unpriced model) reads
+ *  as a dash rather than a misleading zero. */
+export function formatCost(usd: number | null | undefined): string {
+  if (usd == null || !Number.isFinite(usd) || usd < 0) return "—";
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  if (usd < 1) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(2)}`;
 }
 
 /** Model ids are stored as `<provider_id>:<model>` where `provider_id` is a

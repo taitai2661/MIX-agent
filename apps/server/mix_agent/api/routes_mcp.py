@@ -2,11 +2,10 @@ import hashlib
 import json
 import secrets
 import time
-from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from mix_agent.api.common import (
     audit,
@@ -20,6 +19,13 @@ from mix_agent.api.schemas import (
     MCPOAuthStartInput,
     MCPUninstallInput,
 )
+from mix_agent.api.helpers.mcp_auth import (
+    create_transient_secret,
+    delete_auth_state,
+    purge_expired_auth_states,
+    replace_connection_secret,
+)
+from mix_agent.api.helpers.mcp_connections import create_connection, update_connection
 from mix_agent.auth.security import (
     read_secret,
     store_secret,
@@ -29,9 +35,8 @@ from mix_agent.db.models import (
     MCPConnection,
     Secret,
     Tool,
-    now,
 )
-from mix_agent.db.session import get_db
+from mix_agent.db.session import SessionLocal, get_db
 from mix_agent.mcp import oauth as mcp_oauth
 from mix_agent.mcp import registry as mcp_registry
 from mix_agent.mcp.protocol import validate_schema as validate_mcp_schema
@@ -132,6 +137,9 @@ async def install_registry_mcp(body: MCPInstallInput, ctx=Depends(context)):
     except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         db.rollback()
         raise HTTPException(422, "MCPを安全に導入できませんでした")
+    owner_id = s.owner_id
+    common_snapshot = dict(common)
+    manifest_snapshot = dict(manifest)
     db.close()
     try:
         runtime = await runner_request(
@@ -139,28 +147,36 @@ async def install_registry_mcp(body: MCPInstallInput, ctx=Depends(context)):
             "/v1/install",
             {
                 "resource_id": row_id,
-                "manifest": manifest,
-                "network_capability": common["network_capability"],
+                "manifest": manifest_snapshot,
+                "network_capability": common_snapshot["network_capability"],
             },
             timeout=360,
         )
     except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
-        failed = db.get(MCPConnection, row_id)
-        if failed:
-            db.delete(failed)
+        with SessionLocal() as fresh:
+            failed = fresh.get(MCPConnection, row_id)
+            if failed is not None:
+                fresh.delete(failed)
             if secret_id:
-                secret = db.get(Secret, secret_id)
-                if secret:
-                    db.delete(secret)
-            db.commit()
+                orphan = fresh.get(Secret, secret_id)
+                if orphan is not None:
+                    fresh.delete(orphan)
+            fresh.commit()
         raise HTTPException(422, "MCPを安全に導入できませんでした")
-    row = db.get(MCPConnection, row_id)
-    if not row:
-        raise HTTPException(422, "MCPを安全に導入できませんでした")
-    row.data = {**row.data, "runtime": runtime, "state": runtime.get("state", "running")}
-    audit(db, s.owner_id, "mcp.registry.install", row.id)
-    db.commit()
-    return public(row)
+    with SessionLocal() as fresh:
+        row = fresh.get(MCPConnection, row_id)
+        if not row:
+            if secret_id:
+                orphan = fresh.get(Secret, secret_id)
+                if orphan is not None:
+                    fresh.delete(orphan)
+                    fresh.commit()
+            raise HTTPException(422, "MCPを安全に導入できませんでした")
+        row.data = {**row.data, "runtime": runtime, "state": runtime.get("state", "running")}
+        audit(fresh, owner_id, "mcp.registry.install", row.id)
+        fresh.commit()
+        result = public(row)
+    return result
 
 
 @router.get("/mcp/oauth/client-metadata.json")
@@ -180,11 +196,11 @@ async def start_mcp_oauth(key: str, body: MCPOAuthStartInput, ctx=Depends(contex
             discovery, {"client_id": body.client_id, "client_secret": body.client_secret}
         )
         state, verifier = mcp_oauth.new_state()
-        transient_secret = store_secret(
+        transient_secret = create_transient_secret(
             db,
             s.owner_id,
-            json.dumps({"verifier": verifier, "client_secret": registration.pop("client_secret", "")}),
-            "mcp-oauth-state",
+            verifier,
+            registration.pop("client_secret", ""),
         )
         auth = MCPAuthState(
             owner_id=s.owner_id,
@@ -216,8 +232,9 @@ async def mcp_oauth_callback(
 ):
     digest = hashlib.sha256(state.encode()).hexdigest()
     # Authorization states are single-use and expire after ten minutes; purge
-    # abandoned ones so this unauthenticated endpoint stays bounded.
-    db.execute(delete(MCPAuthState).where(MCPAuthState.created_at < now() - timedelta(hours=1)))
+    # abandoned ones (and their transient client secret) so this unauthenticated
+    # endpoint stays bounded.
+    purge_expired_auth_states(db)
     db.commit()
     auth = db.scalar(select(MCPAuthState).where(MCPAuthState.state_hash == digest))
     if (
@@ -242,7 +259,7 @@ async def mcp_oauth_callback(
             "oauth_registration": registration,
             "headers": {"Authorization": "Bearer " + token["access_token"]},
         }
-        secret_id = store_secret(db, row.owner_id, json.dumps(credential), "mcp")
+        secret_id = replace_connection_secret(db, row.owner_id, credential, row.data.get("secret_id"))
         row.data = {
             **row.data,
             "secret_id": secret_id,
@@ -250,7 +267,7 @@ async def mcp_oauth_callback(
             "authorization_required": False,
             "oauth_registration": registration["method"],
         }
-        db.delete(auth)
+        delete_auth_state(db, auth)
         audit(db, row.owner_id, "mcp.oauth.authorized", row.id)
         db.commit()
         return RedirectResponse("/settings/mcp?oauth=success", status_code=303)
@@ -261,12 +278,7 @@ async def mcp_oauth_callback(
 @router.post("/mcp/connections")
 def create_mcp(body: MCPInput, ctx=Depends(context)):
     db, s = ctx
-    data = body.model_dump(exclude={"credentials"})
-    if body.credentials:
-        data["secret_id"] = store_secret(db, s.owner_id, json.dumps(body.credentials), "mcp")
-    row = MCPConnection(owner_id=s.owner_id, data=data)
-    db.add(row)
-    db.flush()
+    row = create_connection(db, s.owner_id, body)
     audit(db, s.owner_id, "mcp.create", row.id)
     db.commit()
     return public(row)
@@ -275,16 +287,7 @@ def create_mcp(body: MCPInput, ctx=Depends(context)):
 @router.patch("/mcp/connections/{key}")
 def update_mcp(key: str, body: MCPInput, ctx=Depends(context)):
     db, s = ctx
-    row = own(db, MCPConnection, key, s.owner_id)
-    data = body.model_dump(exclude={"credentials"})
-    data["secret_id"] = row.data.get("secret_id")
-    if body.credentials is not None:
-        data["secret_id"] = store_secret(db, s.owner_id, json.dumps(body.credentials), "mcp")
-    row.data = data
-    # Connection edits invalidate all previously discovered definitions and grants.
-    for tool in db.scalars(select(Tool).where(Tool.owner_id == s.owner_id)):
-        if tool.data.get("source_ref") == key:
-            tool.data = {**tool.data, "enabled": False}
+    row = update_connection(db, s.owner_id, key, body)
     db.commit()
     return public(row)
 
@@ -307,59 +310,69 @@ async def mcp_action(key: str, action: str, ctx=Depends(context)):
     driver = row.data.get("runtime", {}).get("driver")
     # Sync/test/install can take minutes; release the pooled connection while
     # awaiting the runner instead of pinning a session for the whole call.
+    # Keep only plain values; the request-scoped session must not be reused
+    # after close().
+    owner_id = s.owner_id
+    connection_key = key
+    connection_snapshot = dict(connection)
+    credentials_snapshot = dict(credentials)
+    driver_snapshot = driver
     db.close()
-    if driver in ("oci", "npm", "pypi"):
+    if driver_snapshot in ("oci", "npm", "pypi"):
         if action == "install":
             raise HTTPException(409, "Registry MCPは導入済みです")
         result = await runner_request(
             "manager",
-            f"/v1/discover/{key}",
+            f"/v1/discover/{connection_key}",
             {
-                "credentials": credentials,
-                "arguments": connection.get("runtime_arguments", []),
+                "credentials": credentials_snapshot,
+                "arguments": connection_snapshot.get("runtime_arguments", []),
             },
             timeout=360,
         )
     else:
         result = await runner_request(
-            "mcp", "/" + ("install" if action == "install" else "discover"), {"connection": connection}
+            "mcp",
+            "/" + ("install" if action == "install" else "discover"),
+            {"connection": connection_snapshot},
         )
     if action == "sync":
-        row = db.get(MCPConnection, key)
-        if not row:
-            raise HTTPException(404)
-        prefix = key.replace("-", "")[:8]
-        seen = set()
-        for t in result["tools"]:
-            validate_mcp_schema(t["inputSchema"])
-            validate_mcp_schema(t.get("outputSchema", {}))
-            tool_id = hashlib.sha256((key + ":" + t["name"]).encode()).hexdigest()[:36]
-            seen.add(tool_id)
-            data = {
-                "model_name": ("mcp_" + prefix + "_" + t["name"])[:64],
-                "description": t.get("description", "MCP tool"),
-                "input_schema": t["inputSchema"],
-                "output_schema": t.get("outputSchema", {"type": "object"}),
-                "source": "mcp",
-                "source_ref": key,
-                "remote_name": t["name"],
-                "executor_ref": "mcp",
-                "default_permission": "ask",
-                "risk": "external",
-                "enabled": True,
-                "version": hashlib.sha256(json.dumps(t, sort_keys=True).encode()).hexdigest(),
-            }
-            old = db.get(Tool, tool_id)
-            if old:
-                old.data = data
-            else:
-                db.add(Tool(id=tool_id, owner_id=s.owner_id, data=data))
-        for old in db.scalars(select(Tool).where(Tool.owner_id == s.owner_id)):
-            if old.data.get("source_ref") == key and old.id not in seen:
-                old.data = {**old.data, "enabled": False}
-        row.data = {**row.data, "enabled": True}
-        audit(db, s.owner_id, "mcp.sync", key)
-        db.commit()
+        with SessionLocal() as fresh:
+            row = fresh.get(MCPConnection, connection_key)
+            if not row or row.owner_id != owner_id:
+                raise HTTPException(404)
+            prefix = connection_key.replace("-", "")[:8]
+            seen = set()
+            for t in result["tools"]:
+                validate_mcp_schema(t["inputSchema"])
+                validate_mcp_schema(t.get("outputSchema", {}))
+                tool_id = hashlib.sha256((connection_key + ":" + t["name"]).encode()).hexdigest()[:36]
+                seen.add(tool_id)
+                data = {
+                    "model_name": ("mcp_" + prefix + "_" + t["name"])[:64],
+                    "description": t.get("description", "MCP tool"),
+                    "input_schema": t["inputSchema"],
+                    "output_schema": t.get("outputSchema", {"type": "object"}),
+                    "source": "mcp",
+                    "source_ref": connection_key,
+                    "remote_name": t["name"],
+                    "executor_ref": "mcp",
+                    "default_permission": "ask",
+                    "risk": "external",
+                    "enabled": True,
+                    "version": hashlib.sha256(json.dumps(t, sort_keys=True).encode()).hexdigest(),
+                }
+                old = fresh.get(Tool, tool_id)
+                if old:
+                    old.data = data
+                else:
+                    fresh.add(Tool(id=tool_id, owner_id=owner_id, data=data))
+            for old in fresh.scalars(select(Tool).where(Tool.owner_id == owner_id)):
+                if old.data.get("source_ref") == connection_key and old.id not in seen:
+                    old.data = {**old.data, "enabled": False}
+            row.data = {**row.data, "enabled": True}
+            audit(fresh, owner_id, "mcp.sync", connection_key)
+            fresh.commit()
     return result
 
 

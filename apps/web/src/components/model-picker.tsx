@@ -73,7 +73,6 @@ export function ModelPicker({
       trigger.current?.focus();
       return;
     }
-    if (event.target !== input.current) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setActive((index) => Math.min(index + 1, filtered.length - 1));
@@ -81,6 +80,14 @@ export function ModelPicker({
     if (event.key === "ArrowUp") {
       event.preventDefault();
       setActive((index) => Math.max(index - 1, 0));
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      setActive(0);
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setActive(Math.max(filtered.length - 1, 0));
     }
     if (event.key === "Enter" && filtered[active]) {
       event.preventDefault();
@@ -116,6 +123,7 @@ export function ModelPicker({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={keyboard}
+              aria-label={t("モデルを検索")}
               placeholder={t("モデルを検索")}
             />
           </label>
@@ -125,6 +133,7 @@ export function ModelPicker({
                 key={item.id}
                 className={index === active ? "active" : ""}
                 aria-selected={value === item.id}
+                tabIndex={-1}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => choose(item)}
                 role="option"

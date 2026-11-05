@@ -113,7 +113,9 @@ async def test_update_downloads_even_when_ready(monkeypatch):
 async def test_timeout_kills_install_process(monkeypatch):
     class Output:
         async def read(self, _size):
-            await asyncio.sleep(1)
+            # Block well past the timeout so the kill path is taken even on a
+            # heavily loaded CI runner; the old 1s read vs 0.01s timeout raced.
+            await asyncio.sleep(30)
 
     class Process:
         stdout = Output()
@@ -133,7 +135,9 @@ async def test_timeout_kills_install_process(monkeypatch):
         return process
 
     monkeypatch.setattr(installer.asyncio, "create_subprocess_exec", launch)
-    monkeypatch.setattr(installer, "INSTALL_TIMEOUT", 0.01)
+    # 0.5s: long enough to be reachable under load, short enough to keep the
+    # suite fast; the 30s read above guarantees the timeout fires first.
+    monkeypatch.setattr(installer, "INSTALL_TIMEOUT", 0.5)
     await installer.start_install()
     await installer.TASK
     assert process.killed

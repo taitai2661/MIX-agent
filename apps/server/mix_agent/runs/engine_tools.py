@@ -251,7 +251,7 @@ async def execute_prepared_calls(db, run, snapshot, prepared):
             }, None
 
     batch = await asyncio.gather(*(one(call, current) for call, current in prepared))
-    for (call, current), (result, worker_refs) in zip(prepared, batch):
+    for (call, current), (result, worker_refs) in zip(prepared, batch, strict=False):
         if worker_refs:
             merged = list(dict.fromkeys([*(run.data.get("tool_refs") or []), *worker_refs]))
             update(run, tool_refs=merged)

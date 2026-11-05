@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
 rust-version = "1.91"
 authors = ["MIX-agent contributors"]
@@ -23,6 +23,9 @@ repository = "https://github.com/taitai2661/MIX-agent"
 # hands the very same spec to every turn instead of deep-copying it each time.
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+# Maintained `serde_yaml` fork. Skills frontmatter needs real YAML: block
+# scalars, quoted colons and nested `metadata` maps all break a line parser.
+serde_yaml_ng = "0.10"
 # Minimal feature set (see Cargo.toml:26): rt + macros + time + sync + fs +
 # io-util + net. `signal`/`process` are needed by terminal handling;
 # `test-util` is intentionally NOT here — dev-dependencies add it per crate.
@@ -67,7 +70,11 @@ debug = 0
 [profile.release]
 codegen-units = 1
 lto = "thin"
-opt-level = "s"
+# Speed over size. Retrieval scores every candidate in Rust and the Run Engine
+# parses/streams large JSON payloads; `opt-level = "s"` trades that CPU away
+# for a smaller binary. The updater payload is compressed, so the real cost of
+# `3` is measured in the release checklist rather than assumed here.
+opt-level = 3
 # Beta builds keep unwinding + no symbol stripping so crash reports from the
 # field still carry a backtrace. `panic = "abort"` / `strip = "symbols"` would
 # shrink the binary but blind beta diagnostics; re-enable both for the final

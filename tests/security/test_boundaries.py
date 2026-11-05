@@ -102,6 +102,14 @@ def test_backup_path_traversal(name):
         snapshots.validate_snapshot({"files": {name: "aGk="}})
 
 
+def test_empty_snapshot_roundtrip(tmp_path):
+    # A fresh workspace or an unused MCP /shared volume captures as an empty
+    # file map; restoring it must not be rejected as an invalid snapshot.
+    assert snapshots.capture(tmp_path) == {"files": {}}
+    snapshots.restore(tmp_path, {"files": {}})
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_snapshot_roundtrip(tmp_path):
     (tmp_path / "example.txt").write_text("original")
     old = snapshots.capture(tmp_path)

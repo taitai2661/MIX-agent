@@ -23,7 +23,14 @@ export function BrowserPanel({
   const qc = useQueryClient();
   const { data: frames = [] } = useQuery<Frame[]>({
     queryKey: ["browser-frames", runId],
-    queryFn: () => api(`/runs/${runId}/browser-frames`),
+    queryFn: ({ signal }) =>
+      api(
+        `/runs/${encodeURIComponent(runId)}/browser-frames`,
+        "GET",
+        undefined,
+        undefined,
+        { signal },
+      ),
     refetchInterval:
       run && ["running", "waiting_approval", "paused"].includes(run.status)
         ? 1500
@@ -42,12 +49,12 @@ export function BrowserPanel({
   const manual =
     !!run?.browser_manual_active &&
     ["paused", "waiting_approval"].includes(run.status);
-  const image = `/api/v1/runs/${runId}/browser-frames/${frame.artifact_id}`;
+  const image = `/api/v1/runs/${encodeURIComponent(runId)}/browser-frames/${encodeURIComponent(frame.artifact_id)}`;
   async function action(path: string, body?: unknown) {
     setWorking(true);
     setError("");
     try {
-      await api(`/runs/${runId}/${path}`, "POST", body);
+      await api(`/runs/${encodeURIComponent(runId)}/${path}`, "POST", body);
       setSelected(null);
       await qc.invalidateQueries({ queryKey: ["browser-frames", runId] });
       onChange();

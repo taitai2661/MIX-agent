@@ -103,16 +103,15 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
 
   const preset = presets.data?.find((p) => p.slug === presetSlug) ?? null;
 
-  // A provider already on file (from a previous attempt, or one the user added
-  // in Settings) makes this step a pure "test + fetch". Reusing it rather than
-  // creating a second one is what keeps a retry after a failed key from leaving
-  // a duplicate row behind.
-  //
-  // Only when no preset is chosen: someone who just imported a local runtime and
-  // then switched to this tab is adding a *second* provider, and overwriting the
-  // first one's URL would be a nasty surprise.
+  // A provider already on file for this preset (from a failed key attempt, or
+  // one the user added in Settings) makes this step a pure "test + fetch" and
+  // lets them correct the key. Matching on the preset is what makes a retry
+  // reuse the row instead of hitting the backend's duplicate-label error.
+  // Without a preset there is nothing to match, so a second provider can still
+  // be added.
   const reusable =
-    !presetSlug && providers.data?.length === 1 ? providers.data[0] : null;
+    providers.data?.find((p) => !!presetSlug && p.preset === presetSlug) ??
+    null;
 
   const connect = useMutation({
     mutationFn: async () => {
@@ -140,74 +139,84 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
       void queryClient.invalidateQueries({ queryKey: MODELS_QUERY_KEY });
       onDone();
     },
-    onError: (err) => setError(errorMessage(err)),
+    onError: (err) => {
+      // `create_provider` already succeeded before the key check failed, so
+      // refresh the list: otherwise the retry cannot see the row it should
+      // update and tries to create a duplicate instead.
+      void queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY });
+      setError(errorMessage(err));
+    },
   });
 
   return (
     <div className="flex flex-col gap-3">
       <Alert tone="info">
         {t(
-          "API キーは OS の資格情報ストレージに保存され、設定画面には表示されません。",
+          "API キーのマスター鍵は OS の資格情報ストレージ（macOS Keychain / Windows Credential Manager）に保存され、API キー本体は AES-256-GCM で暗号化してローカルに保存されます。設定画面には表示されません。",
         )}
       </Alert>
 
-      {!reusable ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("プロバイダー")}>
-            <Select
-              value={presetSlug}
-              onChange={(e) => {
-                setPresetSlug(e.target.value);
-                const next = presets.data?.find(
-                  (p) => p.slug === e.target.value,
-                );
-                if (next) setBaseUrl(next.default_url || "");
-              }}
-              disabled={presets.isPending}
-            >
-              <option value="">
-                {presets.isPending ? t("読み込み中…") : t("選択してください…")}
-              </option>
-              {(presets.data ?? []).map((p) => (
-                <option key={p.slug} value={p.slug}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Base URL">
-            <Input
-              placeholder={t("プリセットを選ぶと入力されます")}
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </Field>
-          <Field
-            label={t("API キー")}
-            hint={
-              preset?.api_key_required
-                ? t("このプロバイダーでは API キーが必要です")
-                : t("このプロバイダーでは API キーは任意です")
-            }
-          >
-            <Input
-              type="password"
-              placeholder="sk-…"
-              autoComplete="off"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-          </Field>
-        </div>
-      ) : (
+      {reusable && (
         <Row>
           <Plug size={12} className="text-muted" />
-          <span className="text-xs text-fg">{reusable.label}</span>
+          <span className="text-xs text-fg">
+            {reusable.label}
+            {reusable.has_api_key
+              ? t("の設定を再利用します")
+              : t("の設定を再利用します（キーを入力してください）")}
+          </span>
           <code className="font-mono text-xs text-faint">
             {reusable.base_url ?? "—"}
           </code>
         </Row>
       )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={t("プロバイダー")}>
+          <Select
+            value={presetSlug}
+            onChange={(e) => {
+              setPresetSlug(e.target.value);
+              setApiKey("");
+              const next = presets.data?.find((p) => p.slug === e.target.value);
+              setBaseUrl(next?.default_url || "");
+            }}
+            disabled={presets.isPending}
+          >
+            <option value="">
+              {presets.isPending ? t("読み込み中…") : t("選択してください…")}
+            </option>
+            {(presets.data ?? []).map((p) => (
+              <option key={p.slug} value={p.slug}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Base URL">
+          <Input
+            placeholder={t("プリセットを選ぶと入力されます")}
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={t("API キー")}
+          hint={
+            preset?.api_key_required
+              ? t("このプロバイダーでは API キーが必要です")
+              : t("このプロバイダーでは API キーは任意です")
+          }
+        >
+          <Input
+            type="password"
+            placeholder="sk-…"
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+        </Field>
+      </div>
 
       <Row>
         <Button
@@ -217,8 +226,11 @@ function StepProviderCloud({ onDone }: { onDone: () => void }) {
             connect.isPending ||
             // A preset that declares a key requirement is not going to answer
             // without one, and the resulting HTTP 401 is a much worse error to
-            // read than saying so here.
-            (!!preset?.api_key_required && !apiKey.trim())
+            // read than saying so here. A reusable row that already has a key
+            // can be tested without retyping it.
+            (!!preset?.api_key_required &&
+              !reusable?.has_api_key &&
+              !apiKey.trim())
           }
           onClick={() => connect.mutate()}
         >

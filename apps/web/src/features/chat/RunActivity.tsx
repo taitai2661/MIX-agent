@@ -256,17 +256,25 @@ function RunActivityCall({
               )}
               {sources.length > 0 && (
                 <div className="run-step-sources">
-                  {sources.map((source) => (
-                    <a
-                      key={source.url}
-                      href={source.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <ExternalLink size={12} />
-                      {source.host}
-                    </a>
-                  ))}
+                  {sources.map((source) =>
+                    typeof source.url === "string" &&
+                    /^https?:\/\//i.test(source.url) ? (
+                      <a
+                        key={source.url}
+                        href={source.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <ExternalLink size={12} />
+                        {source.host}
+                      </a>
+                    ) : (
+                      <span key={source.url}>
+                        <ExternalLink size={12} />
+                        {source.host}
+                      </span>
+                    ),
+                  )}
                   {!!call.result_activity?.remaining && (
                     <span>
                       {t("あと")} {call.result_activity.remaining} {t("件")}
@@ -277,7 +285,12 @@ function RunActivityCall({
               {call.artifact && (
                 <a
                   className="run-step-artifact"
-                  href={"/api/v1/artifacts/" + call.artifact.artifact_id}
+                  href={
+                    "/api/v1/artifacts/" +
+                    encodeURIComponent(call.artifact.artifact_id)
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
                   {t("成果物をダウンロード")}
                 </a>

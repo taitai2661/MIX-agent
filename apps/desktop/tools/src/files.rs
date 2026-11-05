@@ -8,6 +8,7 @@
 //! of pulling the whole thing into the context window. Bulk editing belongs to
 //! the `edit` tool; `write` stays here for whole-file replacement.
 
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use async_trait::async_trait;
@@ -15,10 +16,16 @@ use serde::{Deserialize, Serialize};
 
 use super::{Tool, ToolContext, ToolResult};
 
-/// Refuse to inline more than this from a single read; return a pointer instead.
-pub const MAX_READ_BYTES: usize = 256 * 1024;
+/// Hard cap on what an explicit `limit` may inline. Larger files are returned
+/// as head + tail so one read cannot swallow the context window.
+pub const MAX_READ_BYTES: usize = 128 * 1024;
 /// Default page size when the model asks for a slice without a limit.
-const DEFAULT_READ_LINES: usize = 2_000;
+const DEFAULT_READ_LINES: usize = 400;
+/// Default byte budget for a read without an explicit `limit`. A single long
+/// file would otherwise spend tens of thousands of tokens per call.
+const DEFAULT_READ_BYTES: usize = 48 * 1024;
+/// How much of a file larger than [`MAX_READ_BYTES`] is shown from each end.
+const HEAD_TAIL_BYTES: usize = 48 * 1024;
 
 #[derive(Default)]
 pub struct FilesTool;
@@ -79,8 +86,10 @@ impl FilesTool {
     ) -> anyhow::Result<(PathBuf, bool)> {
         if Path::new(path).is_absolute() {
             // The leaf may not exist yet (a `write` creating it), so resolve
-            // the deepest existing ancestor and re-append the rest.
-            let canon = canonicalize_partial(Path::new(path));
+            // the deepest existing ancestor and re-append the rest. Fail
+            // closed: an unresolvable base is an error, never a lexical
+            // fallback that would trust an attacker-controlled path.
+            let canon = canonicalize_partial(Path::new(path))?;
             if canon.starts_with(main) {
                 return Ok((canon, true));
             }
@@ -163,9 +172,11 @@ impl FilesTool {
 /// ancestor and re-appending the not-yet-created remainder. Used so a
 /// not-yet-written file's absolute path can still be compared against the
 /// canonical roots (`/var/...` is a symlink to `/private/var/...` on macOS).
-fn canonicalize_partial(path: &Path) -> PathBuf {
+/// Fail-closed: when even the deepest existing ancestor cannot be
+/// canonicalized, return an error instead of trusting the lexical path.
+fn canonicalize_partial(path: &Path) -> anyhow::Result<PathBuf> {
     if let Ok(canonical) = path.canonicalize() {
-        return canonical;
+        return Ok(canonical);
     }
     let mut existing = path.to_path_buf();
     let mut rest: Vec<std::ffi::OsString> = Vec::new();
@@ -178,11 +189,11 @@ fn canonicalize_partial(path: &Path) -> PathBuf {
             _ => break,
         }
     }
-    let mut base = existing.canonicalize().unwrap_or(existing);
+    let mut base = existing.canonicalize()?;
     for part in rest.into_iter().rev() {
         base.push(part);
     }
-    base
+    Ok(base)
 }
 
 /// A line-addressed slice of a file, plus enough metadata for the model to know
@@ -197,6 +208,8 @@ pub struct FilePage {
     pub total_lines: usize,
     /// True when more lines remain after `end_line`.
     pub has_more: bool,
+    /// 1-based offset to pass on the next read when `has_more` is true.
+    pub next_offset: Option<usize>,
     /// True when the file was too large to inline at all.
     pub truncated: bool,
     /// Stable-within-process fingerprint of the whole file, so the engine can
@@ -212,16 +225,7 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
         anyhow::bail!("{} is a directory; use action \"list\"", display);
     }
     if meta.len() as usize > MAX_READ_BYTES {
-        return Ok(FilePage {
-            path: display.to_string(),
-            content: String::new(),
-            start_line: 0,
-            end_line: 0,
-            total_lines: 0,
-            has_more: false,
-            truncated: true,
-            fingerprint: 0,
-        });
+        return read_head_tail(path, display);
     }
     let full = std::fs::read_to_string(path)?;
     let fingerprint = fingerprint_of(full.as_bytes());
@@ -233,41 +237,114 @@ fn read_page(path: &Path, args: &serde_json::Value, display: &str) -> anyhow::Re
         .map(|n| n.max(1) as usize)
         .unwrap_or(1)
         .min(total_lines.max(1));
-    let limit = args
-        .get("limit")
-        .and_then(|v| v.as_u64())
+    let explicit_limit = args.get("limit").and_then(|v| v.as_u64());
+    let limit = explicit_limit
         // A JSON `u64` reaches this as `usize::MAX`, and `start_line - 1 + limit`
         // then wrapped around — the slice below panicked with
         // "slice index starts at … but ends at …".
         .map(|n| n.clamp(1, 100_000) as usize)
         .unwrap_or(DEFAULT_READ_LINES);
-    let end_line = (start_line - 1).saturating_add(limit).min(total_lines);
-    let slice = if total_lines == 0 || start_line > total_lines {
-        String::new()
+    // The default page is deliberately small; an explicit `limit` may ask for
+    // more, but never past the hard cap that keeps one read from swallowing the
+    // context window.
+    let byte_budget = if explicit_limit.is_some() {
+        MAX_READ_BYTES
     } else {
-        // Prefix every line with its 1-based number. Without it the model has
-        // to count lines to use `offset`/`limit`, and a line number quoted from
-        // `symbols` could not be turned into a read window at all. The format
-        // matches what other coding agents emit, so anchors copied back into
-        // `edit` are recognised (see `edit::strip_line_number_prefixes`).
-        let mut out = String::new();
-        for (offset, line) in all[start_line - 1..end_line].iter().enumerate() {
-            if offset > 0 {
-                out.push('\n');
-            }
-            out.push_str(&format!("{:>6}\t{}", start_line + offset, line));
-        }
-        out
+        DEFAULT_READ_BYTES
     };
+    // Prefix every line with its 1-based number. Without it the model has to
+    // count lines to use `offset`/`limit`, and a line number quoted from
+    // `symbols` could not be turned into a read window at all. The format
+    // matches what other coding agents emit, so anchors copied back into
+    // `edit` are recognised (see `edit::strip_line_number_prefixes`).
+    let mut content = String::new();
+    let mut end_line = start_line.saturating_sub(1);
+    if total_lines > 0 {
+        for (offset, line) in all[start_line - 1..].iter().enumerate() {
+            if offset >= limit {
+                break;
+            }
+            let line_no = start_line + offset;
+            let formatted = format!("{:>6}\t{}", line_no, line);
+            let needed = formatted.len() + usize::from(!content.is_empty());
+            if content.len() + needed > byte_budget {
+                // Always return at least one line, truncated on a character
+                // boundary, so a pathological single-line file still yields
+                // something the model can act on.
+                if content.is_empty() {
+                    let prefix = format!("{:>6}\t", line_no);
+                    let remaining = byte_budget.saturating_sub(prefix.len());
+                    content.push_str(&prefix);
+                    content.push_str(crate::terminal::truncate_to_char_boundary(line, remaining));
+                    end_line = line_no;
+                }
+                break;
+            }
+            if !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(&formatted);
+            end_line = line_no;
+        }
+    }
+    let has_more = end_line < total_lines;
     Ok(FilePage {
         path: display.to_string(),
-        content: slice,
+        content,
         start_line: if total_lines == 0 { 0 } else { start_line },
         end_line,
         total_lines,
-        has_more: end_line < total_lines,
+        has_more,
+        next_offset: has_more.then_some(end_line + 1),
         truncated: false,
         fingerprint,
+    })
+}
+
+/// Return the first and last [`HEAD_TAIL_BYTES`] of a file that is too large to
+/// inline. Reading the ends instead of returning nothing keeps the model
+/// oriented (imports, module header, trailing definitions) while still telling
+/// it, explicitly, that the middle was dropped.
+fn read_head_tail(path: &Path, display: &str) -> anyhow::Result<FilePage> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len() as usize;
+    let head_len = HEAD_TAIL_BYTES.min(len);
+    let tail_len = HEAD_TAIL_BYTES.min(len - head_len);
+
+    let mut head = vec![0u8; head_len];
+    file.read_exact(&mut head)?;
+    file.seek(SeekFrom::End(-(tail_len as i64)))?;
+    let mut tail = vec![0u8; tail_len];
+    file.read_exact(&mut tail)?;
+
+    // Drop the partial line at each split so the model does not try to use half
+    // a line as an anchor.
+    let head = String::from_utf8_lossy(&head);
+    let head = head
+        .rsplit_once('\n')
+        .map(|(before, _)| before)
+        .unwrap_or(&head);
+    let tail = String::from_utf8_lossy(&tail);
+    let tail = tail
+        .split_once('\n')
+        .map(|(_, after)| after)
+        .unwrap_or(&tail);
+    let content = format!(
+        "{head}\n\n... [truncated: file is {len} bytes; showing the first and last \
+         {HEAD_TAIL_BYTES} bytes. Use `terminal` (e.g. sed -n) to read the middle.] ...\n\n{tail}"
+    );
+    Ok(FilePage {
+        path: display.to_string(),
+        content,
+        start_line: 1,
+        end_line: 0,
+        total_lines: 0,
+        has_more: false,
+        next_offset: None,
+        truncated: true,
+        fingerprint: 0,
     })
 }
 
@@ -286,19 +363,57 @@ pub fn fingerprint_of(bytes: &[u8]) -> u64 {
 /// a temp path) plus a pid and a counter (so two concurrent writes to the *same*
 /// target cannot interleave).
 pub(crate) fn temp_sibling(target: &Path) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let file_name = target
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".to_string());
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    target.with_file_name(format!(
-        ".{}.{}.{}.mix-agent-tmp",
-        file_name,
-        std::process::id(),
-        n
-    ))
+    // Random, not pid+counter: the old names were predictable, so a model
+    // could plant a symlink at the staging path with `terminal` and make the
+    // following `std::fs::write` write through it. `create_new` below refuses
+    // an existing entry, so a planted file or symlink cannot be followed.
+    let suffix = uuid::Uuid::new_v4().simple();
+    target.with_file_name(format!(".{file_name}.{suffix}.mix-agent-tmp"))
+}
+
+/// Atomically replace `target` with `content` without following a leaf symlink.
+///
+/// The staging file is created with `create_new` and mode 0600, fsynced, then
+/// renamed over the target. `rename` replaces a symlink rather than writing
+/// through it, and the random name makes pre-planting the staging path
+/// impractical.
+pub(crate) fn atomic_write_bytes(target: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = temp_sibling(target);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp)?;
+    let written = (|| -> std::io::Result<()> {
+        file.write_all(content)?;
+        file.sync_all()
+    })();
+    drop(file);
+    if let Err(err) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    if let Err(err) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    // Persist the directory entry so a crash cannot resurrect the old name.
+    if let Some(parent) = target.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -313,7 +428,8 @@ impl Tool for FilesTool {
         "Read, write, list, search and delete files inside the workspace root. Use `edit` \
          instead of `write` for changes to existing files; `write` replaces a whole file. \
          `read` returns each line prefixed with its 1-based line number and supports \
-         `offset` / `limit` (1-based line numbers) for large files."
+         `offset` / `limit` (1-based line numbers) for large files. Without a `limit` \
+         it returns at most 400 lines / 48 KiB; use `next_offset` to continue."
     }
     /// Reading is free; changing the workspace is not. Deciding per action
     /// rather than per tool is what lets an agent look at a repository without
@@ -428,18 +544,8 @@ impl FilesTool {
                 if let Some(parent) = resolved.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                // A name unique to this target: `with_extension` maps `README`
-                // and `README.md` (and any `a.b` / `a.c` pair) onto the same
-                // temp path, so two overlapping writes corrupted each other.
-                let tmp = temp_sibling(&resolved);
-                if let Err(err) = std::fs::write(&tmp, content) {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(err.into());
-                }
-                if let Err(err) = std::fs::rename(&tmp, &resolved) {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(err.into());
-                }
+                // Atomic, no-follow write: see `atomic_write_bytes`.
+                atomic_write_bytes(&resolved, content.as_bytes())?;
                 Ok(ToolResult {
                     ok: true,
                     content: serde_json::json!({ "path": path, "bytes": content.len() }),
@@ -661,6 +767,66 @@ mod tests {
     }
 
     #[test]
+    fn read_defaults_to_a_bounded_page() {
+        let root = temp_root("read-default-page");
+        let file = root.join("big.txt");
+        let body: String = (1..=500).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(&file, body).unwrap();
+
+        let page = read_page(&file, &serde_json::json!({}), "big.txt").unwrap();
+        assert_eq!(page.start_line, 1);
+        assert_eq!(page.end_line, DEFAULT_READ_LINES);
+        assert_eq!(page.total_lines, 500);
+        assert!(page.has_more);
+        assert_eq!(page.next_offset, Some(DEFAULT_READ_LINES + 1));
+        assert!(!page.content.contains("line 401\t"));
+    }
+
+    #[test]
+    fn read_stops_at_the_default_byte_budget() {
+        let root = temp_root("read-byte-budget");
+        let file = root.join("wide.txt");
+        let line = "x".repeat(1_000);
+        let body: String = (1..=60).map(|_| format!("{line}\n")).collect();
+        std::fs::write(&file, body).unwrap();
+
+        let page = read_page(&file, &serde_json::json!({}), "wide.txt").unwrap();
+        assert!(page.content.len() <= DEFAULT_READ_BYTES);
+        assert!(page.has_more);
+        assert_eq!(page.end_line, page.next_offset.unwrap() - 1);
+        assert!(page.end_line < page.total_lines);
+    }
+
+    #[test]
+    fn read_pages_from_next_offset() {
+        let root = temp_root("read-next-offset");
+        let file = root.join("big.txt");
+        let body: String = (1..=500).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(&file, body).unwrap();
+
+        let page = read_page(&file, &serde_json::json!({ "offset": 401 }), "big.txt").unwrap();
+        assert_eq!(page.start_line, 401);
+        assert_eq!(page.end_line, 500);
+        assert!(!page.has_more);
+        assert_eq!(page.next_offset, None);
+    }
+
+    #[test]
+    fn read_of_an_oversized_file_returns_head_and_tail() {
+        let root = temp_root("read-head-tail");
+        let file = root.join("huge.txt");
+        let body = format!("head-marker\n{}\ntail-marker\n", "a".repeat(MAX_READ_BYTES));
+        std::fs::write(&file, body).unwrap();
+
+        let page = read_page(&file, &serde_json::json!({}), "huge.txt").unwrap();
+        assert!(page.truncated);
+        assert_eq!(page.next_offset, None);
+        assert!(page.content.contains("head-marker"));
+        assert!(page.content.contains("tail-marker"));
+        assert!(page.content.contains("truncated"));
+    }
+
+    #[test]
     fn read_of_an_empty_file_reports_no_lines() {
         let root = temp_root("read-empty");
         let file = root.join("empty.txt");
@@ -670,5 +836,26 @@ mod tests {
         assert_eq!(page.content, "");
         assert_eq!(page.total_lines, 0);
         assert_eq!(page.start_line, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_replaces_a_symlink_instead_of_writing_through_it() {
+        let root = temp_root("atomic-symlink");
+        let outside =
+            std::env::temp_dir().join(format!("mixd-files-atomic-outside-{}", std::process::id()));
+        std::fs::write(&outside, b"original").unwrap();
+        let target = root.join("target.txt");
+        std::os::unix::fs::symlink(&outside, &target).unwrap();
+
+        atomic_write_bytes(&target, b"replacement").unwrap();
+
+        assert_eq!(std::fs::read(&outside).unwrap(), b"original");
+        assert!(!std::fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), b"replacement");
+        let _ = std::fs::remove_file(&outside);
     }
 }

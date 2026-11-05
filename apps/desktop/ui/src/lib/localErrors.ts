@@ -127,4 +127,26 @@ export const LOCAL_ERRORS: Record<string, LocalErrorSpec> = {
     template: "ランタイムのヘルスチェックに失敗しました。",
     params: [],
   },
+  chatgpt_auth_required: {
+    template: "ChatGPT の再ログインが必要です。",
+    params: [],
+  },
+  chatgpt_auth_expired: {
+    template:
+      "ChatGPT のログインの有効期限が切れました。もう一度ログインしてください。",
+    params: [],
+  },
+  chatgpt_device_unavailable: {
+    template:
+      "このアカウントでは ChatGPT のデバイスコードログインを利用できません。",
+    params: [],
+  },
+  chatgpt_device_failed: {
+    template: "ChatGPT のログインを開始できませんでした: {detail}",
+    params: ["detail"],
+  },
+  chatgpt_quota_failed: {
+    template: "使用枠を取得できませんでした: {detail}",
+    params: ["detail"],
+  },
 };

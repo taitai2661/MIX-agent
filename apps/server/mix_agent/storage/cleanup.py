@@ -15,15 +15,46 @@ from mix_agent.db.models import (
     Conversation,
     Event,
     Feedback,
+    MemoryActionEvent,
+    MemoryProcessingJob,
     Message,
     Run,
     RunCheckpoint,
+    ScheduledRun,
     ToolCall,
     now,
 )
 
 _LAST_HISTORY_PURGE = None
 TERMINAL_RUN_STATES = ("completed", "failed", "cancelled", "interrupted")
+
+
+def _delete_run_dependents(db, run_ids) -> None:
+    """Delete every row that points at ``run_ids`` before the Runs themselves.
+
+    Several child tables use a plain ForeignKey without ``ondelete="CASCADE"``.
+    Missing even one of them makes the enclosing flush fail with an
+    IntegrityError, which surfaced as a 500 on permanent conversation deletion
+    and on edit-and-resend (nearly every completed Run creates a
+    MemoryProcessingJob).  Scheduled-run history is preserved by detaching the
+    Run reference instead of deleting the row.
+    """
+    ids = [run_id for run_id in run_ids if run_id]
+    if not ids:
+        return
+    # Approvals reference ToolCalls, so they must go first.
+    for model in (
+        Approval,
+        ToolCall,
+        Event,
+        RunCheckpoint,
+        MemoryActionEvent,
+        MemoryProcessingJob,
+    ):
+        for row in db.scalars(select(model).where(model.run_id.in_(ids))):
+            db.delete(row)
+    for scheduled in db.scalars(select(ScheduledRun).where(ScheduledRun.run_id.in_(ids))):
+        scheduled.run_id = None
 
 
 def _collect_used_artifact_ids(db, owner_id: str) -> set:
@@ -151,14 +182,7 @@ def _delete_message_tail(db, conversation, from_message_id, keep_artifact_ids=()
             item.get("artifact_id") for item in run.data.get("browser_frames", []) if item.get("artifact_id")
         )
     if run_ids:
-        for approval in db.scalars(select(Approval).where(Approval.run_id.in_(run_ids))):
-            db.delete(approval)
-        for call in db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_ids))):
-            db.delete(call)
-        for event in db.scalars(select(Event).where(Event.run_id.in_(run_ids))):
-            db.delete(event)
-        for checkpoint in db.scalars(select(RunCheckpoint).where(RunCheckpoint.run_id.in_(run_ids))):
-            db.delete(checkpoint)
+        _delete_run_dependents(db, run_ids)
         for run in db.scalars(select(Run).where(Run.id.in_(run_ids))):
             db.delete(run)
     if message_ids:
@@ -193,16 +217,9 @@ def purge_temporary_run(db, run):
         artifact_ids.update(message.data.get("artifact_ids", []))
         db.delete(message)
     message_ids = [message.id for message in messages]
-    for model, column, value in (
-        (Feedback, Feedback.message_id, message_ids),
-        (Approval, Approval.run_id, [run_id]),
-        (ToolCall, ToolCall.run_id, [run_id]),
-        (Event, Event.run_id, [run_id]),
-    ):
-        if not value:
-            continue
-        for row in list(db.scalars(select(model).where(column.in_(value)))):
-            db.delete(row)
+    for feedback in db.scalars(select(Feedback).where(Feedback.message_id.in_(message_ids))):
+        db.delete(feedback)
+    _delete_run_dependents(db, [run_id])
     db.delete(run)
     db.flush()
     for artifact_id in artifact_ids:
@@ -225,12 +242,7 @@ def purge_conversation(db, conversation):
     messages = list(db.scalars(select(Message).where(Message.conversation_id == conversation.id)))
     artifact_ids = _conversation_artifact_ids(messages, runs)
     if run_ids:
-        for approval in db.scalars(select(Approval).where(Approval.run_id.in_(run_ids))):
-            db.delete(approval)
-        for call in db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_ids))):
-            db.delete(call)
-        for event in db.scalars(select(Event).where(Event.run_id.in_(run_ids))):
-            db.delete(event)
+        _delete_run_dependents(db, run_ids)
         for run in runs:
             db.delete(run)
     for feedback in db.scalars(select(Feedback).where(Feedback.message_id.in_([m.id for m in messages]))):

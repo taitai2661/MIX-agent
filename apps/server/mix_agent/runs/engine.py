@@ -170,7 +170,12 @@ async def drive(run_id):
                                 break
                             batch.append((next_call, next_current))
                             index += 1
+                    # execute_prepared_calls commits its write-ahead markers
+                    # first and runs tool I/O on worker sessions; the outer
+                    # session holds no open transaction across that await.
+                    db.commit()
                     await execute_prepared_calls(db, run, snapshot, batch)
+                    db.refresh(run)
                 db.refresh(run)
                 if run.status == "cancelled":
                     return
@@ -284,12 +289,17 @@ async def drive(run_id):
                 provider = snapshot["provider"]
                 # Credentials are resolved at use time, never copied into run snapshots.
                 key = read_secret(db, provider.get("secret_id"))
+                # Release the pooled connection before network I/O: commit any
+                # pending writes so no transaction pins a connection across
+                # the await, then re-fetch afterwards for a short transaction.
+                db.commit()
                 # Model-aware pre-send budget check with progressive compaction.
                 try:
                     send_history = await _maybe_compact_context(db, run, snapshot, provider, key)
                 except ContextBudgetError as exc:
                     finish(db, run, "interrupted", str(exc))
                     return
+                db.refresh(run)
                 emit(
                     db,
                     run.id,
@@ -306,6 +316,8 @@ async def drive(run_id):
                 db.commit()
 
                 # --- Phase 3: provider streaming -----------------------------
+                # No open transaction across the stream: the commit above
+                # returned the pooled connection; re-fetch after the I/O.
                 first_output_at = None
                 provider_started_at = now()
                 stream_state: dict = {}
@@ -366,6 +378,7 @@ async def drive(run_id):
                         and first_output_at is None
                         else None
                     )
+                    db.refresh(run)
                     if rerouted:
                         snapshot = rerouted
                         continue
@@ -396,11 +409,17 @@ async def drive(run_id):
                                 },
                             )
                             db.commit()
+                            # Release the connection before sleeping; the next
+                            # loop iteration re-reads the run in a short txn.
                             if delay:
                                 await asyncio.sleep(delay)
+                            db.refresh(run)
                             continue
                     raise
 
+                # Short transaction after I/O: re-read so a concurrent cancel
+                # is observed before further writes.
+                db.refresh(run)
                 model_record = (
                     db.get(Model, snapshot["model_record_id"]) if snapshot.get("model_record_id") else None
                 )

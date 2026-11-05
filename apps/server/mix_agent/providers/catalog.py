@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+from mix_agent.providers.chatgpt_config import CHATGPT_BASE_URL
+
 KIND_VALUES = ("openai", "anthropic", "gemini", "openrouter", "ollama", "lmstudio", "compatible")
 CUSTOM_KINDS = ("compatible", "anthropic", "gemini")
 TRANSPORT_IDS = (
@@ -11,6 +13,7 @@ TRANSPORT_IDS = (
     "gemini_generate_content",
     "ollama",
     "lmstudio",
+    "chatgpt_responses",
 )
 
 
@@ -167,6 +170,18 @@ PRESETS = (
     preset("anthropic", "Anthropic", "直接接続", "anthropic", "https://api.anthropic.com"),
     preset("gemini", "Google Gemini", "直接接続", "gemini", "https://generativelanguage.googleapis.com"),
     preset("openrouter", "OpenRouter", "ゲートウェイ", "openrouter", "https://openrouter.ai/api/v1"),
+    # Unofficial: the ChatGPT subscription backend used by the Codex CLI.
+    # Opt-in only; the UI shows a warning and the API key flow stays available.
+    preset(
+        "chatgpt",
+        "ChatGPT (Codex 使用枠)",
+        "サブスクリプション",
+        "openai",
+        CHATGPT_BASE_URL,
+        False,
+        transport_id="chatgpt_responses",
+        discovery_id="chatgpt_models",
+    ),
     preset("ollama", "Ollama", "ローカル", "ollama", "http://host.docker.internal:11434/v1", False, True),
     preset(
         "lmstudio", "LM Studio", "ローカル", "lmstudio", "http://host.docker.internal:1234/v1", False, True
@@ -290,7 +305,7 @@ PRESETS = (
     ),
     preset("custom", "カスタム", "カスタム", "compatible"),
 )
-assert len(PRESETS) == 52
+assert len(PRESETS) == 53
 BY_ID = {item["id"]: item for item in PRESETS}
 assert all(
     item["transport_id"] and item["discovery_id"] and item["metadata_resolver_ids"] for item in PRESETS

@@ -19,7 +19,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 | **起動環境** | Docker 不要。`.dmg` / `.exe` / `.deb` インストーラーから即起動 | Docker Engine & Docker Compose が必要 |
 | **プロセス構成** | 単一デスクトップバイナリ（tokio in-proc タスク） | 5 つの Docker コンテナ（app, web, db, runner, proxy） |
 | **データ管理** | SQLite (WAL モード + FTS5 全文検索)。DB 本体は平文のため、保存時の保護は OS のディスク暗号化（FileVault / BitLocker / LUKS）に依存 | PostgreSQL (pg_trgm インデックス) |
-| **秘密情報保護** | **OS Keychain**（macOS Keychain / Windows Credential Manager / Linux Secret Service） | 暗号化 DB カラム (AES-GCM + scrypt) |
+| **秘密情報保護** | **OS Keychain にマスター鍵**（macOS Keychain / Windows Credential Manager）+ AES-256-GCM 暗号化ファイル。Linux は Secret Service があれば Keychain 方式 | 暗号化 DB カラム (AES-GCM + scrypt) |
 | **ターミナル実行** | ローカルマシンの **永続 PTY シェル**（環境変数や `cd` が継続） | execution-runner コンテナ内の非 root シェル |
 | **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを tokio 子プロセスで直接制御 | execution-runner コンテナ内の Playwright |
 | **ファイル操作** | ホストマシンのファイルに直接アクセス・インライン差分編集 (`edit`) | マウントされたボリュームのみ操作可能 |
@@ -82,7 +82,7 @@ Linuxの`.deb`はChromiumの実行時ライブラリを`depends`に含むが、A
 Chromium は常にヘッドレスで起動し、チャット右側のブラウザパネル（Codex 風の
 ツールバー・複数タブ・フル/スプリット表示）から操作する。`⌘⇧B`（macOS）/ `Ctrl+Shift+B`（Windows / Linux）で開閉でき、
 エージェントが `browser` ツールを使うと自動で表示される。メモリ節約のため、
-同時に開くワークスペースは 2 個、15 分未使用のブラウザは自動終了する。
+同時に開くワークスペースは 2 個、5 分未使用のブラウザは自動終了する。
 
 ---
 
@@ -132,6 +132,32 @@ pnpm tauri:build     # 現在の OS の全ターゲット（Windows は NSIS + M
 
 初回起動時は Tauri が Cargo workspace 全体をビルドするため数分かかります。2回目以降はキャッシュが効いて高速に起動します。
 
+### ヘッドレス診断
+
+インストール済みバイナリは、ウィンドウを開かずに環境を確認できます。
+
+```sh
+"MIX-agent Desktop" --doctor          # 人が読む形式
+"MIX-agent Desktop" --doctor --json   # サポート / CI 向け
+"MIX-agent Desktop" --version
+```
+
+`--doctor` はデータディレクトリの書き込み可否、DB の schema version と `quick_check`、秘密情報バックエンド（Keychain master seed / file）の到達性を読み取り専用で確認します。DB を変更しないため、破損時の一次切り分けに使えます。
+
+### 言語サーバー（任意）
+
+`lsp` ツールは PATH 上の言語サーバーを自動検出します。未導入でも他の機能は動きます。
+
+| 言語 | サーバー |
+| :--- | :--- |
+| Rust | `rust-analyzer` |
+| TypeScript / JavaScript | `typescript-language-server` |
+| Python | `pyright-langserver` または `pylsp` |
+| Go | `gopls` |
+
+`MIX_LSP_RUST` / `MIX_LSP_TYPESCRIPT` / `MIX_LSP_PYTHON` / `MIX_LSP_GO` に実行ファイルのパスを設定すると、そのパスを優先します。
+
+
 ---
 
 ## 利用可能なツールと権限モデル
@@ -144,12 +170,16 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 | `edit` | 最小差分の文字列置換・新規作成・追記。曖昧なアンカーは拒否 | ask |
 | `glob` | `.gitignore` を考慮した glob パターンによるファイルパス検索 | allow |
 | `grep` | 高速な正規表現マッチングによるファイル内容検索 | allow |
-| `terminal` | **永続 PTY シェル**。`cd` によるカレントディレクトリ移動や環境変数が引き継がれる | ask |
+| `symbols` | `map`（リポジトリ全体の構造マップ）/ `outline`（ファイル内の定義一覧）/ `references`（シンボル参照検索） | allow |
+| `lsp` | 実言語サーバーによる `diagnostics`（型エラー・lint）と `definition`（宣言へジャンプ）。rust-analyzer / typescript-language-server / pyright・pylsp / gopls を自動検出 | allow |
+| `git` | 読み取り専用の `status` / `diff` / `log` / `show` / `blame` | allow |
+| `terminal` | **永続 PTY シェル**。`cd` によるカレントディレクトリ移動や環境変数が引き継がれる。`action: "send"` で実行中の REPL やプロンプトへ入力できる | ask |
 | `workspace_check` | シェルなしで git status, git diff, python syntax を安全に確認 | allow |
 | `knowledge` | SQLite + FTS5 によるドキュメントの登録・全文検索・Web クリップ保存 | 検索: allow / 書込: ask |
 | `todo` | 複数ステップ作業のためのチェックリスト。ターン毎に AI へ自動注入 | allow |
 | `skill` | 保存された `SKILL.md` の指示手順を読み取り | allow |
-| `agent` | 保存済みサブエージェントプロファイルへの処理委任 | ask |
+| `skill_resource` | Skill に同梱された `scripts/` / `references/` / `assets/` を一覧・読み取り（実行はしない） | allow |
+| `agent` | 保存済みサブエージェントプロファイルへの処理委任。`tasks` で並列実行、`isolate: true` で使い捨て Git worktree に分離し、差分を受け取る | ask |
 | `web_search` | DuckDuckGo による Web 検索 | allow |
 | `web_fetch` | URL からのコンテンツ取得（egress 制御 & プライベート IP 拒否） | ask |
 | `web_fetch_pdf` | Web 上の PDF からテキスト抽出 | ask |
@@ -160,3 +190,26 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 
 - **呼び出し単位の判定**: 単に「ファイル書き込み全体」を一括許可するのではなく、「どのパスへの書き込みか」「どのコマンドの実行か」といった**操作対象のスコープ**に絞って許可ルールが保存されます。
 - **安全な既定値**: 読み取りや検索は即座に実行（`allow`）されますが、ファイル変更・シェル実行・ブラウザ操作は常にユーザーの確認（`ask`）を挟みます。
+
+### ChatGPT（非公式・専用連携）
+
+- 設定 ▸ **ChatGPT** の専用タブから、デバイスコードでログインします。
+- プロバイダーのプリセットには表示されません。汎用の Provider 作成フォームからは作れず、接続は1つだけです。
+- 接続後に取得したモデルだけが「モデル」タブに並びます。使用枠（5時間 / 週次）とログアウトも同じタブで管理します。
+
+### バックグラウンドとスケジュール
+
+- 設定 ▸ 一般の「ログイン時に起動」で OS の自動起動に登録します（macOS は LaunchAgent、Windows は Run キー、Linux は XDG autostart）。起動時は `--hidden` でトレイ常駐します。
+- ウィンドウを閉じてもプロセスは残り、スケジュール・実行中の Run・承認待ちは継続します。完全終了はトレイメニューの「Quit」です。
+
+### 変更レビューとロールバック
+
+- Run 開始時に Git の作業ツリー（未コミット変更を含む）をスナップショットし、`refs/mix-agent/runs/<id>` に固定します。
+- 実行後は「このRunの変更を取り消す」で、`edit` / `files` に加えて**ターミナルが作成・変更したファイル**も実行前へ戻せます。変更ファイル一覧は Activity パネルで確認できます。
+- Git 管理外のフォルダでは従来どおり `edit` / `files` の変更だけが対象です。
+
+### 大規模な会話
+
+- サイドバーは 50 件ずつのカーソルページング（`updated_at` + `id`）で読み込み、下端までスクロールすると次のページを取得します。
+- 40 メッセージを超えるトランスクリプトは `@tanstack/react-virtual` で可視領域だけを描画します。
+- コンテキスト圧縮が起きた Run には「履歴を圧縮しました」マーカーを表示し、保持件数・退避したツール結果を確認できます。

@@ -28,6 +28,7 @@ function resetStore() {
     zoom: 1,
     codeWrap: false,
     reduceMotion: false,
+    accent: "blue",
     rightPanel: "none",
     sidePanelMode: "split",
     browserOpenedBy: null,
@@ -270,5 +271,16 @@ describe("useUi surface state", () => {
     useUi.getState().setReduceMotion(true);
     expect(localStorage.getItem("mix-agent-reduce-motion")).toBe("1");
     expect(document.documentElement.dataset.reduceMotion).toBe("true");
+  });
+
+  it("persists the accent color and paints it immediately", () => {
+    document.documentElement.dataset.theme = "light";
+    useUi.getState().setAccent("rose");
+
+    expect(useUi.getState().accent).toBe("rose");
+    expect(localStorage.getItem("mix-agent-accent")).toBe("rose");
+    expect(
+      document.documentElement.style.getPropertyValue("--color-brand"),
+    ).toBe("#db2777");
   });
 });

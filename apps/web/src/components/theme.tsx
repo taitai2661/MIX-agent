@@ -2,12 +2,13 @@ import { Laptop, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { t } from "@/app/i18n";
 import { applyAccent, type ResolvedTheme } from "@/components/accent";
+import { safeStorage } from "@/lib/storage";
 
 export type Theme = "light" | "dark" | "system";
 const key = "mix-agent-theme";
 
 function initialTheme(): Theme {
-  const stored = localStorage.getItem(key);
+  const stored = safeStorage.get(key);
   return stored === "light" || stored === "dark" || stored === "system"
     ? stored
     : "system";
@@ -25,7 +26,7 @@ export function ThemeController() {
     };
     apply();
     query.addEventListener("change", apply);
-    localStorage.setItem(key, theme);
+    safeStorage.set(key, theme);
     window.dispatchEvent(new CustomEvent("mix-agent-theme", { detail: theme }));
     return () => query.removeEventListener("change", apply);
   }, [theme]);

@@ -47,7 +47,7 @@ export const MentionPopover = memo(function MentionPopover({
     const items = containerRef.current.querySelectorAll("[data-mention-item]");
     const active = items[selectedIndex] as HTMLElement | undefined;
     if (active) {
-      active.scrollIntoView({ block: "nearest" });
+      active?.scrollIntoView?.({ block: "nearest" });
     }
   }, [selectedIndex]);
 

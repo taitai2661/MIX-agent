@@ -45,7 +45,9 @@ impl Tool for SymbolsTool {
     fn description(&self) -> &str {
         "Inspect code structure and symbol usages. Use action: \"outline\" with a path to list \
          functions, classes, structs, traits, and types with their line numbers. Use action: \
-         \"references\" with a symbol name to find everywhere it is used in the workspace."
+         \"references\" with a symbol name to find everywhere it is used in the workspace. Use \
+         action: \"map\" for a ranked, repo-wide overview of files and their top-level symbols \
+         before exploring individual files."
     }
 
     fn is_sensitive(&self, _args: &serde_json::Value) -> bool {
@@ -58,9 +60,9 @@ impl Tool for SymbolsTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["outline", "references"],
+                    "enum": ["outline", "references", "map"],
                     "default": "outline",
-                    "description": "outline: list symbol definitions in a file. references: search for symbol occurrences across workspace."
+                    "description": "outline: list symbol definitions in a file. references: search for symbol occurrences across workspace. map: rank files and summarize their symbols."
                 },
                 "path": {
                     "type": "string",
@@ -145,6 +147,18 @@ impl Tool for SymbolsTool {
                         error: None,
                     })
                 }
+                "map" => {
+                    let map = build_repo_map(&workspace_root, max_results)?;
+                    Ok(ToolResult {
+                        ok: true,
+                        content: serde_json::json!({
+                            "files": map.files,
+                            "total_files": map.total_files,
+                            "truncated": map.truncated,
+                        }),
+                        error: None,
+                    })
+                }
                 other => Ok(ToolResult {
                     ok: false,
                     content: serde_json::json!({}),
@@ -158,6 +172,147 @@ impl Tool for SymbolsTool {
             Err(join_err) => Err(anyhow::anyhow!("symbols tool worker panicked: {join_err}")),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoMapFile {
+    pub path: String,
+    pub symbols: Vec<String>,
+    /// Symbol count before the per-file cap, so the model can tell a large
+    /// module from one with only a few declarations.
+    pub total_symbols: usize,
+    /// Why this file ranks where it does (source dir, symbol density, tests).
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoMap {
+    pub files: Vec<RepoMapFile>,
+    pub total_files: usize,
+    pub truncated: bool,
+}
+
+/// A repo-wide outline ordered by likely relevance.
+///
+/// This is deliberately a structural map, not a semantic one: it gives the
+/// model the shape of the workspace (`src/` before `tests/`, symbol-dense files
+/// first) without needing an LSP or a tree-sitter grammar per language. The
+/// per-file declarations come from the same heuristic as `outline`.
+fn build_repo_map(root: &Path, max_symbols: usize) -> anyhow::Result<RepoMap> {
+    const MAX_FILES_SCANNED: usize = 2_000;
+    const MAX_SYMBOLS_PER_FILE: usize = 8;
+    const CODE_EXTENSIONS: &[&str] = &[
+        "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "java", "kt", "kts", "c", "cc",
+        "cpp", "cxx", "h", "hpp", "cs", "rb", "php", "swift", "scala", "sh", "bash", "zsh",
+    ];
+
+    let mut builder = WalkBuilder::new(root);
+    builder.standard_filters(true);
+    builder.hidden(false);
+    let walker = builder.build();
+
+    let mut candidates: Vec<(String, Vec<OutlineItem>, String)> = Vec::new();
+    let mut scanned = 0usize;
+    for entry in walker {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        if !CODE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        if let Ok(meta) = path.metadata() {
+            if meta.len() > MAX_FILE_BYTES {
+                continue;
+            }
+        }
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        // Vendored and generated trees dominate by volume and are never the
+        // answer to "where is this behaviour implemented?".
+        if rel.split('/').any(|part| {
+            matches!(
+                part,
+                "node_modules" | "target" | "dist" | "build" | ".git" | "vendor" | "coverage"
+            )
+        }) {
+            continue;
+        }
+        scanned += 1;
+        if scanned > MAX_FILES_SCANNED {
+            break;
+        }
+        let Ok(symbols) = extract_outline(path) else {
+            continue;
+        };
+        if symbols.is_empty() {
+            continue;
+        }
+        let reason = if rel.starts_with("src/") || rel.contains("/src/") {
+            "source"
+        } else if rel.starts_with("tests/")
+            || rel.contains("/tests/")
+            || rel.contains("test_")
+            || rel.ends_with("_test.rs")
+            || rel.ends_with(".test.ts")
+            || rel.ends_with(".test.tsx")
+        {
+            "test"
+        } else {
+            "other"
+        };
+        candidates.push((rel, symbols, reason.to_string()));
+    }
+
+    // Source files first, then symbol density, then a stable path order so the
+    // same repository always produces the same map.
+    candidates.sort_by(|a, b| {
+        let rank = |reason: &str| match reason {
+            "source" => 0,
+            "other" => 1,
+            _ => 2,
+        };
+        rank(&a.2)
+            .cmp(&rank(&b.2))
+            .then_with(|| b.1.len().cmp(&a.1.len()))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let total_files = candidates.len();
+    let mut files = Vec::new();
+    let mut budget = max_symbols.max(1);
+    for (path, symbols, reason) in candidates {
+        if budget == 0 {
+            break;
+        }
+        let total = symbols.len();
+        let take = total.min(MAX_SYMBOLS_PER_FILE).min(budget);
+        let names = symbols
+            .into_iter()
+            .take(take)
+            .map(|item| item.name)
+            .collect::<Vec<_>>();
+        budget = budget.saturating_sub(names.len());
+        files.push(RepoMapFile {
+            path,
+            symbols: names,
+            total_symbols: total,
+            reason,
+        });
+    }
+
+    Ok(RepoMap {
+        truncated: budget == 0 || files.len() < total_files,
+        files,
+        total_files,
+    })
 }
 
 fn extract_outline(path: &Path) -> anyhow::Result<Vec<OutlineItem>> {
@@ -330,4 +485,68 @@ fn find_references(
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mixd-symbols-{name}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn repo_map_ranks_source_above_tests_and_skips_vendored_trees() {
+        let root = temp_dir("map");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn alpha() {}\npub struct Beta;\nfn gamma() {}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("tests/it.rs"), "fn only_test() {}\n").unwrap();
+        std::fs::write(
+            root.join("node_modules/pkg/index.js"),
+            "function vendored() {}\n",
+        )
+        .unwrap();
+
+        let map = build_repo_map(&root, 20).expect("map");
+        let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths[0], "src/lib.rs");
+        assert!(
+            !paths.iter().any(|p| p.contains("node_modules")),
+            "vendored trees are not part of the map: {paths:?}"
+        );
+        assert!(paths.contains(&"tests/it.rs"));
+        let lib = &map.files[0];
+        assert_eq!(lib.reason, "source");
+        assert!(lib.symbols.contains(&"alpha".to_string()));
+        assert_eq!(lib.total_symbols, 3);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn repo_map_honours_the_symbol_budget() {
+        let root = temp_dir("budget");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "fn a() {}\nfn b() {}\nfn c() {}\nfn d() {}\n",
+        )
+        .unwrap();
+        let map = build_repo_map(&root, 2).expect("map");
+        assert_eq!(map.files[0].symbols.len(), 2);
+        assert!(map.truncated);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -15,6 +15,11 @@ def _context_view(data: dict) -> dict:
 def search(db, owner, query="", ids=None):
     rows = db.scalars(select(Skill).where(Skill.owner_id == owner).order_by(Skill.created_at.desc()))
     wanted = set(ids or [])
+    terms = [
+        term
+        for term in "".join(ch if ch.isalnum() else " " for ch in (query or "")).casefold().split()
+        if len(term) > 1
+    ]
     result = []
     for row in rows:
         data = row.data
@@ -25,8 +30,8 @@ def search(db, owner, query="", ids=None):
         haystack = " ".join(
             [str(data.get(k, "")) for k in ("name", "description", "content")]
             + sorted((data.get("files") or {}).keys())
-        )
-        if query.casefold() in haystack.casefold():
+        ).casefold()
+        if not terms or any(term in haystack for term in terms):
             result.append({"id": row.id, **_context_view(data)})
     return result[:20]
 

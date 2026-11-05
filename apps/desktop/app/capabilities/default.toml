@@ -26,6 +26,10 @@ permissions = [
   "core:window:allow-minimize",
   "core:window:allow-toggle-maximize",
   "core:window:allow-close",
+  # `lib/theme.ts` pins the window appearance to the app theme so native chrome
+  # (the `<select>` popup, context menus) stops rendering in the system theme;
+  # a light app on a dark-mode Mac otherwise opens dark, see-through menus.
+  "core:window:allow-set-theme",
   "core:webview:default",
   "core:event:default",
   "core:app:default",

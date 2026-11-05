@@ -68,7 +68,7 @@ def cosine01(left, right) -> float | None:
     dot = 0.0
     norm_left = 0.0
     norm_right = 0.0
-    for a, b in zip(left, right):
+    for a, b in zip(left, right, strict=False):
         if not (math.isfinite(a) and math.isfinite(b)):
             return None
         dot += a * b
@@ -174,13 +174,45 @@ def is_stale(data, model) -> bool:
     return str((data or {}).get("embedding_model") or "") != str(model)
 
 
+def _provider_data(provider):
+    return getattr(provider, "data", provider)
+
+
+def provider_can_embed(provider) -> bool:
+    """Whether this row can produce vectors at all.
+
+    ChatGPT reuses ``kind="openai"`` for its wire protocol but has no
+    embeddings endpoint. Without this check it shadowed a working OpenAI row and
+    every Memory vector silently fell back to lexical ranking.
+    """
+    if provider is None:
+        return False
+    from mix_agent.providers.adapters import Adapter
+
+    try:
+        return Adapter(_provider_data(provider), None).embedding_model() is not None
+    except Exception:  # noqa: BLE001 - an unusable row is simply skipped
+        return False
+
+
 def default_provider(db, owner_id):
-    """Most recent provider record for the owner."""
+    """Most recent provider row that can actually embed."""
     from mix_agent.db.models import Provider
 
-    return db.scalar(
-        select(Provider).where(Provider.owner_id == owner_id).order_by(Provider.created_at.desc()).limit(1)
-    )
+    rows = db.scalars(
+        select(Provider).where(Provider.owner_id == owner_id).order_by(Provider.created_at.desc())
+    ).all()
+    return next((row for row in rows if provider_can_embed(row)), None)
+
+
+def _select_provider_and_key(db, owner_id, provider, key):
+    """Prefer the caller's provider, but fall back when it cannot embed."""
+    from mix_agent.auth.security import read_secret
+
+    selected = provider if provider_can_embed(provider) else default_provider(db, owner_id)
+    if selected is not provider:
+        key = read_secret(db, selected.data.get("secret_id")) if selected else None
+    return selected, key
 
 
 async def embed_memory(db, memory_id: str, provider=None, key=None) -> bool:
@@ -191,7 +223,6 @@ async def embed_memory(db, memory_id: str, provider=None, key=None) -> bool:
     revision trail free of index noise and stops a re-embed from quietly
     inflating the recency term of the very ranking it feeds.
     """
-    from mix_agent.auth.security import read_secret
     from mix_agent.db.models import Memory
 
     row = db.get(Memory, memory_id)
@@ -200,9 +231,7 @@ async def embed_memory(db, memory_id: str, provider=None, key=None) -> bool:
     content = str((row.data or {}).get("content") or row.content or "").strip()
     if not content:
         return False
-    if provider is None:
-        provider = default_provider(db, row.owner_id)
-        key = read_secret(db, provider.data.get("secret_id")) if provider else None
+    provider, key = _select_provider_and_key(db, row.owner_id, provider, key)
     if provider is None:
         return False
     embedded = await embed_content({**provider.data, "id": provider.id}, key, content)
@@ -219,7 +248,6 @@ async def embed_contents(db, memory_ids, provider=None, key=None) -> int:
     the whole batch rather than one per row keeps a background job's latency
     proportional to the batch, not to the number of rows in it.
     """
-    from mix_agent.auth.security import read_secret
     from mix_agent.db.models import Memory
 
     rows = [
@@ -229,33 +257,28 @@ async def embed_contents(db, memory_ids, provider=None, key=None) -> int:
     ]
     if not rows:
         return 0
-    if provider is None:
-        provider = default_provider(db, rows[0].owner_id)
-        key = read_secret(db, provider.data.get("secret_id")) if provider else None
+    provider, key = _select_provider_and_key(db, rows[0].owner_id, provider, key)
     if provider is None:
         return 0
     # Only rows whose text has no vector yet, so a retry never redoes the work.
     pending = [row for row in rows if row_vector(row.data) is None]
     texts = [str((row.data or {}).get("content") or row.content or "").strip() for row in pending]
-    keep = [(row, text) for row, text in zip(pending, texts) if text]
+    keep = [(row, text) for row, text in zip(pending, texts, strict=False) if text]
     if not keep:
         return 0
     batch = await _embed_batch({**provider.data, "id": provider.id}, key, [text for _, text in keep])
     if batch is None:
         return 0
-    for (row, _), vector in zip(keep, batch[1]):
+    for (row, _), vector in zip(keep, batch[1], strict=False):
         row.data = store(dict(row.data or {}), batch[0], vector)
     return len(keep)
 
 
 async def embed_pending(db, owner_id: str, provider=None, key=None, limit: int = 50) -> int:
     """Backfill vectors for rows that still have none; returns how many landed."""
-    from mix_agent.auth.security import read_secret
     from mix_agent.db.models import Memory
 
-    if provider is None:
-        provider = default_provider(db, owner_id)
-        key = read_secret(db, provider.data.get("secret_id")) if provider else None
+    provider, key = _select_provider_and_key(db, owner_id, provider, key)
     if provider is None:
         return 0
     wire_provider = {**provider.data, "id": provider.id}

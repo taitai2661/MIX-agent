@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   ChevronRight,
   FileText,
+  GitFork,
   ListChecks,
   MessageSquare,
   Pencil,
@@ -53,6 +54,7 @@ export const MessageItem = memo(function MessageItem({
   models = [],
   onEdit,
   onRetry,
+  onFork,
   editDisabled = false,
   retryDisabled = false,
   showRunError = false,
@@ -65,6 +67,8 @@ export const MessageItem = memo(function MessageItem({
   /** Edit this user turn and regenerate; absent on read-only transcripts. */
   onEdit?: (messageId: string, content: string) => Promise<void>;
   onRetry?: () => Promise<void> | void;
+  /** Copy the conversation prefix up to this message into a new thread. */
+  onFork?: (messageId: string) => Promise<void> | void;
   editDisabled?: boolean;
   retryDisabled?: boolean;
   /** Render this Run's failure under this (its last assistant) message. */
@@ -87,6 +91,7 @@ export const MessageItem = memo(function MessageItem({
         run={run}
         onEdit={onEdit}
         onRetry={onRetry}
+        onFork={onFork}
         editDisabled={editDisabled}
         retryDisabled={retryDisabled}
         showRunError={showRunError}
@@ -174,6 +179,18 @@ export const MessageItem = memo(function MessageItem({
                   <RefreshCw size={13} aria-hidden="true" />
                 </Button>
               )}
+            {onFork && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={editDisabled}
+                onClick={() => void onFork(message.id)}
+                title={t("このメッセージから分岐")}
+                aria-label={t("このメッセージから分岐")}
+              >
+                <GitFork size={13} aria-hidden="true" />
+              </Button>
+            )}
             <CopyButton value={message.content} />
           </span>
         </div>
@@ -374,6 +391,7 @@ function UserMessage({
   run,
   onEdit,
   onRetry,
+  onFork,
   editDisabled,
   retryDisabled = false,
   showRunError,
@@ -384,6 +402,7 @@ function UserMessage({
   run: RunView | undefined;
   onEdit?: (messageId: string, content: string) => Promise<void>;
   onRetry?: () => Promise<void> | void;
+  onFork?: (messageId: string) => Promise<void> | void;
   editDisabled: boolean;
   retryDisabled?: boolean;
   showRunError: boolean;
@@ -552,6 +571,19 @@ function UserMessage({
             >
               {relativeTime(message.created_at, new Date(now))}
             </time>
+            {onFork && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void onFork(message.id)}
+                disabled={editDisabled}
+                aria-label={t("このメッセージから分岐")}
+                title={t("このメッセージから分岐")}
+                className="text-faint hover:text-fg [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/msg:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
+              >
+                <GitFork size={13} aria-hidden="true" />
+              </Button>
+            )}
             {onEdit && (
               <Button
                 variant="ghost"

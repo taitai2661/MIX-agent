@@ -115,7 +115,7 @@ async def _build_history_payload(
             "auto_priority": settings_row.data.get("auto_priority", "balanced")
             if requested_model_id == "auto"
             else "balanced",
-            "provider": provider.data,
+            "provider": {**provider.data, "id": provider.id},
             "provider_record_id": provider.id,
             "tool_ids": tool_ids,
             "tools": [available[t] for t in tool_ids if t in available],

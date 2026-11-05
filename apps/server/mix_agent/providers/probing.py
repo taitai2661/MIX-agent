@@ -26,7 +26,10 @@ def capability_targets(model_data, provider_kind):
 
 
 async def _capability_adapter(db, provider):
-    return Adapter(provider.data, read_secret(db, provider.data.get("secret_id")))
+    return Adapter(
+        {**provider.data, "id": provider.id},
+        read_secret(db, provider.data.get("secret_id")),
+    )
 
 
 async def verify_tool_capability(db, owner, model, provider, source):

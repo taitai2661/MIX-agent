@@ -2,6 +2,7 @@ import {
   Minus,
   Monitor,
   Moon,
+  Paintbrush,
   Palette,
   Plus,
   RotateCcw,
@@ -14,6 +15,7 @@ import type { Theme } from "@/lib/theme";
 import { useApplySettings, useSettingsForm } from "@/lib/settings";
 import { Card, Row, Section } from "@/components/layout";
 import { ToggleRow } from "@/components/common";
+import { AccentPicker } from "@/components/accent";
 import { Button } from "@/components/ui/button";
 
 const THEMES: Array<{ value: Theme; label: string; Icon: typeof Sun }> = [
@@ -56,6 +58,13 @@ export function AppearanceSettings() {
             );
           })}
         </Row>
+      </Card>
+
+      <Card title={t("アクセントカラー")} icon={<Paintbrush size={13} />}>
+        <p className="m-0 text-xs text-muted">
+          {t("ボタンやリンクなど、操作の目印となる色を選びます。")}
+        </p>
+        <AccentPicker />
       </Card>
 
       <Card title={t("表示")} icon={<Monitor size={13} />}>

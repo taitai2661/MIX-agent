@@ -191,7 +191,7 @@ export function ChatComposer({
               >
                 {a.mime?.startsWith("image/") ? (
                   <img
-                    src={`/api/v1/artifacts/${a.artifact_id}`}
+                    src={`/api/v1/artifacts/${encodeURIComponent(a.artifact_id)}`}
                     alt=""
                     className="attachment-thumb"
                   />

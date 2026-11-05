@@ -187,7 +187,7 @@ async def _evaluate(job, run, provider, key, existing):
         from mix_agent.providers.adapters import Adapter
 
         async with asyncio.timeout(EVALUATE_TIMEOUT):
-            async for event in Adapter(provider.data, key).stream(
+            async for event in Adapter({**provider.data, "id": provider.id}, key).stream(
                 snapshot["model_id"],
                 messages,
                 [],

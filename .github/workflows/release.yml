@@ -10,9 +10,30 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: read
 
 jobs:
+  preflight:
+    name: Require green CI for this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the CI conclusion for the tagged SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$GITHUB_SHA" --limit 1 --json conclusion,status,url)"
+          echo "$runs"
+          conclusion="$(printf '%s' "$runs" | jq -r '.[0].conclusion // ""')"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI for $GITHUB_SHA is '$conclusion'. Refusing to publish a release."
+            exit 1
+          fi
+
   images:
+    needs: preflight
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

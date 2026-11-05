@@ -182,6 +182,7 @@ export function KnowledgePane() {
           )}
         </DataTable>
       )}
+      {remove.isError && <ErrorBox error={remove.error} />}
     </Section>
   );
 }

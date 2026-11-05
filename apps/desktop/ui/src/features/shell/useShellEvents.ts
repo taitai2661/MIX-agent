@@ -219,8 +219,15 @@ export function useShellEvents(handlers: {
   }, [pushEvent, queryClient]);
 }
 
+/** Whether a modal or popup above the right panel owns Escape right now. */
+function hasOpenOverlay(): boolean {
+  return !!document.querySelector(
+    '[role="dialog"][data-state="open"], [data-radix-popper-content-wrapper]',
+  );
+}
+
 /** Global keyboard shortcuts. */
-export function useAppShortcuts() {
+export function useAppShortcuts(enabled = true) {
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
@@ -250,6 +257,7 @@ export function useAppShortcuts() {
   });
 
   useEffect(() => {
+    if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
       const {
         setPaletteOpen: palette,
@@ -298,8 +306,8 @@ export function useAppShortcuts() {
         return;
       }
       // ⌘⇧B — Codex's browser shortcut. It also brings the agent workspace
-      // into view, so the pane is actually rendered (the side panel only
-      // exists on the desktop-agent surface).
+      // into view, so the pane is actually rendered (the browser pane is still
+      // an agent-only target even though the side panel itself exists in chat).
       if (isMod && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         const state = useUi.getState();
@@ -359,13 +367,24 @@ export function useAppShortcuts() {
           return;
         }
       }
-      // Esc: Close right panel if open and not in an input
-      if (e.key === "Escape" && !isMod && !e.shiftKey && !e.altKey) {
+      // Esc: close the right panel only when nothing above it owns Escape.
+      // The previous guard read the store *after* the palette/dialog had
+      // already handled the same key, so dismissing ⌘K also closed the panel
+      // behind it. Capture phase lets us see the layers still open, and
+      // `defaultPrevented` covers a danger confirm that refuses to close.
+      if (
+        e.key === "Escape" &&
+        !isMod &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.defaultPrevented
+      ) {
         const state = useUi.getState();
         if (
           state.rightPanel !== "none" &&
           !state.paletteOpen &&
-          !state.shortcutsOpen
+          !state.shortcutsOpen &&
+          !hasOpenOverlay()
         ) {
           e.preventDefault();
           rightPanelSetter("none");
@@ -388,7 +407,10 @@ export function useAppShortcuts() {
         shortcuts(true);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    // Capture: React/Radix handlers run before a window bubble listener, so by
+    // the time Escape reached us the dialog had unmounted and its "was open"
+    // state was already false.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [enabled]);
 }

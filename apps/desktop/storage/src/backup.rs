@@ -161,10 +161,24 @@ fn compress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 fn decompress(data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    use flate2::write::ZlibDecoder;
-    let mut dec = ZlibDecoder::new(Vec::new());
-    dec.write_all(data)?;
-    Ok(dec.finish()?)
+    use std::io::Read;
+
+    // A few-MB compressed backup can expand to gigabytes. Bound the output
+    // before allocating so restoring an untrusted `.mixbak` cannot OOM the app.
+    const MAX_UNCOMPRESSED_BACKUP: u64 = 512 * 1024 * 1024;
+    let decoder = flate2::read::ZlibDecoder::new(data);
+    let mut out = Vec::new();
+    decoder
+        .take(MAX_UNCOMPRESSED_BACKUP + 1)
+        .read_to_end(&mut out)
+        .context("backup payload is not valid zlib")?;
+    if out.len() as u64 > MAX_UNCOMPRESSED_BACKUP {
+        bail!(
+            "backup payload expands beyond the {} byte limit",
+            MAX_UNCOMPRESSED_BACKUP
+        );
+    }
+    Ok(out)
 }
 
 /// Consistent SQLite snapshot, safe to take while the app is running.

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleAlert,
   ClipboardList,
+  Code2,
   Clock3,
   FileText,
   Globe2,
@@ -48,6 +49,7 @@ import {
   payloadBlock,
 } from "@/components/shared";
 import { TerminalResultView } from "./TerminalResultView";
+import { ContextCompactionNotice } from "./ContextCompaction";
 
 function toolIcon(name: string) {
   if (name === "files") return FileText;
@@ -57,6 +59,7 @@ function toolIcon(name: string) {
   if (name === "network") return Globe2;
   if (name === "todo") return ListChecks;
   if (name === "user_plan") return ClipboardList;
+  if (name === "lsp") return Code2;
   return Wrench;
 }
 
@@ -291,14 +294,24 @@ export function ActivityPanel({
 
   const [revertNote, setRevertNote] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
+  const workspaceChanges = useQuery({
+    queryKey: ["run_workspace_changes", runId],
+    queryFn: () => api.runWorkspaceChanges(runId!),
+    enabled: !!runId && !isLive,
+    staleTime: 5_000,
+  });
   const revert = useMutation({
-    mutationFn: (id: string) => api.revertRun(id),
+    mutationFn: (id: string) => api.revertRunWorkspace(id),
     onSuccess: (count) => {
       setRevertNote(
         tf("{count} 件のファイルを実行前の内容に戻しました。", { count }),
       );
       void queryClient.invalidateQueries({ queryKey: ["file_diff"] });
       void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["run_workspace_changes", runId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["checkpoints", runId] });
     },
     onError: (error) => setRevertNote(errorMessage(error) || t("エラー")),
   });
@@ -385,6 +398,10 @@ export function ActivityPanel({
           <TodoList items={timeline.todos} />
         )}
 
+        {runId && timeline && timeline.contextCompactions.length > 0 && (
+          <ContextCompactionNotice items={timeline.contextCompactions} />
+        )}
+
         {runId && timeline?.verificationFailed && (
           <Card
             className="border-danger"
@@ -445,10 +462,36 @@ export function ActivityPanel({
             bodyClassName="p-2.5"
           >
             <p className="m-0 text-xs text-muted">
-              {t(
-                "このRunが edit / files で変更したファイルを、実行前の内容に戻します。ターミナル経由の変更は対象外です。",
-              )}
+              {workspaceChanges.data?.available
+                ? t(
+                    "このRunの変更をGitのスナップショットまで戻します。edit / files に加え、ターミナルが作成・変更したファイルも対象です。Run終了後に手で加えた変更も失われます。",
+                  )
+                : t(
+                    "このRunが edit / files で変更したファイルを、実行前の内容に戻します。ターミナル経由の変更は対象外です。",
+                  )}
             </p>
+            {workspaceChanges.data?.available &&
+              workspaceChanges.data.files.length > 0 && (
+                <details className="group text-xs">
+                  <summary className="cursor-pointer list-none text-faint transition-colors hover:text-muted">
+                    {tf("{count} 件の変更を確認", {
+                      count: workspaceChanges.data.files.length,
+                    })}
+                  </summary>
+                  <ul className="mt-1 flex max-h-40 list-none flex-col gap-0.5 overflow-y-auto p-0 font-mono text-2xs text-muted">
+                    {workspaceChanges.data.files.map((file) => (
+                      <li key={file.path} className="flex gap-1.5">
+                        <span className="w-4 shrink-0 text-faint">
+                          {file.status}
+                        </span>
+                        <span className="min-w-0 truncate" title={file.path}>
+                          {file.path}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             <Button
               variant="ghost-danger"
               size="sm"

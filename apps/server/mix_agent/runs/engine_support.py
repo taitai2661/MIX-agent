@@ -11,6 +11,7 @@ from mix_agent.context import head_blocks
 from mix_agent.context import task_state as context_task_state
 from mix_agent.db.models import (
     Event,
+    Run,
     ScheduledRun,
     ToolCall,
     now,
@@ -471,6 +472,12 @@ def refresh_task_state(head_text, state):
 
 
 def emit(db, run_id, kind, data):
+    # Serialize sequence allocation per Run.  Two sessions (for example the
+    # cancel route and the drive loop, or a manual browser frame save) used to
+    # read the same MAX(sequence) and race into UNIQUE(run_id, sequence),
+    # which failed the whole Run.  The row lock also covers the INSERT below
+    # until the caller commits.
+    db.execute(select(Run.id).where(Run.id == run_id).with_for_update())
     sequence = (db.scalar(select(func.max(Event.sequence)).where(Event.run_id == run_id)) or 0) + 1
     db.add(Event(run_id=run_id, sequence=sequence, kind=kind, data=data))
     db.flush()

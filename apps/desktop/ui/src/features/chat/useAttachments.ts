@@ -20,6 +20,9 @@ export function useAttachments(): {
   addImageFiles: (files: Iterable<File>) => Promise<void>;
   onAttach: () => Promise<void>;
   removeAttachment: (index: number) => void;
+  /** Drop only the attachments that were actually sent (by identity), so an
+   *  image added while the request was in flight stays in the composer. */
+  removeAttachments: (items: readonly DraftAttachment[]) => void;
   clearAttachments: () => void;
 } {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
@@ -114,6 +117,12 @@ export function useAttachments(): {
     setAttachments((prev) => prev.filter((_, j) => j !== index));
   };
 
+  const removeAttachments = (items: readonly DraftAttachment[]) => {
+    if (items.length === 0) return;
+    const sent = new Set(items);
+    setAttachments((prev) => prev.filter((item) => !sent.has(item)));
+  };
+
   const clearAttachments = () => setAttachments([]);
 
   return {
@@ -123,6 +132,7 @@ export function useAttachments(): {
     addImageFiles,
     onAttach,
     removeAttachment,
+    removeAttachments,
     clearAttachments,
   };
 }

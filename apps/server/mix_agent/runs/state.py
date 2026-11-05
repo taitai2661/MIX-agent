@@ -35,7 +35,10 @@ NON_TERMINAL_STATES = RUN_STATES - TERMINAL_STATES
 # resume endpoint; ``interrupted -> cancelled`` is what the cancel endpoint
 # already allowed.  Terminal states cannot move anywhere else.  Agent-mode
 # budget pauses (``budget_extension_pending``) act like ``paused``: the run
-# keeps its place while the user decides whether to extend the budget.
+# keeps its place while the user decides whether to extend the budget.  A
+# granted extension re-queues the Run so ``drive`` can start it again (the
+# engine refuses to "transition" an already-running Run), and a denial closes
+# it from the paused state.
 TRANSITIONS = {
     "queued": frozenset({"running", "cancelled", "failed"}),
     "running": frozenset(
@@ -50,7 +53,7 @@ TRANSITIONS = {
         }
     ),
     "paused": frozenset({"queued", "cancelled"}),
-    "budget_extension_pending": frozenset({"running", "cancelled", "failed"}),
+    "budget_extension_pending": frozenset({"queued", "running", "completed", "cancelled", "failed"}),
     "waiting_approval": frozenset({"running", "cancelled", "failed", "interrupted"}),
     "interrupted": frozenset({"queued", "cancelled"}),
     "completed": frozenset(),

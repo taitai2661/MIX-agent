@@ -173,7 +173,12 @@ export function LocalRuntimePanel() {
           return api.localModelUnload(input.slug, input.model);
       }
     },
-    onSuccess: invalidate,
+    onSuccess: () => {
+      // A later success means the previous error no longer describes the
+      // runtime; without this the red box stayed under an "online" badge.
+      setError(null);
+      invalidate();
+    },
     onError: (err) => setError(errorMessage(err)),
   });
 
@@ -289,6 +294,10 @@ function RuntimeCard({
   const activeJob = jobs.find(
     (job) => job.status === "running" || job.status === "cancelling",
   );
+  // Single guard for the button and Enter. The keyboard path used to submit a
+  // pull while the runtime was offline or another job was already running —
+  // the button was disabled, so the two paths disagreed.
+  const canPull = runtime.online && !!model.trim() && !pending && !activeJob;
 
   return (
     <div className="rounded-xl border border-line bg-surface p-3">
@@ -386,7 +395,12 @@ function RuntimeCard({
               value={model}
               onChange={(event) => setModel(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && model.trim()) {
+                if (
+                  event.key === "Enter" &&
+                  !event.nativeEvent.isComposing &&
+                  canPull
+                ) {
+                  event.preventDefault();
                   onPull(model.trim());
                   setModel("");
                 }
@@ -395,9 +409,7 @@ function RuntimeCard({
           </div>
           <Button
             size="sm"
-            disabled={
-              !runtime.online || !model.trim() || pending || Boolean(activeJob)
-            }
+            disabled={!canPull}
             onClick={() => {
               onPull(model.trim());
               setModel("");

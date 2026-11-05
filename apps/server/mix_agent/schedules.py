@@ -45,7 +45,7 @@ def parse(expression):
     if len(parts) != 5:
         raise ValueError("Cron式は5フィールドで入力してください")
     try:
-        return [_part(part, *bounds) for part, bounds in zip(parts, FIELDS)]
+        return [_part(part, *bounds) for part, bounds in zip(parts, FIELDS, strict=False)]
     except (ValueError, TypeError):
         raise ValueError("Cron式が不正です")
 
@@ -100,21 +100,31 @@ def notify(db, owner, kind, title, scheduled_run=None):
 
 def claim(db, job, scheduled_at):
     row = ScheduledRun(owner_id=job.owner_id, job_id=job.id, scheduled_at=scheduled_at, data={"attempt": 0})
-    db.add(row)
     try:
-        db.flush()
-        return row
+        # Use a SAVEPOINT so a duplicate occurrence only rolls back this
+        # insert; a full db.rollback() would discard the caller's pending work.
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
     except IntegrityError:
-        db.rollback()
         return None
+    return row
 
 
 def tick(db, launch):
     current = now().replace(second=0, microsecond=0)
     # Retries reuse the same occurrence record, preserving its idempotency lock.
     for scheduled in db.scalars(select(ScheduledRun).where(ScheduledRun.status == "retrying")):
-        retry_at = scheduled.data.get("retry_at")
-        if not retry_at or datetime.fromisoformat(retry_at) > now():
+        raw_retry = scheduled.data.get("retry_at")
+        try:
+            retry_at = datetime.fromisoformat(raw_retry) if raw_retry else None
+        except (ValueError, TypeError):
+            continue
+        if retry_at is None:
+            continue
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        if retry_at > now():
             continue
         job = db.get(ScheduledJob, scheduled.job_id)
         if not job or not job.data.get("enabled"):
@@ -175,6 +185,7 @@ def reconcile(db, launch):
     created per job is capped so a long-dormant job cannot hang startup.
     """
     current = now().replace(second=0, microsecond=0)
+    to_launch: list[str] = []
     for job in db.scalars(select(ScheduledJob).where(ScheduledJob.data["enabled"].as_boolean().is_(True))):
         try:
             parsed, tz = parse(job.data["cron"]), job.data["timezone"]
@@ -213,5 +224,9 @@ def reconcile(db, launch):
                 notify(db, job.owner_id, "schedule.missed", job.data["name"], scheduled)
             else:
                 run = enqueue_scheduled_run(db, job.owner_id, job, scheduled)
-                launch(run.id)
+                # Defer launch until after commit (same order as tick()): the
+                # run row must be durable before the driver reads it.
+                to_launch.append(run.id)
         db.commit()
+    for run_id in to_launch:
+        launch(run_id)

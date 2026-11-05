@@ -5,10 +5,14 @@
 //! is the whole point: a library of twenty skills should cost a few hundred
 //! tokens, not twenty documents.
 //!
-//! The tool delegates the storage lookup to the host because the tools crate has
-//! no database handle of its own beyond the approval tables.
+//! Bundled files (`scripts/`, `references/`, `assets/`) are listed with the
+//! skill and read one at a time through [`SkillResourceTool`]. They are always
+//! returned as data: this crate never executes a bundled script.
+//!
+//! The tools delegate storage lookup to the host because the tools crate has no
+//! database handle of its own beyond the approval tables.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,32 +21,68 @@ use tokio::sync::RwLock;
 use super::{Tool, ToolContext, ToolResult};
 
 /// A skill as the tools crate sees it: the fields the prompt needs, nothing more.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SkillSummary {
     pub name: String,
     pub description: String,
     pub body_markdown: String,
     #[serde(default)]
+    pub license: String,
+    #[serde(default)]
+    pub compatibility: String,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+    #[serde(default)]
     pub allowed_tools: Vec<String>,
+    /// Relative paths of bundled files. Contents stay on disk/database until
+    /// [`SkillSource::resource`] asks for one.
+    #[serde(default)]
+    pub resources: Vec<String>,
+}
+
+/// One bundled file, returned by [`SkillSource::resource`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillResourceData {
+    pub path: String,
+    /// Text content, or base64 when `binary` is true.
+    pub content: String,
+    #[serde(default)]
+    pub binary: bool,
+    #[serde(default)]
+    pub size: usize,
 }
 
 /// Supplies the catalogue. Implemented by the app shell, which owns the database,
-/// and by the project-folder discovery source.
+/// and by the project/user folder discovery sources.
 ///
 /// `root` is the run's project folder. Sources that are not project-scoped (the
-/// database) ignore it; a project-scoped source returns nothing when it is
-/// `None`.
+/// database and the user-level folder) ignore it; a project-scoped source
+/// returns nothing when it is `None`.
 #[async_trait]
 pub trait SkillSource: Send + Sync {
     async fn skills(&self, root: Option<&str>) -> anyhow::Result<Vec<SkillSummary>>;
+
+    /// Read one bundled file by relative path.
+    ///
+    /// Defaults to `None` so a source that only lists skills still works; the
+    /// composite source walks its children until one returns a file.
+    async fn resource(
+        &self,
+        _root: Option<&str>,
+        _skill: &str,
+        _path: &str,
+    ) -> anyhow::Result<Option<SkillResourceData>> {
+        Ok(None)
+    }
 }
 
-/// Several sources behind one: the stored skills plus the ones discovered in
-/// the project folder.
+/// Several sources behind one: project skills, user-level skills, then stored
+/// skills.
 ///
-/// Concatenated in order, first name wins. A name clash between a stored skill
-/// and a project skill is worth a log line — the two were authored
-/// independently, so the ambiguity is a real configuration mistake.
+/// Concatenated in order, first name wins. A name clash is worth a log line —
+/// the two were authored independently, so the ambiguity is a real
+/// configuration mistake, and the resolution must not depend on directory
+/// iteration order.
 pub struct CompositeSkillSource {
     sources: Vec<Arc<dyn SkillSource>>,
 }
@@ -76,6 +116,24 @@ impl SkillSource for CompositeSkillSource {
             }
         }
         Ok(out)
+    }
+
+    async fn resource(
+        &self,
+        root: Option<&str>,
+        skill: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<SkillResourceData>> {
+        for source in &self.sources {
+            match source.resource(root, skill, path).await {
+                Ok(Some(found)) => return Ok(Some(found)),
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::warn!(%err, skill, path, "skill resource source failed; continuing")
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -161,7 +219,7 @@ impl Tool for SkillTool {
     fn description(&self) -> &str {
         "Read a skill's full procedure. Call with no name to list what is available. \
          Read a skill before acting on it — the catalogue in your instructions only \
-         names them."
+         names them. Bundled files listed by the result are read with `skill_resource`."
     }
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
@@ -201,6 +259,7 @@ impl Tool for SkillTool {
                             "name": s.name,
                             "description": s.description,
                             "allowed_tools": s.allowed_tools,
+                            "resources": s.resources,
                         }))
                         .collect::<Vec<_>>(),
                 }),
@@ -227,6 +286,137 @@ impl Tool for SkillTool {
     }
 }
 
+/// Lists or reads a bundled file of a skill.
+///
+/// Kept separate from [`SkillTool`] so the common path (`skill` → body) does
+/// not pay for a second large response, and so the permission table can treat
+/// resource reads like the read-only operation they are.
+pub struct SkillResourceTool {
+    source: Arc<dyn SkillSource>,
+}
+
+impl SkillResourceTool {
+    pub fn new(source: Arc<dyn SkillSource>) -> Self {
+        Self { source }
+    }
+}
+
+#[async_trait]
+impl Tool for SkillResourceTool {
+    fn id(&self) -> &str {
+        "skill_resource"
+    }
+    fn is_sensitive(&self, _args: &serde_json::Value) -> bool {
+        false
+    }
+    fn name(&self) -> &str {
+        "Skill resource"
+    }
+    fn description(&self) -> &str {
+        "List or read a bundled file from a skill as read-only data. Omit `path` to \
+         list the files. Bundled scripts are never executed."
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "skill": {
+                    "type": "string",
+                    "description": "Skill name."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Relative path of a bundled file. Omit to list files."
+                }
+            },
+            "required": ["skill"]
+        })
+    }
+
+    async fn invoke(
+        &self,
+        ctx: ToolContext,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolResult> {
+        let skill = args
+            .get("skill")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if skill.is_empty() {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({}),
+                error: Some("`skill` is required".to_string()),
+            });
+        }
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let root = ctx.root_path.as_deref();
+
+        if path.is_empty() {
+            let catalogue = self.source.skills(root).await?;
+            let Some(summary) = catalogue
+                .iter()
+                .find(|s| s.name.eq_ignore_ascii_case(skill))
+            else {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: serde_json::json!({
+                        "available": catalogue.iter().map(|s| s.name.clone()).collect::<Vec<_>>()
+                    }),
+                    error: Some(format!("no skill named {skill:?}")),
+                });
+            };
+            return Ok(ToolResult {
+                ok: true,
+                content: serde_json::json!({
+                    "skill": summary.name,
+                    "files": summary.resources,
+                }),
+                error: None,
+            });
+        }
+
+        // The common path reads one file without materialising every skill's
+        // resource list first; the catalogue is only needed to explain a miss.
+        if let Some(found) = self.source.resource(root, skill, path).await? {
+            return Ok(ToolResult {
+                ok: true,
+                content: serde_json::to_value(found).unwrap_or_else(|_| serde_json::json!({})),
+                error: None,
+            });
+        }
+        let catalogue = self.source.skills(root).await?;
+        let Some(summary) = catalogue
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(skill))
+        else {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({
+                    "available": catalogue.iter().map(|s| s.name.clone()).collect::<Vec<_>>()
+                }),
+                error: Some(format!("no skill named {skill:?}")),
+            });
+        };
+        Ok(ToolResult {
+            ok: false,
+            content: serde_json::json!({
+                "skill": summary.name,
+                "files": summary.resources,
+            }),
+            error: Some(format!(
+                "no bundled file {path:?} in skill {:?}",
+                summary.name
+            )),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +427,26 @@ mod tests {
     impl SkillSource for StaticSource {
         async fn skills(&self, _root: Option<&str>) -> anyhow::Result<Vec<SkillSummary>> {
             Ok(self.0.clone())
+        }
+
+        async fn resource(
+            &self,
+            _root: Option<&str>,
+            skill: &str,
+            path: &str,
+        ) -> anyhow::Result<Option<SkillResourceData>> {
+            if skill != "expense-report" {
+                return Ok(None);
+            }
+            match path {
+                "references/POLICY.md" => Ok(Some(SkillResourceData {
+                    path: path.to_string(),
+                    content: "policy body".into(),
+                    binary: false,
+                    size: 11,
+                })),
+                _ => Ok(None),
+            }
         }
     }
 
@@ -260,12 +470,14 @@ mod tests {
                 description: "Build expense reports from receipts".into(),
                 body_markdown: "1. Collect receipts\n2. Categorise".into(),
                 allowed_tools: vec!["files".into(), "terminal".into()],
+                resources: vec!["references/POLICY.md".into()],
+                ..SkillSummary::default()
             },
             SkillSummary {
                 name: "release-notes".into(),
                 description: "Draft release notes from a git log".into(),
                 body_markdown: "Run git log".into(),
-                allowed_tools: Vec::new(),
+                ..SkillSummary::default()
             },
         ]
     }
@@ -293,6 +505,7 @@ mod tests {
         assert_eq!(skills[0]["name"], "expense-report");
         // The listing must stay cheap: no bodies.
         assert!(!result.content.to_string().contains("Categorise"));
+        assert_eq!(skills[0]["resources"][0], "references/POLICY.md");
     }
 
     #[tokio::test]
@@ -378,7 +591,7 @@ mod tests {
                 name: "expense-report".into(),
                 description: "the other one".into(),
                 body_markdown: "other".into(),
-                allowed_tools: Vec::new(),
+                ..SkillSummary::default()
             }])),
         ]);
         let skills = composite.skills(None).await.expect("skills");
@@ -456,6 +669,7 @@ mod tests {
             description: "Build expense reports from receipts".into(),
             body_markdown: "A very long procedure that should not be inlined.".into(),
             allowed_tools: vec!["files".into()],
+            ..SkillSummary::default()
         }])));
         let runtime = tokio::runtime::Runtime::new()?;
         let prompt = runtime.block_on(tool.catalogue_prompt(None));
@@ -481,5 +695,58 @@ mod tests {
         let empty = SkillTool::new(Arc::new(StaticSource(Vec::new())));
         assert_eq!(runtime.block_on(empty.catalogue_prompt(None)), "");
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn skill_resource_lists_files() {
+        let tool = SkillResourceTool::new(Arc::new(StaticSource(sample())));
+        let result = tool
+            .invoke(ctx(), serde_json::json!({ "skill": "expense-report" }))
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        assert_eq!(result.content["files"][0], "references/POLICY.md");
+    }
+
+    #[tokio::test]
+    async fn skill_resource_reads_one_file() {
+        let tool = SkillResourceTool::new(Arc::new(StaticSource(sample())));
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({
+                    "skill": "expense-report",
+                    "path": "references/POLICY.md"
+                }),
+            )
+            .await
+            .expect("invoke");
+        assert!(result.ok, "{:?}", result.error);
+        assert_eq!(result.content["content"], "policy body");
+    }
+
+    #[tokio::test]
+    async fn skill_resource_reports_an_unknown_path() {
+        let tool = SkillResourceTool::new(Arc::new(StaticSource(sample())));
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({ "skill": "expense-report", "path": "../secret" }),
+            )
+            .await
+            .expect("invoke");
+        assert!(!result.ok);
+        assert_eq!(result.content["files"][0], "references/POLICY.md");
+    }
+
+    #[tokio::test]
+    async fn skill_resource_reports_an_unknown_skill() {
+        let tool = SkillResourceTool::new(Arc::new(StaticSource(sample())));
+        let result = tool
+            .invoke(ctx(), serde_json::json!({ "skill": "nope" }))
+            .await
+            .expect("invoke");
+        assert!(!result.ok);
+        assert_eq!(result.content["available"][0], "expense-report");
     }
 }

@@ -16,7 +16,10 @@ import { t } from "@/app/i18n";
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function trapFocus(panel: HTMLElement, event: KeyboardEvent) {
+export function trapFocus(
+  panel: HTMLElement,
+  event: { shiftKey: boolean; preventDefault: () => void },
+) {
   const focusable = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
   if (!focusable.length) return;
   const first = focusable[0],
@@ -50,6 +53,9 @@ export function useModalDialog<T extends HTMLElement>(
     )?.focus();
     const keydown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") cancelRef.current();
+      if (event.key === "Tab" && panelRef.current) {
+        trapFocus(panelRef.current, event);
+      }
     };
     document.addEventListener("keydown", keydown);
     return () => {

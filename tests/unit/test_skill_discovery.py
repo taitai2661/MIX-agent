@@ -95,19 +95,70 @@ def test_search_filters_by_query(tmp_path):
     write_skill(tmp_path, ".mix/skills", "release-notes", "draft release notes")
     write_skill(tmp_path, ".mix/skills", "expense-report", "build expense reports")
 
-    hits = discovery.search("release", tmp_path)
+    home = tmp_path / "home"
+    hits = discovery.search("release", tmp_path, home=home)
     assert [row["name"] for row in hits] == ["release-notes"]
-    assert discovery.search("nothing-matches", tmp_path) == []
+    assert discovery.search("nothing-matches", tmp_path, home=home) == []
 
 
 def test_find_and_read_resource_round_trip(tmp_path):
     skill_dir = write_skill(tmp_path, ".mix/skills", "packaged")
     (skill_dir / "helper.py").write_text("print('hi')\n", encoding="utf-8")
 
-    pkg = discovery.find("packaged", tmp_path)
+    home = tmp_path / "home"
+    pkg = discovery.find("packaged", tmp_path, home=home)
     assert pkg is not None
     listing = discovery.read_resource(pkg)
     assert [entry["path"] for entry in listing["files"]] == ["helper.py"]
     body = discovery.read_resource(pkg, "helper.py")
     assert body["content"] == "print('hi')\n"
-    assert discovery.find("absent", tmp_path) is None
+    assert discovery.find("absent", tmp_path, home=home) is None
+
+
+def test_a_user_skill_is_discovered_without_a_project(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    write_skill(home, ".claude/skills", "personal", "a personal procedure")
+    monkeypatch.setattr(discovery.config, "SKILLS_DIR", tmp_path / "missing")
+
+    packages, failures = discovery.discover_all(None, home=home)
+    assert failures == []
+    assert [pkg["name"] for pkg in packages] == ["personal"]
+    assert packages[0]["source"] == "user"
+    assert discovery.context_view(packages[0])["id"] == "user:personal"
+
+
+def test_a_project_skill_wins_over_a_user_skill(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    home = tmp_path / "home"
+    write_skill(project, ".mix/skills", "shared", "project version")
+    write_skill(home, ".claude/skills", "shared", "user version")
+    monkeypatch.setattr(discovery.config, "SKILLS_DIR", tmp_path / "missing")
+
+    packages, _failures = discovery.discover_all(project, home=home)
+    assert len(packages) == 1
+    assert packages[0]["description"] == "project version"
+    assert packages[0]["source"] == "project"
+
+
+def test_a_name_that_does_not_match_the_directory_is_reported(tmp_path):
+    write_skill(tmp_path, ".mix/skills", "alpha", "copied")
+    # Rewrite the name so the folder and frontmatter disagree.
+    (tmp_path / ".mix/skills/alpha/SKILL.md").write_text(
+        "---\nname: beta\ndescription: copied\n---\nbody",
+        encoding="utf-8",
+    )
+
+    packages, failures = discovery.discover(tmp_path)
+    assert packages == []
+    assert len(failures) == 1
+    assert "must match" in failures[0]["reason"]
+
+
+def test_the_mounted_skills_directory_is_discovered(tmp_path, monkeypatch):
+    mounted = tmp_path / "mounted"
+    write_skill(mounted, "", "mounted-skill", "from the mount")
+    monkeypatch.setattr(discovery.config, "SKILLS_DIR", mounted)
+
+    packages, _failures = discovery.discover_all(None, home=tmp_path / "home")
+    assert [pkg["name"] for pkg in packages] == ["mounted-skill"]
+    assert packages[0]["source"] == "user"

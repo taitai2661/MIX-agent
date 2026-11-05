@@ -634,7 +634,16 @@ pub async fn retrieve_memories(
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<MemoryHit>> {
-    retrieve_memories_with(storage, &QueryTerms::new(query), limit, None, true).await
+    let fts = ranking_fts_match_query(query);
+    retrieve_memories_with(
+        storage,
+        &QueryTerms::new(query),
+        fts.as_deref(),
+        limit,
+        None,
+        true,
+    )
+    .await
 }
 
 /// Retrieve Memory items, using the vector term whenever `source` can embed
@@ -665,9 +674,11 @@ pub async fn retrieve_memories_hybrid(
             .unwrap_or_default(),
         values,
     });
+    let fts = ranking_fts_match_query(query);
     retrieve_memories_with(
         storage,
         &QueryTerms::new(query),
+        fts.as_deref(),
         limit,
         query_embedding.as_ref(),
         // Same as [`retrieve_memories`]: an explicit recall activates what it
@@ -689,88 +700,132 @@ pub async fn retrieve_memories_hybrid(
 /// Scoring lives in [`score_rows`] so the gate is written once for the lexical
 /// recall, the hybrid recall and §4 source (1) alike; `exclude` is §4's
 /// "a Memory does not propose a link to itself".
+#[allow(clippy::too_many_arguments)]
+fn score_memory_row(
+    terms: &QueryTerms,
+    query_embedding: Option<&QueryEmbedding>,
+    now: chrono::DateTime<Utc>,
+    exclude: Option<&str>,
+    id: String,
+    raw: &str,
+    role: String,
+    scope: String,
+    updated_at_raw: &str,
+) -> Option<ScoredHit> {
+    if exclude == Some(id.as_str()) {
+        return None;
+    }
+    let data = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let title = data.get("title")?.as_str()?.to_string();
+    let content = data.get("content")?.as_str()?.to_string();
+    // Spec §5.1: `lexical = |Q ∩ T| / max(1, |Q|)`, over `terms()`.
+    let lexical = terms.score_parts(&title, &content);
+    let vector = vector_for_pair(&data, query_embedding);
+    // The row must match on at least one axis. Without a vector term this is
+    // the lexical gate retrieval has always had; letting a row in on the
+    // strength of recency alone is exactly the unrelated-memory padding spec
+    // §5.2 forbids ("語彙が一致した候補が 1 件も無ければ空を返す").
+    if lexical <= 0.0 && vector.is_none() {
+        return None;
+    }
+    let updated_at = parse_updated_at(updated_at_raw, now);
+    let score = rank_score(lexical, recency_at(updated_at, now), vector);
+    if score < MIN_SCORE {
+        return None;
+    }
+    Some(ScoredHit {
+        hit: MemoryHit {
+            id,
+            title,
+            content,
+            role,
+            scope,
+            score,
+            // A row the query matched arrived through the query, not through
+            // an edge; only §4's expansion sets this.
+            selection_reason: None,
+        },
+        updated_at,
+    })
+}
+
 async fn score_rows(
     storage: &Storage,
     terms: &QueryTerms,
     query_embedding: Option<&QueryEmbedding>,
     exclude: Option<&str>,
+    fts: Option<&str>,
 ) -> anyhow::Result<Vec<ScoredHit>> {
     use futures_util::TryStreamExt;
     use sqlx::Row;
     let now = Utc::now();
-    // Rows are streamed, not `fetch_all`-ed: a large Memory table used to be
-    // materialised in full, alongside the scored hits, for the duration of every
-    // Run. The rows visited and the scoring are identical; only the peak
-    // allocation shrinks.
-    let query = format!(
-        "SELECT id, data, role, scope, updated_at FROM memories WHERE {}",
-        crate::memory::retrievable_predicate()
-    );
-    let mut rows = sqlx::query(&query).fetch(storage.pool());
-
+    let predicate = crate::memory::retrievable_predicate();
     let mut scored: Vec<ScoredHit> = Vec::new();
-    while let Some(row) = rows.try_next().await? {
-        let id: String = row.try_get("id").unwrap_or_default();
-        if exclude == Some(id.as_str()) {
-            continue;
-        }
-        let Some(data) = row
-            .try_get::<String, _>("data")
-            .ok()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        else {
-            continue;
-        };
-        let Some(title) = data
-            .get("title")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        let Some(content) = data
-            .get("content")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        // Spec §5.1: `lexical = |Q ∩ T| / max(1, |Q|)`, over `terms()`.
-        let lexical = terms.score_parts(&title, &content);
-        let vector = vector_for_pair(&data, query_embedding);
-        // The row must match on at least one axis. Without a vector term this
-        // is the lexical gate retrieval has always had; letting a row in on the
-        // strength of recency alone is exactly the unrelated-memory padding
-        // spec §5.2 forbids ("語彙が一致した候補が 1 件も無ければ空を返す").
-        if lexical <= 0.0 && vector.is_none() {
-            continue;
-        }
-        let updated_at = parse_updated_at(
-            &row.try_get::<String, _>("updated_at").unwrap_or_default(),
-            now,
+
+    // When the query is indexable, let SQLite narrow the candidate set before
+    // Rust parses any JSON. The scorer below is unchanged, so this only
+    // changes which rows are read — not how they rank.
+    if let Some(fts) = fts {
+        let query = format!(
+            "SELECT m.id, m.data, m.role, m.scope, m.updated_at \
+             FROM memory_search s JOIN memories m ON m.id = s.memory_id \
+             WHERE memory_search MATCH ? \
+               AND m.id <> COALESCE(?, '') \
+               AND ({predicate}) \
+             ORDER BY bm25(memory_search) LIMIT 2000"
         );
-        let score = rank_score(lexical, recency_at(updated_at, now), vector);
-        if score < MIN_SCORE {
-            continue;
-        }
-        scored.push(ScoredHit {
-            hit: MemoryHit {
+        let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(&query)
+            .bind(fts)
+            .bind(exclude)
+            .fetch_all(storage.pool())
+            .await
+            .unwrap_or_default();
+        for (id, raw, role, scope, updated_at) in rows {
+            if let Some(hit) = score_memory_row(
+                terms,
+                query_embedding,
+                now,
+                exclude,
                 id,
-                title,
-                content,
-                role: row
-                    .try_get::<String, _>("role")
+                &raw,
+                role,
+                scope,
+                &updated_at,
+            ) {
+                scored.push(hit);
+            }
+        }
+    }
+
+    // Short/CJK queries (the trigram index cannot represent their tokens) and
+    // an empty index fall back to the streaming scan. Streamed, not
+    // `fetch_all`-ed: a large Memory table must not be materialised in full
+    // alongside the scored hits.
+    if scored.is_empty() {
+        let query =
+            format!("SELECT id, data, role, scope, updated_at FROM memories WHERE {predicate}");
+        let mut rows = sqlx::query(&query).fetch(storage.pool());
+        while let Some(row) = rows.try_next().await? {
+            let id: String = row.try_get("id").unwrap_or_default();
+            let Ok(raw) = row.try_get::<String, _>("data") else {
+                continue;
+            };
+            if let Some(hit) = score_memory_row(
+                terms,
+                query_embedding,
+                now,
+                exclude,
+                id,
+                &raw,
+                row.try_get::<String, _>("role")
                     .unwrap_or_else(|_| "fact".into()),
-                scope: row
-                    .try_get::<String, _>("scope")
+                row.try_get::<String, _>("scope")
                     .unwrap_or_else(|_| "user".into()),
-                score,
-                // A row the query matched arrived through the query, not
-                // through an edge; only §4's expansion sets this.
-                selection_reason: None,
-            },
-            updated_at,
-        });
+                &row.try_get::<String, _>("updated_at").unwrap_or_default(),
+            ) {
+                scored.push(hit);
+            }
+        }
     }
 
     scored.sort_by(|a, b| {
@@ -795,13 +850,14 @@ struct Retrieved {
 async fn retrieve_with(
     storage: &Storage,
     terms: &QueryTerms,
+    fts: Option<&str>,
     limit: usize,
     query_embedding: Option<&QueryEmbedding>,
     activate: bool,
 ) -> anyhow::Result<Retrieved> {
     // Spec §2 `result_limit_max`: a caller asking for 500 memories gets 30.
     let limit = limit.min(RESULT_LIMIT_MAX);
-    let mut scored = score_rows(storage, terms, query_embedding, None).await?;
+    let mut scored = score_rows(storage, terms, query_embedding, None, fts).await?;
     scored.truncate(limit);
     let seeds: Vec<MemoryHit> = scored.into_iter().map(|entry| entry.hit).collect();
     let seed_ids: Vec<String> = seeds.iter().map(|hit| hit.id.clone()).collect();
@@ -854,11 +910,12 @@ async fn retrieve_with(
 async fn retrieve_memories_with(
     storage: &Storage,
     terms: &QueryTerms,
+    fts: Option<&str>,
     limit: usize,
     query_embedding: Option<&QueryEmbedding>,
     activate: bool,
 ) -> anyhow::Result<Vec<MemoryHit>> {
-    retrieve_with(storage, terms, limit, query_embedding, activate)
+    retrieve_with(storage, terms, fts, limit, query_embedding, activate)
         .await
         .map(|retrieved| retrieved.hits)
 }
@@ -876,7 +933,16 @@ pub async fn retrieve_memories_debug(
     limit: usize,
     activate: bool,
 ) -> anyhow::Result<(Vec<MemoryHit>, RetrievalDebug)> {
-    let retrieved = retrieve_with(storage, &QueryTerms::new(query), limit, None, activate).await?;
+    let fts = ranking_fts_match_query(query);
+    let retrieved = retrieve_with(
+        storage,
+        &QueryTerms::new(query),
+        fts.as_deref(),
+        limit,
+        None,
+        activate,
+    )
+    .await?;
     Ok((retrieved.hits, retrieved.debug))
 }
 
@@ -892,7 +958,7 @@ pub(crate) async fn suggest_targets(
     exclude_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<MemoryHit>> {
-    let mut scored = score_rows(storage, terms, None, Some(exclude_id)).await?;
+    let mut scored = score_rows(storage, terms, None, Some(exclude_id), None).await?;
     scored.truncate(limit);
     Ok(scored.into_iter().map(|entry| entry.hit).collect())
 }
@@ -903,57 +969,152 @@ pub async fn retrieve_knowledge(
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<KnowledgeHit>> {
-    retrieve_knowledge_with(storage, &QueryTerms::new(query), limit).await
+    retrieve_knowledge_with(
+        storage,
+        &QueryTerms::new(query),
+        ranking_fts_match_query(query),
+        limit,
+    )
+    .await
+}
+
+/// Build a safe FTS5 MATCH expression from a raw query.
+///
+/// Only runs of three or more characters are usable by the `trigram`
+/// tokenizer. Each run is quoted (with embedded quotes doubled), so punctuation
+/// and FTS operators in user input cannot change the query shape. `None`
+/// means the caller should use the lexical scan: short queries (including
+/// 1–2 character CJK) are not indexable.
+pub fn fts_match_query(query: &str) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let flush = |current: &mut String, parts: &mut Vec<String>| {
+        let run = current.trim();
+        if run.chars().count() >= 3 {
+            parts.push(format!("\"{}\"", run.replace('"', "\"\"")));
+        }
+        current.clear();
+    };
+    for ch in query.chars() {
+        if ch.is_whitespace()
+            || matches!(
+                ch,
+                ',' | '.'
+                    | '、'
+                    | '。'
+                    | '，'
+                    | '．'
+                    | '!'
+                    | '?'
+                    | ':'
+                    | ';'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '"'
+                    | '\''
+                    | '/'
+                    | '\\'
+                    | '|'
+                    | '&'
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '='
+                    | '<'
+                    | '>'
+                    | '~'
+                    | '^'
+                    | '@'
+                    | '#'
+                    | '$'
+                    | '%'
+            )
+        {
+            flush(&mut current, &mut parts);
+        } else {
+            current.push(ch);
+        }
+    }
+    flush(&mut current, &mut parts);
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" OR "))
+    }
+}
+
+/// FTS prefilter for the lexical ranker, not for user-facing search.
+///
+/// `QueryTerms::tokenize` score a query by every token it produces, including
+/// 1–2 character Latin words and the unigrams/bigrams it emits for CJK. The
+/// trigram index cannot represent those, so using it would silently drop rows
+/// the ranker would have scored. This helper therefore declines (full scan)
+/// unless every token is at least three characters and uses exactly the
+/// tokenizer's terms, which makes the candidate set identical to `hits`.
+pub fn ranking_fts_match_query(query: &str) -> Option<String> {
+    let terms = tokenize(query);
+    if terms.is_empty() || terms.iter().any(|term| term.chars().count() < 3) {
+        return None;
+    }
+    Some(
+        terms
+            .iter()
+            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" OR "),
+    )
 }
 
 async fn retrieve_knowledge_with(
     storage: &Storage,
     terms: &QueryTerms,
+    fts: Option<String>,
     limit: usize,
 ) -> anyhow::Result<Vec<KnowledgeHit>> {
     use futures_util::TryStreamExt;
     use sqlx::Row;
-    // Streamed for the same reason as Memory: no full-table materialisation per
-    // Run. Rows and scoring are unchanged.
-    let mut rows = sqlx::query("SELECT id, data, created_at FROM knowledge").fetch(storage.pool());
-    let now = Utc::now();
-    let _ = now;
+
+    // Ask SQLite for the candidate set when the query is indexable. The final
+    // ordering still comes from `QueryTerms::score`, so the FTS path changes
+    // *which rows are read*, not how they are ranked.
     let mut scored: Vec<KnowledgeHit> = Vec::new();
-    while let Some(row) = rows.try_next().await? {
-        let Some(data) = row
-            .try_get::<String, _>("data")
-            .ok()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        else {
-            continue;
-        };
-        let Some(text) = data
-            .get("text")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        let filename = data
-            .get("filename")
-            .and_then(|v| v.as_str())
-            .unwrap_or("document")
-            .to_string();
-        let s = terms.score(&text);
-        if s <= 0.0 {
-            continue;
+    if let Some(fts) = fts {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT k.id, k.data FROM knowledge_search s \
+             JOIN knowledge k ON k.id = s.knowledge_id \
+             WHERE knowledge_search MATCH ? \
+             ORDER BY bm25(knowledge_search) LIMIT 500",
+        )
+        .bind(fts)
+        .fetch_all(storage.pool())
+        .await
+        .unwrap_or_default();
+        for (id, raw) in rows {
+            if let Some(hit) = score_knowledge_row(terms, &id, &raw) {
+                scored.push(hit);
+            }
         }
-        scored.push(KnowledgeHit {
-            id: row.try_get::<String, _>("id").unwrap_or_default(),
-            doc_id: data
-                .get("docId")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            filename,
-            text,
-            score: s,
-        });
+    }
+
+    // Short queries, an empty index, or an FTS build without trigram fall back
+    // to the streaming scan. Streamed so a large Knowledge table is never
+    // materialised in one Vec.
+    if scored.is_empty() {
+        let mut rows =
+            sqlx::query("SELECT id, data, created_at FROM knowledge").fetch(storage.pool());
+        while let Some(row) = rows.try_next().await? {
+            let Ok(raw) = row.try_get::<String, _>("data") else {
+                continue;
+            };
+            let id = row.try_get::<String, _>("id").unwrap_or_default();
+            if let Some(hit) = score_knowledge_row(terms, &id, &raw) {
+                scored.push(hit);
+            }
+        }
     }
     scored.sort_by(|a, b| {
         b.score
@@ -977,12 +1138,42 @@ async fn retrieve_knowledge_with(
     Ok(out)
 }
 
+/// Parse one Knowledge JSON row and score it. Returns `None` for malformed rows
+/// and rows with no query overlap, which is what the streaming loop used to do
+/// inline.
+fn score_knowledge_row(terms: &QueryTerms, id: &str, raw: &str) -> Option<KnowledgeHit> {
+    let data = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let text = data.get("text").and_then(|v| v.as_str())?.to_string();
+    let filename = data
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .unwrap_or("document")
+        .to_string();
+    let score = terms.score(&text);
+    if score <= 0.0 {
+        return None;
+    }
+    Some(KnowledgeHit {
+        id: id.to_string(),
+        doc_id: data
+            .get("docId")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        filename,
+        text,
+        score,
+    })
+}
+
 /// Convenience: retrieve both Memory and Knowledge in one call.
 ///
 /// The two lookups are independent tables, so they run concurrently rather than
 /// one after the other.
 pub async fn retrieve_all(storage: &Storage, query: &str) -> anyhow::Result<RetrievedBlock> {
     let terms = QueryTerms::new(query);
+    let memory_fts = ranking_fts_match_query(query);
+    let knowledge_fts = ranking_fts_match_query(query);
     let (memories, knowledge) = tokio::try_join!(
         // Context injection stays on the lexical path: the Run Engine has no
         // embedder, and spec §2.2 guarantees that scoring without a vector is
@@ -996,8 +1187,15 @@ pub async fn retrieve_all(storage: &Storage, query: &str) -> anyhow::Result<Retr
         // coactivation rides the same switch (source (2) is search-side too),
         // while §4's expansion runs either way: a linked row is a fact about
         // the graph, not an activation of it.
-        retrieve_with(storage, &terms, DEFAULT_MEMORY_LIMIT, None, false),
-        retrieve_knowledge_with(storage, &terms, DEFAULT_KNOWLEDGE_LIMIT),
+        retrieve_with(
+            storage,
+            &terms,
+            memory_fts.as_deref(),
+            DEFAULT_MEMORY_LIMIT,
+            None,
+            false,
+        ),
+        retrieve_knowledge_with(storage, &terms, knowledge_fts, DEFAULT_KNOWLEDGE_LIMIT,),
     )?;
     Ok(RetrievedBlock {
         memories: memories.hits,
@@ -1196,5 +1394,26 @@ mod tests {
             "the Knowledge clip must stay at 1200"
         );
         assert!(knowledge_line.ends_with('…'));
+    }
+
+    /// The FTS prefilter must only be used when its candidates are exactly the
+    /// rows the lexical ranker could score. A 2-byte Latin token or CJK
+    /// unigram/bigram cannot be represented by the trigram index, so those
+    /// queries must fall back to the full scan instead of silently losing rows.
+    #[test]
+    fn ranking_fts_declines_unrepresentable_terms() {
+        assert!(ranking_fts_match_query("改善点").is_none());
+        assert!(ranking_fts_match_query("go rust").is_none());
+        assert!(ranking_fts_match_query("a").is_none());
+
+        let query = ranking_fts_match_query("Rust language").expect("indexable");
+        assert_eq!(query, "\"language\" OR \"rust\"");
+    }
+
+    /// The user-facing transcript search may use the trigram index for a CJK
+    /// phrase even though the ranker cannot.
+    #[test]
+    fn message_fts_accepts_a_three_character_cjk_run() {
+        assert_eq!(fts_match_query("改善点"), Some("\"改善点\"".to_string()));
     }
 }

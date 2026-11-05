@@ -326,6 +326,7 @@ where
                     tool_call_id: None,
                     name: None,
                     is_error: false,
+                    native: Vec::new(),
                 });
             }
             // `split_off` moves the retained tail instead of copying it.

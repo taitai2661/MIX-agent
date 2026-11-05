@@ -217,8 +217,9 @@ pub fn is_mutating(name: &str, args: &serde_json::Value) -> bool {
         // must match the registry ids: `outline` / `repo_map` were stale names
         // that no tool answers to, so a read through `symbols` fell through to
         // this default and plan mode refused it.
-        "glob" | "grep" | "symbols" | "skill" | "web_fetch" | "web_fetch_pdf" | "web_search"
-        | "network" | "image_vision" | "browser" | "workspace_check" => false,
+        "glob" | "grep" | "symbols" | "lsp" | "skill" | "skill_resource" | "web_fetch"
+        | "web_fetch_pdf" | "web_search" | "network" | "image_vision" | "browser"
+        | "workspace_check" => false,
         _ => true,
     }
 }
@@ -243,8 +244,8 @@ pub fn is_read_only(name: &str, args: &serde_json::Value) -> bool {
                 .unwrap_or("status"),
             "status" | "diff" | "log" | "show" | "blame"
         ),
-        "glob" | "grep" | "symbols" | "web_fetch" | "web_fetch_pdf" | "web_search"
-        | "image_vision" | "network" | "workspace_check" => true,
+        "glob" | "grep" | "symbols" | "lsp" | "skill" | "skill_resource" | "web_fetch"
+        | "web_fetch_pdf" | "web_search" | "image_vision" | "network" | "workspace_check" => true,
         _ => false,
     }
 }
@@ -287,6 +288,26 @@ pub fn read_key(name: &str, args: &serde_json::Value) -> String {
                 .unwrap_or_default();
             format!("symbols:{action}:{path}:{symbol}")
         }
+        // Diagnostics for a file and a definition lookup at a position are
+        // different reads even though they share `path`.
+        "lsp" => {
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("diagnostics");
+            format!(
+                "lsp:{action}:{path}:{}:{}",
+                args.get("line").and_then(|v| v.as_u64()).unwrap_or(0),
+                args.get("column").and_then(|v| v.as_u64()).unwrap_or(0)
+            )
+        }
+        // A skill body and one of its bundled files are different reads; the
+        // resource path is the identity, not the (empty) generic `path`.
+        "skill" | "skill_resource" => format!(
+            "{name}:{}:{}",
+            args.get("skill").and_then(|v| v.as_str()).unwrap_or(""),
+            path
+        ),
         // `git status` and `git diff --staged` are different reads of the same
         // empty `path`; keying only on the path merged them.
         "git" => {

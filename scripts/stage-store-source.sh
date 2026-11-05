@@ -13,7 +13,12 @@ if [[ "$stage" != /* ]]; then
   stage="$root/$stage"
 fi
 
-rm -rf "$stage"
+if [[ -z "${stage:-}" || "$stage" == "/" || "$stage" == "$root" ]]; then
+  printf 'Refusing to clear stage path: %s\n' "${stage:-<empty>}" >&2
+  exit 1
+fi
+
+rm -rf -- "$stage"
 mkdir -p "$stage/Apps"
 
 cp -R "$root/build" "$stage/build"

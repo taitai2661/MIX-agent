@@ -5,7 +5,10 @@ import { type ReactNode } from "react";
 import { ErrorBox } from "./error-box";
 
 export function useRows<T = Row>(path: string) {
-  return useQuery<T[]>({ queryKey: [path], queryFn: () => api(path) });
+  return useQuery<T[]>({
+    queryKey: [path],
+    queryFn: ({ signal }) => api(path, "GET", undefined, undefined, { signal }),
+  });
 }
 
 export { ErrorBox };

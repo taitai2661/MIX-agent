@@ -101,6 +101,21 @@ impl RunEngine {
         let mut final_text = String::new();
         let mut final_reasoning = String::new();
         let mut last_usage: Option<Usage> = None;
+        // Cumulative across every turn, unlike `last_usage` which the status
+        // event keeps for per-turn consumers. The context window is copied in
+        // once so the UI can draw its meter without another query.
+        let mut totals = RunUsage {
+            context_window: request.context_window,
+            ..Default::default()
+        };
+        // A resumed Run continues the same budget; it must continue the same
+        // spend total too. The latest usage event is the durable checkpoint.
+        if request.resume_from.is_some() {
+            if let Some(mut previous) = self.latest_usage(run_id).await {
+                previous.context_window = request.context_window;
+                totals = previous;
+            }
+        }
         let mut last_finish: Option<String> = None;
         let mut stagnation = StagnationDetector::new();
         let mut verification = VerificationLedger::new(request.verify_command.clone());
@@ -175,6 +190,7 @@ impl RunEngine {
                         final_reasoning,
                         all_tool_calls,
                         last_usage,
+                        totals.clone(),
                         last_finish,
                         steps,
                     )
@@ -220,6 +236,7 @@ impl RunEngine {
                                 final_reasoning,
                                 all_tool_calls,
                                 last_usage,
+                                totals.clone(),
                                 last_finish,
                                 steps,
                             )
@@ -250,6 +267,7 @@ impl RunEngine {
                                     reasoning: final_reasoning,
                                     tool_calls: all_tool_calls,
                                     usage: last_usage,
+                                    totals: totals.clone(),
                                     finish_reason: last_finish,
                                     steps,
                                 },
@@ -377,6 +395,7 @@ impl RunEngine {
                         turn.reasoning,
                         all_tool_calls,
                         last_usage,
+                        totals.clone(),
                         last_finish,
                         steps,
                     )
@@ -398,6 +417,7 @@ impl RunEngine {
                             reasoning: final_reasoning,
                             tool_calls: all_tool_calls,
                             usage: last_usage,
+                            totals: totals.clone(),
                             finish_reason: last_finish,
                             steps,
                         },
@@ -407,9 +427,23 @@ impl RunEngine {
 
             // Spend the turn against the token ceiling. `last_usage` is the
             // *latest* turn's usage, which the UI shows per turn; the budget
-            // needs the running total.
+            // and the Usage panel need the running total.
             if let Some(usage) = &turn.usage {
                 budget.record_usage(usage.input_tokens, usage.output_tokens);
+                totals.record(usage);
+                // Price the cumulative totals, not the last turn: a Run that
+                // made ten cheap turns must not report only the final one.
+                totals.estimated_cost_usd = if provider.billing() == BillingMode::Subscription {
+                    Some(0.0)
+                } else {
+                    crate::pricing::estimate_cost_usd(request.wire_model(), &totals.as_usage())
+                };
+                self.emit(
+                    run_id,
+                    "usage",
+                    serde_json::to_value(&totals).unwrap_or(serde_json::Value::Null),
+                )
+                .await;
             }
             last_usage = turn.usage.clone();
             last_finish = turn.finish_reason.clone();
@@ -611,7 +645,8 @@ impl RunEngine {
 
             // Assistant turn requested Tools — record it and execute them.
             let assistant_message =
-                Message::assistant_with_tools(turn.text.clone(), turn.tool_calls.clone());
+                Message::assistant_with_tools(turn.text.clone(), turn.tool_calls.clone())
+                    .with_native(turn.native_items.clone());
             self.append_message(
                 request.conversation_id,
                 run_id,
@@ -681,12 +716,14 @@ impl RunEngine {
                 let effect = destructive_reason(&call.function.name, args);
                 destructive[index] = effect.clone();
                 if self.policy.strict_verification && effect.is_some() {
+                    let mut redacted_args = args.clone();
+                    mixd_tools::redact::redact_arguments(&mut redacted_args);
                     self.emit(
                         run_id,
                         "destructive_tool_called",
                         serde_json::json!({
                             "tool": call.function.name,
-                            "arguments": args,
+                            "arguments": redacted_args,
                             "reason": effect.clone().unwrap_or_default(),
                         }),
                     )
@@ -773,6 +810,9 @@ impl RunEngine {
                     biased;
                     _ = cancellation.cancelled_signal() => {
                         tracing::info!(%run_id, tool = %call.function.name, "cancelled mid-tool; stopping");
+                        // Drop the tool future, then make sure a persistent
+                        // terminal shell does not keep executing the command.
+                        self.tools.read().await.cancel_run(&run_id.to_string()).await;
                         break;
                     }
                     result = self.dispatch_tool(run_id, &request, call, args) => result,
@@ -820,16 +860,17 @@ impl RunEngine {
                             .and_then(|value| value.as_u64()),
                     ) {
                         if fingerprint != 0 {
-                            let key = normalize_tool_path(
+                            if let Some(key) = normalize_tool_path(
                                 request.root_path.as_deref().map(std::path::Path::new),
                                 path,
-                            );
-                            self.read_fingerprints
-                                .lock()
-                                .await
-                                .entry(run_id)
-                                .or_default()
-                                .insert(key, fingerprint);
+                            ) {
+                                self.read_fingerprints
+                                    .lock()
+                                    .await
+                                    .entry(run_id)
+                                    .or_default()
+                                    .insert(key, fingerprint);
+                            }
                         }
                     }
                 }
@@ -1066,11 +1107,13 @@ impl RunEngine {
                 "steps": steps,
                 "tool_calls": total_tool_calls,
                 "usage": last_usage,
+                "totals": totals,
                 "tokensUsed": budget.tokens_used,
                 "tokenLimit": budget.token_limit,
-                "estimatedCostUsd": last_usage
-                    .as_ref()
-                    .and_then(|usage| crate::pricing::estimate_cost_usd(request.wire_model(), usage)),
+                // Cumulative, matching the last `usage` event. Keeping the
+                // per-turn estimate here made a finished Run look cheaper than
+                // the live meter it replaced.
+                "estimatedCostUsd": totals.estimated_cost_usd,
             }),
             RunOutcome {
                 status: RunStatus::Completed,
@@ -1078,6 +1121,7 @@ impl RunEngine {
                 reasoning: final_reasoning,
                 tool_calls: all_tool_calls,
                 usage: last_usage,
+                totals: totals.clone(),
                 finish_reason: last_finish,
                 steps,
             },

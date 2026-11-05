@@ -45,6 +45,21 @@ function ProviderIcon({ kind }: { kind: string }) {
   return <Icon size={15} className="shrink-0 text-faint" aria-hidden="true" />;
 }
 
+/** The Rust catalogue ships preset categories as Japanese identifiers
+ *  (`直接接続`, `ゲートウェイ`, …), so the `<optgroup>` label used to stay
+ *  Japanese in the English UI. Listing the known categories keeps the lookup
+ *  literal-based — the i18n coverage test only sees literal translation
+ *  arguments — while an unknown category added to the catalogue still falls
+ *  back to its raw name instead of disappearing. */
+const PRESET_CATEGORY_KEYS: Record<string, string> = {
+  直接接続: "直接接続",
+  ゲートウェイ: "ゲートウェイ",
+  ローカル: "ローカル",
+  国内: "国内",
+  OpenAI互換: "OpenAI互換",
+  サブスクリプション: "サブスクリプション",
+};
+
 export function ProvidersPane() {
   const queryClient = useQueryClient();
   const providers = useProviders();
@@ -168,7 +183,10 @@ export function ProvidersPane() {
 
   // `?? []` allocates a fresh array every render while the query is in flight,
   // which would invalidate `filtered` on each one.
-  const list = useMemo(() => providers.data ?? [], [providers.data]);
+  const list = useMemo(
+    () => (providers.data ?? []).filter((provider) => !provider.dedicated),
+    [providers.data],
+  );
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return list;
@@ -198,7 +216,10 @@ export function ProvidersPane() {
                 {presets.isPending ? t("読み込み中…") : t("プリセットを選択…")}
               </option>
               {presetGroups.map(([category, items]) => (
-                <optgroup key={category} label={category}>
+                <optgroup
+                  key={category}
+                  label={t(PRESET_CATEGORY_KEYS[category] ?? category)}
+                >
                   {items.map((p) => (
                     <option key={p.slug} value={p.slug}>
                       {p.label}
@@ -271,7 +292,9 @@ export function ProvidersPane() {
         <EmptyState
           icon={<KeyRound size={22} />}
           title={t("プロバイダーが未設定です")}
-          sub={t("プリセットを選んで API キーを入力してください。")}
+          sub={t(
+            "プリセットを選んで API キーを入力してください。ChatGPT は設定 ▸ ChatGPT で接続します。",
+          )}
         />
       ) : (
         <>
@@ -299,157 +322,161 @@ export function ProvidersPane() {
                 const count = modelCounts.get(p.id) ?? 0;
                 const synced = syncCounts[p.id];
                 return (
-                  <Card key={p.id}>
-                    {editing ? (
-                      <div className="flex flex-col gap-3">
-                        <Field label={t("ラベル")}>
-                          <Input
-                            value={editLabel}
-                            onChange={(e) => setEditLabel(e.target.value)}
-                          />
-                        </Field>
-                        <Field label="Base URL">
-                          <Input
-                            value={editBaseUrl}
-                            onChange={(e) => setEditBaseUrl(e.target.value)}
-                          />
-                        </Field>
-                        <Field
-                          label={t("API キー")}
-                          hint={t("空欄のままにすると既存のキーを保持します")}
-                        >
-                          <Input
-                            type="password"
-                            placeholder="••••••••"
-                            value={editApiKey}
-                            onChange={(e) => setEditApiKey(e.target.value)}
-                          />
-                        </Field>
-                        <Row align="end">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setEditingId(null)}
-                          >
-                            {t("キャンセル")}
-                          </Button>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            disabled={
-                              !editLabel.trim() || updateProvider.isPending
-                            }
-                            onClick={() =>
-                              updateProvider.mutate({
-                                id: p.id,
-                                label: editLabel.trim(),
-                                base_url: editBaseUrl.trim() || null,
-                                api_key: editApiKey || null,
-                                enabled: p.enabled,
-                              })
-                            }
-                          >
-                            {updateProvider.isPending ? (
-                              <Spinner size={12} />
-                            ) : null}
-                            {t("保存")}
-                          </Button>
-                        </Row>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-start gap-2.5">
-                          <ProviderIcon kind={p.kind} />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-fg">
-                              {p.label}
-                            </div>
-                            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                              <Badge size="sm" className="font-mono">
-                                {p.kind}
-                              </Badge>
-                              {p.has_api_key ? (
-                                <Badge tone="success" size="sm">
-                                  {t("保存済み")}
-                                </Badge>
-                              ) : (
-                                <Badge tone="warning" size="sm">
-                                  {t("未設定")}
-                                </Badge>
-                              )}
-                              {p.preset && (
-                                <span className="truncate text-2xs text-faint">
-                                  {p.preset}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <label className="flex shrink-0 items-center gap-1.5 text-2xs text-muted">
-                            <span>{p.enabled ? t("有効") : t("無効")}</span>
-                            <Switch
-                              checked={p.enabled}
-                              onCheckedChange={() => toggleEnabled(p)}
-                              aria-label={tf("{name} を有効にする", {
-                                name: p.label,
-                              })}
+                  <div key={p.id} className="flex flex-col gap-3">
+                    <Card>
+                      {editing ? (
+                        <div className="flex flex-col gap-3">
+                          <Field label={t("ラベル")}>
+                            <Input
+                              value={editLabel}
+                              onChange={(e) => setEditLabel(e.target.value)}
                             />
-                          </label>
-                        </div>
-
-                        <div
-                          className={payloadBlock}
-                          title={p.base_url ?? undefined}
-                        >
-                          {p.base_url ?? "—"}
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
-                          <span>{tf("{n} モデル", { n: count })}</span>
-                          {synced !== undefined && (
-                            <Badge tone="success" size="sm">
-                              {tf("{n} 件を取り込みました", { n: synced })}
-                            </Badge>
-                          )}
-                        </div>
-
-                        <Row align="between" className="gap-1.5">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={syncProvider.isPending}
-                            onClick={() => syncProvider.mutate(p.id)}
+                          </Field>
+                          <Field label="Base URL">
+                            <Input
+                              value={editBaseUrl}
+                              onChange={(e) => setEditBaseUrl(e.target.value)}
+                            />
+                          </Field>
+                          <Field
+                            label={t("API キー")}
+                            hint={t("空欄のままにすると既存のキーを保持します")}
                           >
-                            {syncProvider.isPending &&
-                            syncProvider.variables === p.id ? (
-                              <Spinner size={12} />
-                            ) : (
-                              <RefreshCw size={12} />
-                            )}
-                            {t("接続してモデルを取得")}
-                          </Button>
-                          <span className="flex items-center gap-1">
+                            <Input
+                              type="password"
+                              placeholder="••••••••"
+                              value={editApiKey}
+                              onChange={(e) => setEditApiKey(e.target.value)}
+                            />
+                          </Field>
+                          <Row align="end">
                             <Button
                               variant="ghost"
-                              size="icon-sm"
-                              title={t("編集")}
-                              aria-label={t("編集")}
-                              onClick={() => startEdit(p)}
+                              size="sm"
+                              onClick={() => setEditingId(null)}
                             >
-                              <Pencil size={13} />
+                              {t("キャンセル")}
                             </Button>
-                            <DeleteIconButton
-                              title={t("プロバイダーを削除しますか？")}
-                              description={t(
-                                "このプロバイダーのモデル一覧も消えます。",
-                              )}
-                              pending={deleteProvider.isPending}
-                              onDelete={() => deleteProvider.mutate(p.id)}
-                            />
-                          </span>
-                        </Row>
-                      </>
-                    )}
-                  </Card>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={
+                                !editLabel.trim() || updateProvider.isPending
+                              }
+                              onClick={() =>
+                                updateProvider.mutate({
+                                  id: p.id,
+                                  label: editLabel.trim(),
+                                  base_url: editBaseUrl.trim() || null,
+                                  api_key: editApiKey || null,
+                                  enabled: p.enabled,
+                                })
+                              }
+                            >
+                              {updateProvider.isPending ? (
+                                <Spinner size={12} />
+                              ) : null}
+                              {t("保存")}
+                            </Button>
+                          </Row>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-2.5">
+                            <ProviderIcon kind={p.kind} />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium text-fg">
+                                {p.label}
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                <Badge size="sm" className="font-mono">
+                                  {p.kind}
+                                </Badge>
+                                {p.has_api_key ? (
+                                  <Badge tone="success" size="sm">
+                                    {t("保存済み")}
+                                  </Badge>
+                                ) : (
+                                  <Badge tone="warning" size="sm">
+                                    {t("未設定")}
+                                  </Badge>
+                                )}
+                                {p.preset && (
+                                  <span className="truncate text-2xs text-faint">
+                                    {p.preset}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <label className="flex shrink-0 items-center gap-1.5 text-2xs text-muted">
+                              <span>{p.enabled ? t("有効") : t("無効")}</span>
+                              <Switch
+                                checked={p.enabled}
+                                onCheckedChange={() => toggleEnabled(p)}
+                                aria-label={tf("{name} を有効にする", {
+                                  name: p.label,
+                                })}
+                              />
+                            </label>
+                          </div>
+
+                          <div
+                            className={payloadBlock}
+                            title={p.base_url ?? undefined}
+                          >
+                            {p.base_url ?? "—"}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
+                            <span>{tf("{n} モデル", { n: count })}</span>
+                            {synced !== undefined && (
+                              <Badge tone="success" size="sm">
+                                {tf("{n} 件を取り込みました", { n: synced })}
+                              </Badge>
+                            )}
+                          </div>
+
+                          <Row align="between" className="gap-1.5">
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={syncProvider.isPending}
+                                onClick={() => syncProvider.mutate(p.id)}
+                              >
+                                {syncProvider.isPending &&
+                                syncProvider.variables === p.id ? (
+                                  <Spinner size={12} />
+                                ) : (
+                                  <RefreshCw size={12} />
+                                )}
+                                {t("接続してモデルを取得")}
+                              </Button>
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title={t("編集")}
+                                aria-label={t("編集")}
+                                onClick={() => startEdit(p)}
+                              >
+                                <Pencil size={13} />
+                              </Button>
+                              <DeleteIconButton
+                                title={t("プロバイダーを削除しますか？")}
+                                description={t(
+                                  "このプロバイダーのモデル一覧も消えます。",
+                                )}
+                                pending={deleteProvider.isPending}
+                                onDelete={() => deleteProvider.mutate(p.id)}
+                              />
+                            </span>
+                          </Row>
+                        </>
+                      )}
+                    </Card>
+                  </div>
                 );
               })}
             </div>

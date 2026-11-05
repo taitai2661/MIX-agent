@@ -87,6 +87,11 @@ function measureCap(row: HTMLElement): number | null {
   const widths: number[] = [];
 
   for (const panel of row.querySelectorAll<HTMLElement>("[data-side-panel]")) {
+    // The right panel can be an absolute overlay (the default) instead of a
+    // docked sibling. It still carries `data-side-panel`, but out-of-flow
+    // panes reserve no inline width and must not shrink the sidebar/file tree
+    // when they open.
+    if (getComputedStyle(panel).position === "absolute") continue;
     const rect = panel.getBoundingClientRect();
     // A closed sidebar is pushed out with a negative margin rather than
     // unmounted, so it still measures — but it reserves no width.

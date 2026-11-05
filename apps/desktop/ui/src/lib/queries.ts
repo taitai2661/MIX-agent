@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { PENDING_APPROVALS_POLL_MS } from "@/lib/settings";
 import { useUi } from "@/lib/ui";
@@ -23,6 +23,13 @@ export const PROVIDERS_STALE_MS = 30_000;
 
 export const PROJECTS_QUERY_KEY = ["projects"] as const;
 export const CONVERSATIONS_QUERY_KEY = ["conversations"] as const;
+/** Page cache shares the `conversations` prefix, so every existing
+ *  `invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY })` also refreshes
+ *  the paginated sidebar without touching each call site. */
+export const CONVERSATION_PAGES_QUERY_KEY = [
+  ...CONVERSATIONS_QUERY_KEY,
+  "pages",
+] as const;
 export const PENDING_APPROVALS_QUERY_KEY = ["pending_approvals"] as const;
 export const PROVIDERS_QUERY_KEY = ["providers"] as const;
 export const PROVIDER_PRESETS_QUERY_KEY = ["provider_presets"] as const;
@@ -30,7 +37,15 @@ export const MODELS_QUERY_KEY = ["models"] as const;
 export const LOCAL_RUNTIMES_QUERY_KEY = ["local_runtimes"] as const;
 export const LOCAL_JOBS_QUERY_KEY = ["local_jobs"] as const;
 
-export const gitStatusKey = (root: string) => ["git_status", root] as const;
+export const gitStatusKey = (root: string, allUntracked = false) =>
+  ["git_status", root, allUntracked] as const;
+
+/** Polling stops while the WebView is hidden (for example, minimised to the
+ *  tray). A hidden window has no visible file decorations to refresh. */
+export const visiblePoll = (ms: number) => (): number | false =>
+  typeof document !== "undefined" && document.visibilityState === "hidden"
+    ? false
+    : ms;
 
 /** Every configured provider.
  *
@@ -79,7 +94,7 @@ export function useLocalRuntimes() {
     queryKey: LOCAL_RUNTIMES_QUERY_KEY,
     queryFn: api.localRuntimeSnapshot,
     staleTime: 0,
-    refetchInterval: 10_000,
+    refetchInterval: visiblePoll(10_000),
   });
 }
 
@@ -91,13 +106,104 @@ export function useProjects() {
   });
 }
 
-export function useConversations() {
+export const CONVERSATION_QUERY_KEY = [
+  ...CONVERSATIONS_QUERY_KEY,
+  "detail",
+] as const;
+export const CONVERSATION_STATS_QUERY_KEY = [
+  ...CONVERSATIONS_QUERY_KEY,
+  "stats",
+] as const;
+
+/** One thread by id. Used for titles/selection so callers no longer depend on
+ *  the bounded `list_conversations` list. */
+export function useConversation(id: string | null | undefined) {
   return useQuery({
-    queryKey: CONVERSATIONS_QUERY_KEY,
-    queryFn: api.listConversations,
+    queryKey: [...CONVERSATION_QUERY_KEY, id ?? ""],
+    queryFn: () => api.getConversation(id!),
+    enabled: !!id,
     staleTime: PROJECTS_STALE_MS,
   });
 }
+
+/** Newest thread in any of `modes` (the surface's default selection). */
+export function useLatestConversation(modes: string[]) {
+  return useQuery({
+    queryKey: [...CONVERSATIONS_QUERY_KEY, "latest", modes.join(",")],
+    queryFn: () => api.latestConversation(modes),
+    staleTime: PROJECTS_STALE_MS,
+  });
+}
+
+/** Threads linked to one project, newest first. */
+export function useConversationsForProject(
+  projectId: string | null | undefined,
+) {
+  return useQuery({
+    queryKey: [...CONVERSATIONS_QUERY_KEY, "by-project", projectId ?? ""],
+    queryFn: () => api.listConversationsForProject(projectId!),
+    enabled: !!projectId,
+    staleTime: PROJECTS_STALE_MS,
+  });
+}
+
+/** Server-side title search across every thread. */
+export function useConversationSearch(query: string) {
+  const trimmed = query.trim();
+  return useQuery({
+    queryKey: [...CONVERSATIONS_QUERY_KEY, "search", trimmed],
+    queryFn: () => api.searchConversations(trimmed),
+    enabled: trimmed.length > 0,
+    staleTime: 30_000,
+  });
+}
+
+/** Cheap aggregate counts for the welcome card. */
+export function useConversationStats() {
+  return useQuery({
+    queryKey: CONVERSATION_STATS_QUERY_KEY,
+    queryFn: api.conversationStats,
+    staleTime: PROJECTS_STALE_MS,
+  });
+}
+
+/** First page only, for the palette's idle state. */
+export function useRecentConversations(limit = 50, enabled = true) {
+  return useQuery({
+    queryKey: [...CONVERSATIONS_QUERY_KEY, "recent", limit],
+    queryFn: () => api.listConversationsPage(limit, null),
+    enabled,
+    staleTime: PROJECTS_STALE_MS,
+  });
+}
+
+/** Paginated thread list for the sidebar.
+ *
+ *  The first page paints immediately; older pages load when the user scrolls
+ *  near the end (or presses the explicit button). Keeping the cursor in the
+ *  page param means a thread renamed or moved between requests cannot make the
+ *  next page repeat a row. */
+export function useConversationPages() {
+  return useInfiniteQuery({
+    queryKey: CONVERSATION_PAGES_QUERY_KEY,
+    queryFn: ({ pageParam }) =>
+      api.listConversationsPage(
+        CONVERSATION_PAGE_SIZE,
+        pageParam as { cursor: string; id: string } | null,
+      ),
+    initialPageParam: null as { cursor: string; id: string } | null,
+    getNextPageParam: (last) => {
+      const tail = last.items[last.items.length - 1];
+      return last.has_more && tail
+        ? { cursor: tail.cursor, id: tail.id }
+        : undefined;
+    },
+    staleTime: PROJECTS_STALE_MS,
+  });
+}
+
+/** Matches the backend default. Kept here so the UI and the command agree. */
+export const CONVERSATION_PAGE_SIZE = 50;
 
 /** The project currently driving the file tree / diff scope. */
 export function useActiveProject(): ProjectView | null {
@@ -122,7 +228,7 @@ export function usePendingApprovals() {
   return useQuery({
     queryKey: PENDING_APPROVALS_QUERY_KEY,
     queryFn: api.listPendingApprovals,
-    refetchInterval: PENDING_APPROVALS_POLL_MS,
+    refetchInterval: visiblePoll(PENDING_APPROVALS_POLL_MS),
   });
 }
 
@@ -132,11 +238,11 @@ export function usePendingApprovals() {
  * their own 15s timer — two `git status` subprocesses per interval — while
  * sitting on one cache entry.
  */
-export function useGitStatus(root: string | null) {
+export function useGitStatus(root: string | null, allUntracked = false) {
   return useQuery({
-    queryKey: gitStatusKey(root ?? ""),
-    queryFn: () => api.gitStatus(root!),
+    queryKey: gitStatusKey(root ?? "", allUntracked),
+    queryFn: () => api.gitStatus(root!, allUntracked),
     enabled: !!root,
-    refetchInterval: GIT_STATUS_POLL_MS,
+    refetchInterval: visiblePoll(GIT_STATUS_POLL_MS),
   });
 }

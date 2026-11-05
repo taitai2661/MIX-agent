@@ -1,5 +1,7 @@
 //! MIX-agent Desktop application library.
 
+pub mod autostart;
+pub mod cli;
 pub mod commands;
 pub mod deep_link;
 pub mod diff;
@@ -13,12 +15,13 @@ pub mod push;
 pub mod run_events;
 pub mod scheduler;
 pub mod tray;
+pub mod workspace_baseline;
 
 use mixd_core::runs::engine::{ProviderRegistry, RunEngine};
 use mixd_mcp::McpHost;
 use mixd_providers::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAiProvider,
-    preset as preset_catalog, Provider,
+    anthropic::AnthropicProvider, chatgpt::ChatGptProvider, gemini::GeminiProvider,
+    openai::OpenAiProvider, preset as preset_catalog, Provider,
 };
 use mixd_storage::{SecretStore, Storage};
 use std::sync::Arc;
@@ -237,13 +240,44 @@ impl mixd_tools::skill::SkillSource for DbSkillSource {
             .filter_map(|raw| serde_json::from_str(raw).ok())
             .map(
                 |skill: mixd_core::skills::Skill| mixd_tools::skill::SkillSummary {
+                    resources: skill
+                        .resources
+                        .iter()
+                        .map(|resource| resource.path.clone())
+                        .collect(),
                     name: skill.name,
                     description: skill.description,
                     body_markdown: skill.body_markdown,
+                    license: skill.license,
+                    compatibility: skill.compatibility,
+                    metadata: skill.metadata,
                     allowed_tools: skill.allowed_tools,
                 },
             )
             .collect())
+    }
+
+    async fn resource(
+        &self,
+        _root: Option<&str>,
+        skill: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<mixd_tools::skill::SkillResourceData>> {
+        let Some(skill) =
+            mixd_core::skills::SkillService::get(self.storage.as_ref(), skill).await?
+        else {
+            return Ok(None);
+        };
+        Ok(skill
+            .resources
+            .into_iter()
+            .find(|resource| resource.path == path)
+            .map(|resource| mixd_tools::skill::SkillResourceData {
+                path: resource.path,
+                content: resource.content,
+                binary: resource.binary,
+                size: resource.size,
+            }))
     }
 }
 
@@ -470,7 +504,347 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
                 RunStatus::Completed | RunStatus::Cancelled => None,
                 other => Some(format!("sub-agent ended as {}", other.as_str())),
             },
+            ..Default::default()
         })
+    }
+
+    /// Run the delegate in a detached git worktree.
+    ///
+    /// Two fan-out tasks editing the same file used to race in the parent
+    /// workspace; the last writer won and the diff was unreviewable. A worktree
+    /// gives each delegate a private checkout and the parent gets a patch it can
+    /// apply deliberately.
+    async fn delegate_isolated(
+        &self,
+        parent: &mixd_tools::ToolContext,
+        profile: &mixd_tools::agent::AgentProfile,
+        task: &str,
+    ) -> anyhow::Result<mixd_tools::agent::DelegateResult> {
+        let Some(root) = parent.root_path.as_deref() else {
+            let mut fallback = self.delegate(parent, profile, task).await?;
+            fallback
+                .text
+                .push_str("\n\n(worktree isolation unavailable: the run has no workspace root)");
+            return Ok(fallback);
+        };
+        let Some((worktree, base)) = prepare_delegate_worktree(root, parent.run_id).await else {
+            let mut fallback = self.delegate(parent, profile, task).await?;
+            fallback.text.push_str(
+                "\n\n(worktree isolation unavailable: the workspace is not a git repository \
+                 or git worktree failed; changes went to the parent workspace)",
+            );
+            return Ok(fallback);
+        };
+
+        let mut scoped = parent.clone();
+        scoped.root_path = Some(worktree.to_string_lossy().into_owned());
+        let outcome = self.delegate(&scoped, profile, task).await;
+        let (diff, changed_files) = collect_worktree_diff(&worktree, &base).await;
+        cleanup_delegate_worktree(root, &worktree).await;
+
+        let mut result = outcome?;
+        // The worktree was temporary: `cleanup_delegate_worktree` has already
+        // removed it, so returning its path would point at a directory that no
+        // longer exists. The diff and changed-file list are the durable result.
+        result.diff = diff;
+        result.changed_files = changed_files;
+        Ok(result)
+    }
+}
+
+/// Remove delegate worktrees left behind by a crash or a killed process.
+///
+/// The git metadata is pruned by `prepare_delegate_worktree` in the repository
+/// that owns it; this removes the checkout directories themselves. Only stale
+/// entries are touched so a delegate running in another window is safe.
+pub async fn cleanup_stale_worktrees(data_dir: &std::path::Path) {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+    let base = data_dir.join("worktrees");
+    let Ok(mut entries) = tokio::fs::read_dir(&base).await else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let stale = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > MAX_AGE);
+        if stale {
+            let _ = tokio::fs::remove_dir_all(&path).await;
+        }
+    }
+}
+
+/// Git helpers for isolated delegation. Kept outside the trait impl so they can
+/// be tested without an engine.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Same cap the transcript uses for a delegated patch.
+const DELEGATE_DIFF_LIMIT: usize = 128 * 1024;
+
+fn git_command(cwd: &std::path::Path, args: &[&str]) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .current_dir(cwd)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .kill_on_drop(true);
+    command
+}
+
+async fn run_git(cwd: &std::path::Path, args: &[&str]) -> anyhow::Result<std::process::Output> {
+    let mut command = git_command(cwd, args);
+    command.stdout(std::process::Stdio::piped());
+    tokio::time::timeout(GIT_TIMEOUT, command.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("git {} timed out", args.join(" ")))?
+        .map_err(Into::into)
+}
+
+/// Run git with extra environment variables (used for a private index file).
+async fn run_git_env(
+    cwd: &std::path::Path,
+    args: &[&str],
+    envs: &[(&str, &std::ffi::OsStr)],
+) -> anyhow::Result<std::process::Output> {
+    let mut command = git_command(cwd, args);
+    for (key, value) in envs {
+        command.env(*key, *value);
+    }
+    command.stdout(std::process::Stdio::piped());
+    tokio::time::timeout(GIT_TIMEOUT, command.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("git {} timed out", args.join(" ")))?
+        .map_err(Into::into)
+}
+
+/// Read at most `limit` bytes of git output, killing the child instead of
+/// buffering a multi-megabyte binary patch in memory.
+async fn run_git_limited(
+    cwd: &std::path::Path,
+    args: &[&str],
+    limit: usize,
+) -> anyhow::Result<Option<String>> {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut command = git_command(cwd, args);
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = command.spawn()?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git produced no stdout"))?;
+    let mut data = Vec::new();
+    let read = async {
+        let mut limited = (&mut stdout).take((limit as u64).saturating_add(1));
+        limited.read_to_end(&mut data).await?;
+        Ok::<bool, std::io::Error>(data.len() > limit)
+    };
+    let truncated = match tokio::time::timeout(GIT_TIMEOUT, read).await {
+        Ok(result) => result?,
+        Err(_) => {
+            let _ = child.kill().await;
+            anyhow::bail!("git {} timed out", args.join(" "));
+        }
+    };
+    if truncated {
+        let _ = child.kill().await;
+    }
+    let _ = child.wait().await;
+    if data.is_empty() {
+        return Ok(None);
+    }
+    if data.len() > limit {
+        let mut cut = limit;
+        while cut > 0 && std::str::from_utf8(&data[..cut]).is_err() {
+            cut -= 1;
+        }
+        data.truncate(cut);
+    }
+    let mut text = String::from_utf8_lossy(&data).into_owned();
+    if truncated {
+        text.push_str("\n… (diff truncated)");
+    }
+    Ok(Some(text))
+}
+
+/// Build a commit that contains the parent worktree *including* untracked
+/// files, without touching the parent's real index.
+///
+/// `git stash create` only records tracked paths, so a delegate used to open a
+/// checkout where a new (untracked) file simply did not exist. A private
+/// `GIT_INDEX_FILE` lets `git add -A` capture those paths and `write-tree`
+/// turn the result into a commit the temporary worktree can check out.
+async fn delegate_base_commit(root: &std::path::Path, head: &str) -> Option<String> {
+    let index = std::env::temp_dir().join(format!(
+        "mix-agent-delegate-index-{}.idx",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let index_env = [("GIT_INDEX_FILE", index.as_os_str())];
+    let result = async {
+        let read = run_git_env(root, &["read-tree", head], &index_env)
+            .await
+            .ok()?;
+        if !read.status.success() {
+            return None;
+        }
+        let added = run_git_env(root, &["add", "-A"], &index_env).await.ok()?;
+        if !added.status.success() {
+            return None;
+        }
+        let tree = run_git_env(root, &["write-tree"], &index_env).await.ok()?;
+        if !tree.status.success() {
+            return None;
+        }
+        let tree_oid = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+        if tree_oid.is_empty() {
+            return None;
+        }
+        let head_tree = run_git(root, &["rev-parse", &format!("{head}^{{tree}}")])
+            .await
+            .ok()?;
+        if head_tree.status.success()
+            && String::from_utf8_lossy(&head_tree.stdout).trim() == tree_oid
+        {
+            return Some(head.to_string());
+        }
+        let identity = [
+            ("GIT_AUTHOR_NAME", "MIX-agent"),
+            ("GIT_AUTHOR_EMAIL", "mix@localhost"),
+            ("GIT_COMMITTER_NAME", "MIX-agent"),
+            ("GIT_COMMITTER_EMAIL", "mix@localhost"),
+        ];
+        let mut args = vec!["commit-tree", tree_oid.as_str(), "-p", head, "-m"];
+        args.push("MIX-agent delegate base");
+        let commit = run_git(root, &args).await.ok()?;
+        // Re-run with the identity only when the host has none configured.
+        let commit = if commit.status.success() {
+            commit
+        } else {
+            let envs: Vec<(&str, &std::ffi::OsStr)> = identity
+                .iter()
+                .map(|(key, value)| (*key, std::ffi::OsStr::new(*value)))
+                .collect();
+            run_git_env(root, &args, &envs).await.ok()?
+        };
+        if !commit.status.success() {
+            return None;
+        }
+        let oid = String::from_utf8_lossy(&commit.stdout).trim().to_string();
+        (!oid.is_empty()).then_some(oid)
+    }
+    .await;
+    let _ = tokio::fs::remove_file(&index).await;
+    result
+}
+
+async fn prepare_delegate_worktree(
+    root: &str,
+    run_id: uuid::Uuid,
+) -> Option<(std::path::PathBuf, String)> {
+    let root_path = std::path::PathBuf::from(root);
+    if !root_path.is_dir() {
+        return None;
+    }
+    let inside = run_git(&root_path, &["rev-parse", "--is-inside-work-tree"])
+        .await
+        .ok()?;
+    if !inside.status.success() || String::from_utf8_lossy(&inside.stdout).trim() != "true" {
+        return None;
+    }
+    // Remove metadata for worktrees whose directory was deleted by a crash.
+    let _ = run_git(&root_path, &["worktree", "prune"]).await;
+    let head = run_git(&root_path, &["rev-parse", "HEAD"]).await.ok()?;
+    if !head.status.success() {
+        return None;
+    }
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    if head.is_empty() {
+        return None;
+    }
+    let base = delegate_base_commit(&root_path, &head)
+        .await
+        .unwrap_or(head);
+
+    let base_dir = dirs::data_dir()?
+        .join(crate::APP_IDENTIFIER)
+        .join("worktrees");
+    if let Err(err) = tokio::fs::create_dir_all(&base_dir).await {
+        tracing::warn!(?err, "could not create the delegate worktree directory");
+        return None;
+    }
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let worktree = base_dir.join(format!("{run_id}-{}", &suffix[..8]));
+    let added = run_git(
+        &root_path,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            &worktree.to_string_lossy(),
+            &base,
+        ],
+    )
+    .await
+    .ok()?;
+    if !added.status.success() {
+        tracing::warn!(
+            stderr = %String::from_utf8_lossy(&added.stderr),
+            "git worktree add failed; delegate will run in the parent workspace"
+        );
+        return None;
+    }
+    Some((worktree, base))
+}
+
+async fn collect_worktree_diff(
+    worktree: &std::path::Path,
+    base: &str,
+) -> (Option<String>, Vec<String>) {
+    // Stage everything first so newly created files appear in the patch.
+    let _ = run_git(worktree, &["add", "-A"]).await;
+    let changed = run_git(worktree, &["diff", "--cached", "--name-only", base])
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::to_string)
+                .filter(|line| !line.trim().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let diff = run_git_limited(
+        worktree,
+        &["diff", "--cached", "--binary", base],
+        DELEGATE_DIFF_LIMIT,
+    )
+    .await
+    .ok()
+    .flatten()
+    .filter(|value| !value.trim().is_empty());
+    (diff, changed)
+}
+
+async fn cleanup_delegate_worktree(root: &str, worktree: &std::path::Path) {
+    let parent = std::path::PathBuf::from(root);
+    let removed = run_git(
+        &parent,
+        &["worktree", "remove", "--force", &worktree.to_string_lossy()],
+    )
+    .await;
+    if !removed
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+    {
+        let _ = tokio::fs::remove_dir_all(worktree).await;
     }
 }
 
@@ -506,6 +880,13 @@ pub struct AppState {
     /// installer writes the tree the operator resolves.
     pub chromium_installer: Arc<mixd_browser::ChromiumInstaller>,
     pub mcp: Arc<McpHost>,
+    /// Flips to `true` once the background MCP connection pass has finished.
+    ///
+    /// Start-up no longer waits for external MCP servers, but the first Run
+    /// must not silently lose their tools just because it was sent during the
+    /// connect window. `dispatch` waits on this briefly (bounded) before it
+    /// hands the request to the engine.
+    pub mcp_ready: tokio::sync::watch::Receiver<bool>,
     /// The same runner instance the engine's registry was built with, so a
     /// rebuild after an MCP change keeps the `agent` tool working.
     pub(crate) agent_runner: Arc<EngineAgentRunner>,
@@ -542,6 +923,9 @@ pub(crate) async fn refresh_registry(state: &AppState) {
     // registry. Saving the egress allowlist used to require a relaunch for the
     // pane while the agent got the new policy on its next registry rebuild.
     *state.egress.write().await = egress.clone();
+    let settings = crate::commands::settings::read_settings(state.storage.pool())
+        .await
+        .unwrap_or_default();
     let mut tools = build_registry(
         &state.storage,
         &state.browser,
@@ -549,6 +933,7 @@ pub(crate) async fn refresh_registry(state: &AppState) {
         &state.agent_runner,
         &state.embeddings,
         egress,
+        settings.discover_user_skills,
     );
     tools.set_mcp_specs(
         mixd_mcp::collect_tool_specs(&state.mcp)
@@ -580,18 +965,22 @@ pub(crate) fn build_registry(
     agent_runner: &Arc<EngineAgentRunner>,
     embeddings: &Arc<embedding::EmbeddingResolver>,
     egress: mixd_tools::EgressPolicy,
+    discover_user_skills: bool,
 ) -> mixd_tools::ToolRegistry {
+    // Project skills first: a procedure a repository carries itself is more
+    // specific than a personal or stored one with the same name.
+    let mut skill_sources: Vec<Arc<dyn mixd_tools::skill::SkillSource>> =
+        vec![Arc::new(mixd_core::skills::discovery::ProjectSkillSource)];
+    if discover_user_skills {
+        skill_sources.push(Arc::new(mixd_core::skills::discovery::UserSkillSource));
+    }
+    skill_sources.push(Arc::new(DbSkillSource {
+        storage: storage.clone(),
+    }));
     let mut registry = mixd_tools::ToolRegistry::new(egress)
         .with_mcp(Arc::new(McpBridge { host: mcp.clone() }))
-        // Project skills first: a procedure a repository carries itself is
-        // more specific than a stored one with the same name.
         .with_skills(Arc::new(mixd_tools::skill::CompositeSkillSource::new(
-            vec![
-                Arc::new(mixd_core::skills::discovery::ProjectSkillSource),
-                Arc::new(DbSkillSource {
-                    storage: storage.clone(),
-                }),
-            ],
+            skill_sources,
         )))
         .with_agents(
             Arc::new(DbAgentSource {
@@ -625,6 +1014,23 @@ pub async fn build_app_state(
     app_data: &std::path::Path,
     resource_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<AppState> {
+    let build_started = std::time::Instant::now();
+    // Old delegate checkouts are removed here rather than on every `agent`
+    // call, so a crash does not leak a full copy of the workspace per fan-out.
+    // It walks a directory tree, so it runs beside the window rather than in
+    // front of it.
+    {
+        let cleanup_dir = app_data.to_path_buf();
+        tauri::async_runtime::spawn(async move {
+            let started = std::time::Instant::now();
+            cleanup_stale_worktrees(&cleanup_dir).await;
+            tracing::info!(
+                target: "startup",
+                ms = started.elapsed().as_millis() as u64,
+                "app_state: stale worktree cleanup"
+            );
+        });
+    }
     // The browser is always headless: the in-app side panel is the only view,
     // so a second visible Chromium window would just duplicate the page and
     // keep an extra compositor alive.
@@ -660,28 +1066,61 @@ pub async fn build_app_state(
         }
     });
     let chromium_installer = Arc::new(mixd_browser::ChromiumInstaller::new(app_data));
-    chromium_installer.cleanup_stale().await;
-    // Apply the persisted browser opt-in before the first run can call the
-    // tool. A corrupt/missing settings row simply leaves the safe default off.
-    match crate::commands::settings::read_settings(storage.pool()).await {
-        Ok(settings) => browser.set_allow_local(settings.browser_allow_local).await,
-        Err(err) => tracing::warn!(%err, "could not read browser settings; local access stays off"),
+    {
+        let installer = chromium_installer.clone();
+        tauri::async_runtime::spawn(async move {
+            installer.cleanup_stale().await;
+        });
     }
 
-    // Load persisted MCP connections before the Tool Registry is built so the
-    // first Run already sees the connected servers.
-    let mcp = Arc::new(McpHost::new());
-    match mixd_mcp::hydrate_and_connect(&mcp, storage.as_ref(), Some(secrets.as_ref())).await {
-        Ok(count) => tracing::info!(count, "MCP servers connected"),
+    // Read the settings row once. It was read three times below (browser
+    // opt-in, registry, sandbox), which is three SQLite round trips on the
+    // path to the first window.
+    let settings_started = std::time::Instant::now();
+    let settings = match crate::commands::settings::read_settings(storage.pool()).await {
+        Ok(settings) => settings,
         Err(err) => {
-            tracing::warn!(?err, "MCP hydration failed; continuing without MCP tools");
+            tracing::warn!(
+                %err,
+                "could not read settings; browser/sandbox/skills use their safe defaults"
+            );
+            Default::default()
+        }
+    };
+    tracing::info!(
+        target: "startup",
+        ms = settings_started.elapsed().as_millis() as u64,
+        "app_state: settings"
+    );
+    // Apply the persisted browser opt-in before the first run can call the
+    // tool. A corrupt/missing settings row simply leaves the safe default off.
+    browser.set_allow_local(settings.browser_allow_local).await;
+
+    // Load the MCP *configuration* synchronously (a SQLite read) but connect
+    // in the background: `connect_all` talks to external servers and used to
+    // hold the first paint behind their timeouts. Until it finishes the
+    // registry simply advertises no `mcp__*` tools; a Run that starts in that
+    // window waits briefly on `mcp_ready` (see `dispatch`).
+    let mcp = Arc::new(McpHost::new());
+    let mcp_started = std::time::Instant::now();
+    match mixd_mcp::load_configs(storage.as_ref(), Some(secrets.as_ref())).await {
+        Ok(configs) => {
+            for config in configs {
+                mcp.add(config).await;
+            }
+        }
+        Err(err) => {
+            tracing::warn!(
+                ?err,
+                "MCP configuration load failed; continuing without MCP tools"
+            );
         }
     }
-    // The specs have to be pulled explicitly. The registry can dispatch
-    // `mcp__*` calls, but without these the model is never told the tools
-    // exist, so a fully configured server is unusable.
-    let mcp_specs = mixd_mcp::collect_tool_specs(&mcp).await;
-    tracing::info!(tools = mcp_specs.len(), "MCP tools advertised");
+    tracing::info!(
+        target: "startup",
+        ms = mcp_started.elapsed().as_millis() as u64,
+        "app_state: MCP config load"
+    );
 
     let egress = load_egress_policy(storage.as_ref()).await;
     // The agent runner needs the engine, and the engine needs the registry, so
@@ -694,38 +1133,79 @@ pub async fn build_app_state(
         storage.clone(),
         secrets.clone(),
     ));
-    let mut tools = build_registry(
+    let tools = build_registry(
         &storage,
         &browser,
         &mcp,
         &agent_runner,
         &embeddings,
         egress.clone(),
+        settings.discover_user_skills,
     );
     let egress = Arc::new(tokio::sync::RwLock::new(egress));
-    tools.set_mcp_specs(
-        mcp_specs
-            .into_iter()
-            .map(|spec| mixd_tools::ToolSpec {
-                name: spec.name,
-                description: spec.description,
-                parameters: spec.parameters,
-            })
-            .collect(),
-    );
 
     let engine = Arc::new(RunEngine::with_storage_and_tools(
         storage.clone(),
         secrets.clone(),
         tools,
     ));
+    // Connect MCP off the start-up path. The host is shared with the
+    // registry, so pushing the specs when the connections settle is enough;
+    // no registry rebuild (and no re-read of settings) is needed here.
+    let (mcp_ready_tx, mcp_ready_rx) = tokio::sync::watch::channel(false);
+    {
+        let mcp = mcp.clone();
+        let engine = engine.clone();
+        tauri::async_runtime::spawn(async move {
+            let started = std::time::Instant::now();
+            match mcp.connect_all().await {
+                Ok(count) => tracing::info!(
+                    target: "startup",
+                    ms = started.elapsed().as_millis() as u64,
+                    tools = count,
+                    "MCP servers connected"
+                ),
+                Err(err) => {
+                    tracing::warn!(?err, "MCP connect failed; continuing without MCP tools")
+                }
+            }
+            let specs: Vec<mixd_tools::ToolSpec> = mixd_mcp::collect_tool_specs(&mcp)
+                .await
+                .into_iter()
+                .map(|spec| mixd_tools::ToolSpec {
+                    name: spec.name,
+                    description: spec.description,
+                    parameters: spec.parameters,
+                })
+                .collect();
+            let advertised = specs.len();
+            engine.tools.write().await.set_mcp_specs(specs);
+            tracing::info!(tools = advertised, "MCP tools advertised");
+            // Even a failed connect must release the barrier: a Run should
+            // not pay the timeout twice.
+            let _ = mcp_ready_tx.send(true);
+        });
+    }
     // Apply the persisted terminal-sandbox opt-in before the first shell is
     // spawned. A corrupt row leaves the safe default (off) in place.
-    match crate::commands::settings::read_settings(storage.pool()).await {
-        Ok(settings) => engine.set_terminal_sandbox(settings.sandbox_terminal).await,
-        Err(err) => {
-            tracing::warn!(%err, "could not read sandbox setting; terminal stays unsandboxed")
+    {
+        // A setting saved on another machine (or before bwrap was removed)
+        // must not claim an isolation this host cannot enforce.
+        let sandbox = settings.sandbox_terminal && mixd_tools::terminal::os_sandbox_available();
+        if settings.sandbox_terminal && !sandbox {
+            tracing::warn!(
+                reason = mixd_tools::terminal::os_sandbox_unavailable_reason().unwrap_or(""),
+                "terminal sandbox setting ignored because the host cannot enforce it"
+            );
         }
+        engine.set_terminal_sandbox(sandbox).await;
+        engine
+            .set_terminal_sandbox_network(
+                sandbox
+                    && settings.sandbox_terminal_network
+                    && cfg!(any(target_os = "macos", target_os = "linux")),
+            )
+            .await;
     }
     // Close the cycle now that the engine exists.
     agent_runner.attach(&engine, &secrets, "");
@@ -747,10 +1227,19 @@ pub async fn build_app_state(
     {
         let storage = storage.clone();
         let embeddings = embeddings.clone();
+        let engine = engine.clone();
         tauri::async_runtime::spawn(async move {
             // Let the window and the first Run start before spending a
-            // provider round trip per batch.
+            // provider round trip per batch. Then wait for an idle moment:
+            // backfilling every embedding while the user waits for their first
+            // answer competed with the Run's own provider calls.
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            for _ in 0..120 {
+                if engine.active.lock().await.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
             let Some(source) = embeddings.resolve().await else {
                 return;
             };
@@ -770,6 +1259,11 @@ pub async fn build_app_state(
     // through the picker or the native confirmation.
     let grants = Arc::new(path_grants::PathGrants::default());
     seed_project_grants(storage.as_ref(), grants.as_ref()).await;
+    tracing::info!(
+        target: "startup",
+        ms = build_started.elapsed().as_millis() as u64,
+        "app_state: total"
+    );
     Ok(AppState {
         storage,
         secrets,
@@ -777,6 +1271,7 @@ pub async fn build_app_state(
         browser,
         chromium_installer,
         mcp,
+        mcp_ready: mcp_ready_rx,
         agent_runner,
         embeddings,
         egress,
@@ -910,14 +1405,16 @@ async fn register_providers_from_storage(
     storage: &Storage,
     secrets: &SecretStore,
 ) -> anyhow::Result<()> {
+    type StoredProviderRow = (String, Option<String>, Option<String>, Option<String>, i64);
     let pool = storage.pool();
-    let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT id, json_extract(data, '$.kind') AS kind, json_extract(data, '$.baseUrl') AS base_url, \
-         json_extract(data, '$.enabled') AS enabled FROM providers",
+    let rows: Vec<StoredProviderRow> = sqlx::query_as(
+        "SELECT id, json_extract(data, '$.kind') AS kind, json_extract(data, '$.preset') AS preset, \
+         json_extract(data, '$.baseUrl') AS base_url, json_extract(data, '$.enabled') AS enabled \
+         FROM providers",
     )
     .fetch_all(pool)
     .await?;
-    for (id, kind, base_url, enabled) in rows {
+    for (id, kind, preset, base_url, enabled) in rows {
         if enabled == 0 {
             continue;
         }
@@ -925,7 +1422,8 @@ async fn register_providers_from_storage(
             registry,
             secrets,
             &id,
-            &kind,
+            &kind.unwrap_or_default(),
+            preset.as_deref(),
             &base_url.unwrap_or_default(),
             true,
         )
@@ -947,16 +1445,79 @@ async fn register_providers_from_storage(
 ///
 /// A disabled provider is removed rather than registered, so it cannot be
 /// reached through any model id either.
+/// Bridges the provider crate's credential-store seam to the desktop secret
+/// store. Keeping the keychain access here lets `mixd-providers` stay free of
+/// a dependency on the storage layer.
+struct SecretCredentialStore {
+    secrets: SecretStore,
+    provider_id: String,
+}
+
+#[async_trait_impl::async_trait]
+impl mixd_providers::chatgpt::CredentialStore for SecretCredentialStore {
+    async fn load(&self) -> anyhow::Result<Option<String>> {
+        // A missing slot and an unreadable store both mean "no credentials";
+        // the UI derives `needs_login` from the empty blob either way.
+        Ok(self
+            .secrets
+            .get_string(&format!("provider/{}", self.provider_id), "oauth")
+            .await
+            .ok())
+    }
+
+    async fn save(&self, raw: &str) -> anyhow::Result<()> {
+        self.secrets
+            .put(
+                &format!("provider/{}", self.provider_id),
+                "oauth",
+                raw.as_bytes(),
+            )
+            .await
+    }
+}
+
+pub(crate) fn chatgpt_credential_store(
+    secrets: &SecretStore,
+    provider_id: &str,
+) -> Arc<dyn mixd_providers::chatgpt::CredentialStore> {
+    Arc::new(SecretCredentialStore {
+        secrets: secrets.clone(),
+        provider_id: provider_id.to_string(),
+    })
+}
+
 pub async fn register_adapter(
     registry: &ProviderRegistry,
     secrets: &SecretStore,
     id: &str,
     kind: &str,
+    preset: Option<&str>,
     base_url: &str,
     enabled: bool,
 ) {
     if !enabled {
         registry.unregister(id).await;
+        return;
+    }
+    // `preset` and `kind` are both user-supplied. Rows written before the
+    // unified gate may carry `preset=chatgpt` with `kind=openai`, so checking
+    // only one of them silently built an OpenAI adapter for a ChatGPT row.
+    if mixd_providers::chatgpt::is_chatgpt(preset, kind) {
+        let oauth = secrets
+            .get_string(&format!("provider/{id}"), "oauth")
+            .await
+            .ok();
+        registry
+            .register(
+                id.to_string(),
+                Arc::new(ChatGptProvider::new(
+                    id,
+                    base_url.to_string(),
+                    chatgpt_credential_store(secrets, id),
+                    oauth.as_deref(),
+                )),
+            )
+            .await;
         return;
     }
     let api_key = secrets
@@ -995,9 +1556,18 @@ pub async fn resolve_provider_for_model(
         if registry.get(prefix).await.is_some() {
             return Ok(prefix.to_string());
         }
-        if let Some((kind, base_url, enabled)) = provider_row(storage, prefix).await? {
+        if let Some((kind, preset, base_url, enabled)) = provider_row(storage, prefix).await? {
             if enabled {
-                register_adapter(registry, secrets, prefix, &kind, &base_url, true).await;
+                register_adapter(
+                    registry,
+                    secrets,
+                    prefix,
+                    &kind,
+                    preset.as_deref(),
+                    &base_url,
+                    true,
+                )
+                .await;
                 return Ok(prefix.to_string());
             }
             anyhow::bail!(
@@ -1024,17 +1594,20 @@ pub async fn resolve_provider_for_model(
 async fn provider_row(
     storage: &Storage,
     id: &str,
-) -> anyhow::Result<Option<(String, String, bool)>> {
-    let row: Option<(Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT json_extract(data, '$.kind'), json_extract(data, '$.baseUrl'), \
-         json_extract(data, '$.enabled') FROM providers WHERE id = ?",
+) -> anyhow::Result<Option<(String, Option<String>, String, bool)>> {
+    type Row = (Option<String>, Option<String>, Option<String>, Option<i64>);
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT json_extract(data, '$.kind'), json_extract(data, '$.preset'), \
+         json_extract(data, '$.baseUrl'), json_extract(data, '$.enabled') \
+         FROM providers WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(storage.pool())
     .await?;
-    Ok(row.map(|(kind, base_url, enabled)| {
+    Ok(row.map(|(kind, preset, base_url, enabled)| {
         (
             kind.unwrap_or_default(),
+            preset,
             base_url.unwrap_or_default(),
             // `enabled` is absent from rows written before the field existed;
             // those were all enabled.
@@ -1057,6 +1630,11 @@ pub fn build_provider(kind: &str, base_url: String, api_key: Option<String>) -> 
         Some(ProviderKind::Gemini) => Arc::new(GeminiProvider::new(base_url, api_key)),
         Some(ProviderKind::Ollama) => Arc::new(mixd_providers::ollama::ollama(base_url)),
         Some(ProviderKind::LMStudio) => Arc::new(mixd_providers::lmstudio::lmstudio(base_url)),
+        // This factory has no provider id or secret store. `register_adapter`
+        // handles ChatGPT before calling here; this variant is deliberately
+        // inert so a mistaken direct call fails with "login required" instead
+        // of reaching the backend without an account id.
+        Some(ProviderKind::ChatGpt) => Arc::new(ChatGptProvider::unauthenticated(base_url)),
         _ => Arc::new(OpenAiProvider::new(base_url, api_key)),
     }
 }
@@ -1106,7 +1684,16 @@ fn init_tracing() {
         tracing_subscriber::registry().with(console).init();
         return;
     }
+    // Provider error bodies and tool output can contain user data. Keep the
+    // directory private to the current user; the daily files inherit the
+    // protection because another user cannot traverse this directory.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
 
+    prune_old_logs(&dir);
     let (writer, guard) =
         tracing_appender::non_blocking(tracing_appender::rolling::daily(&dir, "mix-agent.log"));
     // A `WorkerGuard` must outlive every log record; storing it in a `static`
@@ -1125,9 +1712,60 @@ fn init_tracing() {
         .init();
 }
 
+/// Keep the daily log files bounded. `rolling::daily` never deletes anything
+/// on its own, so a long-running install accumulated a file per day forever.
+fn prune_old_logs(dir: &std::path::Path) {
+    const KEEP: usize = 14;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut logs: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("mix-agent.log") {
+                return None;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .collect();
+    logs.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in logs.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Log a panic before the process unwinds.
+///
+/// A beta build can abort on a background worker whose panic would otherwise
+/// only reach stderr — invisible when the app was launched from Finder. The
+/// default hook still runs so debug builds keep their usual output.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string());
+        // `eprintln!` is unbuffered enough to survive `abort`; the tracing
+        // layer is non-blocking and may lose its last record on a hard exit.
+        eprintln!("MIX-agent Desktop panicked at {location}: {payload}");
+        tracing::error!(%location, %payload, "uncaught panic");
+        default_hook(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
+    install_panic_hook();
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -1233,7 +1871,29 @@ pub fn run() {
             app.manage(state);
             // Forward Run Engine broadcast events into the WebView.
             let managed = app.state::<AppState>();
+            // The everyday database snapshot runs after the window exists; a
+            // pending migration already took its blocking copy in
+            // `Storage::open`.
+            let snapshot_storage = managed.storage.clone();
+            tauri::async_runtime::spawn(async move {
+                snapshot_storage.snapshot_if_due().await;
+                snapshot_storage.maintenance().await;
+            });
             run_events::spawn(app_handle.clone(), managed.engine.clone());
+            // Language servers and other subprocess-holding tools release
+            // themselves after ten idle minutes. The sweep is deliberately
+            // low-frequency: it is housekeeping, not a request.
+            {
+                let engine = managed.engine.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+                    ticker.tick().await;
+                    loop {
+                        ticker.tick().await;
+                        engine.tools.read().await.sweep_idle().await;
+                    }
+                });
+            }
             // Local runtimes start in the background: a scan or an auto-start
             // must never delay the first paint of the shell.
             let local_runtime = managed.local_runtime.clone();
@@ -1245,6 +1905,14 @@ pub fn run() {
             menu::install(&app_handle)?;
             tray::install(&app_handle)?;
             push::install(&app_handle);
+            // Autostart is how a scheduled task survives a reboot. When the
+            // OS launches us with `--hidden`, keep the window out of the way:
+            // the tray icon and notifications are the intended surface.
+            if std::env::args().any(|arg| arg == autostart::HIDDEN_ARG) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             Ok(())
         })
         // Closing the window keeps a live run alive in the tray. Before this,
@@ -1259,12 +1927,21 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::health::health,
+            commands::autostart::get_autostart,
+            commands::autostart::set_autostart,
             commands::providers::list_providers,
             commands::providers::create_provider,
             commands::providers::update_provider,
             commands::providers::delete_provider,
             commands::providers::provider_presets,
             commands::providers::connect_provider,
+            commands::chatgpt::chatgpt_status,
+            commands::chatgpt::chatgpt_ensure,
+            commands::chatgpt::chatgpt_device_start,
+            commands::chatgpt::chatgpt_device_poll,
+            commands::chatgpt::chatgpt_device_cancel,
+            commands::chatgpt::chatgpt_quota,
+            commands::chatgpt::chatgpt_logout,
             commands::discovery::scan_local_runtimes,
             commands::discovery::probe_local_endpoint,
             commands::discovery::import_local_runtime,
@@ -1287,11 +1964,19 @@ pub fn run() {
             commands::auto::resolve_auto,
             commands::auto::set_message_feedback,
             commands::conversations::list_conversations,
+            commands::conversations::list_conversations_page,
+            commands::conversations::get_conversation,
+            commands::conversations::latest_conversation,
+            commands::conversations::list_conversations_for_project,
+            commands::conversations::search_conversations,
+            commands::conversations::conversation_stats,
+            commands::conversations::search_messages,
             commands::conversations::create_conversation,
             commands::conversations::send_message,
             commands::conversations::edit_message,
             commands::conversations::list_messages,
             commands::conversations::rename_conversation,
+            commands::conversations::fork_conversation,
             commands::conversations::delete_conversation,
             commands::conversations::export_markdown,
             commands::runs::get_run,
@@ -1300,6 +1985,8 @@ pub fn run() {
             commands::runs::cancel_run,
             commands::runs::steer_run,
             commands::runs::revert_run,
+            commands::runs::run_workspace_changes,
+            commands::runs::revert_run_workspace,
             commands::runs::resume_run,
             commands::runs::budget_extension,
             commands::runs::list_checkpoints,
@@ -1378,6 +2065,7 @@ pub fn run() {
             commands::schedules::run_job_now,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::settings::sandbox_status,
             commands::agents::list_agents,
             commands::agents::create_agent,
             commands::agents::update_agent,
@@ -1624,5 +2312,62 @@ mod tests {
 
         let policy = super::load_egress_policy(&storage).await;
         assert!(policy.allowlist.is_empty());
+    }
+
+    /// A delegated worktree must see uncommitted *and* untracked parent work,
+    /// without the parent's real index being modified.
+    #[tokio::test]
+    async fn a_delegate_base_includes_untracked_files() {
+        use std::process::Command;
+
+        let root =
+            std::env::temp_dir().join(format!("mixd-delegate-base-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create repo");
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(root.join("tracked.txt"), "one").expect("write");
+        git(&["add", "tracked.txt"]);
+        git(&["commit", "-qm", "initial"]);
+        std::fs::write(root.join("tracked.txt"), "two").expect("write");
+        std::fs::write(root.join("untracked.txt"), "new").expect("write");
+        let head = Command::new("git")
+            .current_dir(&root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git rev-parse");
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+
+        let base = super::delegate_base_commit(&root, &head)
+            .await
+            .expect("delegate base");
+        assert_ne!(base, head, "a dirty worktree must get a new base commit");
+        let tree = Command::new("git")
+            .current_dir(&root)
+            .args(["ls-tree", "-r", "--name-only", &base])
+            .output()
+            .expect("git ls-tree");
+        let tree = String::from_utf8_lossy(&tree.stdout);
+        assert!(tree.contains("tracked.txt"));
+        assert!(tree.contains("untracked.txt"));
+
+        // The parent index still considers the new file untracked.
+        let status = Command::new("git")
+            .current_dir(&root)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("git status");
+        let status = String::from_utf8_lossy(&status.stdout);
+        assert!(status.contains("untracked.txt"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

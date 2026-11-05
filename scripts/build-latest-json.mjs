@@ -19,7 +19,13 @@
  *     --repo taitai2661/MIX-agent \
  *     --out artifacts/latest.json
  */
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,6 +45,7 @@ const artifactsDir = resolve(arg("artifacts", "artifacts"));
 const tag = arg("tag");
 const repo = arg("repo", "taitai2661/MIX-agent");
 const outPath = resolve(arg("out", join(artifactsDir, "latest.json")));
+const notesPath = arg("notes");
 
 if (!tag) {
   throw new Error("--tag is required (the Release tag the assets are uploaded to)");
@@ -91,6 +98,31 @@ if (!version) {
   throw new Error("apps/desktop/app/tauri.conf.json has no version");
 }
 
+/**
+ * Release notes for the in-app update banner.
+ *
+ * The workflow always passes the checked-in notes file, but local dry runs and
+ * older callers only passed `--tag`; fall back to `MIX_RELEASE_NOTES` and then
+ * to `docs/release-notes-v<version>.md` so the manifest is never published
+ * with an empty `notes` field while a notes file exists.
+ */
+function readReleaseNotes() {
+  const explicit = notesPath && resolve(notesPath);
+  if (explicit) {
+    if (!existsSync(explicit)) {
+      throw new Error(`--notes file not found: ${explicit}`);
+    }
+    return readFileSync(explicit, "utf8").trim();
+  }
+  const fromEnv = process.env.MIX_RELEASE_NOTES?.trim();
+  if (fromEnv) return fromEnv;
+  const fallback = join(root, `docs/release-notes-v${version}.md`);
+  if (!existsSync(fallback)) return "";
+  return readFileSync(fallback, "utf8").trim();
+}
+
+const notes = readReleaseNotes();
+
 const platforms = {};
 for (const { key, asset } of PLATFORMS) {
   const payload = files.get(asset);
@@ -110,7 +142,7 @@ for (const { key, asset } of PLATFORMS) {
 
 const manifest = {
   version,
-  notes: process.env.MIX_RELEASE_NOTES ?? "",
+  notes,
   pub_date: new Date().toISOString(),
   platforms,
 };

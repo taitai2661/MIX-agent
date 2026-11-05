@@ -26,5 +26,5 @@ dirs.workspace = true
 base64.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 sha2 = "0.10"
-zip = { version = "4.6", default-features = false, features = ["deflate"] }
+zip = { version = "9.3", default-features = false, features = ["deflate"] }
 fs2 = "0.4"

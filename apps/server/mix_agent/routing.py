@@ -293,7 +293,7 @@ def select_auto_model(
     has_other_provider = prefer_other_provider_than and any(
         model.data.get("provider_id") != prefer_other_provider_than for model, _, _ in candidates
     )
-    for model, caps, context_window in candidates:
+    for model, _caps, context_window in candidates:
         quality = quality_prior(model.data)
         quality_details[model.id] = quality
         costs[model.id] = request_cost(model.data, required_tokens, reserved_output_tokens)
@@ -324,7 +324,7 @@ def select_auto_model(
         )
     speed_scores = _speed_scores(speed_details)
     cost_scores = _cost_scores(costs)
-    for model, caps, context_window in candidates:
+    for model, _caps, _context_window in candidates:
         up, down = outcomes[model.id]
         quality = quality_details[model.id]
         # A known tier becomes a mild Beta pseudo-count prior; unknown stays at

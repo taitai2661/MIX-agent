@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, type Ref } from "react";
 import {
   Activity,
   Columns2,
+  Gauge,
   GitBranch,
   Globe,
   Maximize2,
@@ -12,6 +13,7 @@ import {
 import { t } from "@/lib/i18n";
 import { useUi, WIDE_RIGHT_PANEL_WIDTH } from "@/lib/ui";
 import { ActivityPanel } from "@/features/chat/ActivityPanel";
+import { UsagePanel } from "@/features/chat/UsagePanel";
 import { DiffPanel } from "@/features/chat/DiffView";
 import { ChangesPanel, FilePreviewPanel } from "@/features/files/ChangesPanel";
 import { Spinner } from "@/components/ui/spinner";
@@ -28,6 +30,8 @@ const BrowserPanel = lazy(() =>
 export function RightPanel({ cap = null }: { cap?: number | null }) {
   const rightPanel = useUi((s) => s.rightPanel);
   const setRightPanel = useUi((s) => s.setRightPanel);
+  const surface = useUi((s) => s.surface);
+  const isAgentSurface = surface === "desktop-agent";
   const dismissBrowserPanel = useUi((s) => s.dismissBrowserPanel);
   const openBrowserPanel = useUi((s) => s.openBrowserPanel);
   const rightPanelWidth = useUi((s) => s.rightPanelWidth);
@@ -48,46 +52,55 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     if (rightPanel === "file" && !filePreviewPath) setRightPanel("none");
   }, [diffTarget, filePreviewPath, rightPanel, setRightPanel]);
 
-  // Overlay drawer: Escape or a click outside closes it. It is deliberately
-  // non-modal: opening it must not steal focus from the composer, and Tab is
-  // free to leave the panel. A docked panel is part of the page, so only
-  // Escape (in `useAppShortcuts`) applies there.
+  // The chat surface has no file tree or workspace targets. A panel left over
+  // from the agent surface (or restored from localStorage) would render an
+  // empty workspace column, so land on the usage panel — the one panel that
+  // matters in a plain conversation — instead.
+  useEffect(() => {
+    if (isAgentSurface) return;
+    if (
+      rightPanel === "changes" ||
+      rightPanel === "browser" ||
+      rightPanel === "diff" ||
+      rightPanel === "file"
+    ) {
+      setRightPanel("usage");
+    }
+  }, [isAgentSurface, rightPanel, setRightPanel]);
+
+  // Overlay drawer: a click outside closes it. It is deliberately non-modal:
+  // opening it must not steal focus from the composer, and Tab is free to leave
+  // the panel. Escape is handled once in `useAppShortcuts`, which knows about
+  // the palette, shortcut sheet and native popups above the panel; a second
+  // bubble-phase handler here closed the drawer while one of those was closing.
   useEffect(() => {
     if (rightPanel === "none" || isDocked) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // Do not steal Escape from an open modal dialog / menu above us.
-      if (document.querySelector("[role='dialog'][data-modal='true']")) return;
-      e.preventDefault();
-      setRightPanel("none");
-    };
     const onPointerDown = (e: PointerEvent) => {
       const aside = asideRef.current;
       if (aside && !aside.contains(e.target as Node)) setRightPanel("none");
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("pointerdown", onPointerDown);
-    };
+    return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [isDocked, rightPanel, setRightPanel]);
 
   if (rightPanel === "none") return null;
 
   const tabbed =
     rightPanel === "activity" ||
+    rightPanel === "usage" ||
     rightPanel === "changes" ||
     rightPanel === "browser";
 
   // Can be rendered either as a docked flex sibling (split-view) or as an
-  // overlay drawer depending on `isDocked`.
+  // overlay drawer depending on `isDocked`. An overlay drawer is out of flow:
+  // it takes no width from the centre column, so the inline-panel cap must not
+  // squeeze it (or its siblings).
   return (
     <aside
       ref={asideRef as Ref<HTMLElement>}
       tabIndex={-1}
       data-side-panel=""
-      style={panelStyle(rightPanelWidth, cap)}
+      style={panelStyle(rightPanelWidth, isDocked ? cap : null)}
       role={isDocked ? "region" : "dialog"}
       aria-modal="false"
       aria-label={t("サイドパネル")}
@@ -116,23 +129,36 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
               {t("アクティビティ")}
             </SegmentedOption>
             <SegmentedOption
-              value="changes"
-              label={t("変更")}
-              icon={<GitBranch size={13} aria-hidden="true" />}
-              selected={rightPanel === "changes"}
-              onSelect={() => setRightPanel("changes")}
+              value="usage"
+              label={t("使用状況")}
+              icon={<Gauge size={13} aria-hidden="true" />}
+              selected={rightPanel === "usage"}
+              onSelect={() => setRightPanel("usage")}
             >
-              {t("変更")}
+              {t("使用")}
             </SegmentedOption>
-            <SegmentedOption
-              value="browser"
-              label={t("ブラウザ")}
-              icon={<Globe size={13} aria-hidden="true" />}
-              selected={rightPanel === "browser"}
-              onSelect={() => openBrowserPanel("user")}
-            >
-              {t("ブラウザ")}
-            </SegmentedOption>
+            {isAgentSurface && (
+              <SegmentedOption
+                value="changes"
+                label={t("変更")}
+                icon={<GitBranch size={13} aria-hidden="true" />}
+                selected={rightPanel === "changes"}
+                onSelect={() => setRightPanel("changes")}
+              >
+                {t("変更")}
+              </SegmentedOption>
+            )}
+            {isAgentSurface && (
+              <SegmentedOption
+                value="browser"
+                label={t("ブラウザ")}
+                icon={<Globe size={13} aria-hidden="true" />}
+                selected={rightPanel === "browser"}
+                onSelect={() => openBrowserPanel("user")}
+              >
+                {t("ブラウザ")}
+              </SegmentedOption>
+            )}
           </Segmented>
           <Button
             variant="ghost"
@@ -176,11 +202,12 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
           </Button>
         </div>
       )}
-      {rightPanel === "diff" && <DiffPanel />}
-      {rightPanel === "changes" && <ChangesPanel embedded />}
-      {rightPanel === "file" && <FilePreviewPanel />}
+      {rightPanel === "diff" && isAgentSurface && <DiffPanel />}
+      {rightPanel === "changes" && isAgentSurface && <ChangesPanel embedded />}
+      {rightPanel === "file" && isAgentSurface && <FilePreviewPanel />}
       {rightPanel === "activity" && <ActivityPanel embedded />}
-      {rightPanel === "browser" && (
+      {rightPanel === "usage" && <UsagePanel embedded />}
+      {rightPanel === "browser" && isAgentSurface && (
         <div className="flex min-h-0 flex-1 flex-col">
           <Suspense
             fallback={

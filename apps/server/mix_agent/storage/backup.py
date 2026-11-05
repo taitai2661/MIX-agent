@@ -78,6 +78,14 @@ async def create(db, password):
                     row["data"]["enabled"] = False
         tables[table.name] = rows
     files = {}
+    # Fail before reading every artifact into memory: base64 adds ~33%, so a
+    # directory slightly below MAX_SIZE already builds an over-limit payload
+    # after hundreds of files have been slurped.
+    artifact_bytes = sum(
+        file.stat().st_size for file in config.ARTIFACTS.iterdir() if file.is_file() and not file.is_symlink()
+    )
+    if artifact_bytes > MAX_SIZE * 3 // 4:
+        raise ValueError("初期版のバックアップ上限は256MBです")
     for file in config.ARTIFACTS.iterdir():
         if file.is_file() and not file.is_symlink():
             files[file.name] = base64.b64encode(file.read_bytes()).decode()
@@ -183,11 +191,24 @@ async def restore(db, raw, password, recovering=False):
     previous = config.DATA / ("rollback-" + str(uuid4()))
     swapped = False
     moved_original = False
+    # Count each runner that may have been mutated. A failure after the first
+    # call must still roll back the runners already touched; the old code only
+    # set a flag after all three succeeded and therefore deleted the recovery
+    # journal while the workspace was already half-restored.
+    runner_writes = 0
+    db_swapped = False
     try:
+        # Pre-validation already ran (validate() checksums + runner
+        # /validate-snapshot above, artifacts staged to disk). Apply in
+        # runner -> DB -> files order so each step can be unwound.
         await runner_request("execution", "/restore-snapshot", payload["workspace"])
+        runner_writes += 1
         await runner_request("mcp", "/restore-snapshot", payload["mcp_shared"])
+        runner_writes += 1
         await runner_request("manager", "/v1/restore-snapshot", payload["mcp_volumes"])
-        # One transaction for all database tables. The original files remain available until commit.
+        runner_writes += 1
+        # One transaction for all database tables, separate from the
+        # filesystem rename so a file error cannot leave a half-committed DB.
         db.rollback()
         with engine.begin() as conn:
             for table in reversed(Base.metadata.sorted_tables):
@@ -202,24 +223,50 @@ async def restore(db, raw, password, recovering=False):
                             row[column.name] = datetime.fromisoformat(row[column.name])
                 if rows:
                     conn.execute(table.insert(), rows)
-            config.ARTIFACTS.rename(previous)
-            moved_original = True
-            stage.rename(config.ARTIFACTS)
-            swapped = True
-    except BaseException:  # noqa: BLE001 - intentionally classified; never leak raw details
+        db_swapped = True
+        config.ARTIFACTS.rename(previous)
+        moved_original = True
+        stage.rename(config.ARTIFACTS)
+        swapped = True
+    except BaseException as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
         if swapped:
-            config.ARTIFACTS.rename(stage)
+            try:
+                config.ARTIFACTS.rename(stage)
+            except OSError:
+                pass
         if moved_original:
-            previous.rename(config.ARTIFACTS)
+            try:
+                previous.rename(config.ARTIFACTS)
+            except OSError:
+                pass
         # Keep the encrypted rollback archive for recovery even if a runner is unavailable.
-        try:
-            await runner_request("execution", "/restore-snapshot", old_workspace)
-            await runner_request("mcp", "/restore-snapshot", old_mcp)
-            await runner_request("manager", "/v1/restore-snapshot", old_managed)
-            journal.unlink(missing_ok=True)
-            recovery_key.unlink(missing_ok=True)
-        finally:
-            raise
+        if runner_writes or db_swapped:
+            try:
+                await runner_request("execution", "/restore-snapshot", old_workspace)
+                await runner_request("mcp", "/restore-snapshot", old_mcp)
+                await runner_request("manager", "/v1/restore-snapshot", old_managed)
+                # The runner snapshots are back to their pre-restore state. That
+                # is only a complete rollback when the database was not swapped
+                # yet; otherwise startup recovery must still replay the rollback
+                # archive, so keep the journal + key in place.
+                if not db_swapped:
+                    journal.unlink(missing_ok=True)
+                    recovery_key.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+                # Runner rollback failed after the DB was (maybe) swapped:
+                # the journal + rollback archive are kept and the operator
+                # must recover manually. Surface the inconsistency explicitly.
+                raise ValueError(
+                    "復元に失敗し、Runner/DBの状態が不整合の可能性があります。"
+                    "退避データから手動復旧してください。"
+                ) from exc
+        else:
+            try:
+                journal.unlink(missing_ok=True)
+                recovery_key.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
     # Keep previous artifacts for operator recovery. Do not erase automatically.
     setting = payload["tables"]["app_settings"]
     domains = setting[0]["data"].get("allowed_domains", []) if setting else []

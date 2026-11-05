@@ -40,3 +40,6 @@ apps/desktop/app/.data/
 
 # Test coverage output (Vitest / pytest)
 **/coverage/
+
+# CommandCode local agent state (never committed)
+.commandcode/

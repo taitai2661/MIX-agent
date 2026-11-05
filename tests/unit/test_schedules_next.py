@@ -32,6 +32,20 @@ def test_matches_is_timezone_aware():
     assert not _matches(parse("30 6 * * 1"), instant, "UTC")
 
 
+def test_reconcile_with_no_enabled_jobs_is_a_noop():
+    # `to_launch` used to be scoped inside the per-job loop; with no enabled
+    # jobs the function raised UnboundLocalError and killed the scheduler task.
+    from mix_agent.schedules import reconcile
+
+    class EmptyDB:
+        def scalars(self, _query):
+            return iter(())
+
+    launched: list[str] = []
+    reconcile(EmptyDB(), launched.append)
+    assert launched == []
+
+
 def test_reconcile_horizon_constants_are_bounded():
     from datetime import timedelta
 

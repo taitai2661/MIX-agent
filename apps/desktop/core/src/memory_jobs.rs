@@ -456,6 +456,7 @@ impl JobRunner {
             max_tokens: Some(EXTRACTION_MAX_TOKENS),
             reasoning: None,
             stream: true,
+            session_id: None,
             context_window: None,
             keep_alive: None,
         };

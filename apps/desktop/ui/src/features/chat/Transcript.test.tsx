@@ -16,6 +16,7 @@ function userMessage(content: string): MessageView {
     kind: "user",
     created_at: new Date().toISOString(),
     attachments: [],
+    seq: 1,
   };
 }
 
@@ -30,8 +31,8 @@ describe("Transcript user-message editing", () => {
       <Transcript
         messages={[userMessage("元のメッセージ")]}
         runs={new Map()}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onEditMessage={onEditMessage}
       />,
     );
@@ -60,8 +61,8 @@ describe("Transcript user-message editing", () => {
       <Transcript
         messages={[userMessage("元のメッセージ")]}
         runs={new Map()}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onEditMessage={onEditMessage}
       />,
     );
@@ -83,8 +84,8 @@ describe("Transcript user-message editing", () => {
       <Transcript
         messages={[userMessage("元のメッセージ")]}
         runs={new Map()}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onEditMessage={() => Promise.resolve()}
         editDisabled
       />,
@@ -101,8 +102,8 @@ describe("Transcript user-message editing", () => {
       <Transcript
         messages={[userMessage("元のメッセージ")]}
         runs={new Map()}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onEditMessage={onEditMessage}
       />,
     );
@@ -153,11 +154,12 @@ describe("Transcript user-message editing", () => {
             kind: "assistant",
             created_at: new Date().toISOString(),
             attachments: [],
+            seq: 2,
           },
         ]}
         runs={new Map([["run-1", failed]])}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onEditMessage={() => Promise.resolve()}
         onRetry={onRetry}
       />,
@@ -179,8 +181,8 @@ describe("Transcript user-message editing", () => {
       <Transcript
         messages={[userMessage("元のメッセージ"), assistant]}
         runs={new Map()}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onEditMessage={onEditMessage}
       />,
     );
@@ -232,16 +234,53 @@ describe("Transcript user-message editing", () => {
             kind: "assistant",
             created_at: new Date().toISOString(),
             attachments: [],
+            seq: 2,
           },
         ]}
         runs={new Map([["run-1", cancelled]])}
-        live={null}
         liveRunId={null}
+        liveConversationId={null}
         onRetry={onRetry}
       />,
     );
     expect(screen.getAllByText("停止しました").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "再実行" }));
     expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("offers an older-page control only when older rows exist", () => {
+    const onLoadOlder = vi.fn();
+    render(
+      <Transcript
+        messages={[userMessage("最近のメッセージ")]}
+        runs={new Map()}
+        liveRunId={null}
+        liveConversationId={null}
+        hasOlder={false}
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "以前のメッセージを読み込む" }),
+    ).toBeNull();
+  });
+
+  it("loads an older page when the control is clicked", async () => {
+    const user = userEvent.setup();
+    const onLoadOlder = vi.fn();
+    render(
+      <Transcript
+        messages={[userMessage("最近のメッセージ")]}
+        runs={new Map()}
+        liveRunId={null}
+        liveConversationId={null}
+        hasOlder
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "以前のメッセージを読み込む" }),
+    );
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
   });
 });

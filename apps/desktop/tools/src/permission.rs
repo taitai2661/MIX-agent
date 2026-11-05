@@ -10,6 +10,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Validate a rule pattern with the same parser the executor uses for matching.
+///
+/// Keeping this next to the matcher prevents the settings UI and runtime from
+/// disagreeing about which patterns are usable.
+pub fn is_valid_pattern(pattern: &str) -> bool {
+    glob::Pattern::new(pattern).is_ok()
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {

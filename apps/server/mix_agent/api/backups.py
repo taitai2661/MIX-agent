@@ -5,6 +5,10 @@ from mix_agent.api.routes import context
 from mix_agent.api.schemas import BackupInput
 from mix_agent.storage import backup
 
+import logging
+
+LOGGER = logging.getLogger("mix_agent.backup")
+
 router = APIRouter(prefix="/api/v1")
 
 
@@ -22,6 +26,7 @@ async def create(body: BackupInput, ctx=Depends(context)):
                 headers={"Content-Disposition": 'attachment; filename="mix-agent-backup.mix"'},
             )
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
+            LOGGER.exception("backup creation failed")
             raise HTTPException(
                 422,
                 "バックアップできません。実行・バックグラウンドProcessを停止し、Runner接続とサイズ上限を確認してください。",

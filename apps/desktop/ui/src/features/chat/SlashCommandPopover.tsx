@@ -99,9 +99,9 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
     if (!containerRef.current) return;
     const items = containerRef.current.querySelectorAll("[data-slash-item]");
     const active = items[selectedIndex] as HTMLElement | undefined;
-    if (active) {
-      active.scrollIntoView({ block: "nearest" });
-    }
+    // Optional call: jsdom does not implement scrollIntoView, and a missing
+    // method used to throw inside the effect whenever the list scrolled.
+    active?.scrollIntoView?.({ block: "nearest" });
   }, [selectedIndex]);
 
   if (filtered.length === 0) return null;

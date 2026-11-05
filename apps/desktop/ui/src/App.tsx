@@ -1,16 +1,10 @@
-import {
-  Suspense,
-  lazy,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useState,
-} from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Download,
   Folder,
   FolderTree,
+  Gauge,
   GitCompareArrows,
   Globe,
   PanelLeft,
@@ -24,7 +18,7 @@ import { t, tf } from "./lib/i18n";
 import { chord, detectPlatformFromUa } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
 import {
-  useConversations,
+  useConversation,
   useGitStatus,
   useProjects,
   usePendingApprovals,
@@ -32,8 +26,14 @@ import {
 import { useHealth } from "./lib/health";
 import { SETTINGS_QUERY_KEY } from "./lib/settings";
 import { useUpdateCheck } from "./lib/updates";
+import { markOnce } from "./lib/perf";
 
-import { ChatPane } from "./features/chat/ChatPane";
+// The chat pane itself is split as well: the shell (sidebar, title bar,
+// command palette) paints before the transcript/composer bundle is parsed, and
+// the main chunk stays under the bundle budget in `vite.config.ts`.
+const ChatPane = lazy(() =>
+  import("./features/chat/ChatPane").then((m) => ({ default: m.ChatPane })),
+);
 // Secondary panes are code-split: the chat path (the startup view) must not
 // wait on the agents/projects/schedules/settings/file-tree code. Each lands
 // in its own chunk (see `manualChunks` in vite.config.ts).
@@ -69,13 +69,25 @@ const BrowserPanel = lazy(() =>
 );
 import { Sidebar } from "./features/shell/Sidebar";
 import { RightPanel } from "./features/shell/RightPanel";
-import { CommandPalette } from "./features/shell/CommandPalette";
+const CommandPalette = lazy(() =>
+  import("./features/shell/CommandPalette").then((m) => ({
+    default: m.CommandPalette,
+  })),
+);
 import { HealthBanner } from "./features/shell/HealthBanner";
-import { ShortcutHelp } from "./features/shell/ShortcutHelp";
+const ShortcutHelp = lazy(() =>
+  import("./features/shell/ShortcutHelp").then((m) => ({
+    default: m.ShortcutHelp,
+  })),
+);
 import { SurfaceSwitcher } from "./features/shell/SurfaceSwitcher";
 import { WindowControls } from "./features/shell/WindowControls";
 import { usePanelCap } from "./features/shell/usePanelCap";
-import { Onboarding } from "./features/onboarding/Onboarding";
+const Onboarding = lazy(() =>
+  import("./features/onboarding/Onboarding").then((m) => ({
+    default: m.Onboarding,
+  })),
+);
 import { useOnboardingGate } from "./features/onboarding/useOnboardingGate";
 import {
   useAppShortcuts,
@@ -297,17 +309,36 @@ export function App() {
   // centre column. `panelCap` only clamps the inline panes on narrow windows.
   const [shellRow, setShellRow] = useState<HTMLDivElement | null>(null);
   const panelCap = usePanelCap(shellRow);
-  useShellEvents({
-    newThread: startNewThread,
-    openView: (target) => setView(target),
-    openSettingsTab: (tab) => openSettings(tab),
-  });
-  useAppShortcuts();
-
-  const activeProjectId = useUi((s) => s.activeProjectId);
-  const conversations = useConversations();
-  const projects = useProjects();
+  // The wizard replaces the shell's render, but these hooks stay mounted. Keep
+  // their side effects quiet while it is up: otherwise ⌘K during onboarding
+  // silently opened the palette and it appeared the moment setup finished,
+  // and native menu events changed surface/panel state behind the wizard.
   const onboarding = useOnboardingGate();
+  const shellEnabled = onboarding.ready && !onboarding.show;
+  useEffect(() => {
+    if (shellEnabled) markOnce("shell-ready");
+  }, [shellEnabled]);
+  useShellEvents({
+    newThread: () => {
+      if (shellEnabled) startNewThread();
+    },
+    openView: (target) => {
+      if (shellEnabled) setView(target);
+    },
+    openSettingsTab: (tab) => {
+      if (shellEnabled) openSettings(tab);
+    },
+  });
+  useAppShortcuts(shellEnabled);
+
+  // Mount the overlays only after they are first opened, so their code
+  // (and the search/index bundle behind the palette) stays out of the initial
+  // chunk.
+  const paletteOpen = useUi((s) => s.paletteOpen);
+  const shortcutsOpen = useUi((s) => s.shortcutsOpen);
+  const activeProjectId = useUi((s) => s.activeProjectId);
+  const activeConversation = useConversation(conversationId);
+  const projects = useProjects();
   const activeProject =
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
   const git = useGitStatus(
@@ -315,10 +346,7 @@ export function App() {
   );
   const changedFiles =
     git.data?.available === true ? git.data.entries.length : 0;
-  const threadTitle = useMemo(
-    () => conversations.data?.find((c) => c.id === conversationId)?.title,
-    [conversations.data, conversationId],
-  );
+  const threadTitle = activeConversation.data?.title;
 
   // Every hook above runs unconditionally; only the *render* is replaced. A
   // conditional hook call would put the shell's queries out of step with the
@@ -337,10 +365,18 @@ export function App() {
 
   if (onboarding.show) {
     return (
-      <Onboarding
-        onComplete={onboarding.complete}
-        onDefer={onboarding.complete}
-      />
+      <Suspense
+        fallback={
+          <div className="flex h-full items-center justify-center bg-bg">
+            <Spinner size={16} label={t("読み込み中…")} />
+          </div>
+        }
+      >
+        <Onboarding
+          onComplete={onboarding.complete}
+          onDefer={onboarding.complete}
+        />
+      </Suspense>
     );
   }
 
@@ -498,6 +534,26 @@ export function App() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() =>
+                  setRightPanel(rightPanel === "usage" ? "none" : "usage")
+                }
+                title={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-label={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-pressed={rightPanel === "usage"}
+              >
+                <Gauge size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
                   setRightPanel(rightPanel === "none" ? "activity" : "none")
                 }
                 title={
@@ -513,6 +569,30 @@ export function App() {
                 aria-pressed={rightPanel !== "none"}
               >
                 <PanelRight size={16} />
+              </Button>
+            </div>
+          )}
+          {view === "chat" && !agentSurface && (
+            <div className="flex items-center gap-1 border-s border-line ps-1.5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() =>
+                  setRightPanel(rightPanel === "usage" ? "none" : "usage")
+                }
+                title={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-label={
+                  rightPanel === "usage"
+                    ? t("使用状況を閉じる")
+                    : t("使用状況を表示")
+                }
+                aria-pressed={rightPanel === "usage"}
+              >
+                <Gauge size={16} />
               </Button>
             </div>
           )}
@@ -556,7 +636,9 @@ export function App() {
                       : "flex min-h-0 min-w-0 flex-1 flex-col"
                   }
                 >
-                  <ChatPane />
+                  <Suspense fallback={<PaneFallback />}>
+                    <ChatPane />
+                  </Suspense>
                 </div>
               )}
               {browserFull && (
@@ -583,14 +665,22 @@ export function App() {
             </div>
           </div>
         </section>
-        {view === "chat" && agentSurface && !browserFull && (
+        {view === "chat" && !browserFull && (
           <PaneErrorBoundary name="RightPanel" resetKeys={[view, agentSurface]}>
             <RightPanel cap={panelCap} />
           </PaneErrorBoundary>
         )}
       </div>
-      <CommandPalette />
-      <ShortcutHelp />
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
+      )}
+      {shortcutsOpen && (
+        <Suspense fallback={null}>
+          <ShortcutHelp />
+        </Suspense>
+      )}
     </div>
   );
 }

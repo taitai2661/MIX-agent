@@ -4,9 +4,9 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 722 crates
+- **Rust Dependencies**: 742 crates
 - **Python Dependencies**: 82 packages
-- **Node.js / Web Dependencies**: 47 packages
+- **Node.js / Web Dependencies**: 48 packages
 
 ## 2. Special Notices & Disclosures
 
@@ -35,13 +35,13 @@ This document lists third-party software components and dependencies used by MIX
 | `argon2-cffi-bindings` | `26.1.0` | Python |
 | `attrs` | `26.1.0` | Python |
 | `beautifulsoup4` | `4.15.0` | Python |
-| `certifi` | `2026.7.22` | Python |
+| `certifi` | `2026.10.23` | Python |
 | `cffi` | `2.1.1` | Python |
 | `charset-normalizer` | `3.5.1` | Python |
 | `click` | `8.5.0` | Python |
 | `colorama` | `0.4.6` | Python |
 | `coverage` | `7.17.0` | Python |
-| `cryptography` | `46.0.7` | Python |
+| `cryptography` | `50.0.2` | Python |
 | `ddgs` | `9.16.0` | Python |
 | `distro` | `1.9.0` | Python |
 | `docstring-parser` | `0.18.0` | Python |
@@ -62,7 +62,7 @@ This document lists third-party software components and dependencies used by MIX
 | `lxml` | `6.1.2` | Python |
 | `mako` | `1.4.1` | Python |
 | `markupsafe` | `3.0.3` | Python |
-| `mcp` | `1.29.1` | Python |
+| `mcp` | `1.30.0` | Python |
 | `nodeenv` | `1.11.0` | Python |
 | `openai` | `2.54.0` | Python |
 | `packaging` | `26.3` | Python |
@@ -71,7 +71,7 @@ This document lists third-party software components and dependencies used by MIX
 | `primp` | `2.0.0` | Python |
 | `psycopg` | `3.3.4` | Python |
 | `psycopg-binary` | `3.3.4` | Python |
-| `pyasn1` | `0.6.4` | Python |
+| `pyasn1` | `0.6.5` | Python |
 | `pyasn1-modules` | `0.4.2` | Python |
 | `pycparser` | `3.0` | Python |
 | `pydantic` | `2.13.5` | Python |
@@ -79,8 +79,8 @@ This document lists third-party software components and dependencies used by MIX
 | `pydantic-settings` | `2.15.0` | Python |
 | `pyee` | `13.0.1` | Python |
 | `pygments` | `2.21.0` | Python |
-| `pyjwt` | `2.13.0` | Python |
-| `pypdf` | `6.16.2` | Python |
+| `pyjwt` | `2.15.1` | Python |
+| `pypdf` | `6.21.4` | Python |
 | `pyright` | `1.1.414` | Python |
 | `pytest` | `9.1.1` | Python |
 | `pytest-asyncio` | `1.4.0` | Python |
@@ -103,7 +103,7 @@ This document lists third-party software components and dependencies used by MIX
 | `typing-extensions` | `4.16.0` | Python |
 | `typing-inspection` | `0.4.4` | Python |
 | `tzdata` | `2026.3` | Python |
-| `urllib3` | `2.7.0` | Python |
+| `urllib3` | `2.8.0` | Python |
 | `uvicorn` | `0.52.4` | Python |
 | `uvloop` | `0.22.1` | Python |
 | `watchfiles` | `1.2.0` | Python |
@@ -126,6 +126,7 @@ This document lists third-party software components and dependencies used by MIX
 | `@radix-ui/react-tooltip` | `^1.2.16` | npm |
 | `@tailwindcss/vite` | `^4.1.7` | npm |
 | `@tanstack/react-query` | `^5.80.0` | npm |
+| `@tanstack/react-virtual` | `^3.14.25` | npm |
 | `@tauri-apps/api` | `^2.1.1` | npm |
 | `@tauri-apps/plugin-notification` | `^2.0.1` | npm |
 | `@tauri-apps/plugin-os` | `^2.0.0` | npm |
@@ -163,7 +164,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 722 crates compiled into Desktop binaries.
+Total: 742 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -174,9 +175,12 @@ Total: 722 crates compiled into Desktop binaries.
 | `adobe-cmap-parser` | `0.4.1` | Rust |
 | `aead` | `0.5.2` | Rust |
 | `aes` | `0.8.4` | Rust |
+| `aes` | `0.9.4` | Rust |
 | `aes-gcm` | `0.10.3` | Rust |
 | `aho-corasick` | `1.1.5` | Rust |
+| `alloc-no-stdlib` | `2.0.4` | Rust |
 | `alloc-no-stdlib` | `3.0.0` | Rust |
+| `alloc-stdlib` | `0.2.4` | Rust |
 | `alloc-stdlib` | `0.3.0` | Rust |
 | `allocator-api2` | `0.2.21` | Rust |
 | `android_system_properties` | `0.1.6` | Rust |
@@ -186,7 +190,6 @@ Total: 722 crates compiled into Desktop binaries.
 | `anstyle-query` | `1.1.5` | Rust |
 | `anstyle-wincon` | `3.0.11` | Rust |
 | `anyhow` | `1.0.104` | Rust |
-| `arbitrary` | `1.5.0` | Rust |
 | `argon2` | `0.5.3` | Rust |
 | `async-broadcast` | `0.7.2` | Rust |
 | `async-channel` | `2.5.0` | Rust |
@@ -217,9 +220,13 @@ Total: 722 crates compiled into Desktop binaries.
 | `bitflags` | `2.13.2` | Rust |
 | `blake2` | `0.10.6` | Rust |
 | `block-buffer` | `0.10.4` | Rust |
+| `block-buffer` | `0.12.1` | Rust |
+| `block-padding` | `0.3.3` | Rust |
+| `block-padding` | `0.4.2` | Rust |
 | `block2` | `0.6.2` | Rust |
 | `blocking` | `1.7.0` | Rust |
 | `brotli` | `9.0.0` | Rust |
+| `brotli-decompressor` | `5.0.3` | Rust |
 | `brotli-decompressor` | `6.0.1` | Rust |
 | `bs58` | `0.5.1` | Rust |
 | `bstr` | `1.13.1` | Rust |
@@ -233,9 +240,12 @@ Total: 722 crates compiled into Desktop binaries.
 | `cargo_metadata` | `0.19.2` | Rust |
 | `cargo_toml` | `1.0.1` | Rust |
 | `cargo-platform` | `0.1.9` | Rust |
+| `cbc` | `0.1.2` | Rust |
+| `cbc` | `0.2.1` | Rust |
 | `cc` | `1.5.1` | Rust |
 | `cesu8` | `1.1.0` | Rust |
 | `cfb` | `0.14.0` | Rust |
+| `cff-parser` | `0.2.0` | Rust |
 | `cfg_aliases` | `0.2.2` | Rust |
 | `cfg-expr` | `0.15.8` | Rust |
 | `cfg-if` | `1.0.5` | Rust |
@@ -246,6 +256,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `chromiumoxide_types` | `0.8.0` | Rust |
 | `chrono` | `0.4.45` | Rust |
 | `cipher` | `0.4.4` | Rust |
+| `cipher` | `0.5.2` | Rust |
 | `clap` | `4.6.7` | Rust |
 | `clap_builder` | `4.6.7` | Rust |
 | `clap_derive` | `4.6.7` | Rust |
@@ -256,6 +267,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `compression-core` | `0.4.33` | Rust |
 | `concurrent-queue` | `2.5.0` | Rust |
 | `const-oid` | `0.9.6` | Rust |
+| `const-oid` | `0.10.2` | Rust |
 | `const-random` | `0.1.18` | Rust |
 | `const-random-macro` | `0.1.16` | Rust |
 | `cookie` | `0.18.2` | Rust |
@@ -265,6 +277,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `core-foundation-sys` | `0.8.7` | Rust |
 | `core-graphics` | `0.25.0` | Rust |
 | `core-graphics-types` | `0.2.0` | Rust |
+| `cpubits` | `0.1.1` | Rust |
 | `cpufeatures` | `0.2.17` | Rust |
 | `cpufeatures` | `0.3.1` | Rust |
 | `crc` | `3.4.0` | Rust |
@@ -277,6 +290,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `crossbeam-utils` | `0.8.23` | Rust |
 | `crunchy` | `0.2.4` | Rust |
 | `crypto-common` | `0.1.7` | Rust |
+| `crypto-common` | `0.2.2` | Rust |
 | `cssparser` | `0.37.0` | Rust |
 | `cssparser-macros` | `0.7.1` | Rust |
 | `ctor` | `1.0.13` | Rust |
@@ -292,10 +306,10 @@ Total: 722 crates compiled into Desktop binaries.
 | `defmt-parser` | `1.0.0` | Rust |
 | `der` | `0.7.10` | Rust |
 | `deranged` | `0.5.8` | Rust |
-| `derive_arbitrary` | `1.5.0` | Rust |
 | `derive_more` | `2.1.1` | Rust |
 | `derive_more-impl` | `2.1.1` | Rust |
 | `digest` | `0.10.7` | Rust |
+| `digest` | `0.11.3` | Rust |
 | `dirs` | `6.0.0` | Rust |
 | `dirs` | `7.0.0` | Rust |
 | `dirs-sys` | `0.5.0` | Rust |
@@ -312,6 +326,8 @@ Total: 722 crates compiled into Desktop binaries.
 | `dtoa-short` | `0.3.5` | Rust |
 | `dunce` | `1.0.5` | Rust |
 | `dyn-clone` | `1.0.20` | Rust |
+| `ecb` | `0.1.2` | Rust |
+| `ecb` | `0.2.1` | Rust |
 | `either` | `1.18.0` | Rust |
 | `embed_plist` | `1.2.2` | Rust |
 | `embed-resource` | `3.0.11` | Rust |
@@ -395,6 +411,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `http-body` | `1.1.0` | Rust |
 | `http-body-util` | `0.1.5` | Rust |
 | `httparse` | `1.10.1` | Rust |
+| `hybrid-array` | `0.4.15` | Rust |
 | `hyper` | `1.11.1` | Rust |
 | `hyper-rustls` | `0.27.10` | Rust |
 | `hyper-util` | `0.1.21` | Rust |
@@ -416,6 +433,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `indexmap` | `2.14.2` | Rust |
 | `infer` | `0.22.0` | Rust |
 | `inout` | `0.1.4` | Rust |
+| `inout` | `0.2.5` | Rust |
 | `ioctl-rs` | `0.1.6` | Rust |
 | `ipnet` | `2.12.2` | Rust |
 | `ipnetwork` | `0.20.0` | Rust |
@@ -450,26 +468,24 @@ Total: 722 crates compiled into Desktop binaries.
 | `libm` | `0.2.16` | Rust |
 | `libredox` | `0.1.25` | Rust |
 | `libsqlite3-sys` | `0.30.1` | Rust |
-| `linked-hash-map` | `0.5.6` | Rust |
 | `linux-keyutils` | `0.2.5` | Rust |
 | `linux-raw-sys` | `0.12.1` | Rust |
 | `litemap` | `0.8.3` | Rust |
 | `lock_api` | `0.4.14` | Rust |
 | `log` | `0.4.34` | Rust |
-| `lopdf` | `0.32.0` | Rust |
-| `lopdf` | `0.34.0` | Rust |
+| `lopdf` | `0.42.0` | Rust |
+| `lopdf` | `0.47.0` | Rust |
 | `lru-slab` | `0.1.3` | Rust |
 | `mac-notification-sys` | `0.6.15` | Rust |
 | `markup5ever` | `0.39.0` | Rust |
 | `matchers` | `0.2.0` | Rust |
 | `md-5` | `0.10.6` | Rust |
-| `md5` | `0.7.0` | Rust |
+| `md-5` | `0.11.0` | Rust |
 | `memchr` | `2.8.3` | Rust |
 | `memoffset` | `0.6.5` | Rust |
 | `memoffset` | `0.9.1` | Rust |
 | `mime` | `0.3.17` | Rust |
-| `minimal-lexical` | `0.2.1` | Rust |
-| `minisign-verify` | `0.2.5` | Rust |
+| `minisign-verify` | `0.3.0` | Rust |
 | `miniz_oxide` | `0.8.9` | Rust |
 | `miniz_oxide` | `0.9.1` | Rust |
 | `mio` | `1.2.3` | Rust |
@@ -481,7 +497,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `new_debug_unreachable` | `1.0.6` | Rust |
 | `nix` | `0.25.1` | Rust |
 | `nix` | `0.31.3` | Rust |
-| `nom` | `7.1.3` | Rust |
+| `nom` | `8.0.0` | Rust |
 | `notify-rust` | `4.18.0` | Rust |
 | `nu-ansi-term` | `0.50.3` | Rust |
 | `num_enum` | `0.7.6` | Rust |
@@ -525,7 +541,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `parking_lot` | `0.12.5` | Rust |
 | `parking_lot_core` | `0.9.12` | Rust |
 | `password-hash` | `0.5.0` | Rust |
-| `pdf-extract` | `0.7.12` | Rust |
+| `pdf-extract` | `0.12.1` | Rust |
 | `pem-rfc7468` | `0.7.0` | Rust |
 | `percent-encoding` | `2.3.2` | Rust |
 | `phf` | `0.13.1` | Rust |
@@ -597,12 +613,12 @@ Total: 722 crates compiled into Desktop binaries.
 | `rustc_version` | `0.4.1` | Rust |
 | `rustc-hash` | `2.1.3` | Rust |
 | `rustix` | `1.1.5` | Rust |
-| `rustls` | `0.23.45` | Rust |
+| `rustls` | `0.23.46` | Rust |
 | `rustls-native-certs` | `0.8.5` | Rust |
 | `rustls-pki-types` | `1.15.1` | Rust |
 | `rustls-platform-verifier` | `0.7.1` | Rust |
 | `rustls-platform-verifier-android` | `0.2.0` | Rust |
-| `rustls-webpki` | `0.103.15` | Rust |
+| `rustls-webpki` | `0.103.16` | Rust |
 | `rustversion` | `1.0.23` | Rust |
 | `ryu` | `1.0.23` | Rust |
 | `same-file` | `1.0.6` | Rust |
@@ -628,6 +644,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `serde_urlencoded` | `0.7.1` | Rust |
 | `serde_with` | `3.24.0` | Rust |
 | `serde_with_macros` | `3.24.0` | Rust |
+| `serde_yaml_ng` | `0.10.0` | Rust |
 | `serde-untagged` | `0.1.9` | Rust |
 | `serial` | `0.4.0` | Rust |
 | `serial-core` | `0.4.0` | Rust |
@@ -638,6 +655,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `servo_arc` | `0.4.3` | Rust |
 | `sha1` | `0.10.7` | Rust |
 | `sha2` | `0.10.9` | Rust |
+| `sha2` | `0.11.1` | Rust |
 | `sharded-slab` | `0.1.7` | Rust |
 | `shared_library` | `0.1.9` | Rust |
 | `shell-words` | `1.1.1` | Rust |
@@ -669,7 +687,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `stringprep` | `0.1.5` | Rust |
 | `strsim` | `0.11.1` | Rust |
 | `subtle` | `2.6.1` | Rust |
-| `swift-rs` | `1.0.8` | Rust |
+| `swift-rs` | `1.0.9` | Rust |
 | `symlink` | `0.1.0` | Rust |
 | `syn` | `1.0.109` | Rust |
 | `syn` | `2.0.119` | Rust |
@@ -688,7 +706,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `tauri-build` | `2.7.0` | Rust |
 | `tauri-codegen` | `2.7.0` | Rust |
 | `tauri-macros` | `2.7.0` | Rust |
-| `tauri-plugin` | `2.7.0` | Rust |
+| `tauri-plugin` | `2.7.2` | Rust |
 | `tauri-plugin-cli` | `2.5.0` | Rust |
 | `tauri-plugin-deep-link` | `2.5.0` | Rust |
 | `tauri-plugin-dialog` | `2.8.0` | Rust |
@@ -696,11 +714,11 @@ Total: 722 crates compiled into Desktop binaries.
 | `tauri-plugin-notification` | `2.5.0` | Rust |
 | `tauri-plugin-os` | `2.4.0` | Rust |
 | `tauri-plugin-single-instance` | `2.5.0` | Rust |
-| `tauri-plugin-updater` | `2.13.1` | Rust |
+| `tauri-plugin-updater` | `2.14.1` | Rust |
 | `tauri-plugin-window-state` | `2.5.0` | Rust |
 | `tauri-runtime` | `2.12.0` | Rust |
 | `tauri-runtime-wry` | `2.12.0` | Rust |
-| `tauri-utils` | `2.10.0` | Rust |
+| `tauri-utils` | `2.10.2` | Rust |
 | `tauri-winres` | `0.3.6` | Rust |
 | `tauri-winrt-notification` | `0.7.3` | Rust |
 | `tempfile` | `3.27.0` | Rust |
@@ -743,8 +761,10 @@ Total: 722 crates compiled into Desktop binaries.
 | `tracing-subscriber` | `0.3.23` | Rust |
 | `tray-icon` | `0.25.1` | Rust |
 | `try-lock` | `0.2.5` | Rust |
+| `ttf-parser` | `0.25.1` | Rust |
 | `tungstenite` | `0.28.0` | Rust |
 | `type1-encoding-parser` | `0.1.1` | Rust |
+| `typed-path` | `0.13.0` | Rust |
 | `typeid` | `1.0.3` | Rust |
 | `typenum` | `1.20.1` | Rust |
 | `uds_windows` | `1.2.1` | Rust |
@@ -754,6 +774,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `unicode-properties` | `0.1.4` | Rust |
 | `unicode-segmentation` | `1.13.3` | Rust |
 | `universal-hash` | `0.5.1` | Rust |
+| `unsafe-libyaml` | `0.2.11` | Rust |
 | `untrusted` | `0.9.0` | Rust |
 | `url` | `2.5.8` | Rust |
 | `urlpattern` | `0.6.0` | Rust |
@@ -785,11 +806,12 @@ Total: 722 crates compiled into Desktop binaries.
 | `webkit2gtk` | `2.0.2` | Rust |
 | `webkit2gtk-sys` | `2.0.2` | Rust |
 | `webpki-root-certs` | `1.0.11` | Rust |
-| `webpki-roots` | `1.0.9` | Rust |
+| `webpki-roots` | `1.0.11` | Rust |
 | `webview2-com` | `0.39.1` | Rust |
 | `webview2-com-macros` | `0.8.1` | Rust |
 | `webview2-com-sys` | `0.39.1` | Rust |
 | `weezl` | `0.1.12` | Rust |
+| `weezl` | `0.2.1` | Rust |
 | `which` | `8.0.6` | Rust |
 | `whoami` | `1.6.1` | Rust |
 | `winapi` | `0.3.9` | Rust |
@@ -842,7 +864,6 @@ Total: 722 crates compiled into Desktop binaries.
 | `windows-numerics` | `0.2.0` | Rust |
 | `windows-numerics` | `0.3.1` | Rust |
 | `windows-registry` | `0.5.3` | Rust |
-| `windows-registry` | `0.6.1` | Rust |
 | `windows-result` | `0.3.4` | Rust |
 | `windows-result` | `0.4.1` | Rust |
 | `windows-strings` | `0.4.2` | Rust |
@@ -885,7 +906,7 @@ Total: 722 crates compiled into Desktop binaries.
 | `zerotrie` | `0.2.5` | Rust |
 | `zerovec` | `0.11.8` | Rust |
 | `zerovec-derive` | `0.11.6` | Rust |
-| `zip` | `4.6.1` | Rust |
+| `zip` | `9.3.0` | Rust |
 | `zlib-rs` | `0.6.8` | Rust |
 | `zmij` | `1.0.23` | Rust |
 | `zopfli` | `0.8.4` | Rust |

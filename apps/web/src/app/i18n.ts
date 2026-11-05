@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 
+import { safeStorage } from "@/lib/storage";
+
 export type Language = "ja" | "en";
 const key = "mix-agent-language";
 const listeners = new Set<() => void>();
@@ -18,8 +20,7 @@ export function browserLanguage(
 
 function initialLanguage(): Language {
   if (typeof document === "undefined") return "ja";
-  const saved =
-    typeof localStorage === "undefined" ? null : localStorage.getItem(key);
+  const saved = safeStorage.get(key);
   return saved === "ja" || saved === "en" ? saved : browserLanguage();
 }
 
@@ -32,7 +33,7 @@ export function getLanguage() {
 export function setLanguage(value: Language) {
   if (language === value) return;
   language = value;
-  if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
+  safeStorage.set(key, value);
   if (typeof document !== "undefined") document.documentElement.lang = value;
   listeners.forEach((listener) => listener());
 }
@@ -78,6 +79,28 @@ export const en: Record<string, string> = {
   "12文字以上。API Keyとは別のパスワードです。":
     "At least 12 characters. This password is separate from your API keys.",
   "処理中…": "Working…",
+  "{count} 件": "{count} items",
+  "{count} 件接続中": "{count} connected",
+  "{count} ドメイン": "{count} domains",
+  "{minutes}分・{steps}ステップ・{calls} Tool Call":
+    "{minutes} min · {steps} steps · {calls} tool calls",
+  "30日間": "Last 30 days",
+  "選択したチェックポイントから再開します。結果不明の操作は破棄されます。":
+    "Resume from the selected checkpoint. Operations with an unknown result are discarded.",
+  "ChatGPTのように、ユーザーについての短い事実を1件ずつ保存します。":
+    "Save short facts about the user one at a time, like ChatGPT does.",
+  "まだ記憶がありません。「覚える」から追加するか、「○○を覚えて」と話しかけてください。":
+    "No memories yet. Add one from “Remember”, or say “remember …” in chat.",
+  "短い事実を1件ずつ保存します（200字以内推奨）。重複は自動で無視されます。":
+    "Save one short fact at a time (200 characters recommended). Duplicates are ignored automatically.",
+  "現在のデータをバックアップ内容に置き換えます。現在のバックアップを確保しましたか？":
+    "Replace the current data with the backup contents. Have you saved a current backup?",
+  "※API Keyは暗号化して保存されます。スキップして後から設定することも可能です。":
+    "API keys are stored encrypted. You can skip this and configure it later.",
+  "追加のモデル設定やMCPツールの追加は、左下の「設定」からいつでも行えます。":
+    "You can add models and MCP tools any time from “Settings” at the bottom left.",
+  "Agent Skills（SKILL.md）の取り込み・書き出しと、検証済み手順の再利用。":
+    "Import and export Agent Skills (SKILL.md) and reuse verified procedures.",
   "ワークスペースを作成": "Create workspace",
   "ログイン": "Sign in",
   "接続先のAI Providerへ送信した内容は、そのProviderの規約に従います。":
@@ -560,6 +583,73 @@ export const en: Record<string, string> = {
   "Providerを追加": "Add provider",
   "API Keyは暗号化して保存され、保存後は再表示されません。":
     "API keys are encrypted and cannot be viewed after saving.",
+  "非公式・自己責任の機能です": "Unofficial feature — use at your own risk",
+  "この連携は OpenAI の公式 API ではなく、Codex CLI が使う非公開バックエンドを利用します。利用規約・アカウント制限に抵触する可能性、予告なく停止する可能性があります。MIX-agent は動作や継続利用を保証しません。":
+    "This integration uses the private backend the Codex CLI uses, not an official OpenAI API. It may violate the terms of service or account limits, and it may stop working without notice. MIX-agent does not guarantee that it will work or remain available.",
+  "上記を理解し、非公式・自己責任であることに同意します":
+    "I understand the above and accept that this is unofficial and at my own risk.",
+  "ChatGPT 連携は非公式・自己責任の機能です。同意にチェックしてから保存してください。":
+    "The ChatGPT integration is unofficial and at your own risk. Check the consent box before saving.",
+  "保存後に ChatGPT のログイン（デバイスコード）を開始します。API Key は使いません。":
+    "Saving starts the ChatGPT device-code login. No API key is used.",
+  "ChatGPT にログイン": "Sign in to ChatGPT",
+  "表示された URL を開き、ワンタイムコードを入力してください。この画面は自動で完了を確認します。":
+    "Open the URL and enter the one-time code. This page checks for completion automatically.",
+  "コードをコピー": "Copy code",
+  "認証ページを開く": "Open sign-in page",
+  "認証の完了を待っています…": "Waiting for sign-in to complete…",
+  "ChatGPT に接続し、モデルを取得しました。":
+    "Connected to ChatGPT and fetched models.",
+  "ChatGPT 使用枠": "ChatGPT usage",
+  "5時間枠": "5-hour window",
+  "週次枠": "Weekly window",
+  "使用枠": "Usage window",
+  "未ログイン": "Not signed in",
+  "ログイン済み": "Signed in",
+  "ChatGPT でログイン": "Sign in with ChatGPT",
+  "残量を更新": "Refresh usage",
+  "ログアウトしました": "Signed out",
+  "残量を取得しています…": "Loading usage…",
+  "再ログイン": "Sign in again",
+  "リセット:": "Resets:",
+  "リセット時刻は端末のタイムゾーンで表示し、UTC も併記しています。":
+    "Reset times are shown in your device time zone, with the UTC time alongside.",
+  "非公式ChatGPT連携を有効にする": "Enable the unofficial ChatGPT integration",
+  "非公式連携が無効です": "The unofficial integration is disabled",
+  "Codex CLI の非公開バックエンドを使う連携です。有効にするとプリセットに表示されます。":
+    "This integration uses the private backend the Codex CLI uses. Enable it to show the preset.",
+  "このアカウントでは ChatGPT のデバイスコードログインを利用できません。":
+    "Device-code sign-in is not available for this ChatGPT account.",
+  "ログインの有効期限が切れました。もう一度ログインしてください。":
+    "The sign-in expired. Please sign in again.",
+  "ログイン情報が見つかりません。もう一度ログインしてください。":
+    "The sign-in session could not be found. Please sign in again.",
+  "ChatGPT のログインに失敗しました。": "ChatGPT sign-in failed.",
+  "ChatGPT のログインの有効期限が切れました。もう一度ログインしてください。":
+    "The ChatGPT sign-in expired. Please sign in again.",
+  "ChatGPT の再ログインが必要です。": "ChatGPT needs you to sign in again.",
+  "ChatGPT の使用枠に達しています。":
+    "The ChatGPT usage limit has been reached.",
+  "ChatGPT の認証更新に失敗しました。":
+    "Could not refresh the ChatGPT sign-in.",
+  "ChatGPT の認証情報を保存できませんでした。":
+    "Could not save the ChatGPT credentials.",
+  "使用枠を取得できませんでした。": "Could not read the usage windows.",
+  "15 分以上前の情報です。": "This information is more than 15 minutes old.",
+  "クレジット: 無制限": "Credits: unlimited",
+  "クレジット残高:": "Credit balance:",
+  "クレジットなし": "No credits",
+  "使用枠に達しています。": "The usage limit has been reached.",
+  "残り": "left",
+  "使用済み": "used",
+  "リセットを待つか、APIキー方式のProviderに切り替えてください。":
+    "Wait for the reset, or switch to an API-key provider.",
+  "取得:": "Updated:",
+  "ログインすると 5 時間枠・週次枠の残量を表示します。":
+    "Sign in to see the 5-hour and weekly usage windows.",
+  "残量は OpenAI の非公開エンドポイントから取得しています。表示は保証されません。":
+    "Usage comes from a private OpenAI endpoint. The figures are not guaranteed.",
+  "サブスクリプション": "Subscription",
   "Providerと取得済みのモデルを削除しますか？ 元に戻せません。":
     "Delete this provider and its fetched models? This cannot be undone.",
   "Providerを削除しました": "Provider deleted",
@@ -1135,6 +1225,15 @@ export const en: Record<string, string> = {
   "バイナリファイルは表示できません。": "Binary files cannot be displayed.",
 };
 
-export function t(value: string): string {
-  return language === "en" ? (en[value] ?? value) : value;
+export function t(
+  value: string,
+  vars?: Record<string, string | number>,
+): string {
+  const rendered = language === "en" ? (en[value] ?? value) : value;
+  if (!vars) return rendered;
+  let out = rendered;
+  for (const [name, replacement] of Object.entries(vars)) {
+    out = out.split(`{${name}}`).join(String(replacement));
+  }
+  return out;
 }

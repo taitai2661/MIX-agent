@@ -1,6 +1,6 @@
 # MIX-agent Desktop — コーディングエージェント化計画
 
-> 状態: Phase 8.1〜8.4 完了。Phase 10.0（ツール契約の修復）／10.1（評価ハーネス）完了。次は Phase 10.5 の残り（`repo_map`、LSP 相当の definition / diagnostics）。
+> 状態: Phase 8.1〜8.4 完了。Phase 10.0（ツール契約の修復）／10.1（評価ハーネス）／10.5 の `repo_map` 完了。LSP 相当の definition / diagnostics は `lsp` ツールとして実装済み。専用ターミナル UI と Windows のファイルシステム隔離が残り。
 
 ## 1. 目的
 
@@ -42,7 +42,7 @@ Phase 10（信頼性）を優先したため、この節は着手時点の計画
 
 ## 4. 非スコープ (今回やらない)
 
-- OS プロセス sandbox (macOS `sandbox-exec` / Windows Job / landlock)。[`docs/desktop/architecture.md`](architecture.md) のセキュリティ節の未実装宣言を維持し、敵対的コード実行には使わない前提を変えない
+- OS プロセス sandbox は macOS `sandbox-exec` / Linux bubblewrap / Windows Job Object まで実装。Windows のファイルシステム書き込み隔離と Linux landlock は残タスクで、敵対的コード実行には使わない前提を変えない
 - embedding 検索 / FTS5 は Knowledge 側のみ未実装 (Memory は hybrid 検索済み、[`docs/desktop/architecture.md`](architecture.md) の「今回も未実装のもの」を参照)
 - PTY 対話 terminal (stdin 送出)、`browser evaluate` の完全隔離
 - 各 OS 実機での更新適用確認（アプリ内更新・署名付き `latest.json` の配布基盤は v0.5.2 で実装済み。実機確認結果は [`docs/verification.md`](../verification.md) に記録）
@@ -111,7 +111,7 @@ Phase 10（信頼性）を優先したため、この節は着手時点の計画
 | 10.2 | 完了 | `format_command` を編集ステップ後に自動実行（失敗はモデルへ返す）。`verify_command` / `format_command` をプロジェクト設定とアプリ既定値から編集可能にし、検証候補を UI に表示 |
 | 10.3 | 完了 | `user_plan` を sensitive 化して承認プロンプトで停止。承認で Plan モードをその Run の間だけ解除し、次ターンから編集可能 |
 | 10.4 | 完了 | `edit` / `files` の変更前内容を Run 単位で保持し、ActivityPanel の「実行前の状態に戻す」で復元。ターミナル経由の変更は対象外 |
-| 10.5 | 一部 | `files read` の行番号付与、`edit` の番号付きアンカー許容、`grep` の context 行、`git` に `log` / `show` / `blame` を追加。`repo_map` と LSP definition / diagnostics は未着手 |
+| 10.5 | 完了 | `files read` の行番号付与、`edit` の番号付きアンカー許容、`grep` の context 行、`git` に `log` / `show` / `blame`、`symbols` に `map`（repo-wide の構造マップ）を追加。`lsp` ツールで diagnostics / definition を実装 |
 | 10.6 | 完了 | Anthropic の `cache_control`（system / tools / 履歴末尾）、読み取り専用ツールの並列実行（最大 4）、実行中の追加指示（steering） |
 
 追加の安全対策:

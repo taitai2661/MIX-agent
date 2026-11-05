@@ -17,6 +17,7 @@ concurrency:
 jobs:
   docker-backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # `alembic check` must run before pytest: the test fixture drops and
@@ -50,6 +51,7 @@ jobs:
 
   docker-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -76,6 +78,7 @@ jobs:
 
   docker-frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -125,6 +128,7 @@ jobs:
   # two specs diverge or when a spec no longer matches what is implemented.
   memory-parity:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -154,12 +158,27 @@ jobs:
       # on one side forces a look at the other (and its UI parser).
       - name: Run event contract parity check
         run: python3 scripts/check-run-event-parity.py
+      # The unofficial Codex integration is implemented independently in Rust
+      # and Python. A drifted client id, base URL or quota threshold makes one
+      # edition fail while the other still works.
+      - name: ChatGPT / Codex contract parity check
+        run: python3 scripts/check-chatgpt-parity.py
+      # Skill packages are shared by both editions; a cap that differs makes
+      # one edition import a bundle the other refuses (or silently truncates).
+      - name: Skill package parity check
+        run: python3 scripts/check-skill-parity.py
+      # The execution/mcp images COPY the shared snapshot helper into /app;
+      # this fails when a stage copies it from anywhere but the canonical
+      # packages/tool_contracts path (a silent backup/restore fork).
+      - name: Snapshot copy parity check
+        run: python3 scripts/check-snapshot-parity.py
 
   # Cheap, dependency-free repository gates: no container, no network. These
   # used to rely on human discipline (README was translated by hand, nothing
   # looked for committed credentials).
   repo-hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -177,6 +196,7 @@ jobs:
   # requirements (what the image actually installs).
   dependency-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -186,13 +206,15 @@ jobs:
         run: pip install uv==0.12.7
       - name: Export locked runtime requirements
         working-directory: apps/server
-        run: uv export --frozen --no-dev --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+        # Exclude the project itself: pip-audit cannot install an editable
+        # requirement when it is asked to verify hashes.
+        run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
       - name: Audit
         run: uvx pip-audit==2.10.1 --requirement "$RUNNER_TEMP/requirements.txt" --strict
       # An SBOM turns "which versions were in v0.5.4?" into an artifact instead
       # of a rebuild. CycloneDX is the format Docker/Grype/Trivy ingest.
       - name: Generate Python SBOM (CycloneDX)
-        run: uvx --from cyclonedx-bom==7.6.0 cyclonedx-py requirements --input-file "$RUNNER_TEMP/requirements.txt" --output-format JSON --output-file "$RUNNER_TEMP/sbom-python.json"
+        run: uvx --from cyclonedx-bom==7.6.0 cyclonedx-py requirements "$RUNNER_TEMP/requirements.txt" --of JSON -o "$RUNNER_TEMP/sbom-python.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-python
@@ -203,6 +225,7 @@ jobs:
     # Dependabot opens upgrade PRs, but it is not a gate: a disclosure can land
     # between weekly updates. Audit the lockfile the installers actually build.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -223,6 +246,7 @@ jobs:
     # Lightweight single-OS fmt gate: rustfmt is platform-independent, so the
     # three-OS matrix below would only repeat the same check three times.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -235,6 +259,7 @@ jobs:
 
   desktop-rust:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -291,6 +316,7 @@ jobs:
 
   desktop-ui:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Linux Tauri dependencies
@@ -334,6 +360,8 @@ jobs:
       - name: UI build
         working-directory: apps/desktop/ui
         run: pnpm exec vite build
+      - name: UI bundle budget
+        run: node scripts/check-desktop-bundle.mjs
       - name: Prettier check
         working-directory: apps/desktop/ui
         run: pnpm format:check
@@ -356,6 +384,7 @@ jobs:
   # job does not download a browser on every pull request.
   desktop-package-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -379,6 +408,9 @@ jobs:
       - name: Build Windows installers
         working-directory: apps/desktop
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles nsis,msi
       - name: Verify installers were produced
         working-directory: apps/desktop

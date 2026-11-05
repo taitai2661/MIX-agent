@@ -1,14 +1,24 @@
 """Provider-specific wire formats stay here; the run engine sees normalized events."""
 
+import asyncio
 import hashlib
+import json
 import logging
+from urllib.parse import quote, urlsplit
 
 import httpx
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from openai import AsyncOpenAI, BadRequestError, UnprocessableEntityError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AsyncOpenAI,
+    BadRequestError,
+    UnprocessableEntityError,
+)
 
+from mix_agent.providers import chatgpt as chatgpt_oauth
 from mix_agent.providers.capability_probe import VISION_DATA_URL
 from mix_agent.providers.catalog import get_preset
 from mix_agent.providers.metadata import context_limit, resolve
@@ -17,7 +27,53 @@ from mix_agent.providers.reasoning import request_options, show_summary
 
 PROVIDER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
+# Raw provider items are persisted in run history so a tool turn can replay the
+# reasoning item. An oversized blob is dropped rather than bloating every
+# checkpoint; losing it only costs reasoning continuity, not the turn.
+NATIVE_HISTORY_MAX_BYTES = 256 * 1024
+
 LOGGER = logging.getLogger(__name__)
+
+
+def _bounded_native(items) -> list:
+    if not isinstance(items, list) or not items:
+        return []
+    try:
+        encoded = json.dumps(items, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        LOGGER.warning("could not encode native provider items; dropping them")
+        return []
+    if len(encoded) > NATIVE_HISTORY_MAX_BYTES:
+        LOGGER.warning(
+            "dropping oversized native provider items (%s bytes > %s)",
+            len(encoded),
+            NATIVE_HISTORY_MAX_BYTES,
+        )
+        return []
+    return items
+
+
+def _chatgpt_quota_exhausted(headers) -> bool:
+    """Whether a 429 means "subscription window exhausted" or a transient limit.
+
+    The Codex backend sets ``x-codex-rate-limit-reached-type`` only for the
+    former. Treating every 429 as exhausted hid a momentary rate limit behind a
+    misleading "usage limit reached" error and skipped the retry that would have
+    recovered it.
+    """
+    value = str((headers or {}).get("x-codex-rate-limit-reached-type") or "")
+    return value.strip().lower() not in {"", "none", "false", "0"}
+
+
+def _retry_after_seconds(headers) -> float:
+    value = (headers or {}).get("retry-after")
+    if value is None:
+        return 0.0
+    try:
+        return min(20.0, max(0.5, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
 
 DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -29,6 +85,21 @@ DEFAULT_URLS = {
     "compatible": "",
 }
 CAPABILITIES = ("chat", "tools", "vision", "reasoning", "structured_output")
+
+
+def _client_version():
+    """Version sent to the Codex model catalog.
+
+    The source checkout has no installed distribution metadata, so fall back to
+    a stable value rather than omitting the query parameter entirely.
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("mix-agent")
+    except Exception:  # noqa: BLE001 - metadata is optional in tests/source
+        return "0.0.0"
+
 
 # Default embedding model per provider kind (memory spec §5). A provider record
 # may override it with ``embedding_model``. A kind with no entry — Anthropic
@@ -136,10 +207,10 @@ class Adapter:
         # conversation exists (probes, memory jobs); a config-derived value
         # keeps those requests on the same routing path across restarts.
         self.session_id = hashlib.sha256(self.url.encode()).hexdigest()[:32]
-        self.preset = get_preset(provider.get("preset_id"))
+        preset = get_preset(provider.get("preset_id"))
         # Records created before presets retain a deliberate legacy mapping.
-        if not self.preset:
-            self.preset = get_preset(
+        if not preset:
+            preset = get_preset(
                 {
                     "openai": "openai",
                     "anthropic": "anthropic",
@@ -149,8 +220,11 @@ class Adapter:
                     "lmstudio": "lmstudio",
                 }.get(self.kind, "custom")
             )
-        if not self.preset:
+        if not preset:
             raise ValueError("Provider preset has no transport configuration")
+        # Annotate the attribute so later methods see a concrete mapping rather
+        # than `dict | None`; the guard above already rejects an empty preset.
+        self.preset: dict = preset
         self.transport_id = self.preset["transport_id"]
         self.discovery_id = self.preset["discovery_id"]
         missing = [
@@ -160,6 +234,23 @@ class Adapter:
         ]
         if missing:
             raise ProviderConfigurationError("missing_extra_config:" + ",".join(missing))
+        self.chatgpt = (
+            chatgpt_oauth.ChatGptAuth(provider.get("secret_id"), key, provider.get("id"))
+            if self.preset.get("id") == "chatgpt"
+            else None
+        )
+        # A chatgpt row without a stored URL must never fall back to the public
+        # OpenAI API: the subscription backend is a different endpoint.
+        if self.chatgpt and not provider.get("base_url"):
+            self.url = self.preset["default_url"]
+        if self.chatgpt:
+            parsed = urlsplit(self.url)
+            if (
+                parsed.scheme != "https"
+                or parsed.netloc != "chatgpt.com"
+                or not parsed.path.startswith("/backend-api/codex")
+            ):
+                raise ProviderConfigurationError("invalid_chatgpt_base_url")
 
     def transport_for(self, model):
         """Wire format for one model; gateways may pin a model to an endpoint."""
@@ -171,6 +262,8 @@ class Adapter:
         return {header: session_id or self.session_id} if header else {}
 
     async def list_models(self):
+        if self.discovery_id == "chatgpt_models":
+            return await self._list_chatgpt_models()
         headers = {"Authorization": "Bearer " + self.key} if self.key else {}
         url = self.url.rstrip("/") + "/models"
         if self.discovery_id == "anthropic_models":
@@ -220,7 +313,7 @@ class Adapter:
         result = []
         for item in body.get("data", body.get("models", [])):
             model_id = item.get("id", item.get("name", "")).removeprefix("models/")
-            caps = {k: None for k in CAPABILITIES}
+            caps: dict[str, bool | None] = {k: None for k in CAPABILITIES}
             caps["chat"] = chat_capability(self.kind, model_id)
             parameters = item.get("supported_parameters", [])
             if parameters:
@@ -263,6 +356,78 @@ class Adapter:
             )
         return result
 
+    async def _list_chatgpt_models(self):
+        """Fetch the Codex model catalog.
+
+        The subscription backend returns ``{"models": [{"slug", ...}]}`` rather
+        than the OpenAI-compatible ``{"data": [{"id"}]}`` shape, and it needs the
+        ChatGPT identity headers plus ``client_version``.
+        """
+        chatgpt = self.chatgpt
+        if chatgpt is None:
+            raise ProviderConfigurationError("ChatGPT transport is not configured")
+        url = self.url.rstrip("/") + "/models?client_version=" + quote(_client_version())
+        headers = chatgpt.headers()
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            response = await client.get(url, headers=headers)
+            if response.status_code in {401, 403}:
+                # The server just rejected the access token, so force the
+                # refresh even when `auth_failed` is set or the advertised
+                # expiry is still in the future.
+                await chatgpt.refresh(force=True)
+                response = await client.get(url, headers=chatgpt.headers())
+            response.raise_for_status()
+            body = response.json()
+        items = body.get("models") if isinstance(body, dict) else None
+        if not isinstance(items, list):
+            items = body.get("data", []) if isinstance(body, dict) else []
+        result = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("slug") or item.get("id") or item.get("name") or "")
+            if not model_id:
+                continue
+            caps: dict[str, bool | None] = {key: None for key in CAPABILITIES}
+            caps.update(
+                chat=chat_capability(self.kind, model_id),
+                tools=True,
+                reasoning=True,
+                vision="image" in (item.get("input_modalities") or []),
+            )
+            try:
+                resolved = await resolve(
+                    self.kind,
+                    model_id,
+                    item,
+                    self.preset["metadata_resolver_ids"],
+                    preset_id=self.preset.get("id"),
+                )
+            except Exception:  # noqa: BLE001 - metadata must not hide a working catalog
+                resolved = {"metadata": {}}
+            metadata = resolved.get("metadata", {})
+            context = metadata.get("context_window")
+            result.append(
+                {
+                    "model_id": model_id,
+                    "name": str(item.get("display_name") or item.get("name") or model_id),
+                    "capabilities": caps,
+                    "context_window": context["value"] if context else None,
+                    "context_source": context["source"] if context else None,
+                    "context_confidence": context["confidence"] if context else None,
+                    "source": "provider_api",
+                    "overrides": {},
+                    **resolved,
+                }
+            )
+        return result
+
+    async def quota(self, force: bool = False):
+        """Current ChatGPT subscription usage, or ``None`` for other providers."""
+        if self.chatgpt is None:
+            return None
+        return await self.chatgpt.quota(force=force)
+
     async def test_connection(self):
         return {"ok": True, "model_count": len(await self.list_models())}
 
@@ -271,11 +436,21 @@ class Adapter:
 
     def embedding_model(self):
         """Embedding model id for this provider, or ``None`` when it has none."""
+        if (
+            self.transport_id in {"anthropic_messages", "chatgpt_responses"}
+            or self.preset.get("id") == "chatgpt"
+            # Also catch legacy rows that predate the preset and only carry the
+            # Codex URL.
+            or "chatgpt.com/backend-api/codex" in str(self.url or "")
+        ):
+            # Neither transport exposes an embeddings endpoint, so an override
+            # cannot conjure one. In particular, ChatGPT shares kind="openai"
+            # with the public API; checking the kind alone sent every Memory
+            # embedding to the Codex backend.
+            return None
         configured = str(self.provider.get("embedding_model") or "").strip()
         if configured:
             return configured
-        if self.transport_id == "anthropic_messages":
-            return None
         return EMBEDDING_DEFAULT_MODELS.get(self.kind)
 
     async def embed(self, texts):
@@ -349,6 +524,7 @@ class Adapter:
             "gemini_generate_content": self._gemini,
             "ollama": self._ollama,
             "lmstudio": self._lmstudio,
+            "chatgpt_responses": self._openai,
         }.get(transport_id)
         if method is None:
             raise ValueError(f"Unsupported transport: {transport_id}")
@@ -429,7 +605,7 @@ class Adapter:
                 return True
         return False
 
-    async def _openai(self, model, messages, tools, mode, settings):
+    def _responses_args(self, model, messages, tools, mode, settings):
         inputs, instructions = [], ""
         for m in messages:
             if m["role"] == "system":
@@ -469,13 +645,31 @@ class Adapter:
             args.update(options)
             if not tools:
                 args.pop("tools", None)
-        elif mode != "chat":
+        elif mode != "chat" or self.chatgpt is not None:
             args.update(
-                reasoning={"summary": "auto", "effort": settings.get("reasoning_effort", "medium")},
+                reasoning={
+                    "summary": "auto",
+                    "effort": settings.get("reasoning_effort", "medium"),
+                },
                 include=["reasoning.encrypted_content"],
             )
         if settings.get("_tool_probe"):
             args["tool_choice"] = {"type": "function", "name": "mix_tool_probe"}
+        if self.chatgpt is not None:
+            if not tools:
+                args.pop("tools", None)
+            # ChatGPT derives cache affinity from this key, and the Codex
+            # backend expects it to stay stable across a run.
+            if settings.get("_session_id"):
+                args["prompt_cache_key"] = settings["_session_id"]
+        return args
+
+    async def _openai(self, model, messages, tools, mode, settings):
+        args = self._responses_args(model, messages, tools, mode, settings)
+        if self.chatgpt is not None:
+            async for event in self._chatgpt_responses(args, mode, settings):
+                yield event
+            return
         async with AsyncOpenAI(
             api_key=self.key,
             base_url=self.url,
@@ -484,27 +678,113 @@ class Adapter:
             default_headers=self.gateway_headers(settings.get("_session_id")),
         ) as client:
             stream = await client.responses.create(**args)
-            async for event in stream:
-                if event.type == "response.output_text.delta":
-                    yield {"kind": "text", "text": event.delta}
-                elif event.type == "response.reasoning_summary_text.delta" and show_summary(mode, settings):
-                    yield {"kind": "reasoning", "text": event.delta}
-                elif event.type == "response.completed":
-                    response = event.response
-                    native = [x.model_dump(mode="json", exclude_none=True) for x in response.output]
-                    calls = [
-                        {"id": x.call_id, "name": x.name, "arguments": x.arguments}
-                        for x in response.output
-                        if x.type == "function_call"
-                    ]
-                    yield {
-                        "kind": "response",
-                        "message": {"role": "assistant", "content": response.output_text, "native": native},
-                        "tool_calls": calls,
-                        "usage": response.usage.model_dump() if response.usage else {},
-                    }
-                elif event.type in ("response.failed", "response.incomplete", "error"):
-                    raise RuntimeError("Provider stopped before completing the response")
+            async for event in self._consume_responses(stream, mode, settings):
+                yield event
+
+    async def _chatgpt_responses(self, args, mode, settings):
+        """One Responses turn with ChatGPT OAuth.
+
+        Auth failures refresh once. Server errors and transport failures retry
+        with backoff, and a 429 is only reported as "usage exhausted" when the
+        backend says so; a bare 429 is a transient rate limit and is retried
+        like any other overload.
+        """
+        if self.chatgpt is None:
+            raise ProviderConfigurationError("ChatGPT transport is not configured")
+        auth_retried = False
+        force_refresh = False
+        transient_attempts = 0
+        while True:
+            token = await self.chatgpt.token(force_refresh=force_refresh)
+            force_refresh = False
+            headers = self.chatgpt.headers(settings.get("_session_id"))
+            async with AsyncOpenAI(
+                api_key=token,
+                base_url=self.url,
+                max_retries=0,
+                timeout=PROVIDER_TIMEOUT,
+                default_headers=headers,
+            ) as client:
+                try:
+                    stream = await client.responses.create(**args)
+                except APIStatusError as exc:
+                    response = getattr(exc, "response", None)
+                    response_headers = getattr(response, "headers", {}) or {}
+                    # Rate-limit headers are most useful exactly when the call
+                    # fails; observe them before classifying the error.
+                    self.chatgpt.observe_headers(response)
+                    status = exc.status_code
+                    if status in {401, 403} and not auth_retried:
+                        # Let `token(force_refresh=True)` perform the refresh on
+                        # the next iteration, so the rotated credentials are
+                        # persisted exactly once. Later transient retries reuse
+                        # that token rather than refreshing on every attempt.
+                        auth_retried = True
+                        force_refresh = True
+                        continue
+                    if status in {401, 403}:
+                        raise chatgpt_oauth.ChatGptError(
+                            chatgpt_oauth.AUTH_EXPIRED,
+                            f"ChatGPT rejected the token ({status})",
+                        ) from exc
+                    exhausted = status == 429 and _chatgpt_quota_exhausted(response_headers)
+                    retryable = status in {408, 425} or status >= 500 or (status == 429 and not exhausted)
+                    if retryable and transient_attempts < 2:
+                        transient_attempts += 1
+                        delay = _retry_after_seconds(response_headers) or 0.5 * 2 ** (transient_attempts - 1)
+                        await asyncio.sleep(delay)
+                        continue
+                    if status == 429:
+                        reset = response_headers.get("x-codex-primary-reset-at") or response_headers.get(
+                            "retry-after"
+                        )
+                        reason = (
+                            "ChatGPT usage limit reached"
+                            if exhausted
+                            else "ChatGPT is rate limiting this account"
+                        )
+                        raise chatgpt_oauth.ChatGptError(
+                            "chatgpt_rate_limited",
+                            reason + (f"; reset at {reset}" if reset else ""),
+                        ) from exc
+                    raise
+                except APIConnectionError:
+                    if transient_attempts < 2:
+                        transient_attempts += 1
+                        await asyncio.sleep(0.5 * 2 ** (transient_attempts - 1))
+                        continue
+                    raise
+                self.chatgpt.observe_headers(getattr(stream, "response", None))
+                async for event in self._consume_responses(stream, mode, settings):
+                    yield event
+                return
+
+    async def _consume_responses(self, stream, mode, settings):
+        async for event in stream:
+            if event.type == "response.output_text.delta":
+                yield {"kind": "text", "text": event.delta}
+            elif event.type == "response.reasoning_summary_text.delta" and show_summary(mode, settings):
+                yield {"kind": "reasoning", "text": event.delta}
+            elif event.type == "codex.rate_limits" and self.chatgpt is not None:
+                self.chatgpt.observe_rate_limit(event)
+            elif event.type == "response.completed":
+                response = event.response
+                native = _bounded_native(
+                    [x.model_dump(mode="json", exclude_none=True) for x in response.output]
+                )
+                calls = [
+                    {"id": x.call_id, "name": x.name, "arguments": x.arguments}
+                    for x in response.output
+                    if x.type == "function_call"
+                ]
+                yield {
+                    "kind": "response",
+                    "message": {"role": "assistant", "content": response.output_text, "native": native},
+                    "tool_calls": calls,
+                    "usage": response.usage.model_dump() if response.usage else {},
+                }
+            elif event.type in ("response.failed", "response.incomplete", "error"):
+                raise RuntimeError("Provider stopped before completing the response")
 
     async def _compatible(self, model, messages, tools, mode, settings):
         wire = []
@@ -714,7 +994,7 @@ class Adapter:
             final = await stream.get_final_message()
         if final.stop_reason not in ("end_turn", "tool_use", "stop_sequence"):
             raise RuntimeError("Provider stopped before completion")
-        native = [x.model_dump(mode="json", exclude_none=True) for x in final.content]
+        native = _bounded_native([x.model_dump(mode="json", exclude_none=True) for x in final.content])
         yield {
             "kind": "response",
             "message": {

@@ -74,8 +74,15 @@ function ChatMessageImpl({
   onBrowserChange,
 }: ChatMessageProps) {
   const m = message;
-  const role = m.data.role;
+  const role = typeof m.data.role === "string" ? m.data.role : "";
   const isUser = role === "user";
+  const rawContent = m.data.content;
+  const content =
+    typeof rawContent === "string"
+      ? rawContent
+      : rawContent == null
+        ? ""
+        : String(rawContent);
   const runningHere = active && currentRunMessageId === m.id;
   const mergedCalls = (() => {
     if (!runningHere) return calls;
@@ -168,7 +175,7 @@ function ChatMessageImpl({
           </div>
         ) : (
           <div className="markdown">
-            <ChatMarkdown>{m.data.content}</ChatMarkdown>
+            <ChatMarkdown>{content}</ChatMarkdown>
           </div>
         )}
         {isUser && !editing && (
@@ -183,26 +190,76 @@ function ChatMessageImpl({
             <Pencil size={12} /> {t("編集")}
           </button>
         )}
-        {m.data.artifacts?.map((artifact: ChatArtifact) => (
-          <ArtifactCard key={artifact.artifact_id} artifact={artifact} />
-        )) ||
-          m.data.artifact_ids?.map((artifact_id: string) => (
-            <ArtifactCard key={artifact_id} artifact={{ artifact_id }} />
-          ))}
-        {m.data.performance && (
-          <div
-            className="message-performance"
-            title={`出力 ${m.data.performance.output_tokens} tokens / 生成 ${m.data.performance.generation_ms}ms`}
-          >
-            {m.data.performance.tokens_per_second.toFixed(1)} tokens/s
-          </div>
-        )}
+        {Array.isArray(m.data.artifacts) && m.data.artifacts.length
+          ? (m.data.artifacts as ChatArtifact[])
+              .filter(
+                (artifact: ChatArtifact): artifact is ChatArtifact =>
+                  typeof artifact === "object" &&
+                  artifact !== null &&
+                  typeof (artifact as ChatArtifact).artifact_id === "string",
+              )
+              .map((artifact: ChatArtifact) => (
+                <ArtifactCard key={artifact.artifact_id} artifact={artifact} />
+              ))
+          : Array.isArray(m.data.artifact_ids)
+            ? (m.data.artifact_ids as unknown[])
+                .filter(
+                  (artifact_id): artifact_id is string =>
+                    typeof artifact_id === "string" && artifact_id.length > 0,
+                )
+                .map((artifact_id: string) => (
+                  <ArtifactCard key={artifact_id} artifact={{ artifact_id }} />
+                ))
+            : null}
+        {(() => {
+          const performance = m.data.performance as
+            | {
+                output_tokens?: unknown;
+                generation_ms?: unknown;
+                tokens_per_second?: unknown;
+              }
+            | undefined;
+          const tps = performance?.tokens_per_second;
+          if (typeof tps !== "number" || !Number.isFinite(tps)) return null;
+          const output =
+            typeof performance?.output_tokens === "number" &&
+            Number.isFinite(performance.output_tokens)
+              ? performance.output_tokens
+              : "?";
+          const ms =
+            typeof performance?.generation_ms === "number" &&
+            Number.isFinite(performance.generation_ms)
+              ? performance.generation_ms
+              : "?";
+          return (
+            <div
+              className="message-performance"
+              title={`出力 ${String(output)} tokens / 生成 ${String(ms)}ms`}
+            >
+              {tps.toFixed(1)} tokens/s
+            </div>
+          );
+        })()}
         {m.data.auto_selection && (
           <div className="message-auto">
             <small>
               Auto:{" "}
-              {m.data.auto_selection.model_name ||
-                m.data.auto_selection.model_id}
+              {(() => {
+                const selection = m.data.auto_selection as {
+                  model_name?: unknown;
+                  model_id?: unknown;
+                };
+                const name =
+                  typeof selection.model_name === "string" &&
+                  selection.model_name
+                    ? selection.model_name
+                    : typeof selection.model_id === "string"
+                      ? selection.model_id
+                      : selection.model_id == null
+                        ? ""
+                        : String(selection.model_id);
+                return name;
+              })()}
             </small>
             <span>
               <button

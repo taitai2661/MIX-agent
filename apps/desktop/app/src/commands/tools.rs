@@ -117,6 +117,32 @@ pub async fn set_permission_rule(
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .map(|p| p.to_string());
+    // Known-tool gate: a typo'd tool_id would otherwise create a rule that
+    // never matches, silently leaving the caller unprotected.
+    let known = state.engine.tools.read().await.list();
+    if !known.iter().any(|t| t.id() == input.tool_id) {
+        return Err(format!("unknown tool: {}", input.tool_id));
+    }
+    // Glob gate: reject patterns that can never match so a permissive
+    // fallback does not silently take over.
+    if let Some(p) = pattern.as_deref() {
+        if p.len() > 1024 {
+            return Err("pattern is too long".to_string());
+        }
+        if !mixd_tools::is_valid_pattern(p) {
+            return Err(format!("invalid glob pattern: {p}"));
+        }
+    }
+    // Confirmation gate: a patternless global allow opens every tool call.
+    if scope == mixd_tools::RuleScope::Global
+        && decision == mixd_tools::PermissionDecision::Allow
+        && pattern.is_none()
+    {
+        return Err(
+            "global allow without a pattern is too broad; scope it to a workspace or add a pattern"
+                .to_string(),
+        );
+    }
     if scope == mixd_tools::RuleScope::Workspace && input.workspace_id.is_none() {
         return Err("workspace_id is required for workspace-scoped rules".into());
     }
@@ -126,7 +152,16 @@ pub async fn set_permission_rule(
         // enum is shared with the executor.
         mixd_tools::RuleScope::Global | mixd_tools::RuleScope::Session => String::new(),
     };
-    let rule_id = format!("{}:{}:{}", scope.as_str(), input.tool_id, workspace_id);
+    // Rule-id hardening: the old `scope:tool:workspace` form both collided
+    // across patterns and allowed `:` in the tool/pattern to forge a
+    // different row's id. Escape separators and mix the pattern into a hash
+    // so each (scope, tool, workspace, pattern) maps to one row.
+    let rule_id = permission_rule_id(
+        scope.as_str(),
+        &input.tool_id,
+        &workspace_id,
+        pattern.as_deref(),
+    );
     let data = serde_json::json!({
         "toolId": input.tool_id,
         "scope": scope.as_str(),
@@ -171,6 +206,50 @@ fn parse_decision(value: &str) -> Result<mixd_tools::PermissionDecision, String>
         "deny" => Ok(mixd_tools::PermissionDecision::Deny),
         other => Err(format!("unknown permission decision: {other}")),
     }
+}
+
+fn sanitize_rule_part(s: &str) -> String {
+    s.replace('%', "%25").replace(':', "%3A")
+}
+
+/// Stable FNV-1a hash for persisted rule ids.
+///
+/// `DefaultHasher` is explicitly unspecified across Rust releases, so using it
+/// for a primary key would mint a new row on every toolchain upgrade and leave
+/// the old rule behind. This hash only needs to be deterministic, not
+/// cryptographic.
+fn stable_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn permission_rule_id(
+    scope: &str,
+    tool_id: &str,
+    workspace_id: &str,
+    pattern: Option<&str>,
+) -> String {
+    // The pattern is hashed, so `:` inside it cannot forge another row's id.
+    // Length-prefixing the other escaped parts keeps `a:b` vs `a` + `b` apart.
+    let raw = [
+        sanitize_rule_part(scope),
+        sanitize_rule_part(tool_id),
+        sanitize_rule_part(workspace_id),
+        pattern.unwrap_or("").to_string(),
+    ]
+    .map(|part| format!("{}:{part}", part.len()))
+    .join("|");
+    format!(
+        "{}:{}:{}:{:016x}",
+        sanitize_rule_part(scope),
+        sanitize_rule_part(tool_id),
+        sanitize_rule_part(workspace_id),
+        stable_hash(&raw)
+    )
 }
 
 #[derive(Serialize)]
@@ -236,6 +315,9 @@ pub struct PendingApprovalView {
     /// to a task the user cannot identify.
     pub conversation_id: Option<String>,
     pub conversation_title: Option<String>,
+    /// Mode of the thread so the UI can switch to the right surface without
+    /// looking the conversation up in a bounded list.
+    pub conversation_mode: Option<String>,
 }
 
 #[tauri::command]
@@ -248,8 +330,9 @@ pub async fn list_pending_approvals(
         let run_id = p.run_id.to_string();
         // One point lookup per pending prompt (there are only ever a handful).
         // The join is what gives the approval queue its task context.
-        let context: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT r.conversation_id, json_extract(c.data, '$.title') \
+        let context: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT r.conversation_id, json_extract(c.data, '$.title'), \
+                    json_extract(c.data, '$.mode') \
              FROM runs r LEFT JOIN conversations c ON c.id = r.conversation_id \
              WHERE r.id = ?",
         )
@@ -257,7 +340,8 @@ pub async fn list_pending_approvals(
         .fetch_optional(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
-        let (conversation_id, conversation_title) = context.unwrap_or((None, None));
+        let (conversation_id, conversation_title, conversation_mode) =
+            context.unwrap_or((None, None, None));
         out.push(PendingApprovalView {
             approval_id: p.approval_id,
             run_id,
@@ -268,6 +352,7 @@ pub async fn list_pending_approvals(
             expires_at: p.expires_at.to_rfc3339(),
             conversation_id,
             conversation_title,
+            conversation_mode,
         });
     }
     Ok(out)

@@ -185,8 +185,8 @@ impl Provider for GeminiProvider {
             .ok_or_else(|| anyhow::anyhow!("Gemini provider requires an API key"))?;
         let base_url = self.base_url.trim_end_matches('/').to_string();
         let url = format!(
-            "{}/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-            base_url, req.model, api_key
+            "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
+            base_url, req.model
         );
 
         let (system, contents) = build_contents(&req);
@@ -245,9 +245,9 @@ impl Provider for GeminiProvider {
             generation_config,
         };
 
-        let response =
-            transport::send_with_retry(transport::json_post(transport::client()?, &url, &body))
-                .await?;
+        let request = transport::json_post(transport::client()?, &url, &body)
+            .header("x-goog-api-key", api_key);
+        let response = transport::send_with_retry(request).await?;
 
         let sse = transport::sse_stream(response);
         let buffer = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
@@ -270,10 +270,7 @@ impl Provider for GeminiProvider {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Gemini provider requires an API key"))?;
         let base_url = self.base_url.trim_end_matches('/');
-        let url = format!(
-            "{}/v1beta/models/batchEmbedContents?key={}",
-            base_url, api_key
-        );
+        let url = format!("{}/v1beta/models/batchEmbedContents", base_url);
         let model = if model.starts_with("models/") {
             model.to_string()
         } else {
@@ -291,9 +288,9 @@ impl Provider for GeminiProvider {
                 })
                 .collect(),
         };
-        let response =
-            transport::send_with_retry(transport::json_post(transport::client()?, &url, &body))
-                .await?;
+        let request = transport::json_post(transport::client()?, &url, &body)
+            .header("x-goog-api-key", api_key);
+        let response = transport::send_with_retry(request).await?;
         let parsed: GeminiBatchEmbedResponse = response
             .json()
             .await
@@ -382,6 +379,9 @@ fn ge_sse_stream(
                         output_tokens: u.candidates_token_count + u.thoughts_token_count,
                         cache_read_tokens: u.cached_content_token_count,
                         cache_write_tokens: 0,
+                        // Gemini's prompt count already includes cached
+                        // content tokens.
+                        context_tokens: Some(u.prompt_token_count),
                     });
                 }
                 for candidate in chunk.candidates {
@@ -616,6 +616,11 @@ mod tests {
         let usage = done[0].1.clone().expect("usage must be reported");
         assert_eq!(usage.input_tokens, 7);
         assert_eq!(usage.output_tokens, 12);
+        assert_eq!(
+            usage.context_tokens,
+            Some(7),
+            "Gemini's prompt count is the context occupancy as-is"
+        );
     }
 
     #[tokio::test]
@@ -656,6 +661,7 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             stream: true,
+            session_id: None,
             context_window: None,
             keep_alive: None,
         }
@@ -789,6 +795,7 @@ mod tests {
                 tool_call_id: Some("x".into()),
                 name: Some("edit".into()),
                 is_error: false,
+                native: Vec::new(),
             },
         ]));
         assert_eq!(contents.len(), 1);
@@ -808,6 +815,7 @@ mod tests {
                 tool_call_id: Some("call_1".into()),
                 name: None,
                 is_error: false,
+                native: Vec::new(),
             },
         ]));
         assert_eq!(contents.len(), 2);

@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Code2,
   ExternalLink,
   FileCode,
   GitBranch,
@@ -47,6 +48,8 @@ function toolIcon(name: string) {
     case "grep":
     case "search":
       return Search;
+    case "lsp":
+      return Code2;
     default:
       return Wrench;
   }

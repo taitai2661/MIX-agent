@@ -28,7 +28,6 @@ from mix_agent.db.models import (
     Feedback,
     Message,
     Project,
-    Provider,
     Run,
     ToolCall,
     now,
@@ -53,13 +52,8 @@ async def _memory_query_vector(db, owner_id: str, query: str, provider=None):
     owner's most recent provider, and with neither we simply rank lexically —
     never an error, because context build must not fail over a missing vector.
     """
-    if provider is None:
-        provider = db.scalar(
-            select(Provider)
-            .where(Provider.owner_id == owner_id)
-            .order_by(Provider.created_at.desc())
-            .limit(1)
-        )
+    if not mem_embeddings.provider_can_embed(provider):
+        provider = mem_embeddings.default_provider(db, owner_id)
     if provider is None:
         return None
     key = read_secret(db, provider.data.get("secret_id"))

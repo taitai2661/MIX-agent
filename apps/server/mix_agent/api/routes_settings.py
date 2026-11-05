@@ -1,6 +1,5 @@
 import re
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -12,6 +11,7 @@ from mix_agent.api.common import (
     own,
     public,
 )
+from mix_agent.api.helpers.searxng import validate_searxng_url
 from mix_agent.api.schemas import (
     ConversationFolderInput,
     DiagnosticsView,
@@ -20,7 +20,7 @@ from mix_agent.api.schemas import (
     ToolView,
 )
 from mix_agent.auth.security import (
-    store_secret,
+    store_optional_secret,
 )
 from mix_agent.db.models import (
     Agent,
@@ -68,6 +68,7 @@ DEFAULT_SETTINGS = {
     "memory_seed_limit": 24,
     "memory_result_limit": 8,
     "memory_link_embedding_neighbors": False,
+    "chatgpt_enabled": False,
 }
 
 
@@ -208,18 +209,10 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
     if "searxng_url" in body.model_fields_set and body.searxng_url is not None:
         url = body.searxng_url.strip()
         if url:
-            parsed = urlsplit(url)
-            if (
-                parsed.scheme != "https"
-                or not parsed.hostname
-                or parsed.username
-                or parsed.password
-                or parsed.port not in (None, 443)
-            ):
-                raise HTTPException(422, "SearXNGのURLは公開HTTPSエンドポイントを指定してください")
-            if len(url) > 500:
-                raise HTTPException(422, "SearXNGのURLが長すぎます")
-            data["searxng_url"] = url.rstrip("/")
+            try:
+                data["searxng_url"] = validate_searxng_url(url)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         else:
             data["searxng_url"] = ""
     if (
@@ -234,8 +227,12 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
             own(db, Model, model_id, s.owner_id)
         data["auto_model_ids"] = auto_ids
     if body.brave_api_key is not None:
-        data["brave_secret_id"] = (
-            store_secret(db, s.owner_id, body.brave_api_key, "brave") if body.brave_api_key else None
+        data["brave_secret_id"] = store_optional_secret(
+            db,
+            s.owner_id,
+            body.brave_api_key,
+            "brave",
+            row.data.get("brave_secret_id"),
         )
     for field, secret_key, purpose in (
         ("tavily_api_key", "tavily_secret_id", "tavily"),
@@ -244,7 +241,7 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
     ):
         value = getattr(body, field)
         if value is not None:
-            data[secret_key] = store_secret(db, s.owner_id, value, purpose) if value else None
+            data[secret_key] = store_optional_secret(db, s.owner_id, value, purpose, row.data.get(secret_key))
     row.data = data
     audit(db, s.owner_id, "settings.update", row.id)
     db.commit()
@@ -307,11 +304,14 @@ def set_permission(body: PermissionInput, ctx=Depends(context)):
     data = {
         **body.model_dump(),
         "tool_version": fingerprint(tool),
-        "scope": call_scope(tool, {}),
+        "scope": body.scope or call_scope(tool, {}),
     }
     for old in db.scalars(select(Permission).where(Permission.owner_id == s.owner_id)):
         if old.data.get("agent_id", "") == body.agent_id and old.data.get("tool_id") == body.tool_id:
-            db.delete(old)
+            # Do not wipe narrower approval-time rules for the same tool; only
+            # replace rules at the same scope this request is writing.
+            if old.data.get("scope", {}) == data["scope"]:
+                db.delete(old)
     row = Permission(owner_id=s.owner_id, data=data)
     db.add(row)
     audit(db, s.owner_id, "permission.update", body.tool_id)

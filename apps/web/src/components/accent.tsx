@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { t } from "@/app/i18n";
+import { safeStorage } from "@/lib/storage";
 
 export type Accent =
   | "green"
@@ -90,8 +91,7 @@ function isAccent(value: string | null): value is Accent {
 }
 
 function initialAccent(): Accent {
-  if (typeof localStorage === "undefined") return DEFAULT_ACCENT;
-  const stored = localStorage.getItem(key);
+  const stored = safeStorage.get(key);
   return isAccent(stored) ? stored : DEFAULT_ACCENT;
 }
 
@@ -104,7 +104,7 @@ export function getAccent(): Accent {
 export function setAccent(value: Accent) {
   if (!isAccent(value) || accent === value) return;
   accent = value;
-  if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
+  safeStorage.set(key, value);
   applyAccent(resolvedTheme());
   listeners.forEach((listener) => listener());
 }
@@ -135,6 +135,9 @@ export function applyAccent(theme: ResolvedTheme) {
   style.setProperty("--accent", palette.accent);
   style.setProperty("--accent-strong", palette.strong);
   style.setProperty("--accent-soft", palette.soft);
+  // Dark accents are light colours; white text on them is ~2:1. Use a dark
+  // foreground for dark-mode fills and white for the darker light-mode fills.
+  style.setProperty("--on-accent", theme === "dark" ? "#0b1f18" : "#ffffff");
 }
 
 export function AccentPicker() {

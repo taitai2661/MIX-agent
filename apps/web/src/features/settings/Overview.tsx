@@ -71,21 +71,27 @@ export function SettingsOverview() {
   const settings = useSettings();
   const domains = settings.data?.data.allowed_domains?.length || 0;
   const counts: Record<string, string> = {
-    providers: `${providers.data?.length || 0} 件`,
-    models: `${models.data?.length || 0} 件`,
-    auto: `${settings.data?.data.auto_model_ids?.length || 0} 件`,
-    memory: "記憶を管理",
-    tools: `${tools.data?.length || 0} 件`,
-    mcp: `${mcp.data?.filter((row) => row.data.enabled).length || 0} 件接続中`,
-    browser: "操作と許可先",
-    "web-search": "検索の設定",
-    general: "表示・既定モデル",
-    network: domains ? `${domains} ドメイン` : "制限なし",
-    account: "変更・確認",
-    backups: "作成・復元",
-    usage: "30日間",
-    statistics: "30日間",
-    diagnostics: "状態を確認",
+    providers: t("{count} 件", { count: providers.data?.length || 0 }),
+    models: t("{count} 件", { count: models.data?.length || 0 }),
+    auto: t("{count} 件", {
+      count: settings.data?.data.auto_model_ids?.length || 0,
+    }),
+    memory: t("記憶を管理"),
+    tools: t("{count} 件", { count: tools.data?.length || 0 }),
+    mcp: t("{count} 件接続中", {
+      count: mcp.data?.filter((row) => row.data.enabled).length || 0,
+    }),
+    browser: t("操作と許可先"),
+    "web-search": t("検索の設定"),
+    general: t("表示・既定モデル"),
+    network: domains
+      ? t("{count} ドメイン", { count: domains })
+      : t("制限なし"),
+    account: t("変更・確認"),
+    backups: t("作成・復元"),
+    usage: t("30日間"),
+    statistics: t("30日間"),
+    diagnostics: t("状態を確認"),
   };
   const defaultModel = models.data?.find(
     (row) => row.id === settings.data?.data.default_model_id,

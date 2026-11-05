@@ -103,6 +103,8 @@ pnpm desktop:build          # Linux の場合（AppImage + deb）
 
 ### 4. ドキュメント修正時の注意
 - `docs/` のファイルは**移動・改名しない**でください。CI・リリースワークフロー・parity 検査がパスを直接参照しています（`docs/README.md` の「配置制約」を参照）。
+- 新しい文書を追加したら [`docs/README.md`](docs/README.md) の索引に追加し、役割（現行仕様 / 設計記録 / 計画 / 履歴）を明記してください。相対リンクは `python3 scripts/check-doc-links.py` で確認できます。
+- 現行仕様を変更した場合は、計画書（`*-plan.md`）ではなく現行仕様側を更新してください。計画書には決定の理由と経緯を残します。
 - エディションに関する記述を行う際は、**Desktop 版と Docker 版のどちらに関する内容か**を明確にしてください。
 - 共通の機能（Provider 対応、モード仕様、Agent ループなど）を変更した場合は、双方の README やドキュメントへの影響を確認してください。`README.md` と `README.en.md` は見出し階層・コマンド・リンク先を揃える必要があります（`scripts/check-readme-parity.py`）。
 - 未検証の環境・Provider を「動作確認済み」と記載しないでください。検証結果は [`docs/verification.md`](docs/verification.md) に追記してください。

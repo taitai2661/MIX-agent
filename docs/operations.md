@@ -49,6 +49,26 @@ Browser Toolは専用RunnerのPlaywright Chromiumを使います。依存関係�
 
 Private IP・link-local・cloud metadata 宛の接続は mode に関係なく拒否されます。
 
+## ChatGPT（Codex 使用枠）連携 — 非公式・自己責任
+
+> **警告**: この連携は OpenAI の公式 API ではなく、Codex CLI が利用する非公開
+> バックエンドを呼び出す **非公式機能** です。OpenAI の利用規約・アカウント制限に
+> 抵触する可能性、仕様変更や予告なき停止のリスクがあります。利用は **自己責任**
+> で行ってください。MIX-agent は動作・継続利用・アカウント状態を保証しません。
+> 既定では無効で、Provider 追加時に同意チェックをした場合だけ有効になります。
+> 通常の API キー Provider はそのまま利用できます。
+
+設定 → AI Providers → 「ChatGPT (Codex 使用枠)」を選び、注意書きに同意して保存すると、
+デバイスコード方式のログインが始まります。表示された URL とワンタイムコードで
+ChatGPT にサインインすると、モデル一覧と 5 時間 / 週次の使用枠が表示されます。
+
+- 認証情報は既存の暗号化 Secret ストアにのみ保存されます。
+- ログアウトは Provider の「ログアウト」から行い、リモートのトークンも失効させます。
+- `originator` は既定で `mix_agent` です。接続が拒否される場合のみ、自己責任で
+  `MIX_CODEX_ORIGINATOR` を設定してください（Codex CLI の値を指定すると
+  クライアントを偽装することになります）。
+- 使用量エンドポイントは 60 秒キャッシュします。連打しないでください。
+
 ## LAN/VPNとTLS
 
 Dockerの公開ポートへLANのプライベートIPアドレスで直接アクセスする場合は、初期設定を含め、そのIPアドレス・ポートと一致するOriginが自動的に許可されます。localhostからのアクセスも従来どおり利用できます。HTTPS対応Reverse Proxy、独自ドメイン、またはインターネット公開では、ホスト側で `MIX_BIND` と正確な `PUBLIC_ORIGIN` を設定してappを再作成してください。これらはDocker起動境界の設定なのでWeb UIでは変更しません。LAN利用にもHTTPS対応Reverse ProxyまたはVPNを推奨します。不特定ユーザーへ公開する構成ではありません。

@@ -56,6 +56,17 @@ export const en: Record<string, string> = {
   "ライト": "Light",
   "ダーク": "Dark",
   "システムに従う": "Follow system",
+  "アクセントカラー": "Accent color",
+  "アクセントカラーを選択": "Choose an accent color",
+  "ボタンやリンクなど、操作の目印となる色を選びます。":
+    "Choose the color that marks actions such as buttons and links.",
+  "緑": "Green",
+  "青": "Blue",
+  "藍": "Indigo",
+  "紫": "Violet",
+  "ピンク": "Pink",
+  "オレンジ": "Orange",
+  "ティール": "Teal",
   "コマンドパレット": "Command palette",
 
   // Chat composer
@@ -63,7 +74,6 @@ export const en: Record<string, string> = {
   "深く考えてほしいことを入力…": "Ask for a deep, careful answer…",
   "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)":
     "Instruct the agent… (terminal execution & file edits allowed)",
-  "デスクトップエージェント": "Desktop Agent",
   "プロジェクトを選択": "Select a project",
   "送信": "Send",
   "停止": "Stop",
@@ -147,6 +157,24 @@ export const en: Record<string, string> = {
   "ステップ上限 {steps} / ツール上限 {calls} に到達しました。":
     "Reached the step limit ({steps}) / tool limit ({calls}).",
 
+  // Usage
+  "使用状況": "Usage",
+  "使用状況を表示": "Show usage",
+  "使用状況を閉じる": "Close usage",
+  "使用": "Usage",
+  "このスレッドにはまだ使用状況がありません": "No usage in this thread yet",
+  "メッセージを送ると、トークン数と推定コストが表示されます。":
+    "Send a message to see token counts and estimated cost.",
+  "最新ターンで使用したプロンプト量です。":
+    "Prompt tokens used by the latest turn.",
+  "このRun": "This run",
+  "会話合計": "Conversation total",
+  "入力トークン": "Input tokens",
+  "出力トークン": "Output tokens",
+  "キャッシュ読取": "Cache read",
+  "キャッシュ書込": "Cache write",
+  "推定コスト": "Estimated cost",
+
   // Tool activity
   "このRunのアクティビティ": "Run activity",
   "アクティビティ": "Activity",
@@ -171,6 +199,7 @@ export const en: Record<string, string> = {
   "作成": "Create",
   "検索": "Search",
   "読み込み中…": "Loading…",
+  "以前のメッセージを読み込む": "Load earlier messages",
   "イベント数が上限を超えたため、この実行のログの一部は省略されています。":
     "Some run events were omitted because this run exceeded the replay limit.",
   "イベント数が上限を超えたため、この実行のログの一部は省略されています（最新の結果は表示されています）。":
@@ -565,6 +594,7 @@ export const en: Record<string, string> = {
   "縮小": "Zoom out",
   "拡大率をリセット": "Reset zoom",
   "スレッド": "Threads",
+  "メッセージ": "Messages",
 
   // Keyboard shortcut cheat sheet
   "キーボードショートカット": "Keyboard shortcuts",
@@ -662,13 +692,87 @@ export const en: Record<string, string> = {
     "Looks for a running LM Studio, Ollama, or similar.",
   "見つかりませんでした。LM Studio か Ollama を起動してからもう一度検出するか、「クラウド API」タブを使ってください。":
     "Nothing was found. Start LM Studio or Ollama and scan again, or use the Cloud API tab.",
-  "API キーは OS の資格情報ストレージに保存され、設定画面には表示されません。":
-    "The API key is stored in your OS credential store and is never shown again in Settings.",
+  "API キーのマスター鍵は OS の資格情報ストレージ（macOS Keychain / Windows Credential Manager）に保存され、API キー本体は AES-256-GCM で暗号化してローカルに保存されます。設定画面には表示されません。":
+    "The API-key master seed is kept in the OS credential store (macOS Keychain / Windows Credential Manager), and the keys themselves are AES-256-GCM encrypted on disk. They are never shown in Settings.",
   "API キー": "API key",
   "このプロバイダーでは API キーが必要です":
     "This provider requires an API key",
   "このプロバイダーでは API キーは任意です":
     "This provider does not need an API key",
+  "非公式・自己責任の機能です": "Unofficial feature — use at your own risk",
+  "この連携は OpenAI の公式 API ではなく、Codex CLI が使う非公開バックエンドを利用します。利用規約・アカウント制限に抵触する可能性、予告なく停止する可能性があります。MIX-agent は動作や継続利用を保証しません。":
+    "This integration uses the private backend the Codex CLI uses, not an official OpenAI API. It may violate the terms of service or account limits, and it may stop working without notice. MIX-agent does not guarantee that it will work or remain available.",
+  "ChatGPT にログイン": "Sign in to ChatGPT",
+  "表示された URL を開き、ワンタイムコードを入力してください。この画面は自動で完了を確認します。":
+    "Open the URL and enter the one-time code. This page checks for completion automatically.",
+  "コードをコピー": "Copy code",
+  "認証ページを開く": "Open sign-in page",
+  "認証の完了を待っています…": "Waiting for sign-in to complete…",
+  "ChatGPT でログイン": "Sign in with ChatGPT",
+  "ChatGPT 使用枠": "ChatGPT usage",
+  "5時間枠": "5-hour window",
+  "週次枠": "Weekly window",
+  "使用枠": "Usage window",
+  "未ログイン": "Not signed in",
+  "ログイン済み": "Signed in",
+  "残量を更新": "Refresh usage",
+  "ログアウト": "Log out",
+  "ChatGPT からログアウトしますか？": "Sign out of ChatGPT?",
+  "使用枠を取得できませんでした。": "Could not read the usage windows.",
+  "ChatGPT の再ログインが必要です。": "ChatGPT needs you to sign in again.",
+  "ChatGPT のログインの有効期限が切れました。もう一度ログインしてください。":
+    "The ChatGPT sign-in expired. Please sign in again.",
+  "使用枠を取得できませんでした: {detail}": "Could not read usage: {detail}",
+  "ログインの有効期限が切れました。もう一度ログインしてください。":
+    "The sign-in expired. Please sign in again.",
+  "ログイン情報が見つかりません。もう一度ログインしてください。":
+    "The sign-in session could not be found. Please sign in again.",
+  "ChatGPT のログインに失敗しました。": "ChatGPT sign-in failed.",
+  "15 分以上前の情報です。": "This information is more than 15 minutes old.",
+  "残量を取得しています…": "Loading usage…",
+  "再ログイン": "Sign in again",
+  "リセット:": "Resets:",
+  "リセット時刻は端末のタイムゾーンで表示し、UTC も併記しています。":
+    "Reset times are shown in your device time zone, with the UTC time alongside.",
+  "非公式ChatGPT連携を有効にする": "Enable the unofficial ChatGPT integration",
+  "非公式連携が無効です": "The unofficial integration is disabled",
+  "このアカウントでは ChatGPT のデバイスコードログインを利用できません。":
+    "Device-code sign-in is not available for this ChatGPT account.",
+  "ChatGPT のログインを開始できませんでした: {detail}":
+    "Could not start ChatGPT sign-in: {detail}",
+  "保存した認証情報と取得済みのモデルをこの PC から削除します。再度使うにはログインし直してください。":
+    "This removes the saved credentials and downloaded models from this PC. You will need to sign in again to use it.",
+  "ChatGPT（非公式・専用連携）": "ChatGPT (unofficial, dedicated)",
+  "OpenAI API キー方式のプロバイダーとは別の専用連携です。プロバイダー一覧には表示されず、接続したモデルだけがモデルタブに並びます。":
+    "A dedicated integration, separate from API-key providers. It does not appear in the provider list; only the models it discovers appear in the Models tab.",
+  "まだ接続されていません": "Not connected yet",
+  "下のボタンからデバイスコードでログインします。ブラウザでコードを入力するだけで、パスワードをこのアプリに渡す必要はありません。":
+    "Sign in with a device code using the button below. Enter the code in your browser; no password is shared with this app.",
+  "ChatGPT を接続": "Connect ChatGPT",
+  "先に上のスイッチで有効にしてください。":
+    "Enable the integration with the switch above first.",
+  "接続状況": "Connection",
+  "モデルを再取得": "Refresh models",
+  "モデルを表示": "View models",
+  "連携は無効です。上のスイッチを有効にすると、この接続を再び使えます。":
+    "The integration is disabled. Turn the switch above back on to use this connection again.",
+  "無効化中": "Disabled",
+  "接続情報は残っていますが、エージェントからは使用できません。有効に戻すとそのまま利用できます。":
+    "The credentials are still stored, but the agent cannot use them. Re-enable the integration to resume.",
+  "クレジット: 無制限": "Credits: unlimited",
+  "クレジット残高:": "Credit balance:",
+  "クレジットなし": "No credits",
+  "使用枠に達しています。": "The usage limit has been reached.",
+  "残り {percent}%": "{percent}% left",
+  "使用済み {percent}%": "{percent}% used",
+  "リセットを待つか、APIキー方式のProviderに切り替えてください。":
+    "Wait for the reset, or switch to an API-key provider.",
+  "取得:": "Updated:",
+  "ログインすると 5 時間枠・週次枠の残量を表示します。":
+    "Sign in to see the 5-hour and weekly usage windows.",
+  "残量は OpenAI の非公開エンドポイントから取得しています。表示は保証されません。":
+    "Usage comes from a private OpenAI endpoint. The figures are not guaranteed.",
+  "サブスクリプション": "Subscription",
   "選択してください…": "Choose one…",
   "プリセットを選ぶと入力されます": "Filled in from the preset",
   "確認中…": "Checking…",
@@ -727,6 +831,11 @@ export const en: Record<string, string> = {
   "Job 名": "Job name",
   "Cron 式": "Cron expression",
   "Cron 式 (例: 0 9 * * *)": "Cron expression (e.g. 0 9 * * *)",
+  "毎時 (0 * * * *)": "Hourly (0 * * * *)",
+  "毎日 9:00": "Daily at 9:00",
+  "平日 9:00 (0 9 * * mon-fri)": "Weekdays at 9:00 (0 9 * * mon-fri)",
+  "毎週月曜 8:00": "Mondays at 8:00",
+  "毎15分 (*/15 * * * *)": "Every 15 minutes (*/15 * * * *)",
   "実行プロンプト…": "Prompt to run…",
   "モデル: 会話の既定": "Model: the chat's default",
   "次回": "Next",
@@ -745,9 +854,16 @@ export const en: Record<string, string> = {
   ".skill.zip を選択": "Choose a .skill.zip",
   "選択": "Choose",
   "まだ Skill はありません。": "No skills yet.",
+  "プロジェクト外の Skills": "Skills outside the project",
+  "ホームディレクトリの Skills を読み込む":
+    "Load skills from the home directory",
+  "~/.mix/skills、~/.claude/skills、~/.agents/skills をプロジェクトの Skills に続けて探索します。同名はプロジェクト側が優先されます。":
+    "Discover ~/.mix/skills, ~/.claude/skills and ~/.agents/skills after the project's own skills. A project skill wins when names clash.",
   "{name} を {target} に書き出しました": "Exported {name} to {target}",
   "同梱リソースを読み込む": "Load bundled resources",
   "同梱リソースはありません。": "No bundled resources.",
+  "バイナリファイルはプレビューできません。":
+    "Binary files cannot be previewed.",
 
   // Browser
   "プロファイルをリセットしますか？": "Reset this profile?",
@@ -892,10 +1008,18 @@ export const en: Record<string, string> = {
     "Finish signing in in the browser; the app picks up the redirect.",
 
   // Providers / models
-  "プリセットを選んで API キーを入力してください。":
-    "Pick a preset and enter an API key.",
+  "プリセットを選んで API キーを入力してください。ChatGPT は設定 ▸ ChatGPT で接続します。":
+    "Choose a preset and enter an API key. ChatGPT is connected in Settings ▸ ChatGPT.",
   "プリセット": "Preset",
   "プリセットを選択…": "Choose a preset…",
+  "の設定を再利用します": " settings will be reused",
+  "の設定を再利用します（キーを入力してください）":
+    " settings will be reused (enter a key)",
+  "直接接続": "Direct",
+  "ゲートウェイ": "Gateway",
+  "ローカル": "Local",
+  "国内": "Japan",
+  "OpenAI互換": "OpenAI compatible",
   "表示名": "Display name",
   "保存済み": "Saved",
   "能力を確認": "Verify",
@@ -964,8 +1088,8 @@ export const en: Record<string, string> = {
   "実行中のRun": "Active Runs",
   "データベースの暗号化": "Database Encryption",
   "保存時の暗号化": "At-rest encryption",
-  "このビルドでは未対応です。データベースは平文SQLiteのため、OSのディスク暗号化（FileVault / BitLocker / LUKS）で保護してください。APIキーなどの秘密情報は別途OSのKeychainに暗号化して保存されます。":
-    "Not available in this build. The database is plain SQLite, so protect it with OS disk encryption (FileVault / BitLocker / LUKS). Secrets such as API keys are separately encrypted in the OS Keychain.",
+  "このビルドでは未対応です。データベースは平文SQLiteのため、OSのディスク暗号化（FileVault / BitLocker / LUKS）で保護してください。APIキーなどの秘密情報はマスター鍵（OSのKeychain）で暗号化してローカルに保存されます。":
+    "Not available in this build. The database is plain SQLite, so protect it with OS disk encryption (FileVault / BitLocker / LUKS). Secrets such as API keys are encrypted on disk with a master seed kept in the OS keychain.",
   "SQLCipher対応は今後のバージョンで提供予定です。":
     "SQLCipher support is planned for a future release.",
   "保存時は暗号化済み": "Encrypted at rest",
@@ -1042,6 +1166,7 @@ export const en: Record<string, string> = {
   "再実行": "Run again",
   "回答を再生成": "Regenerate answer",
   "この回答を破棄して再生成": "Discard this answer and regenerate",
+  "このメッセージから分岐": "Fork from this message",
   "再送信": "Send again",
   "期限切れ（拒否されます）": "Expired (will be denied)",
   "残り {time}": "{time} left",
@@ -1169,10 +1294,8 @@ export const en: Record<string, string> = {
     "Formatter/lint command run automatically after edits.",
   "ターミナルのサンドボックス": "Terminal sandbox",
   "シェルをサンドボックス内で実行": "Run the shell in a sandbox",
-  "macOS では sandbox-exec を使い、ワークスペースと一時ディレクトリ以外への書き込みを拒否します。次に起動するシェルから適用されます（Linux / Windows では未対応）。":
-    "On macOS, sandbox-exec denies writes outside the workspace and temp directories. Applies to shells started afterwards (not supported on Linux or Windows).",
-  "この機能はmacOSでのみ利用できます。Windows / Linux では無効です。":
-    "This feature is available on macOS only; it is disabled on Windows and Linux.",
+  "シェルからのネットワーク通信も拒否":
+    "Also deny network access from the shell",
   "実行中に追加指示を送る": "Send guidance while the run is working",
   "このセッションで許可": "Allow for this session",
   "実行の取り消し": "Revert this run",
@@ -1185,4 +1308,37 @@ export const en: Record<string, string> = {
   "実行前の状態に戻す": "Restore pre-run state",
   "{count} 件のファイルを実行前の内容に戻しました。":
     "Restored {count} file(s) to their pre-run content.",
+  "履歴を圧縮しました": "Context compacted",
+  "{count} 回": "{count} times",
+  "直近 {kept} 件を保持": "Keeping the latest {kept}",
+  "古いメッセージ {source} 件を要約し、直近 {kept} 件をそのまま保持しています。":
+    "Summarised {source} older messages and kept the latest {kept} verbatim.",
+  "ツール結果 {count} 件を要約に退避しました。":
+    "Moved {count} tool result(s) into the summary.",
+  "要約 {chars} 文字 / アーカイブ {rows} 件":
+    "Summary {chars} chars / {rows} archived rows",
+  "{count} 件 → {kept} 件": "{count} → {kept}",
+  "以前のスレッドを読み込む": "Load older threads",
+  "バックグラウンド実行": "Background execution",
+  "ログイン時に起動": "Launch at login",
+  "OS のログイン時に MIX-agent をトレイ常駐で起動します。スケジュールをアプリ未起動のまま実行するために必要です。":
+    "Starts MIX-agent in the tray when you log in. Required for schedules to run while the app is closed.",
+  "ウィンドウを閉じてもトレイに残り、スケジュールと実行中のタスクは継続します。完全に終了するにはトレイメニューの「Quit」を使います。":
+    "Closing the window keeps the app in the tray so schedules and running tasks continue. Use Quit in the tray menu to exit completely.",
+  "アプリを終了している間はスケジュールが実行されません。":
+    "Schedules do not run while the app is closed.",
+  "ログイン時に起動を有効にする": "Enable launch at login",
+  "bubblewrap (bwrap) を使い、ワークスペースとビルドキャッシュ以外への書き込みを拒否します。次に起動するシェルから適用されます。":
+    "Uses bubblewrap (bwrap) to deny writes outside the workspace and build caches. Applies to shells started afterwards.",
+  "Job Object でシェルとその子プロセスを束ね、プロセス数の上限とアプリ終了時の一括停止を強制します。ファイルシステムの書き込み隔離はOSレベルでは未対応です。":
+    "Groups the shell and its children in a Job Object, enforcing a process limit and killing the tree when the app exits. Filesystem write isolation is not enforced at the OS level.",
+  "macOS では sandbox-exec を使い、ワークスペースと一時ディレクトリ以外への書き込みを拒否します。次に起動するシェルから適用されます。":
+    "On macOS, sandbox-exec denies writes outside the workspace and temp directories. Applies to shells started afterwards.",
+  "この環境ではサンドボックスを利用できません。":
+    "The sandbox is unavailable on this machine.",
+  "パッケージ導入やテストが通らなくなるため既定はOFFです。信頼できないコードを動かすときだけ有効にしてください。":
+    "Off by default because package installs and tests need the network. Enable it only when running untrusted code.",
+  "このRunの変更をGitのスナップショットまで戻します。edit / files に加え、ターミナルが作成・変更したファイルも対象です。Run終了後に手で加えた変更も失われます。":
+    "Restores this Run to its Git snapshot, covering files the terminal created or changed as well as edit / files. Manual changes made after the Run finished are lost too.",
+  "{count} 件の変更を確認": "Review {count} changed file(s)",
 };

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MIX agent",
-    "version": "0.5.5"
+    "version": "0.5.6"
   },
   "paths": {
     "/health": {
@@ -627,6 +627,355 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/chatgpt/device/start": {
+      "post": {
+        "summary": "Chatgpt Device Start",
+        "operationId": "chatgpt_device_start_api_v1_providers_chatgpt_device_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatGptDeviceStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatGptDeviceStartView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/chatgpt/device/{login_id}": {
+      "get": {
+        "summary": "Chatgpt Device Status",
+        "operationId": "chatgpt_device_status_api_v1_providers_chatgpt_device__login_id__get",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatGptDeviceStatusView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/chatgpt/device/{login_id}/cancel": {
+      "post": {
+        "summary": "Chatgpt Device Cancel",
+        "operationId": "chatgpt_device_cancel_api_v1_providers_chatgpt_device__login_id__cancel_post",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{key}/quota": {
+      "get": {
+        "summary": "Provider Quota",
+        "operationId": "provider_quota_api_v1_providers__key__quota_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuotaView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{key}/quota/refresh": {
+      "post": {
+        "summary": "Provider Quota Refresh",
+        "operationId": "provider_quota_refresh_api_v1_providers__key__quota_refresh_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuotaView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Error envelope; `code` stays stable when the message wording changes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{key}/logout": {
+      "post": {
+        "summary": "Provider Logout",
+        "operationId": "provider_logout_api_v1_providers__key__logout_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           },
@@ -7627,6 +7976,98 @@
         ],
         "title": "BudgetExtensionRequestView"
       },
+      "ChatGptDeviceStart": {
+        "properties": {
+          "provider_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Provider Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider_id"
+        ],
+        "title": "ChatGptDeviceStart"
+      },
+      "ChatGptDeviceStartView": {
+        "properties": {
+          "login_id": {
+            "type": "string",
+            "title": "Login Id"
+          },
+          "verification_url": {
+            "type": "string",
+            "title": "Verification Url"
+          },
+          "user_code": {
+            "type": "string",
+            "title": "User Code"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          },
+          "interval": {
+            "type": "integer",
+            "title": "Interval"
+          }
+        },
+        "type": "object",
+        "required": [
+          "login_id",
+          "verification_url",
+          "user_code",
+          "expires_in",
+          "interval"
+        ],
+        "title": "ChatGptDeviceStartView"
+      },
+      "ChatGptDeviceStatusView": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "complete",
+              "error",
+              "expired"
+            ],
+            "title": "Status"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "account": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ChatGptDeviceStatusView"
+      },
       "ContextSummaryView": {
         "properties": {
           "text": {
@@ -9377,6 +9818,11 @@
             ],
             "title": "Rate Limit Period",
             "default": "minute"
+          },
+          "acknowledge_unofficial": {
+            "type": "boolean",
+            "title": "Acknowledge Unofficial",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -9413,6 +9859,103 @@
           "model_sync"
         ],
         "title": "ProviderView"
+      },
+      "QuotaCreditsView": {
+        "properties": {
+          "has_credits": {
+            "type": "boolean",
+            "title": "Has Credits",
+            "default": false
+          },
+          "unlimited": {
+            "type": "boolean",
+            "title": "Unlimited",
+            "default": false
+          },
+          "balance": {
+            "type": "string",
+            "title": "Balance",
+            "default": ""
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "QuotaCreditsView"
+      },
+      "QuotaView": {
+        "properties": {
+          "plan_type": {
+            "type": "string",
+            "title": "Plan Type",
+            "default": ""
+          },
+          "captured_at": {
+            "type": "string",
+            "title": "Captured At"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/QuotaWindowView"
+            },
+            "type": "array",
+            "title": "Windows"
+          },
+          "credits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuotaCreditsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit_reached": {
+            "type": "boolean",
+            "title": "Limit Reached",
+            "default": false
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "captured_at"
+        ],
+        "title": "QuotaView"
+      },
+      "QuotaWindowView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "used_percent": {
+            "type": "number",
+            "title": "Used Percent"
+          },
+          "window_minutes": {
+            "type": "integer",
+            "title": "Window Minutes",
+            "default": 0
+          },
+          "window_seconds": {
+            "type": "integer",
+            "title": "Window Seconds",
+            "default": 0
+          },
+          "resets_at": {
+            "type": "integer",
+            "title": "Resets At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "used_percent",
+          "resets_at"
+        ],
+        "title": "QuotaWindowView"
       },
       "RecordView": {
         "properties": {
@@ -10147,6 +10690,11 @@
           "memory_link_embedding_neighbors": {
             "type": "boolean",
             "title": "Memory Link Embedding Neighbors",
+            "default": false
+          },
+          "chatgpt_enabled": {
+            "type": "boolean",
+            "title": "Chatgpt Enabled",
             "default": false
           }
         },

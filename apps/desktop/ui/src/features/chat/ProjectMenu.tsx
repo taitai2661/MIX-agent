@@ -56,6 +56,10 @@ export function ProjectMenu({
       // `null` means the user backed out (cancelled the folder picker):
       // keep the form open so the draft name is not thrown away.
       if (!created) return;
+      // The caller returns the new id so the picker can select it. Previously
+      // the menu closed with the old project still armed, and the next message
+      // was sent without the project the user had just created.
+      onProjectChange?.(created);
       setDraftName("");
       setCreateError(null);
       setMenuMode("list");

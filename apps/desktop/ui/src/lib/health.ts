@@ -6,6 +6,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { visiblePoll } from "./queries";
 
 export const HEALTH_QUERY_KEY = ["health"] as const;
 export const HEALTH_POLL_MS = 15_000;
@@ -14,6 +15,6 @@ export function useHealth() {
   return useQuery({
     queryKey: HEALTH_QUERY_KEY,
     queryFn: api.health,
-    refetchInterval: HEALTH_POLL_MS,
+    refetchInterval: visiblePoll(HEALTH_POLL_MS),
   });
 }

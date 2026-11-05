@@ -20,10 +20,16 @@ pub mod limits {
     pub const HISTORY_LIMIT: i64 = 80;
     /// Prior-turn context parts handed to Auto routing (`LIMIT 20`).
     pub const AUTO_CONTEXT_LIMIT: i64 = 20;
-    /// Default `list_messages` page size.
-    pub const DEFAULT_MESSAGE_LIMIT: u32 = 1000;
+    /// Default `list_messages` page size. The transcript loads older pages on
+    /// demand instead of dumping every row in one IPC round trip.
+    pub const DEFAULT_MESSAGE_LIMIT: u32 = 100;
     /// Hard ceiling for `list_messages` pages.
     pub const MAX_MESSAGE_LIMIT: u32 = 500;
+    /// Default and maximum page size for the paginated thread list. The
+    /// sidebar fetches these pages on demand; 50 keeps the first paint small
+    /// on an installation with years of history.
+    pub const DEFAULT_CONVERSATION_LIMIT: u32 = 50;
+    pub const MAX_CONVERSATION_LIMIT: u32 = 200;
     /// Largest accepted user message (chars) and attachment payloads.
     pub const MAX_CONTENT_CHARS: usize = 200_000;
     pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
@@ -38,6 +44,76 @@ pub mod limits {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageSearchHit {
+    pub message_id: String,
+    pub conversation_id: String,
+    pub conversation_title: String,
+    pub conversation_mode: String,
+    pub role: String,
+    /// FTS5 snippet around the match, for the command palette row.
+    pub excerpt: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Search every transcript message through the FTS5 index.
+///
+/// This is what makes the command palette a real search surface rather than a
+/// title filter. Queries shorter than three characters (and queries with no
+/// FTS5-safe run) return an empty list; the palette still filters titles
+/// client-side for those.
+#[tauri::command]
+pub async fn search_messages(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<MessageSearchHit>, String> {
+    search_messages_with(state.storage.pool(), &query, limit).await
+}
+
+pub async fn search_messages_with(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    query: &str,
+    limit: Option<u32>,
+) -> Result<Vec<MessageSearchHit>, String> {
+    let Some(match_query) = mixd_core::retrieval::fts_match_query(query) else {
+        return Ok(Vec::new());
+    };
+    let limit = limit.unwrap_or(20).clamp(1, 100);
+    let rows: Vec<(String, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT s.message_id, s.conversation_id, s.role, \
+                snippet(message_search, 0, '', '', '…', 12), \
+                m.created_at, COALESCE(json_extract(c.data, '$.title'), ''), \
+                COALESCE(json_extract(c.data, '$.mode'), 'chat') \
+         FROM message_search s \
+         JOIN messages m ON m.id = s.message_id \
+         JOIN conversations c ON c.id = s.conversation_id \
+         WHERE message_search MATCH ? \
+         ORDER BY bm25(message_search) LIMIT ?",
+    )
+    .bind(match_query)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(message_id, conversation_id, role, excerpt, created_at, title, mode)| {
+                MessageSearchHit {
+                    message_id,
+                    conversation_id,
+                    conversation_title: title,
+                    conversation_mode: mode,
+                    role,
+                    excerpt,
+                    created_at: parse_ts(&created_at),
+                }
+            },
+        )
+        .collect())
+}
+
 #[derive(Serialize)]
 pub struct ConversationSummary {
     pub id: String,
@@ -45,6 +121,10 @@ pub struct ConversationSummary {
     pub mode: String,
     pub model_id: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// The raw `updated_at` text used as the pagination cursor. Re-serialising
+    /// the parsed timestamp could turn `…Z` into `…+00:00`, which compares
+    /// differently in SQLite and would skip or repeat a row at the boundary.
+    pub cursor: String,
     /// Latest message excerpt, shown in the thread sidebar.
     pub preview: Option<String>,
     pub message_count: i64,
@@ -56,13 +136,221 @@ pub struct ConversationSummary {
     pub workspace_id: Option<String>,
 }
 
+/// The shared `ConversationSummary` projection.
+///
+/// Every list below (paginated, by id, by project, title search, latest) must
+/// return the same shape; duplicating this SQL is how `cursor`/preview drift
+/// starts. `PREVIEW_CHARS` is interpolated because SQLite cannot bind a LIMIT
+/// inside `substr`.
+fn summary_select() -> String {
+    format!(
+        "SELECT c.id, json_extract(c.data, '$.title'), json_extract(c.data, '$.mode'), \
+          json_extract(c.data, '$.modelId'), c.updated_at, \
+          (SELECT substr(m.content, 1, {}) FROM messages m \
+            WHERE m.conversation_id = c.id \
+              AND m.role IN ('user', 'assistant') \
+            ORDER BY m.rowid DESC LIMIT 1), \
+          (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id \
+            AND m.role IN ('user', 'assistant')), \
+          json_extract(c.data, '$.projectId'), \
+          json_extract(c.data, '$.workspaceId') \
+          FROM conversations c",
+        limits::PREVIEW_CHARS
+    )
+}
+
+fn summary_from_row(row: ConversationRow) -> ConversationSummary {
+    let (id, title, mode, model_id, updated_at, preview, message_count, project_id, workspace_id) =
+        row;
+    let cursor = updated_at.clone();
+    ConversationSummary {
+        id,
+        title,
+        mode,
+        model_id,
+        updated_at: parse_ts(&updated_at),
+        cursor,
+        preview,
+        message_count,
+        project_id,
+        workspace_id,
+    }
+}
+
+/// One page of the thread sidebar plus whether another page exists.
+#[derive(Serialize)]
+pub struct ConversationPage {
+    pub items: Vec<ConversationSummary>,
+    pub has_more: bool,
+}
+
+/// Aggregate counts for the welcome screen.
+///
+/// The greeting used to derive these from `list_conversations`, which tied the
+/// welcome card to the 200-row cap and to loading every summary row.
+#[derive(Serialize)]
+pub struct ConversationStats {
+    pub count: i64,
+    pub message_count: i64,
+    pub last_activity_at: Option<String>,
+}
+
+/// A single thread, without materialising the sidebar page.
+#[tauri::command]
+pub async fn get_conversation(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<ConversationSummary>, String> {
+    fetch_conversation_summary(state.storage.pool(), &id).await
+}
+
+/// Latest thread in any of `modes`, used to pick the initial surface thread.
+#[tauri::command]
+pub async fn latest_conversation(
+    state: State<'_, AppState>,
+    modes: Vec<String>,
+) -> Result<Option<ConversationSummary>, String> {
+    if modes.is_empty() {
+        return Ok(None);
+    }
+    let placeholders = std::iter::repeat_n("?", modes.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "{} WHERE json_extract(c.data, '$.mode') IN ({placeholders}) \
+         ORDER BY c.updated_at DESC, c.id DESC LIMIT 1",
+        summary_select()
+    );
+    let mut query = sqlx::query_as::<_, ConversationRow>(&sql);
+    for mode in &modes {
+        query = query.bind(mode);
+    }
+    let row = query
+        .fetch_optional(state.storage.pool())
+        .await
+        .map_err(crate::error::cmd_err)?;
+    Ok(row.map(summary_from_row))
+}
+
+/// All threads linked to one project, newest first.
+#[tauri::command]
+pub async fn list_conversations_for_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    limit: Option<u32>,
+) -> Result<ConversationPage, String> {
+    let limit = limit.unwrap_or(500).clamp(1, 2_000);
+    fetch_conversation_summaries_for_project(state.storage.pool(), &project_id, limit).await
+}
+
+/// Full-text title search for the command palette.
+///
+/// The palette used to filter `list_conversations` client-side, which silently
+/// stopped at the 200-row cap. Searching in SQLite covers every thread without
+/// shipping the whole history over IPC.
+#[tauri::command]
+pub async fn search_conversations(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<ConversationSummary>, String> {
+    search_conversation_summaries(state.storage.pool(), &query, limit).await
+}
+
+pub async fn search_conversation_summaries(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    query: &str,
+    limit: Option<u32>,
+) -> Result<Vec<ConversationSummary>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.unwrap_or(50).clamp(1, 100) as i64;
+    let pattern = format!("%{}%", escape_like(query));
+    let sql = format!(
+        "{} WHERE json_extract(c.data, '$.title') LIKE ? ESCAPE '\\' \
+         ORDER BY c.updated_at DESC, c.id DESC LIMIT ?",
+        summary_select()
+    );
+    let rows: Vec<ConversationRow> = sqlx::query_as(&sql)
+        .bind(pattern)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    Ok(rows.into_iter().map(summary_from_row).collect())
+}
+
+/// Total threads/messages and the most recent update, in one query.
+#[tauri::command]
+pub async fn conversation_stats(state: State<'_, AppState>) -> Result<ConversationStats, String> {
+    fetch_conversation_stats(state.storage.pool()).await
+}
+
+pub async fn fetch_conversation_stats(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+) -> Result<ConversationStats, String> {
+    let row: (i64, i64, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM conversations), \
+          (SELECT COUNT(*) FROM messages WHERE role IN ('user', 'assistant')), \
+          (SELECT MAX(updated_at) FROM conversations)",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    Ok(ConversationStats {
+        count: row.0,
+        message_count: row.1,
+        last_activity_at: row.2,
+    })
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Legacy, bounded summary list.
+///
+/// Kept for older clients; the sidebar uses [`list_conversations_page`], and
+/// the project/approval/palette views use the dedicated lookup, search and
+/// stats commands so none of them silently depends on this cap. It returns at
+/// most [`limits::MAX_CONVERSATION_LIMIT`] rows.
 #[tauri::command]
 pub async fn list_conversations(
     state: State<'_, AppState>,
 ) -> Result<Vec<ConversationSummary>, String> {
     let pool = state.storage.pool();
-    let rows = fetch_conversation_summaries(pool).await?;
-    Ok(rows)
+    let page =
+        fetch_conversation_summaries_page(pool, limits::MAX_CONVERSATION_LIMIT, None, None).await?;
+    Ok(page.items)
+}
+
+/// Cursor page for the sidebar.
+///
+/// The cursor is `(updated_at, id)`: `updated_at` alone is not unique, and a
+/// tie would either repeat or skip a thread when two conversations share a
+/// timestamp. `id` is the stable tie-breaker.
+#[tauri::command]
+pub async fn list_conversations_page(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+    before_updated_at: Option<String>,
+    before_id: Option<String>,
+) -> Result<ConversationPage, String> {
+    let limit = limit
+        .unwrap_or(limits::DEFAULT_CONVERSATION_LIMIT)
+        .clamp(1, limits::MAX_CONVERSATION_LIMIT);
+    fetch_conversation_summaries_page(
+        state.storage.pool(),
+        limit,
+        before_updated_at.as_deref(),
+        before_id.as_deref(),
+    )
+    .await
 }
 
 /// Query helper kept separate from the command so integration tests can call
@@ -70,51 +358,89 @@ pub async fn list_conversations(
 pub async fn fetch_conversation_summaries(
     pool: &sqlx::Pool<sqlx::Sqlite>,
 ) -> Result<Vec<ConversationSummary>, String> {
-    let rows: Vec<ConversationRow> = sqlx::query_as(&format!(
-        "SELECT c.id, json_extract(c.data, '$.title'), json_extract(c.data, '$.mode'), \
-          json_extract(c.data, '$.modelId'), json_extract(c.data, '$.updatedAt'), \
-          (SELECT substr(json_extract(m.data, '$.content'), 1, {}) FROM messages m \
-            WHERE m.conversation_id = c.id \
-              AND json_extract(m.data, '$.role') IN ('user', 'assistant') \
-            ORDER BY m.created_at DESC LIMIT 1), \
-          (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id \
-            AND json_extract(m.data, '$.role') IN ('user', 'assistant')), \
-          json_extract(c.data, '$.projectId'), \
-          json_extract(c.data, '$.workspaceId') \
-          FROM conversations c ORDER BY json_extract(c.data, '$.updatedAt') DESC",
-        limits::PREVIEW_CHARS,
-    ))
-    .fetch_all(pool)
-    .await
-    .map_err(crate::error::cmd_err)?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                title,
-                mode,
-                model_id,
-                updated_at,
-                preview,
-                message_count,
-                project_id,
-                workspace_id,
-            )| {
-                ConversationSummary {
-                    id,
-                    title,
-                    mode,
-                    model_id,
-                    updated_at: parse_ts(&updated_at),
-                    preview,
-                    message_count,
-                    project_id,
-                    workspace_id,
-                }
-            },
-        )
-        .collect())
+    Ok(
+        fetch_conversation_summaries_page(pool, u32::MAX, None, None)
+            .await?
+            .items,
+    )
+}
+
+pub async fn fetch_conversation_summaries_page(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    limit: u32,
+    before_updated_at: Option<&str>,
+    before_id: Option<&str>,
+) -> Result<ConversationPage, String> {
+    // Fetch one extra row to answer `has_more` without a second COUNT query.
+    let fetch = limit.saturating_add(1).min(i64::MAX as u32) as i64;
+    let sql = format!(
+        "{} WHERE ?1 IS NULL \
+             OR c.updated_at < ?1 \
+             OR (c.updated_at = ?1 AND c.id < ?2) \
+          ORDER BY c.updated_at DESC, c.id DESC \
+          LIMIT ?3",
+        summary_select()
+    );
+    let rows: Vec<ConversationRow> = sqlx::query_as(&sql)
+        .bind(before_updated_at)
+        .bind(before_id.unwrap_or(""))
+        .bind(fetch)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+
+    let has_more = rows.len() > limit as usize;
+    let rows = if has_more {
+        rows.into_iter().take(limit as usize).collect()
+    } else {
+        rows
+    };
+    Ok(ConversationPage {
+        items: rows.into_iter().map(summary_from_row).collect(),
+        has_more,
+    })
+}
+
+pub async fn fetch_conversation_summary(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    id: &str,
+) -> Result<Option<ConversationSummary>, String> {
+    let sql = format!("{} WHERE c.id = ?", summary_select());
+    let row: Option<ConversationRow> = sqlx::query_as(&sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    Ok(row.map(summary_from_row))
+}
+
+pub async fn fetch_conversation_summaries_for_project(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    project_id: &str,
+    limit: u32,
+) -> Result<ConversationPage, String> {
+    let fetch = limit.saturating_add(1).min(i64::MAX as u32) as i64;
+    let sql = format!(
+        "{} WHERE json_extract(c.data, '$.projectId') = ? \
+          ORDER BY c.updated_at DESC, c.id DESC LIMIT ?",
+        summary_select()
+    );
+    let rows: Vec<ConversationRow> = sqlx::query_as(&sql)
+        .bind(project_id)
+        .bind(fetch)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    let has_more = rows.len() > limit as usize;
+    let rows = if has_more {
+        rows.into_iter().take(limit as usize).collect()
+    } else {
+        rows
+    };
+    Ok(ConversationPage {
+        items: rows.into_iter().map(summary_from_row).collect(),
+        has_more,
+    })
 }
 
 type ConversationRow = (
@@ -185,13 +511,16 @@ pub async fn create_conversation(
         .clone()
         .filter(|w| Uuid::parse_str(w).is_ok())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    // `updated_at` is a generated column over this exact string. Returning the
+    // same text as the cursor keeps the first and second page on one format.
+    let updated_at_raw = now.to_rfc3339();
     let data = serde_json::json!({
         "title": title,
         "mode": input.mode,
         "modelId": input.model_id,
         "workspaceId": workspace_id.clone(),
         "projectId": project_id,
-        "updatedAt": now.to_rfc3339(),
+        "updatedAt": updated_at_raw,
         "state": "active",
     });
     sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES (?, ?, ?)")
@@ -207,6 +536,7 @@ pub async fn create_conversation(
         mode: input.mode,
         model_id: input.model_id,
         updated_at: now,
+        cursor: updated_at_raw,
         preview: None,
         message_count: 0,
         project_id,
@@ -398,6 +728,19 @@ async fn dispatch(
     truncate: Option<TruncateTail>,
 ) -> Result<SendMessageOutput, String> {
     validate_send_input(&input)?;
+    // MCP connects in the background now, so the first Run may arrive while
+    // the servers are still starting. Wait for that pass, but only briefly:
+    // a slow or unreachable MCP server must not make the app feel hung.
+    {
+        let mut ready = state.mcp_ready.clone();
+        if !*ready.borrow() {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                ready.wait_for(|connected| *connected),
+            )
+            .await;
+        }
+    }
     let pool = state.storage.pool();
     let row: Option<ConversationDispatchRow> = sqlx::query_as(
         "SELECT id, json_extract(data, '$.mode'), json_extract(data, '$.modelId'), \
@@ -498,6 +841,10 @@ async fn dispatch(
     // and the project folder → tool workspace root. Read-only and independent
     // of the new turn, so resolve it before opening the write transaction.
     let project = super::projects::load_project_runtime(pool, &input.conversation_id).await?;
+    // Captured before the engine starts. Keeping the folder here means the
+    // rollback snapshot cannot be lost when `project.root_path` is moved into
+    // the RunRequest below.
+    let baseline_root = project.root_path.clone();
 
     let tools = {
         let all = build_tool_specs(state, mode).await;
@@ -513,7 +860,11 @@ async fn dispatch(
             // opting out of.
             Arc::new(
                 all.iter()
-                    .filter(|spec| spec.name != "memory" && spec.name != "skill")
+                    .filter(|spec| {
+                        spec.name != "memory"
+                            && spec.name != "skill"
+                            && spec.name != "skill_resource"
+                    })
                     .cloned()
                     .collect::<Vec<_>>(),
             )
@@ -706,6 +1057,10 @@ async fn dispatch(
     // Truncate + Run + user turn are now committed together; only past this
     // point may the engine start and read the transcript.
     tx.commit().await.map_err(crate::error::cmd_err)?;
+
+    // Snapshot the Git worktree before any tool runs. Best-effort: a non-Git
+    // workspace simply keeps the engine's edit/files checkpoints.
+    crate::workspace_baseline::capture_and_store(pool, baseline_root.as_deref(), run_id).await;
 
     // A temporary turn with no earlier messages created its conversation; once
     // the Run ends there is nothing to return to, so the thread goes too.
@@ -1030,6 +1385,9 @@ pub async fn delete_run_cascade(
     conn: &mut sqlx::SqliteConnection,
     run_id: &str,
 ) -> Result<(), String> {
+    // The rollback ref is anchored in the workspace repository, so it must be
+    // dropped while the `runs` row still says which repository that is.
+    crate::workspace_baseline::forget_ref(conn, run_id).await;
     // Leaf-first: approvals reference tool_calls, both reference runs.
     for (table, column) in [
         ("approvals", "run_id"),
@@ -1289,6 +1647,11 @@ where
                     .get("isError")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+                native: value
+                    .get("native")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
             };
             Some(message)
         })
@@ -1415,6 +1778,104 @@ pub async fn rename_conversation(
     Ok(())
 }
 
+/// Duplicate a conversation up to and including `message_id`.
+///
+/// Runs are intentionally not copied: a fork starts a new branch, so the
+/// assistant rows lose their `runId` (the original run stays attached to the
+/// original thread). Model / mode / project / workspace are preserved, which
+/// is what makes a fork immediately usable.
+#[tauri::command]
+pub async fn fork_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    message_id: String,
+) -> Result<String, String> {
+    fork_conversation_with(state.storage.pool(), &conversation_id, &message_id).await
+}
+
+pub async fn fork_conversation_with(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    conversation_id: &str,
+    message_id: &str,
+) -> Result<String, String> {
+    let target_rowid: Option<i64> =
+        sqlx::query_scalar("SELECT rowid FROM messages WHERE id = ? AND conversation_id = ?")
+            .bind(message_id)
+            .bind(conversation_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(crate::error::cmd_err)?;
+    let Some(target_rowid) = target_rowid else {
+        return Err(format!(
+            "message {message_id} does not belong to conversation {conversation_id}"
+        ));
+    };
+
+    let (owner_id, raw): (String, String) =
+        sqlx::query_as("SELECT owner_id, data FROM conversations WHERE id = ?")
+            .bind(conversation_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(crate::error::cmd_err)?
+            .ok_or_else(|| format!("conversation not found: {conversation_id}"))?;
+    let mut data: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|err| format!("invalid conversation data: {err}"))?;
+    let title = data
+        .get("title")
+        .and_then(|value| value.as_str())
+        .unwrap_or("New chat");
+    let now = Utc::now().to_rfc3339();
+    data["title"] = serde_json::json!(format!("{title} (fork)"));
+    data["createdAt"] = serde_json::json!(now);
+    data["updatedAt"] = serde_json::json!(now);
+    data["forkedFromConversationId"] = serde_json::json!(conversation_id);
+
+    let messages: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, data, created_at FROM messages \
+         WHERE conversation_id = ? AND rowid <= ? ORDER BY rowid",
+    )
+    .bind(conversation_id)
+    .bind(target_rowid)
+    .fetch_all(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+
+    let new_id = Uuid::new_v4().to_string();
+    let mut tx = pool.begin().await.map_err(crate::error::cmd_err)?;
+    sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES (?, ?, ?)")
+        .bind(&new_id)
+        .bind(&owner_id)
+        .bind(data.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    for (old_id, raw, created_at) in messages {
+        let mut message: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|err| format!("invalid message data: {err}"))?;
+        // A fork is a new branch: the original run's events and approvals stay
+        // with the original conversation. Clearing the id avoids an assistant
+        // bubble pointing at a run that is not in this thread.
+        if message.get("runId").is_some() {
+            message["runId"] = serde_json::Value::Null;
+        }
+        message["forkedFromMessageId"] = serde_json::json!(old_id);
+        sqlx::query(
+            "INSERT INTO messages (id, owner_id, conversation_id, data, created_at) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&owner_id)
+        .bind(&new_id)
+        .bind(message.to_string())
+        .bind(&created_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    }
+    tx.commit().await.map_err(crate::error::cmd_err)?;
+    Ok(new_id)
+}
+
 /// One persisted message of a conversation, in the shape the transcript view
 /// renders. `reasoning` is written into the JSON payload by `dispatch_run` but
 /// is not part of `MessageData`, so the raw JSON is read instead of the typed
@@ -1430,6 +1891,8 @@ pub struct MessageView {
     pub kind: String,
     pub created_at: String,
     pub attachments: Vec<MessageAttachmentView>,
+    /// SQLite rowid. Stable across edits and used as the "older than" cursor.
+    pub seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1444,13 +1907,14 @@ pub async fn list_messages(
     state: State<'_, AppState>,
     conversation_id: String,
     limit: Option<u32>,
+    before: Option<i64>,
 ) -> Result<Vec<MessageView>, String> {
     // Clamp the page size: an unbounded LIMIT lets a caller dump the whole
     // table in one IPC round trip.
     let limit = limit
         .unwrap_or(limits::DEFAULT_MESSAGE_LIMIT)
         .clamp(1, limits::MAX_MESSAGE_LIMIT);
-    fetch_messages(state.storage.pool(), &conversation_id, limit).await
+    fetch_messages_before(state.storage.pool(), &conversation_id, limit, before).await
 }
 
 /// Query helper kept separate from the command for integration tests.
@@ -1464,11 +1928,21 @@ pub async fn fetch_messages(
     conversation_id: &str,
     limit: u32,
 ) -> Result<Vec<MessageView>, String> {
+    fetch_messages_before(pool, conversation_id, limit, None).await
+}
+
+/// Fetch one page of transcript rows strictly older than `before` (or the
+/// newest page when `before` is `None`). `rowid` is the cursor: it is stable,
+/// monotonic, and does not collide when two messages share a timestamp.
+pub async fn fetch_messages_before(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    conversation_id: &str,
+    limit: u32,
+    before: Option<i64>,
+) -> Result<Vec<MessageView>, String> {
     let limit = limit.clamp(1, limits::MAX_MESSAGE_LIMIT);
     let rows: Vec<MessageRow> = sqlx::query_as(
-        "SELECT id, \
-                json_extract(data, '$.role') AS role, \
-                json_extract(data, '$.content') AS content, \
+        "SELECT rowid, id, role, content, \
                 json_extract(data, '$.reasoning') AS reasoning, \
                 json_extract(data, '$.modelId') AS model_id, \
                 json_extract(data, '$.runId') AS run_id, \
@@ -1476,10 +1950,13 @@ pub async fn fetch_messages(
                 created_at, \
                 json_extract(data, '$.attachments') AS attachments \
          FROM messages WHERE conversation_id = ? \
-           AND json_extract(data, '$.role') IN ('user', 'assistant') \
-         ORDER BY created_at DESC, rowid DESC LIMIT ?",
+           AND role IN ('user', 'assistant') \
+           AND (? IS NULL OR rowid < ?) \
+         ORDER BY rowid DESC LIMIT ?",
     )
     .bind(conversation_id)
+    .bind(before)
+    .bind(before)
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -1490,7 +1967,18 @@ pub async fn fetch_messages(
         // visible end of the transcript is the recent one, not message #1.
         .rev()
         .map(
-            |(id, role, content, reasoning, model_id, run_id, kind, created_at, attachments)| {
+            |(
+                seq,
+                id,
+                role,
+                content,
+                reasoning,
+                model_id,
+                run_id,
+                kind,
+                created_at,
+                attachments,
+            )| {
                 MessageView {
                     id,
                     role: role.unwrap_or_default(),
@@ -1501,6 +1989,7 @@ pub async fn fetch_messages(
                     kind: kind.unwrap_or_default(),
                     created_at: normalize_ts(&created_at),
                     attachments: parse_attachments(attachments.as_deref()),
+                    seq,
                 }
             },
         )
@@ -1508,6 +1997,7 @@ pub async fn fetch_messages(
 }
 
 type MessageRow = (
+    i64,
     String,
     Option<String>,
     Option<String>,

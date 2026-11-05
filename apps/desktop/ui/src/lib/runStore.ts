@@ -8,7 +8,12 @@
 /// opened another thread or sent a message there.
 
 import { create } from "zustand";
-import { applyRunEvent, createTimeline, type RunTimeline } from "./runEvents";
+import {
+  applyRunEvent,
+  createTimeline,
+  isBusy,
+  type RunTimeline,
+} from "./runEvents";
 import type { RunEventPayload } from "./api";
 import { useUi } from "./ui";
 
@@ -28,6 +33,14 @@ interface RunStoreState {
   /** Every tracked run, keyed by conversation id (or run id when there is no
    *  conversation yet). */
   byConversation: Record<string, LiveRunEntry>;
+  /** Conversations whose tracked run is still busy.
+   *
+   *  Derived from `byConversation` but stored separately: the sidebar used to
+   *  subscribe to the whole map, and every 60 ms flush produced a new object,
+   *  so the entire thread list re-rendered 16×/s while tokens streamed. This
+   *  array only changes when a run actually starts or finishes.
+   */
+  busyConversationIds: string[];
   /** Begin tracking a run (called right after `send_message` resolves). */
   startRun: (runId: string, conversationId: string | null) => void;
   /** Feed one event; ignored unless its run is tracked. */
@@ -36,6 +49,18 @@ interface RunStoreState {
   clear: () => void;
   /** Retire one finished run without touching other threads. */
   clearRun: (runId: string) => void;
+}
+
+/** Busy conversation keys, sorted so two equal sets compare equal. */
+function busyIds(entries: Record<string, LiveRunEntry>): string[] {
+  return Object.entries(entries)
+    .filter(([, entry]) => isBusy(entry.timeline.status))
+    .map(([key]) => key)
+    .sort();
+}
+
+function sameIds(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 let buffer: RunEventPayload[] = [];
@@ -71,8 +96,14 @@ function scheduleFlush() {
     const active = state.liveRunId
       ? next[keyByRun.get(state.liveRunId) ?? ""]
       : null;
+    const busy = busyIds(next);
     useRunEvents.setState({
       byConversation: next,
+      // Keep the reference stable when the set did not change, so the sidebar
+      // does not re-render on every streaming flush.
+      ...(sameIds(busy, state.busyConversationIds)
+        ? {}
+        : { busyConversationIds: busy }),
       timeline: active?.timeline ?? null,
     });
   }, FLUSH_MS);
@@ -90,6 +121,7 @@ export const useRunEvents = create<RunStoreState>((set) => ({
   conversationId: null,
   timeline: null,
   byConversation: EMPTY_ENTRIES,
+  busyConversationIds: [],
   startRun: (runId, conversationId) => {
     // The UI store tracks the run whose browser pane a manual close should
     // suppress. It used to have no writer at all, so every dismissal was
@@ -115,15 +147,19 @@ export const useRunEvents = create<RunStoreState>((set) => ({
     for (const event of queued) {
       timeline = applyRunEvent(timeline, event);
     }
-    set((state) => ({
-      liveRunId: runId,
-      conversationId,
-      timeline,
-      byConversation: {
+    set((state) => {
+      const byConversation = {
         ...state.byConversation,
         [key]: { runId, timeline },
-      },
-    }));
+      };
+      return {
+        liveRunId: runId,
+        conversationId,
+        timeline,
+        byConversation,
+        busyConversationIds: busyIds(byConversation),
+      };
+    });
   },
   push: (event) => {
     if (!keyByRun.has(event.run_id)) {
@@ -157,6 +193,7 @@ export const useRunEvents = create<RunStoreState>((set) => ({
       conversationId: null,
       timeline: null,
       byConversation: EMPTY_ENTRIES,
+      busyConversationIds: [],
     });
   },
   clearRun: (runId) => {
@@ -179,8 +216,10 @@ export const useRunEvents = create<RunStoreState>((set) => ({
       const next = { ...state.byConversation };
       delete next[key];
       const active = state.liveRunId === runId;
+      const byConversation = Object.keys(next).length ? next : EMPTY_ENTRIES;
       return {
-        byConversation: Object.keys(next).length ? next : EMPTY_ENTRIES,
+        byConversation,
+        busyConversationIds: busyIds(byConversation),
         liveRunId: active ? null : state.liveRunId,
         conversationId: active ? null : state.conversationId,
         timeline: active ? null : state.timeline,

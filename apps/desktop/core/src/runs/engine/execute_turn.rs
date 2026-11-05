@@ -23,6 +23,7 @@ impl RunEngine {
             max_tokens: request.max_tokens,
             reasoning: request.reasoning,
             stream: true,
+            session_id: Some(request.conversation_id.to_string()),
             context_window: Some(request.context_window).filter(|value| *value > 0),
             keep_alive: request.keep_alive.clone(),
         };
@@ -46,6 +47,7 @@ impl RunEngine {
                     text: String::new(),
                     reasoning: String::new(),
                     tool_calls: Vec::new(),
+                    native_items: Vec::new(),
                     usage: None,
                     finish_reason: None,
                     error: Some(err.to_string()),
@@ -58,6 +60,7 @@ impl RunEngine {
         let mut usage: Option<Usage> = None;
         let mut finish_reason: Option<String> = None;
         let mut error: Option<String> = None;
+        let mut native_items: Vec<serde_json::Value> = Vec::new();
         let mut pending: HashMap<String, (String, String)> = HashMap::new();
         let mut order: Vec<String> = Vec::new();
 
@@ -111,6 +114,9 @@ impl RunEngine {
                     if !order.contains(&id) {
                         order.push(id);
                     }
+                }
+                StreamEvent::NativeOutput(items) => {
+                    native_items = items;
                 }
                 StreamEvent::Finished {
                     finish_reason: reason,
@@ -184,6 +190,7 @@ impl RunEngine {
             text,
             reasoning,
             tool_calls,
+            native_items,
             usage,
             finish_reason,
             error,
@@ -195,6 +202,8 @@ pub(super) struct TurnResult {
     pub(super) text: String,
     pub(super) reasoning: String,
     pub(super) tool_calls: Vec<AssistantToolCall>,
+    /// Raw Responses items attached to this assistant turn.
+    pub(super) native_items: Vec<serde_json::Value>,
     pub(super) usage: Option<Usage>,
     pub(super) finish_reason: Option<String>,
     pub(super) error: Option<String>,

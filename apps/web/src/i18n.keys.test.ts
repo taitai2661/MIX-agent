@@ -32,7 +32,7 @@ function included(path: string): boolean {
 
 function literalKeys(source: string): string[] {
   const keys: string[] = [];
-  for (const match of source.matchAll(/\bt\(\s*("(?:[^"\\]|\\.)*")\s*\)/g)) {
+  for (const match of source.matchAll(/\bt\(\s*("(?:[^"\\]|\\.)*")\s*[,)]/g)) {
     keys.push(JSON.parse(match[1]) as string);
   }
   return keys;

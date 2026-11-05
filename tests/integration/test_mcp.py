@@ -23,6 +23,6 @@ async def test_real_stdio_mcp_discovery_and_call(tmp_path, monkeypatch):
         )
         assert result["content"][0]["text"] == "echo:hello"
     finally:
-        for queue, task in runner.CONNECTIONS.values():
+        for _queue, task in runner.CONNECTIONS.values():
             task.cancel()
         await asyncio.gather(*(task for queue, task in runner.CONNECTIONS.values()), return_exceptions=True)

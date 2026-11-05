@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  ACCENT_STORAGE_KEY,
+  storedAccent,
+  storeAccent,
+  type Accent,
+} from "./accent";
 import { getLanguage, setLanguage, type Language } from "./i18n";
 import { storedTheme, storeTheme, type Theme } from "./theme";
 import {
@@ -45,6 +51,7 @@ export type SettingsTab =
   | "network"
   | "updates"
   | "backup"
+  | "chatgpt"
   | "providers"
   | "models"
   | "tools"
@@ -59,6 +66,7 @@ export type SettingsTab =
 export type RightPanel =
   | "none"
   | "activity"
+  | "usage"
   | "diff"
   | "changes"
   | "file"
@@ -172,6 +180,9 @@ interface UiState {
   setLocale: (locale: Language) => void;
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  /** Accent hue for focus, selection and primary actions. Persisted locally. */
+  accent: Accent;
+  setAccent: (accent: Accent) => void;
   /** WebView zoom factor (0.8–1.5). Applied to `documentElement`. */
   zoom: number;
   setZoom: (zoom: number) => void;
@@ -255,6 +266,7 @@ function readRightPanel(): RightPanel {
   if (
     stored === "none" ||
     stored === "activity" ||
+    stored === "usage" ||
     stored === "diff" ||
     stored === "changes" ||
     stored === "file" ||
@@ -282,6 +294,7 @@ const SETTING_TABS: SettingsTab[] = [
   "network",
   "updates",
   "backup",
+  "chatgpt",
   "providers",
   "models",
   "tools",
@@ -663,6 +676,11 @@ export const useUi = create<UiState>((set, get) => ({
     storeTheme(theme);
     set({ theme });
   },
+  accent: storedAccent(),
+  setAccent: (accent) => {
+    storeAccent(accent);
+    set({ accent });
+  },
   zoom: readZoom(),
   setZoom: (zoom) => {
     const value = clampZoom(zoom);
@@ -712,6 +730,7 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   ZOOM_KEY,
   CODE_WRAP_KEY,
   REDUCE_MOTION_KEY,
+  ACCENT_STORAGE_KEY,
 ]);
 
 if (typeof window !== "undefined") {
@@ -791,6 +810,11 @@ if (typeof window !== "undefined") {
         // `null` covers both "removed" and "emptied" on the other side.
         const next = readActiveProject();
         if (next !== state.activeProjectId) state.setActiveProjectId(next);
+        break;
+      }
+      case ACCENT_STORAGE_KEY: {
+        const next = storedAccent();
+        if (next !== state.accent) state.setAccent(next);
         break;
       }
       case ZOOM_KEY: {

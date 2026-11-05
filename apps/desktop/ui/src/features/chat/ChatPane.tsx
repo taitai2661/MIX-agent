@@ -6,7 +6,9 @@ import { useRunEvents } from "@/lib/runStore";
 import { isBusy, isTerminal } from "@/lib/runEvents";
 import {
   CONVERSATIONS_QUERY_KEY,
-  useConversations,
+  useConversation,
+  useConversationStats,
+  useLatestConversation,
   useLocalRuntimes,
   useModels,
   useProjects,
@@ -15,7 +17,7 @@ import {
 import { useUi, surfaceForMode } from "@/lib/ui";
 import { getLastModelForSurface } from "@/lib/modelPrefs";
 import { SETTINGS_QUERY_KEY } from "@/lib/settings";
-import type { ModelView, RunView } from "@/lib/types";
+import type { MessageView, ModelView, RunView } from "@/lib/types";
 import { nextVisit, type Welcome } from "./greeting";
 import {
   ChatComposerProvider,
@@ -27,9 +29,12 @@ import { Transcript } from "./Transcript";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { ErrorBox } from "@/components/shared";
 import { PaneErrorBoundary } from "@/components/PaneErrorBoundary";
+import { markOnce } from "@/lib/perf";
 
 /** Stable empties for the memoized `Transcript` props. */
 const EMPTY_MODELS: ModelView[] = [];
+/** Matches the backend's default page size; `hasOlder` is inferred from a full page. */
+const MESSAGE_PAGE_SIZE = 100;
 
 export function ChatPane() {
   return (
@@ -58,7 +63,10 @@ function ChatPaneBody() {
   const startRun = useRunEvents((s) => s.startRun);
   const clearLive = useRunEvents((s) => s.clearRun);
 
-  const conversations = useConversations();
+  const conversations = useLatestConversation(
+    surface === "desktop-agent" ? ["agent"] : ["chat", "thinking"],
+  );
+  const stats = useConversationStats();
   const models = useModels();
   const projects = useProjects();
   const providers = useProviders();
@@ -67,49 +75,75 @@ function ChatPaneBody() {
     queryKey: SETTINGS_QUERY_KEY,
     queryFn: api.getSettings,
   });
-  const messages = useQuery({
-    queryKey: ["messages", conversationId],
-    queryFn: () => api.listMessages(conversationId!),
-    enabled: !!conversationId,
-  });
-  const runs = useQuery({
-    queryKey: ["runs", conversationId],
-    queryFn: () => api.listRuns(conversationId!),
-    enabled: !!conversationId,
-  });
-
   // A temporary send that created its own conversation: once the run ends the
   // backend deletes that thread, so the composer has to let go of it too.
-  const temporaryNewRef = useRef<string | null>(null);
+  const [temporaryNewId, setTemporaryNewId] = useState<string | null>(null);
   // A failed first send deletes the thread it just created. Retrying through
   // `activeConversationId` would then fall back to the newest *existing*
   // thread and deliver the message into the wrong conversation.
   const retryNeedsNewConversation = useRef(false);
 
-  const surfaceConversations = useMemo(
-    () =>
-      (conversations.data ?? []).filter(
-        (c) => surfaceForMode(c.mode) === surface,
-      ),
-    [conversations.data, surface],
-  );
-
   const activeModelId = modelId || "auto";
   // A new chat stays blank until its first send, even though the surface has
-  // older threads. Falling back to `surfaceConversations[0]` here made the
-  // composer show (and send into) the newest existing thread, so the new chat
-  // was never created.
+  // older threads. Falling back to the newest thread here made the composer
+  // show (and send into) an existing thread, so the new chat was never created.
   const activeConversationId = newThreadDraft
     ? null
-    : (conversationId ?? surfaceConversations[0]?.id ?? null);
-  // Read this thread's own timeline. A run started in another thread stays
-  // tracked (and keeps streaming) instead of being wiped by the next send.
-  const liveEntry = useRunEvents((s) =>
-    activeConversationId ? s.byConversation[activeConversationId] : undefined,
+    : (conversationId ?? conversations.data?.id ?? null);
+  // Key the history off the conversation the pane actually renders, not the
+  // persisted id. On launch `conversationId` is still null for a beat while a
+  // thread is being adopted — querying the id made that thread's history look
+  // like it was never loading. A brand-new draft has no conversation at all,
+  // so the query is disabled and must not report "pending" forever.
+  const messages = useQuery({
+    queryKey: ["messages", activeConversationId],
+    queryFn: () => api.listMessages(activeConversationId!, MESSAGE_PAGE_SIZE),
+    enabled: !!activeConversationId,
+  });
+  // Older pages are kept beside the query result instead of in it, so a live
+  // refetch of the newest page never discards history the user loaded.
+  useEffect(() => {
+    if (!messages.isPending) markOnce("transcript-ready");
+  }, [messages.isPending]);
+  const [olderMessages, setOlderMessages] = useState<MessageView[]>([]);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  useEffect(() => {
+    setOlderMessages([]);
+    setHasOlder(false);
+  }, [activeConversationId]);
+  useEffect(() => {
+    if (messages.data) setHasOlder(messages.data.length >= MESSAGE_PAGE_SIZE);
+  }, [messages.data]);
+  const runs = useQuery({
+    queryKey: ["runs", activeConversationId],
+    queryFn: () => api.listRuns(activeConversationId!),
+    enabled: !!activeConversationId,
+  });
+  // Read this thread's own run identity and status, not its timeline. The
+  // timeline changes on every token; subscribing to it here re-rendered the
+  // whole pane (composer and transcript included) 16×/s. `LiveBlock` reads the
+  // timeline itself, so this component only wakes on a start/status change.
+  // A run started in another thread stays tracked (and keeps streaming)
+  // instead of being wiped by the next send.
+  const liveRunId = useRunEvents((s) =>
+    activeConversationId
+      ? (s.byConversation[activeConversationId]?.runId ?? null)
+      : null,
   );
-  const liveRunId = liveEntry?.runId ?? null;
-  const liveTimeline = liveEntry?.timeline ?? null;
-  const liveConversationId = liveEntry ? activeConversationId : null;
+  const liveStatus = useRunEvents((s) =>
+    activeConversationId
+      ? (s.byConversation[activeConversationId]?.timeline.status ?? null)
+      : null,
+  );
+  // The approval object is stable between token deltas (the reducer only
+  // replaces it when an approval event arrives).
+  const liveApproval = useRunEvents((s) =>
+    activeConversationId
+      ? (s.byConversation[activeConversationId]?.timeline.approval ?? null)
+      : null,
+  );
+  const liveConversationId = liveRunId ? activeConversationId : null;
 
   useEffect(() => {
     // `auto` is the default pick and is valid without any model in the list.
@@ -135,24 +169,30 @@ function ChatPaneBody() {
     }
   }, [modelId, models.data, setModelId, surface]);
 
+  const activeConversation = useConversation(activeConversationId);
+  // A temporary thread is deleted at the end of its Run. Watch that row so the
+  // composer lets go only after the backend has actually removed it.
+  const purgedConversation = useConversation(temporaryNewId);
   useEffect(() => {
-    if (!conversations.data) return;
     // A new chat is deliberately blank until its first send. Without this
     // guard the auto-select below immediately persisted the newest existing
     // thread and the draft's first message landed in that thread.
     if (newThreadDraft) return;
-    const currentConv = conversations.data.find((c) => c.id === conversationId);
+    if (!conversationId) {
+      if (conversations.data) setConversationId(conversations.data.id);
+      return;
+    }
     if (
-      !conversationId ||
-      (currentConv && surfaceForMode(currentConv.mode) !== surface)
+      activeConversation.data &&
+      surfaceForMode(activeConversation.data.mode) !== surface
     ) {
-      const match = conversations.data.find(
-        (c) => surfaceForMode(c.mode) === surface,
-      );
-      setConversationId(match ? match.id : null);
+      // The persisted id belongs to the other surface; adopt this surface's
+      // newest thread (or clear the id when there is none).
+      setConversationId(conversations.data?.id ?? null);
     }
   }, [
     conversationId,
+    activeConversation.data,
     conversations.data,
     surface,
     setConversationId,
@@ -160,24 +200,24 @@ function ChatPaneBody() {
   ]);
 
   // Opening a project-scoped thread moves the file tree / diff scope with it.
-  const activeConversation = useMemo(
-    () => conversations.data?.find((c) => c.id === activeConversationId),
-    [conversations.data, activeConversationId],
-  );
   useEffect(() => {
     if (
-      activeConversation?.project_id &&
-      activeConversation.project_id !== activeProjectId
+      activeConversation.data?.project_id &&
+      activeConversation.data.project_id !== activeProjectId
     ) {
-      setActiveProjectId(activeConversation.project_id);
+      setActiveProjectId(activeConversation.data.project_id);
     }
-  }, [activeConversation?.project_id, activeProjectId, setActiveProjectId]);
+  }, [
+    activeConversation.data?.project_id,
+    activeProjectId,
+    setActiveProjectId,
+  ]);
 
   // Keep the ui-store workspace in step with the active conversation so the
   // Browser pane defaults to the same profile the agent uses.
   useEffect(() => {
-    setWorkspaceId(activeConversation?.workspace_id ?? null);
-  }, [activeConversation?.workspace_id, setWorkspaceId]);
+    setWorkspaceId(activeConversation.data?.workspace_id ?? null);
+  }, [activeConversation.data?.workspace_id, setWorkspaceId]);
 
   const sendMessage = useMutation({
     mutationFn: async ({
@@ -235,7 +275,11 @@ function ChatPaneBody() {
           project_id: activeProjectId,
         });
         createdId = created.id;
-        setConversationId(created.id);
+        // Adopt the new conversation only after the send succeeds. Setting it
+        // here flipped the composer's draft slot mid-request, which saved the
+        // prompt being sent into the "new chat" slot and cleared attachments
+        // that were still uploading. A failed first send also deleted the row,
+        // so the pane no longer briefly switched to a thread that vanished.
         target = created.id;
       }
       try {
@@ -259,6 +303,7 @@ function ChatPaneBody() {
         return {
           runId: out.run_id,
           conversationId: target,
+          created: createdConversation,
           purged: temporaryMode && createdConversation,
         };
       } catch (err) {
@@ -281,9 +326,10 @@ function ChatPaneBody() {
         throw err;
       }
     },
-    onSuccess: ({ runId, conversationId, purged }) => {
+    onSuccess: ({ runId, conversationId, created, purged }) => {
       retryNeedsNewConversation.current = false;
-      if (purged) temporaryNewRef.current = conversationId;
+      if (created) setConversationId(conversationId);
+      if (purged) setTemporaryNewId(conversationId);
       startRun(runId, conversationId);
       void queryClient.invalidateQueries({
         queryKey: ["messages", conversationId],
@@ -329,9 +375,22 @@ function ChatPaneBody() {
     },
   });
 
+  const forkConversation = useMutation({
+    mutationFn: async (messageId: string) => {
+      if (!activeConversationId) throw new Error("no conversation");
+      return api.forkConversation(activeConversationId, messageId);
+    },
+    onSuccess: (id) => {
+      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+      // Switch to the fork. The thread list is invalidated first so the
+      // sidebar has the new row by the time the transcript loads.
+      setConversationId(id);
+    },
+  });
+
   // Terminal status: refresh persisted history, then retire the live view
   // once the assistant message lands (the Transcript hides it either way).
-  const status = liveTimeline?.status;
+  const status = liveStatus;
   useEffect(() => {
     if (!liveRunId || !status || !isTerminal(status)) return;
     const target = liveConversationId ?? activeConversationId;
@@ -355,13 +414,23 @@ function ChatPaneBody() {
   // race the refetch and leave the composer pointing at a deleted id (or, worse,
   // adopting the wrong thread from the stale list).
   useEffect(() => {
-    if (conversations.data === undefined) return;
-    const purged = temporaryNewRef.current;
-    if (purged && !conversations.data.some((c) => c.id === purged)) {
-      temporaryNewRef.current = null;
-      setConversationId(conversationId === purged ? null : conversationId);
+    if (!temporaryNewId || purgedConversation.isPending) return;
+    // `get_conversation` returns null once the row is gone. The invalidation
+    // after a terminal Run refreshes this query, so the clear cannot race the
+    // refetch and leave the composer pointing at a deleted id.
+    if (purgedConversation.data === null) {
+      setTemporaryNewId(null);
+      setConversationId(
+        conversationId === temporaryNewId ? null : conversationId,
+      );
     }
-  }, [conversations.data, conversationId, setConversationId]);
+  }, [
+    temporaryNewId,
+    conversationId,
+    purgedConversation.isPending,
+    purgedConversation.data,
+    setConversationId,
+  ]);
 
   const runById = useMemo(() => {
     const map = new Map<string, RunView>();
@@ -375,7 +444,12 @@ function ChatPaneBody() {
   // Empty intermediate assistant turns (tool-call turns with no text) carry
   // no transcript value either — tools surface via the Activity badge.
   const visibleMessages = useMemo(() => {
-    const list = messages.data ?? [];
+    // Merge by id: a refetch of the newest page shifts its window forward, and
+    // a plain concatenation would drop the row that fell off the bottom.
+    const byId = new Map<string, MessageView>();
+    for (const message of olderMessages) byId.set(message.id, message);
+    for (const message of messages.data ?? []) byId.set(message.id, message);
+    const list = [...byId.values()].sort((a, b) => a.seq - b.seq);
     return list.filter((m) => {
       if (m.role === "user") return true;
       if (m.role !== "assistant") return false;
@@ -383,17 +457,30 @@ function ChatPaneBody() {
       if (text.length > 0) return true;
       return !!m.reasoning?.trim();
     });
-  }, [messages.data]);
+  }, [messages.data, olderMessages]);
 
-  // The live block only renders in the conversation the run belongs to.
-  const liveForThisConversation =
-    liveTimeline != null &&
-    (liveConversationId == null || liveConversationId === activeConversationId)
-      ? liveTimeline
-      : null;
+  const loadOlder = useCallback(async () => {
+    if (!activeConversationId || loadingOlder) return;
+    // Use the raw page cursors, not `visibleMessages`: filtering out empty
+    // assistant turns must not make the next page start after a row that was
+    // never fetched.
+    const oldest = olderMessages[0]?.seq ?? messages.data?.[0]?.seq;
+    if (oldest === undefined) return;
+    setLoadingOlder(true);
+    try {
+      const page = await api.listMessages(
+        activeConversationId,
+        MESSAGE_PAGE_SIZE,
+        oldest,
+      );
+      setOlderMessages((previous) => [...page, ...previous]);
+      setHasOlder(page.length >= MESSAGE_PAGE_SIZE);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [activeConversationId, loadingOlder, messages.data, olderMessages]);
 
-  const busy =
-    liveForThisConversation != null && isBusy(liveForThisConversation.status);
+  const busy = liveStatus != null && isBusy(liveStatus);
 
   // Stable identities for the memoized `Composer`. Inline arrows here meant a
   // fresh prop on every store flush, so the composer — with its model, mode and
@@ -411,7 +498,12 @@ function ChatPaneBody() {
   );
   const onEditMessage = useCallback(
     (messageId: string, content: string) =>
-      editMessage.mutateAsync({ messageId, content }).then(() => undefined),
+      editMessage.mutateAsync({ messageId, content }).then(() => {
+        // Editing truncates the transcript; paged-in older rows may include
+        // turns the backend just removed.
+        setOlderMessages([]);
+        setHasOlder(false);
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editMessage.mutateAsync],
   );
@@ -468,47 +560,52 @@ function ChatPaneBody() {
   // fragment list) would be bumped twice per mount.
   const welcomePicked = useRef(false);
   useEffect(() => {
-    if (welcomePicked.current || conversations.data === undefined) return;
+    if (welcomePicked.current || stats.data === undefined) return;
     welcomePicked.current = true;
-    const rows = conversations.data;
-    const stamps = rows
-      .map((row) => Date.parse(row.updated_at))
-      .filter((stamp) => Number.isFinite(stamp));
+    const stamp = stats.data.last_activity_at
+      ? Date.parse(stats.data.last_activity_at)
+      : Number.NaN;
     setWelcome(
       nextVisit({
-        conversationCount: rows.length,
-        messageCount: rows.reduce(
-          (sum, row) => sum + (row.message_count || 0),
-          0,
-        ),
+        conversationCount: stats.data.count,
+        messageCount: stats.data.message_count,
         projectCount: projects.data?.length ?? 0,
-        lastActivityAt: stamps.length ? Math.max(...stamps) : null,
+        lastActivityAt: Number.isFinite(stamp) ? stamp : null,
         surface,
         projectActive: !!activeProjectId,
       }).welcome,
     );
-  }, [activeProjectId, conversations.data, projects.data, surface]);
+  }, [activeProjectId, stats.data, projects.data, surface]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {liveForThisConversation?.approval && (
-        <ApprovalBanner approval={liveForThisConversation.approval} />
-      )}
+      {liveApproval && <ApprovalBanner approval={liveApproval} />}
       <PaneErrorBoundary name="Transcript" resetKeys={[activeConversationId]}>
         <Transcript
+          // Scroll state (`stuck`, previous message count) belongs to one
+          // thread. Reusing the component across a thread switch preserved a
+          // scrolled-up offset, so the newly opened thread appeared halfway
+          // down its history with auto-follow switched off.
+          key={activeConversationId ?? "new"}
           messages={visibleMessages}
           runs={runById}
           models={models.data ?? EMPTY_MODELS}
-          live={liveForThisConversation}
-          liveRunId={liveForThisConversation ? liveRunId : null}
-          loading={messages.isPending}
+          liveRunId={liveRunId}
+          liveConversationId={liveConversationId}
+          loading={activeConversationId !== null && messages.isPending}
           error={messages.isError ? messages.error : null}
           welcome={welcome}
           onEditMessage={onEditMessage}
           onRetry={onRetry}
+          onFork={(messageId) =>
+            forkConversation.mutateAsync(messageId).then(() => undefined)
+          }
           onReload={() => void messages.refetch()}
           editDisabled={busy}
           retryDisabled={busy || editMessage.isPending}
+          hasOlder={hasOlder}
+          loadingOlder={loadingOlder}
+          onLoadOlder={() => void loadOlder()}
         />
       </PaneErrorBoundary>
       {(sendMessage.isError ||

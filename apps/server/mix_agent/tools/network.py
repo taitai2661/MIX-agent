@@ -14,6 +14,15 @@ async def public_address(host, port):
     return ips[0]
 
 
+def public_address_sync(host, port):
+    """Synchronous variant for sync FastAPI routes (run in a threadpool)."""
+    addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    ips = list(dict.fromkeys(a[4][0] for a in addresses))
+    if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
+        raise ValueError("Private, loopback and metadata addresses are blocked")
+    return ips[0]
+
+
 async def fetch_public_bytes(url, max_bytes=2_000_000, *, allowed_domains=None):
     """Fetch raw bytes from a public HTTP(S) URL with SSRF protections."""
     for _ in range(5):

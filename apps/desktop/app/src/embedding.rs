@@ -43,6 +43,7 @@ type ProviderRow = (
     String,
     Option<String>,
     Option<String>,
+    Option<String>,
     Option<i64>,
     Option<String>,
 );
@@ -138,8 +139,9 @@ impl EmbeddingResolver {
 
         let mut preferred_plan: Option<Plan> = None;
         let mut fallback_plan: Option<Plan> = None;
-        for (id, kind, base_url, enabled, model) in rows {
-            let Some((kind, base_url, model)) = embedding_plan(kind, base_url, enabled, model)
+        for (id, kind, preset, base_url, enabled, model) in rows {
+            let Some((kind, base_url, model)) =
+                embedding_plan(kind, preset, base_url, enabled, model)
             else {
                 continue;
             };
@@ -178,6 +180,7 @@ impl EmbeddingResolver {
 /// whole query when the column decodes as text.
 const POOL_PROVIDERS: &str = "SELECT id, \
      json_extract(data, '$.kind'), \
+     json_extract(data, '$.preset'), \
      json_extract(data, '$.baseUrl'), \
      json_extract(data, '$.enabled'), \
      CAST(COALESCE(json_extract(data, '$.embeddingModel'), \
@@ -193,6 +196,7 @@ const POOL_PROVIDERS: &str = "SELECT id, \
 /// the table.
 fn embedding_plan(
     kind: Option<String>,
+    preset: Option<String>,
     base_url: Option<String>,
     enabled: Option<i64>,
     override_model: Option<String>,
@@ -200,6 +204,12 @@ fn embedding_plan(
     // Rows written before `enabled` existed carry no such key; they were all
     // enabled (this matches `crate::provider_row`).
     if enabled == Some(0) {
+        return None;
+    }
+    // `preset` and `kind` are both user-controlled (and legacy rows may carry
+    // preset=chatgpt with kind=openai), so use the same unified detector as
+    // the adapter registry.
+    if preset.as_deref() == Some("chatgpt") {
         return None;
     }
     let kind = kind?;
@@ -210,13 +220,17 @@ fn embedding_plan(
     if base_url.is_empty() {
         return None;
     }
+    // Legacy rows can carry the Codex URL without the preset/kind pair.
+    if base_url.contains("chatgpt.com/backend-api/codex") {
+        return None;
+    }
     let provider_kind = ProviderKind::parse(&kind);
-    if provider_kind == Some(ProviderKind::Anthropic) {
-        // Anthropic has no embeddings endpoint, and the adapter keeps the
-        // trait's default `EmbeddingNotSupported`. An `embeddingModel` override
-        // cannot conjure one, so a row that names a model still does not
-        // qualify — it would otherwise be chosen, fail on every recall, and
-        // hide the provider below it.
+    if matches!(
+        provider_kind,
+        Some(ProviderKind::Anthropic) | Some(ProviderKind::ChatGpt)
+    ) {
+        // Neither transport exposes an embeddings endpoint; a model override
+        // cannot conjure one, so the row must not be selected as the source.
         return None;
     }
     let model = override_model
@@ -237,6 +251,7 @@ mod tests {
         assert_eq!(
             embedding_plan(
                 Some("openai".into()),
+                None,
                 Some("https://api.openai.com/v1".into()),
                 Some(0),
                 None
@@ -248,11 +263,17 @@ mod tests {
     #[test]
     fn a_provider_without_a_base_url_is_skipped() {
         assert_eq!(
-            embedding_plan(Some("openai".into()), None, Some(1), None),
+            embedding_plan(Some("openai".into()), None, None, Some(1), None),
             None
         );
         assert_eq!(
-            embedding_plan(Some("openai".into()), Some("   ".into()), Some(1), None),
+            embedding_plan(
+                Some("openai".into()),
+                None,
+                Some("   ".into()),
+                Some(1),
+                None
+            ),
             None
         );
     }
@@ -264,9 +285,37 @@ mod tests {
         assert_eq!(
             embedding_plan(
                 Some("anthropic".into()),
+                None,
                 Some("https://api.anthropic.com".into()),
                 Some(1),
                 Some("text-embedding-3-small".into())
+            ),
+            None
+        );
+    }
+
+    /// A row may carry preset=chatgpt with kind=openai (the shared wire kind).
+    /// It has no embeddings endpoint, so the preset must win over the kind.
+    #[test]
+    fn a_chatgpt_preset_is_not_an_embedding_source() {
+        assert_eq!(
+            embedding_plan(
+                Some("openai".into()),
+                Some("chatgpt".into()),
+                Some("https://chatgpt.com/backend-api/codex".into()),
+                Some(1),
+                None
+            ),
+            None
+        );
+        // A row that only carries the Codex URL (no preset) is excluded too.
+        assert_eq!(
+            embedding_plan(
+                Some("openai".into()),
+                None,
+                Some("https://chatgpt.com/backend-api/codex".into()),
+                Some(1),
+                None
             ),
             None
         );
@@ -278,6 +327,7 @@ mod tests {
     fn the_model_is_the_override_then_the_transport_default() {
         let ollama = embedding_plan(
             Some("ollama".into()),
+            None,
             Some("http://127.0.0.1:11434/v1".into()),
             Some(1),
             None,
@@ -288,6 +338,7 @@ mod tests {
         );
         let overridden = embedding_plan(
             Some("ollama".into()),
+            None,
             Some("http://127.0.0.1:11434/v1".into()),
             Some(1),
             Some("  mxbai-embed-large  ".into()),
@@ -305,6 +356,7 @@ mod tests {
     fn a_missing_enabled_flag_counts_as_enabled() {
         assert!(embedding_plan(
             Some("gemini".into()),
+            None,
             Some("https://generativelanguage.googleapis.com".into()),
             None,
             None
@@ -318,6 +370,7 @@ mod tests {
     fn an_unknown_kind_falls_back_to_the_openai_model() {
         let plan = embedding_plan(
             Some("some-gateway".into()),
+            None,
             Some("https://gateway.example.com/v1".into()),
             Some(1),
             None,

@@ -27,13 +27,18 @@ export const DEFAULT_SETTINGS: SettingsView = {
   // The backend defaults this to `true` too (memory spec §6): a row read
   // before it arrives must not render as "off".
   memory_auto_formation: true,
+  // Personal skills apply across projects; the backend default is `true` too.
+  discover_user_skills: true,
   // Memory spec §4 「(3) は既定オフ」 — the one setting here whose honest
   // default is `false`. Seeding it `true` would both mis-render the switch and,
   // if the seeded value ever reached a save, turn on a source §4 keeps off.
   memory_link_embedding_neighbors: false,
+  // The unofficial integration is off until the user enables it in Providers.
+  chatgpt_enabled: false,
   verify_command: null,
   format_command: null,
   sandbox_terminal: false,
+  sandbox_terminal_network: false,
   // SQLCipher is not wired yet; the only honest value is `false`.
   database_encryption: false,
   onboarding_completed: null,
@@ -58,6 +63,11 @@ export function useSettingsForm() {
   const query = useQuery({
     queryKey: SETTINGS_QUERY_KEY,
     queryFn: api.getSettings,
+    // The form edits the query cache directly. A fresh observer (switching
+    // Settings tabs) with the default staleTime 0 refetched on mount and threw
+    // those edits away without warning, leaving the Save flow unusable unless
+    // the user never left the tab. Invalidation after a save still refetches.
+    staleTime: Infinity,
   });
   const loaded = query.data !== undefined;
   const data = query.data ?? DEFAULT_SETTINGS;
@@ -79,22 +89,39 @@ export function useSettingsForm() {
  * lived only in the local store and were thrown away on the next launch, while
  * the settings row kept a different value — two sources of truth that used to
  * fight each other at boot. */
+/** Immediate-save writes are serialized: two quick clicks (theme then
+ *  language) each read the persisted row first, and running them in parallel
+ *  let the second write a snapshot from before the first landed. */
+let settingsWriteQueue: Promise<void> = Promise.resolve();
+
 export function useApplySettings() {
   const queryClient = useQueryClient();
-  return async (patch: Partial<SettingsView>): Promise<void> => {
+  const apply = async (patch: Partial<SettingsView>): Promise<void> => {
     try {
-      const base =
-        queryClient.getQueryData<SettingsView>(SETTINGS_QUERY_KEY) ??
-        (await api.getSettings());
-      const next: SettingsView = { ...base, ...patch };
+      const cached = queryClient.getQueryData<SettingsView>(SETTINGS_QUERY_KEY);
+      // Immediate-save controls must not promote unrelated edits from the
+      // Settings form. That form lives in this same cache entry, so merging
+      // the patch onto `cached` used to persist a half-typed verify command
+      // with a theme change and then mark it saved. Read the persisted row for
+      // the write and keep the draft in the cache untouched.
+      let persisted: SettingsView;
+      try {
+        persisted = await api.getSettings();
+      } catch {
+        // The update itself may still succeed (e.g. a transient read error);
+        // fall back to the cache rather than turning a theme click into a
+        // no-op.
+        persisted = cached ?? (await api.getSettings());
+      }
+      const saved: SettingsView = { ...persisted, ...patch };
+      const next: SettingsView = { ...(cached ?? persisted), ...patch };
       queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, next);
-      await api.updateSettings(next);
+      await api.updateSettings(saved);
       // The Settings pane snapshots the form to decide between "保存しました"
-      // and "未保存の変更". An immediate-save control (theme, language) lives
-      // outside that snapshot, so without this event flipping the theme showed
-      // a pending-changes badge for a value that had already been written.
+      // and "未保存の変更". Report the row that was actually written, not the
+      // draft, so unrelated unsaved edits stay flagged as unsaved.
       window.dispatchEvent(
-        new CustomEvent<SettingsView>("mix:settings-saved", { detail: next }),
+        new CustomEvent<SettingsView>("mix:settings-saved", { detail: saved }),
       );
     } catch (err) {
       // The optimistic value must not survive a failed write: drop it and let
@@ -102,5 +129,14 @@ export function useApplySettings() {
       console.error("saving settings failed", err);
       await queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
     }
+  };
+  return (patch: Partial<SettingsView>): Promise<void> => {
+    // `apply` swallows its own errors; the rejection branch also keeps a
+    // future write from being skipped if it ever does throw.
+    settingsWriteQueue = settingsWriteQueue.then(
+      () => apply(patch),
+      () => apply(patch),
+    );
+    return settingsWriteQueue;
   };
 }

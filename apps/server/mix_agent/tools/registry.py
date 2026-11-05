@@ -502,20 +502,27 @@ def permission(db, run, tool, args):
     current_scope = call_scope(tool, args)
     tool_scope = call_scope(tool, {})
     scoped = [
-        r.data
+        r
         for r in rules
         if r.data.get("tool_id") == tool["id"]
         and r.data.get("agent_id", "") == snapshot.get("agent_id", "")
         and rule_scope(tool, r.data.get("scope", {})) in (current_scope, tool_scope)
     ]
-    matching = [rule for rule in scoped if rule.get("tool_version") == fingerprint(tool)]
-    if any(x["permission"] == "deny" for x in matching):
+    matching = [rule for rule in scoped if rule.data.get("tool_version") == fingerprint(tool)]
+    if any(rule.data["permission"] == "deny" for rule in matching):
         return "deny"
     if matching:
         # A call-specific rule is the user's most recent, narrowest decision;
-        # it must win over a tool-wide settings rule.
-        matching.sort(key=lambda rule: 0 if rule_scope(tool, rule.get("scope", {})) == current_scope else 1)
-        return matching[-1]["permission"]
+        # it must win over a tool-wide settings rule.  The previous sort kept
+        # the narrow rule first but returned ``matching[-1]``, so the broad
+        # rule actually won.  Ties are broken by newest first so the result
+        # does not depend on the database's row order.
+        def rank(rule):
+            narrow = rule_scope(tool, rule.data.get("scope", {})) == current_scope
+            created = rule.created_at.timestamp() if rule.created_at else 0.0
+            return (0 if narrow else 1, -created)
+
+        return min(matching, key=rank).data["permission"]
     # The owner configured this tool before, but the stored rule was pinned to a
     # definition we no longer recognise. Falling back to the default would hand a
     # re-defined tool the loosest permission, so re-ask instead of trusting it.

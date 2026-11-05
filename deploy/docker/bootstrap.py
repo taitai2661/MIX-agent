@@ -33,7 +33,12 @@ for filename, binary in (
     try:
         with file.open("xb") as handle:
             handle.write(secrets.token_bytes(32) if binary else secrets.token_urlsafe(48).encode())
-        os.chmod(file, 0o644 if filename.startswith("/db-secret") else 0o600)
+        # App/migrate run as uid 1000 and need to read these. The postgres
+        # entrypoint starts as root and reads POSTGRES_PASSWORD_FILE before it
+        # drops to the postgres user, so a 0600 file owned by 1000 is enough
+        # for both; if the upstream image ever switches to USER postgres this
+        # must become group-readable by the postgres gid instead.
+        os.chmod(file, 0o600)
         os.chown(file, 1000, 1000)
     except FileExistsError:
         pass

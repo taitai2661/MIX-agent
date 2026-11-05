@@ -32,6 +32,19 @@ import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 
 type Scope = "unstaged" | "staged";
 
+/** Which side of git's XY pair belongs to the selected list. Older backend
+ *  builds only sent the trimmed two-letter status, so fall back to that. */
+export function entryMatchesScope(
+  entry: { status: string; index_status?: string; worktree_status?: string },
+  scope: Scope,
+): boolean {
+  const trimmed = entry.status.trim();
+  const index = entry.index_status ?? trimmed.slice(0, 1);
+  const worktree = entry.worktree_status ?? trimmed.slice(-1);
+  if (scope === "staged") return index !== " " && index !== "?" && index !== "";
+  return worktree !== " " || entry.status.includes("?");
+}
+
 /** Render a `git diff` payload: split into per-file blocks for headers. */
 const GitDiffBody = memo(function GitDiffBody({
   unified,
@@ -204,7 +217,9 @@ export function ChangesPanel({
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
   const [scope, setScope] = useState<Scope>("unstaged");
 
-  const status = useGitStatus(root);
+  // The changes list needs one row per file, including files inside untracked
+  // directories; the tree and titlebar use the collapsed (`-unormal`) form.
+  const status = useGitStatus(root, true);
 
   const diff = useQuery({
     queryKey: ["git_diff", root, scope, gitDiffPath],
@@ -269,7 +284,12 @@ export function ChangesPanel({
     );
   }
 
-  const entries = status.data?.entries ?? [];
+  // The scope control chooses which set of changes is listed. It used to only
+  // change the diff/stage actions, so both tabs showed every file; clicking an
+  // unstaged row in the staged tab then produced an empty diff.
+  const entries = (status.data?.entries ?? []).filter((entry) =>
+    entryMatchesScope(entry, scope),
+  );
   return (
     <>
       {!embedded && (

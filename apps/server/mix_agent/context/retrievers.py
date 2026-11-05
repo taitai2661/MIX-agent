@@ -81,9 +81,9 @@ def search_skills(db, owner: str, query: str, ids: list | None):
         stored = skill_service.search(db, owner, query, ids) or []
     except Exception:
         LOGGER.exception("skill retrieval failed owner=%s", owner)
-    # Project skills come from the mounted folder, not the database, so the
-    # agent's pinned `skill_ids` do not apply to them: a procedure the
-    # repository carries itself is always on offer.
+    # Discovered skills come from the mounted project folder and the user's
+    # home, not the database, so the agent's pinned `skill_ids` do not apply to
+    # them: a procedure the repository or the user carries is always on offer.
     try:
         discovered = discovery.search(query)
     except Exception:

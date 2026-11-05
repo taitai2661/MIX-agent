@@ -19,6 +19,7 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert } from "@/components/ui/alert";
 import { CONVERSATIONS_QUERY_KEY, useModels } from "@/lib/queries";
+import { useUi } from "@/lib/ui";
 import type { ScheduleJobView } from "@/lib/types";
 
 /** Labels are translated at render, not at module scope: a module-level `t()`
@@ -34,6 +35,12 @@ const PRESETS: Array<{ label: string; cron: string }> = [
 
 export function SchedulesPane() {
   const queryClient = useQueryClient();
+  const openSettings = useUi((s) => s.openSettings);
+  const autostart = useQuery({
+    queryKey: ["autostart"],
+    queryFn: api.getAutostart,
+    staleTime: Infinity,
+  });
   const jobs = useQuery({
     queryKey: ["schedule_jobs"],
     queryFn: api.listScheduleJobs,
@@ -163,6 +170,22 @@ export function SchedulesPane() {
         "Cron で定期実行。アプリ起動中 (および次回起動時に 1 回) 自動実行されます。",
       )}
     >
+      {autostart.data === false && (
+        <Alert tone="info">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>
+              {t("アプリを終了している間はスケジュールが実行されません。")}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => openSettings("general")}
+            >
+              {t("ログイン時に起動を有効にする")}
+            </Button>
+          </div>
+        </Alert>
+      )}
       <Card
         title={editingId ? t("ジョブを編集") : t("定期ジョブを追加")}
         icon={<Clock3 size={13} />}
@@ -265,6 +288,9 @@ export function SchedulesPane() {
 
       <SectionHeading>{t("登録済みジョブ")}</SectionHeading>
       {runNow.isError && <ErrorBox error={runNow.error} />}
+      {(toggle.isError || remove.isError) && (
+        <ErrorBox error={toggle.error ?? remove.error} />
+      )}
       {started && !runNow.isPending && (
         <Alert tone="success">
           {tf("{name} を今すぐ実行しました。", { name: started })}

@@ -73,27 +73,27 @@ Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ�
 - FastAPI は 1 プロセスで起動します。メモリ内の Task 管理や承認の排他制御は単一プロセス前提です。
 - 会話単位の有効な Run は部分ユニークインデックスにより 1 件に制限されます。
 
-### 2. データストア（PostgreSQL）
+### 3. データストア（PostgreSQL）
 - ユーザー、セッション、Run、Event、ToolCall、Approval、RunCheckpoint は専用の構造化カラムを持ちます。
 - Provider、Model、Agent、Tool、MCP、Memory などの拡張設定は専用テーブルの JSONB カラムに保存します。
 - マイグレーションは Alembic で管理され、Memory 本文には `pg_trgm` インデックスを作成して部分一致検索を行います。
 
-### 3. Provider Adapter と Capability Probe
+### 4. Provider Adapter と Capability Probe
 - `Adapter.stream()` は各 Provider の出力を共通の Run イベント形式へ変換します。署名や暗号化された推論履歴は保持しつつ UI には不要な内部トークンを公開しません。
 - **Capability 状態**: 各モデルの Tool Calling 能力は「対応 / 非対応 / 未確認」の 3 状態を保持します。未確認の場合は副作用のないダミー関数を用いたプローブで自動確認します。
 
-### 4. 実行状態と自律性（Agent モード）
+### 5. 実行状態と自律性（Agent モード）
 - 状態遷移: `queued → running → waiting_approval → running → completed`
 - **チェックポイント**: 長時間実行される Agent モードでは 10 ステップごとに中間スナップショットを保存し、任意のチェックポイントからの再開（Resume）が可能です。
 - **停滞検知と自己修復**: 繰り返しの失敗や読み取り停滞を検知し、モデルへ修復ガイダンスを注入します。
 - **階層的要約（Tiered Summary）**: コンテキスト上限に近づいた際、重要タスク状態（ゴールや未完了タスク）を保護しながら過去の会話履歴を段階的に要約圧縮します。
 
-### 5. セキュリティと隔離（Runner & Egress Proxy）
+### 6. セキュリティと隔離（Runner & Egress Proxy）
 - **隔離コンテナ**: シェル実行やファイル操作を行う `execution-runner`、および MCP サーバーを動かす `mcp-runner` は、非 root・read-only filesystem・Capability 削除で起動します。ホストの Docker Socket や DB パスワードはマウントされません。
 - **通信制御**: Runner からの外部接続はすべて `egress-proxy` を経由し、Private IP へのアクセスは自動的に遮断されます。ポリシーは `mode` を明示します（`public_web` = 公開ホストは自由、`restricted` = `allowed_domains` の完全一致のみ、`none` = 全拒否）。初期状態は `public_web` で、許可ドメインを1件でも設定すると `restricted` に切り替わります。
 - **Secret 保護**: API Key や秘密情報は AES-GCM で暗号化されて保存されます。
 
-### 6. エラー契約と可観測性
+### 7. エラー契約と可観測性
 - **エラーコード**: `HTTPException` のレスポンスは `{detail, code}` を返します。`detail` は日本語の正規メッセージ（ログ・既存クライアント用）、`code` は `auth.invalid_credentials` のような安定した識別子です。Web UI は `code` で英語表示を選ぶため、文言変更で翻訳が外れません。未知の動的エラーには `common.http_<status>` が付きます。
 - **メトリクス**: `/metrics` が Prometheus 形式のリクエスト件数・レイテンシ・稼働時間を返します。`app` の healthcheck はDB非依存の `/live` を使い、準備確認は `/health` が担います。
 - **整合性検査**: `scripts/check-error-i18n.py` が「発生しうるエラー」「コード表」「英語文言」の3つを照合します。
@@ -111,3 +111,14 @@ Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ�
 | **ブラウザ自動化** | コンテナ内 Playwright Chromium | 子プロセス実 Chromium (chromiumoxide) |
 | **ターミナル** | コンテナ内の一時的シェル | ホスト OS の **永続 PTY シェル** |
 | **マルチユーザー** | 管理者アカウント・セッション認証あり | 完全ローカル・単一ユーザー前提（認証不要） |
+
+---
+
+## 関連ドキュメント
+
+- [`README.md`](README.md) — ドキュメント索引と役割の一覧
+- [`desktop/architecture.md`](desktop/architecture.md) — Desktop 版の現行仕様
+- [`memory-spec.md`](memory-spec.md) — 両エディション共通の Memory 契約
+- [`agent-skills.md`](agent-skills.md) — Agent Skills の対応範囲
+- [`operations.md`](operations.md) — Docker 版の運用
+- [`verification.md`](verification.md) — 実機・Provider の検証記録

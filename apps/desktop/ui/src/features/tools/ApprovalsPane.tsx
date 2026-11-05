@@ -5,7 +5,6 @@ import { t, tf } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
 import {
   PENDING_APPROVALS_QUERY_KEY,
-  useConversations,
   usePendingApprovals,
 } from "@/lib/queries";
 import { surfaceForMode, useUi } from "@/lib/ui";
@@ -54,7 +53,6 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
   const setConversationId = useUi((s) => s.setConversationId);
   const setView = useUi((s) => s.setView);
   const setSurface = useUi((s) => s.setSurface);
-  const conversations = useConversations();
   const remaining = useApprovalRemaining(approval.expires_at);
   const expired = remaining === 0;
 
@@ -106,10 +104,7 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
             onClick={() => {
               // Switching the workspace first: the chat pane rejects a thread
               // from the other surface and silently selects a different one.
-              const conversation = conversations.data?.find(
-                (c) => c.id === approval.conversation_id,
-              );
-              setSurface(surfaceForMode(conversation?.mode ?? "chat"));
+              setSurface(surfaceForMode(approval.conversation_mode ?? "chat"));
               setConversationId(approval.conversation_id);
               setView("chat");
             }}

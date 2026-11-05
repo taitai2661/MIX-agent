@@ -220,14 +220,16 @@ fn parse_line(line: &str, saw_tool_call: &mut bool) -> Vec<StreamEvent> {
         }
     }
     if value.get("done").and_then(Value::as_bool).unwrap_or(false) {
+        let prompt_tokens = value
+            .get("prompt_eval_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         let usage = Usage {
-            input_tokens: value
-                .get("prompt_eval_count")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
+            input_tokens: prompt_tokens,
             output_tokens: value.get("eval_count").and_then(Value::as_u64).unwrap_or(0),
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            context_tokens: Some(prompt_tokens),
         };
         let finish_reason = if *saw_tool_call {
             "tool_calls".to_string()
@@ -357,6 +359,7 @@ mod tests {
             max_tokens: Some(128),
             reasoning: None,
             stream: true,
+            session_id: None,
             context_window: Some(8192),
             keep_alive: Some("5m".into()),
         }

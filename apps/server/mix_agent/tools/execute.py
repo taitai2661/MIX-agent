@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -19,7 +19,7 @@ from mix_agent.memory import embeddings as mem_embeddings
 from mix_agent.memory import tools as memory_tools
 from mix_agent.memory.service import RESULT_LIMIT_DEFAULT
 from mix_agent.skills import service as skills
-from mix_agent.tools.network import fetch_public, fetch_public_bytes
+from mix_agent.tools.network import fetch_public, fetch_public_bytes, request_public
 
 DDGS_TIMELIMIT = {"day": "d", "week": "w", "month": "m", "year": "y"}
 BRAVE_FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
@@ -247,20 +247,27 @@ async def _search_searxng(query, count, base_url):
         or parsed.port not in (None, 443)
     ):
         raise ValueError("SearXNGのURLは公開HTTPSエンドポイントを指定してください")
-    async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
-        response = await client.get(base + "/search", params={"q": query, "format": "json"})
-        response.raise_for_status()
-        rows = response.json().get("results", [])[:count]
-        return {
-            "results": [
-                {
-                    "title": row.get("title", ""),
-                    "url": row.get("url", ""),
-                    "description": row.get("content", ""),
-                }
-                for row in rows
-            ]
-        }
+    # Do not let this settings-controlled URL bypass the SSRF boundary used by
+    # the other web tools: resolve and pin the public address before sending.
+    url = base + "/search?" + urlencode({"q": query, "format": "json"})
+    status, _headers, body = await request_public("GET", url, max_bytes=2_000_000)
+    if status >= 400:
+        raise ValueError(f"SearXNGがHTTP {status}を返しました")
+    try:
+        payload = json.loads(body)
+    except ValueError as exc:
+        raise ValueError("SearXNGの応答がJSONではありません") from exc
+    rows = payload.get("results", [])[:count]
+    return {
+        "results": [
+            {
+                "title": row.get("title", ""),
+                "url": row.get("url", ""),
+                "description": row.get("content", ""),
+            }
+            for row in rows
+        ]
+    }
 
 
 async def _search_ddgs(query, count, freshness="any"):
@@ -372,6 +379,10 @@ async def _memory_query_vector(db, run, query) -> list[float] | None:
 
     provider_id = (run.data or {}).get("snapshot", {}).get("provider_record_id")
     provider = db.get(Provider, provider_id) if provider_id else None
+    if not mem_embeddings.provider_can_embed(provider):
+        # ChatGPT / Anthropic runs still need recall; use another capable row
+        # rather than disabling vectors for the whole workspace.
+        provider = mem_embeddings.default_provider(db, run.owner_id)
     if provider is None:
         return None
     key = read_secret(db, provider.data.get("secret_id"))
@@ -424,7 +435,13 @@ async def execute(db, run, tool, args):
                 }
                 conn.data = {
                     **conn.data,
-                    "secret_id": store_secret(db, conn.owner_id, json.dumps(credentials), "mcp"),
+                    "secret_id": store_secret(
+                        db,
+                        conn.owner_id,
+                        json.dumps(credentials),
+                        "mcp",
+                        previous_id=conn.data.get("secret_id"),
+                    ),
                 }
                 db.commit()
             except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details

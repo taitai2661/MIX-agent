@@ -1,7 +1,14 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setLanguage } from "@/lib/i18n";
+import { loadComposerDraft } from "@/lib/drafts";
 import { Composer } from "./Composer";
 
 const models = [
@@ -29,6 +36,10 @@ const models = [
 
 // jsdom reports en-US; pin the language so placeholders are deterministic.
 beforeAll(() => setLanguage("ja"));
+
+beforeEach(() => {
+  localStorage.clear();
+});
 
 describe("Composer", () => {
   it("sends on Enter and clears the draft", async () => {
@@ -503,5 +514,110 @@ describe("Composer", () => {
     fireEvent.drop(box, {
       dataTransfer: { files: [file] },
     });
+  });
+
+  it("keeps text typed while a send is still in flight", async () => {
+    let resolveSend: (() => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "first{Enter}");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    // The box stays editable during the request; this is the next message.
+    await user.clear(box);
+    await user.type(box, "second");
+    await act(async () => {
+      resolveSend?.();
+    });
+
+    // The send resolves after the user started typing again. Clearing the
+    // composer unconditionally used to erase "second".
+    await waitFor(() => expect(box).toHaveValue("second"));
+  });
+
+  it("does not leave a sent first message in the new-chat draft slot", async () => {
+    let resolveSend: (() => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const renderComposer = (draftKey: string) => (
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
+        draftKey={draftKey}
+      />
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(renderComposer("none"));
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "first{Enter}");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    // The pane adopts the new conversation while the send is still pending.
+    rerender(renderComposer("thread-1"));
+    await act(async () => {
+      resolveSend?.();
+    });
+
+    await waitFor(() => expect(loadComposerDraft("none")).toBe(""));
+    await waitFor(() => expect(loadComposerDraft("thread-1")).toBe(""));
+    expect(box).toHaveValue("");
+  });
+
+  it("clamps the slash-command highlight instead of sending the raw query", async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={onSend}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "/");
+    await screen.findByRole("listbox", { name: "クイックコマンド" });
+
+    // Six commands exist; walk well past the end.
+    for (let i = 0; i < 8; i += 1) {
+      await user.keyboard("{ArrowDown}");
+    }
+    await user.keyboard("{Enter}");
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).not.toBe("/");
+    expect((box as HTMLTextAreaElement).value.length).toBeGreaterThan(1);
   });
 });

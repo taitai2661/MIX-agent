@@ -21,6 +21,15 @@ services:
   init:
     image: python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
     entrypoint: [python, /bootstrap.py]
+    # init runs as root only to chown fresh volumes, then exits. Keep the
+    # filesystem read-only and drop everything except the chown-related caps.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     network_mode: none
     volumes:
       - ./deploy/docker/bootstrap.py:/bootstrap.py:ro
@@ -59,6 +68,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+  migrate:
+    <<: *restricted
+    # One-shot: the inherited `unless-stopped` would restart a completed
+    # migration forever.
+    restart: "no"
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, target: app}
+    environment:
+      DB_PASSWORD_FILE: /db-secret/password
+    volumes: ["db-secret:/db-secret:ro"]
+    networks: [database]
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db: {condition: service_healthy}
   app:
     <<: *restricted
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: app}
@@ -103,15 +125,15 @@ services:
       # Local models.dev api.json instead of the published catalog:
       #   - ./models-dev:/models-dev:ro   (with MIX_MODELS_DEV_URL=/models-dev/api.json)
       # - ${MIX_MODELS_DEV_DIR:-./models-dev}:/models-dev:ro
-    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && alembic upgrade head && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
+    command: [sh, -c, "mkdir -p /tmp/runner-keys && cp /execution-keys/execution.token /mcp-keys/mcp.token /manager-keys/manager.token /browser-keys/browser.token /browser-provisioner-keys/browser-provisioner.token /tmp/runner-keys/ && export RUNNER_KEYS=/tmp/runner-keys && uvicorn mix_agent.main:app --host 0.0.0.0 --port 8080 --workers 1"]
     networks: [database, execution, mcp, internet]
     extra_hosts: ["host.docker.internal:host-gateway"]
     mem_limit: 1g
     cpus: 2
     healthcheck:
       # `/live` is dependency-free, so a DB hiccup does not restart a healthy
-      # app (the ready probe at `/health` would). The start period covers
-      # `alembic upgrade head` on a fresh volume.
+      # app (the ready probe at `/health` would). Migrations run in the separate
+      # `migrate` service before this one starts.
       test:
         [
           "CMD",
@@ -125,6 +147,7 @@ services:
       start_period: 60s
     depends_on:
       db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
   execution-runner:
     <<: *restricted
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: execution}
@@ -195,6 +218,10 @@ services:
     pids_limit: 64
     mem_limit: 128m
     environment:
+      # CONTAINERS+POST stay enabled only for `docker create` of isolated MCP
+      # workloads (the manager's job). POST is the broad switch: it cannot be
+      # scoped to create-only, so every granular ALLOW_* below stays denied to
+      # keep start/stop/restart/exec unreachable.
       CONTAINERS: 1
       VOLUMES: 1
       NETWORKS: 1
@@ -229,6 +256,9 @@ services:
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
       - manager-token:/tokens:ro
+      # The manager owns mcp-policy.json: install/discover/uninstall rewrite it
+      # to register per-runtime egress rules. This must stay writable; only the
+      # egress proxy below gets a read-only view.
       - policy:/policy
     command: ["uvicorn", "mcp_manager:app", "--host", "0.0.0.0", "--port", "8003"]
     networks: [mcp]
@@ -236,7 +266,7 @@ services:
     cpus: 0.5
     depends_on:
       init: {condition: service_completed_successfully}
-      egress-proxy: {condition: service_started}
+      egress-proxy: {condition: service_healthy}
       docker-socket-proxy: {condition: service_started}
   egress-proxy:
     <<: *restricted
@@ -248,6 +278,20 @@ services:
     networks: [execution, mcp, internet]
     mem_limit: 256m
     cpus: 0.5
+    healthcheck:
+      # The proxy fails closed when the policy is unreadable. Without a probe
+      # its dependants still started and every egress request returned 403.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('127.0.0.1', 3128), 3); s.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       init: {condition: service_completed_successfully}
   postgres-test:
@@ -269,6 +313,10 @@ services:
       timeout: 3s
       retries: 20
   test:
+    <<: *restricted
+    # One-shot pytest run: the inherited `unless-stopped` would restart a
+    # completed (or failed) test container forever when started with `up`.
+    restart: "no"
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
     profiles: [test]
     environment:
@@ -297,6 +345,7 @@ services:
       timeout: 3s
       retries: 20
   preview:
+    <<: *restricted
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: test}
     profiles: [preview]
     ports: ["127.0.0.1:18080:18080"]
@@ -308,7 +357,9 @@ services:
     command: [sh, -c, "cd /app && alembic upgrade head && uvicorn --app-dir /workspace/tests/fixtures chat_preview:app --host 0.0.0.0 --port 18080"]
     tmpfs:
       - /tmp:size=256m,mode=1777
-    networks: [database, internet]
+    # No direct internet: the preview UI is local-only and reaches the outside
+    # (if ever) through the same egress policy path as the runners.
+    networks: [database]
     depends_on:
       preview-db: {condition: service_healthy}
 

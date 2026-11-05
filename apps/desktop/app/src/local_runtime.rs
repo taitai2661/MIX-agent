@@ -1738,15 +1738,18 @@ mod tests {
 
     #[test]
     fn terminal_jobs_are_pruned_after_the_ttl() {
+        // Move the clock forward instead of subtracting from `Instant::now()`:
+        // on a freshly booted Windows runner the process uptime can be shorter
+        // than `JOB_TTL`, and `Instant - Duration` then panics with overflow.
         let now = Instant::now();
+        let later = now
+            .checked_add(JOB_TTL + Duration::from_secs(1))
+            .expect("clock overflow");
         let mut jobs = HashMap::new();
-        jobs.insert(
-            "old".to_string(),
-            job_with_finish(Some(now - JOB_TTL - Duration::from_secs(1))),
-        );
-        jobs.insert("new".to_string(), job_with_finish(Some(now)));
+        jobs.insert("old".to_string(), job_with_finish(Some(now)));
+        jobs.insert("new".to_string(), job_with_finish(Some(later)));
         jobs.insert("running".to_string(), job_with_finish(None));
-        prune_jobs(&mut jobs, now);
+        prune_jobs(&mut jobs, later);
         assert!(!jobs.contains_key("old"));
         assert!(jobs.contains_key("new"));
         assert!(jobs.contains_key("running"));

@@ -83,6 +83,14 @@ def purge_expired_sessions(db) -> int:
     return result.rowcount or 0
 
 
+def verify_password(user, password: str) -> bool:
+    """Verify without leaking hash/format details to the caller."""
+    try:
+        return passwords.verify(user.password_hash, password)
+    except Exception:  # noqa: BLE001 - intentionally classified
+        return False
+
+
 def dummy_password_hash():
     """Precomputed argon2 hash verified against unknown-username logins so the
     password check always runs (removing an account-existence timing signal)."""
@@ -124,11 +132,34 @@ def decrypt(data):
     )
 
 
-def store_secret(db, owner, value, purpose):
+def store_secret(db, owner, value, purpose, previous_id=None):
+    """Store an encrypted value, replacing ``previous_id`` in place when possible.
+
+    Rotation used to insert a new row and leave the old ciphertext behind, so
+    API-key changes and OAuth refreshes grew the secrets table forever and kept
+    decryptable credentials around after they were replaced.
+    """
+    if previous_id:
+        row = db.get(Secret, previous_id)
+        if row is not None and row.owner_id == owner:
+            row.data = encrypt(value, purpose)
+            db.flush()
+            return row.id
     row = Secret(owner_id=owner, data=encrypt(value, purpose))
     db.add(row)
     db.flush()
     return row.id
+
+
+def store_optional_secret(db, owner, value, purpose, previous_id=None):
+    """Store a secret, or delete the previous one when the value is cleared."""
+    if value:
+        return store_secret(db, owner, value, purpose, previous_id)
+    if previous_id:
+        row = db.get(Secret, previous_id)
+        if row is not None and row.owner_id == owner:
+            db.delete(row)
+    return None
 
 
 def read_secret(db, secret_id):
@@ -162,8 +193,10 @@ def authenticate(request: Request, db):
     row = db.get(Session, hashlib.sha256(token.encode()).hexdigest())
     if not row or row.expires.replace(tzinfo=UTC) < now():
         raise HTTPException(401, "ログインしてください")
-    if request.method not in ("GET", "HEAD", "OPTIONS") and not secrets.compare_digest(
-        request.headers.get("x-csrf-token", ""), row.csrf
-    ):
-        raise HTTPException(403, "CSRFトークンが一致しません")
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        provided = request.headers.get("x-csrf-token", "")
+        # compare_digest raises TypeError on non-ASCII str, which surfaced as a
+        # 500 for a malformed header. Reject it as the 403 it is.
+        if not provided.isascii() or not secrets.compare_digest(provided, row.csrf):
+            raise HTTPException(403, "CSRFトークンが一致しません")
     return row

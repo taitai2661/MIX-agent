@@ -5,6 +5,7 @@
 /// exactly one source of truth for "is the app dark" and the Tailwind `dark:`
 /// variant reduces to a single attribute selector.
 
+import { applyAccent, storedAccent } from "./accent";
 import { getString, setString } from "./storage";
 
 export type Theme = "light" | "dark" | "system";
@@ -33,13 +34,53 @@ export function resolveTheme(theme: Theme): ResolvedTheme {
 let watching: MediaQueryList | null = null;
 
 /**
+ * Mirrors the resolved theme onto the native window.
+ *
+ * `data-theme` and `color-scheme` only reach content WebKit renders itself.
+ * Native chrome — the `<select>` popup this app uses for every dropdown, the
+ * context menus, the traffic-light bar — keeps the *system* appearance. On a
+ * Mac running dark mode with the app set to light, the preset picker therefore
+ * opened as a dark, translucent panel with the white form showing through it,
+ * unreadable next to the rest of the pane. Pushing the theme onto the window
+ * makes those native menus match the UI again.
+ *
+ * Best-effort: non-Tauri (plain `vite dev`) has no window to talk to, and a
+ * build whose ACL omits `core:window:allow-set-theme` simply keeps following
+ * the system appearance.
+ *
+ * `system` is passed as `null` (follow the OS) rather than the currently
+ * resolved value: pinning the window would also pin the WebView's
+ * `prefers-color-scheme`, so the media-query listener would stop firing and a
+ * "system" app would never notice the OS switching to the other theme.
+ */
+function syncNativeTheme(theme: Theme): void {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    return;
+  }
+  const target = theme === "system" ? null : theme;
+  void import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(target))
+    .catch(() => {});
+}
+
+/** Writes the concrete theme to the document and the native window. */
+function setResolvedTheme(theme: Theme): void {
+  const resolved = resolveTheme(theme);
+  document.documentElement.dataset.theme = resolved;
+  // The accent has separate light/dark ramps, so a theme switch has to repaint
+  // it too — including the OS-driven change while the app follows `system`.
+  applyAccent(storedAccent(), resolved);
+  syncNativeTheme(theme);
+}
+
+/**
  * Writes `data-theme` to a concrete value. Safe to call repeatedly: the OS
  * listener is installed at most once, so the settings pane can call this on
  * every toggle without stacking subscriptions.
  */
 export function applyTheme(theme: Theme): void {
   if (typeof document === "undefined") return;
-  document.documentElement.dataset.theme = resolveTheme(theme);
+  setResolvedTheme(theme);
 
   if (typeof window === "undefined" || !window.matchMedia) return;
   const mql = window.matchMedia(QUERY);
@@ -53,7 +94,7 @@ export function applyTheme(theme: Theme): void {
 function onSystemChange(): void {
   // Only react while the user has actually deferred to the OS.
   if (storedTheme() !== "system") return;
-  document.documentElement.dataset.theme = prefersDark() ? "dark" : "light";
+  setResolvedTheme("system");
 }
 
 export function storedTheme(): Theme {

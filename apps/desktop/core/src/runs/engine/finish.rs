@@ -26,6 +26,17 @@ impl RunEngine {
         payload: serde_json::Value,
         outcome: RunOutcome,
     ) -> anyhow::Result<RunOutcome> {
+        // The usage summary belongs on the run row, not only in the transient
+        // status event: `list_runs` feeds the Usage panel, and a history that
+        // had to replay every event log to total a conversation would make the
+        // panel slower with every Run. Merge it into whatever the caller
+        // already stores (step and tool counts).
+        let mut state = state;
+        if let Some(object) = state.as_object_mut() {
+            if let Ok(usage) = serde_json::to_value(&outcome.totals) {
+                object.insert("usage".to_string(), usage);
+            }
+        }
         self.set_run_state(run_id, status, state).await;
         self.emit(run_id, "status", payload).await;
         self.release_run(run_id).await;
@@ -47,6 +58,7 @@ impl RunEngine {
         reasoning: String,
         tool_calls: Vec<RunToolCall>,
         usage: Option<Usage>,
+        totals: RunUsage,
         finish_reason: Option<String>,
         steps: u32,
     ) -> anyhow::Result<RunOutcome> {
@@ -78,6 +90,7 @@ impl RunEngine {
                 reasoning,
                 tool_calls,
                 usage,
+                totals,
                 finish_reason,
                 steps,
             },

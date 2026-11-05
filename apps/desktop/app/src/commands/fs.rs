@@ -161,7 +161,15 @@ pub async fn read_attachment(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "attachment".to_string());
-    let meta = tokio::fs::metadata(&path)
+    // TOCTOU hardening: open first, then fstat the handle. A metadata-then-
+    // read sequence lets a swapped path grow past the cap between the two
+    // calls; the handle pins the inode and the second size check plus the
+    // capped read below bound what is actually loaded.
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| format!("cannot read {filename}: {e}"))?;
+    let meta = file
+        .metadata()
         .await
         .map_err(|e| format!("cannot read {filename}: {e}"))?;
     if !meta.is_file() {
@@ -173,9 +181,16 @@ pub async fn read_attachment(
             meta.len() / (1024 * 1024)
         ));
     }
-    let bytes = tokio::fs::read(&path)
+    use tokio::io::AsyncReadExt as _;
+    let mut limited = file.take(MAX_ATTACHMENT_BYTES + 1);
+    let mut bytes = Vec::new();
+    limited
+        .read_to_end(&mut bytes)
         .await
         .map_err(|e| format!("cannot read {filename}: {e}"))?;
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(format!("{filename} exceeds the 8 MB limit"));
+    }
     let mime = mime_from_name(&filename);
     let kind = if mime.starts_with("image/") {
         "image"
@@ -248,9 +263,16 @@ pub async fn save_text_file(
     path: String,
     content: String,
 ) -> Result<u64, String> {
+    const MAX_WRITE_BYTES: u64 = 2 * 1024 * 1024;
     let path = std::path::PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return Err("path required".to_string());
+    }
+    if content.len() as u64 > MAX_WRITE_BYTES {
+        return Err(format!(
+            "content is {} bytes; the limit is {MAX_WRITE_BYTES} bytes",
+            content.len()
+        ));
     }
     ensure_access(&app, &state, &path, "書き込む").await?;
     let bytes = content.len() as u64;
@@ -269,13 +291,24 @@ pub async fn save_base64_file(
     path: String,
     data_base64: String,
 ) -> Result<u64, String> {
+    const MAX_WRITE_BYTES: u64 = 8 * 1024 * 1024;
+    const MAX_BASE64_CHARS: usize = 12 * 1024 * 1024;
     let path = std::path::PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return Err("path required".to_string());
     }
+    if data_base64.len() > MAX_BASE64_CHARS {
+        return Err("base64 payload is too large".to_string());
+    }
     ensure_access(&app, &state, &path, "書き込む").await?;
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data_base64)
         .map_err(|e| format!("invalid base64: {e}"))?;
+    if bytes.len() as u64 > MAX_WRITE_BYTES {
+        return Err(format!(
+            "decoded file is {} bytes; the limit is {MAX_WRITE_BYTES} bytes",
+            bytes.len()
+        ));
+    }
     let len = bytes.len() as u64;
     tokio::fs::write(&path, bytes)
         .await

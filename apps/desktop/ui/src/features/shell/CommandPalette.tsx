@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
@@ -17,7 +17,11 @@ import {
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
-import { CONVERSATIONS_QUERY_KEY, MODELS_QUERY_KEY } from "@/lib/queries";
+import {
+  MODELS_QUERY_KEY,
+  useConversationSearch,
+  useRecentConversations,
+} from "@/lib/queries";
 import {
   surfaceForMode,
   useUi,
@@ -37,7 +41,14 @@ interface PaletteItem {
   /** A keyboard shortcut, rendered as a `Kbd` chip rather than plain text. */
   keys?: string;
   icon: React.ReactNode;
-  kind: "action" | "surface" | "view" | "settings" | "model" | "thread";
+  kind:
+    | "action"
+    | "surface"
+    | "view"
+    | "settings"
+    | "model"
+    | "thread"
+    | "message";
   run: () => void;
 }
 
@@ -48,6 +59,7 @@ const KIND_LABEL: Record<PaletteItem["kind"], string> = {
   settings: "設定",
   model: "モデル",
   thread: "スレッド",
+  message: "メッセージ",
 };
 
 /** Subsequence fuzzy match: `mdl` matches "model". Case-insensitive. */
@@ -78,6 +90,7 @@ const SETTINGS_TARGETS: { tab: SettingsTab; label: string }[] = [
   { tab: "network", label: "ネットワーク" },
   { tab: "updates", label: "アップデート" },
   { tab: "backup", label: "バックアップ" },
+  { tab: "chatgpt", label: "ChatGPT" },
   { tab: "providers", label: "プロバイダー" },
   { tab: "models", label: "モデル" },
   { tab: "tools", label: "ツール" },
@@ -106,19 +119,26 @@ export function CommandPalette() {
   const locale = useUi((s) => s.locale);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const deferredQuery = useDeferredValue(query);
 
-  // Only fetched while the palette is open: it is mounted permanently, and as
-  // a fifth observer of this key it made a `list_conversations` call on every
-  // app start for a list the user had not asked to see.
-  const conversations = useQuery({
-    queryKey: CONVERSATIONS_QUERY_KEY,
-    queryFn: api.listConversations,
-    enabled: open,
-  });
+  // Title search is server-side, so it covers every thread rather than the
+  // first page the palette happened to receive. With no query the recent
+  // first page is enough to offer "continue where you left off".
+  const titleSearch = useConversationSearch(open ? deferredQuery : "");
+  const recent = useRecentConversations(50, open);
   const models = useQuery({
     queryKey: MODELS_QUERY_KEY,
     queryFn: () => api.listModels(),
     enabled: open,
+  });
+  // Transcript search is dormant until the query is long enough for the
+  // trigram index (3+ characters), which is also why short queries still get
+  // the client-side title filter below.
+  const messageSearch = useQuery({
+    queryKey: ["message-search", deferredQuery],
+    queryFn: () => api.searchMessages(deferredQuery, 20),
+    enabled: open && deferredQuery.trim().length >= 3,
+    staleTime: 30_000,
   });
 
   useEffect(() => {
@@ -150,11 +170,12 @@ export function CommandPalette() {
         run: () => openSettings(tab),
       }),
     );
-    // The palette is the advertised search surface, so it searches every
-    // thread, not the 30 most recent. Selecting one from the other workspace
-    // switches first — otherwise the chat pane immediately replaced it with a
-    // thread from the current surface and the chosen row appeared to do nothing.
-    const threads: PaletteItem[] = (conversations.data ?? []).map((c) => ({
+    // The palette is the advertised search surface: a query is resolved by
+    // SQLite over every title, while an empty query shows the newest page.
+    const threadRows = deferredQuery.trim()
+      ? (titleSearch.data ?? [])
+      : (recent.data?.items ?? []);
+    const threads: PaletteItem[] = threadRows.map((c) => ({
       id: `thread:${c.id}`,
       label: c.title,
       hint: t(
@@ -172,6 +193,25 @@ export function CommandPalette() {
         setView("chat");
       },
     }));
+    // Full-text hits are only shown once the query is indexable; otherwise the
+    // title filter still gives immediate feedback while typing.
+    const messageHits: PaletteItem[] =
+      deferredQuery.trim().length >= 3
+        ? (messageSearch.data ?? []).map((hit) => ({
+            id: `message:${hit.message_id}`,
+            label:
+              hit.excerpt.replace(/\s+/g, " ").trim().slice(0, 96) ||
+              hit.conversation_title,
+            hint: hit.conversation_title,
+            icon: <MessageSquare size={15} />,
+            kind: "message",
+            run: () => {
+              setSurface(surfaceForMode(hit.conversation_mode));
+              setConversationId(hit.conversation_id);
+              setView("chat");
+            },
+          }))
+        : [];
     const surfaces: PaletteItem[] = (
       ["chat", "desktop-agent"] as Surface[]
     ).map((id) => ({
@@ -229,7 +269,8 @@ export function CommandPalette() {
         icon: <GitCompareArrows size={15} />,
         kind: "action",
         run: () => {
-          // The right panel only exists on the agent workspace.
+          // File changes are an agent-workspace target; the chat surface has
+          // no workspace.
           setSurface("desktop-agent");
           setRightPanel("changes");
         },
@@ -266,13 +307,17 @@ export function CommandPalette() {
       // show five commands and two workspace switches while the history — the
       // thing users actually search for — sat below the fold.
       ...threads,
+      ...messageHits,
       ...surfaces,
       ...views,
       ...settingsTabs,
       ...modelItems,
     ];
   }, [
-    conversations.data,
+    titleSearch.data,
+    recent.data?.items,
+    messageSearch.data,
+    deferredQuery,
     models.data,
     openSettings,
     setConversationId,
@@ -290,17 +335,23 @@ export function CommandPalette() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return items.slice(0, 12);
+    // Full-text message hits are already matched by SQLite. Applying the
+    // generic substring/fuzzy test again dropped OR hits whose excerpt did not
+    // contain the whole query (e.g. "hello" for "hello world"). Keep them out
+    // of that filter and append them after exact command/title matches.
+    const searchHits = items.filter((item) => item.kind === "message");
     // Substring matches rank first, subsequence fuzzy matches follow — a
     // short typo-tolerant query still finds the row instead of an empty list.
     const exact: PaletteItem[] = [];
     const fuzzy: PaletteItem[] = [];
     for (const item of items) {
+      if (item.kind === "message") continue;
       const label = item.label.toLowerCase();
       if (label.includes(q)) exact.push(item);
       else if (fuzzyMatch(label, q)) fuzzy.push(item);
       if (exact.length + fuzzy.length >= 20) break;
     }
-    return [...exact, ...fuzzy].slice(0, 20);
+    return [...exact, ...searchHits, ...fuzzy].slice(0, 20);
   }, [items, query]);
 
   useEffect(() => {
@@ -321,7 +372,10 @@ export function CommandPalette() {
 
   // Pending → empty: while the lists load the rows would otherwise render the
   // "no match" message for a list that simply has not arrived yet.
-  const pending = conversations.isPending || models.isPending;
+  const threadPending = deferredQuery.trim()
+    ? titleSearch.isPending
+    : recent.isPending;
+  const pending = threadPending || models.isPending;
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
