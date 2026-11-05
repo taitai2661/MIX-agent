@@ -92,7 +92,11 @@ async function parseSuccess<T>(response: Response): Promise<T> {
   if (typeof response.text !== "function") return (await response.json()) as T;
   const text = await response.text();
   if (!text.trim()) return undefined as T;
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new HttpError(t(ja.communicationFailed), response.status);
+  }
 }
 
 function errorMessage(body: ApiErrorBody, status: number): string {

@@ -83,11 +83,47 @@ pub async fn create_connection(
     state: State<'_, AppState>,
     input: McpConnectionCreate,
 ) -> Result<McpConnectionView, String> {
+    const MAX_NAME_LEN: usize = 128;
+    const MAX_URL_LEN: usize = 2048;
+    const MAX_COMMAND_LEN: usize = 1024;
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+    if name.len() > MAX_NAME_LEN {
+        return Err(format!("name must be at most {MAX_NAME_LEN} characters"));
+    }
+    match input.transport.as_str() {
+        "stdio" | "streamable_http" => {}
+        other => return Err(format!("unknown transport: {other}")),
+    }
+    if input.transport == "stdio" {
+        let cmd = input.command.as_deref().unwrap_or("").trim();
+        if cmd.is_empty() {
+            return Err("command is required for stdio transport".to_string());
+        }
+        if cmd.len() > MAX_COMMAND_LEN {
+            return Err("command is too long".to_string());
+        }
+    } else {
+        let url = input.url.as_deref().unwrap_or("").trim();
+        if url.is_empty() {
+            return Err("url is required for streamable_http transport".to_string());
+        }
+        if url.len() > MAX_URL_LEN {
+            return Err("url is too long".to_string());
+        }
+        let parsed = url::Url::parse(url).map_err(|_| "invalid url".to_string())?;
+        match parsed.scheme() {
+            "http" | "https" => {}
+            _ => return Err("url must use http(s)".to_string()),
+        }
+    }
     let id = uuid::Uuid::new_v4().to_string();
     // `headers` carries `Authorization` and friends: those values go to the
     // OS Keychain, and the row only records that they exist.
     let mut data = serde_json::json!({
-        "name": input.name,
+        "name": name,
         "transport": input.transport,
         "command": input.command,
         "args": input.args,
@@ -113,7 +149,7 @@ pub async fn create_connection(
         .map_err(crate::error::cmd_err)?;
     Ok(McpConnectionView {
         id: id.clone(),
-        name: input.name,
+        name: name.to_string(),
         transport: input.transport,
         enabled: true,
         status: "configured".to_string(),

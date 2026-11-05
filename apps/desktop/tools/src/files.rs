@@ -86,8 +86,10 @@ impl FilesTool {
     ) -> anyhow::Result<(PathBuf, bool)> {
         if Path::new(path).is_absolute() {
             // The leaf may not exist yet (a `write` creating it), so resolve
-            // the deepest existing ancestor and re-append the rest.
-            let canon = canonicalize_partial(Path::new(path));
+            // the deepest existing ancestor and re-append the rest. Fail
+            // closed: an unresolvable base is an error, never a lexical
+            // fallback that would trust an attacker-controlled path.
+            let canon = canonicalize_partial(Path::new(path))?;
             if canon.starts_with(main) {
                 return Ok((canon, true));
             }
@@ -170,9 +172,11 @@ impl FilesTool {
 /// ancestor and re-appending the not-yet-created remainder. Used so a
 /// not-yet-written file's absolute path can still be compared against the
 /// canonical roots (`/var/...` is a symlink to `/private/var/...` on macOS).
-fn canonicalize_partial(path: &Path) -> PathBuf {
+/// Fail-closed: when even the deepest existing ancestor cannot be
+/// canonicalized, return an error instead of trusting the lexical path.
+fn canonicalize_partial(path: &Path) -> anyhow::Result<PathBuf> {
     if let Ok(canonical) = path.canonicalize() {
-        return canonical;
+        return Ok(canonical);
     }
     let mut existing = path.to_path_buf();
     let mut rest: Vec<std::ffi::OsString> = Vec::new();
@@ -185,11 +189,11 @@ fn canonicalize_partial(path: &Path) -> PathBuf {
             _ => break,
         }
     }
-    let mut base = existing.canonicalize().unwrap_or(existing);
+    let mut base = existing.canonicalize()?;
     for part in rest.into_iter().rev() {
         base.push(part);
     }
-    base
+    Ok(base)
 }
 
 /// A line-addressed slice of a file, plus enough metadata for the model to know

@@ -109,6 +109,16 @@ function ChatRoute({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   return <Chat key={id ?? "new"} workspace={workspace} />;
 }
 
+/** Project chat must remount when the project changes, mirroring ChatRoute. */
+function ProjectChatRoute({
+  workspace,
+}: {
+  workspace: WorkspaceSnapshot | null;
+}) {
+  const { projectId } = useParams();
+  return <Chat key={projectId ?? "new"} workspace={workspace} />;
+}
+
 export function App() {
   useLanguage();
   const sidebarMinimum = 220,
@@ -894,7 +904,7 @@ export function App() {
                 />
                 <Route
                   path="/projects/:projectId/chat"
-                  element={<Chat workspace={workspace} />}
+                  element={<ProjectChatRoute workspace={workspace} />}
                 />
                 <Route path="/projects" element={<Projects />} />
                 <Route path="/projects/:id" element={<Projects />} />

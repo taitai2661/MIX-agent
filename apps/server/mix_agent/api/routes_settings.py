@@ -241,9 +241,7 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
     ):
         value = getattr(body, field)
         if value is not None:
-            data[secret_key] = store_optional_secret(
-                db, s.owner_id, value, purpose, row.data.get(secret_key)
-            )
+            data[secret_key] = store_optional_secret(db, s.owner_id, value, purpose, row.data.get(secret_key))
     row.data = data
     audit(db, s.owner_id, "settings.update", row.id)
     db.commit()

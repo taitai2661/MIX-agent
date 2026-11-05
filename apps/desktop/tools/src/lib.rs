@@ -139,5 +139,5 @@ pub use egress::EgressPolicy;
 pub use execute::PermissionContext;
 pub use knowledge::KnowledgeDispatch;
 pub use memory::MemoryDispatch;
-pub use permission::{PermissionDecision, PermissionRule, RuleScope};
+pub use permission::{is_valid_pattern, PermissionDecision, PermissionRule, RuleScope};
 pub use registry::{McpDispatch, ToolRegistry};

@@ -75,7 +75,7 @@ def literals() -> tuple[set[str], set[str]]:
                 # the same stable code + English text as routed errors.
                 if not node.args or not isinstance(node.args[0], ast.Dict):
                     continue
-                for key, value in zip(node.args[0].keys, node.args[0].values):
+                for key, value in zip(node.args[0].keys, node.args[0].values, strict=False):
                     if (
                         isinstance(key, ast.Constant)
                         and key.value == "detail"

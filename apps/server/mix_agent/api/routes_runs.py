@@ -36,7 +36,7 @@ from mix_agent.db.models import (
     now,
 )
 from mix_agent.db.session import SessionLocal
-from mix_agent.runs.engine import TASKS, launch
+from mix_agent.runs.engine import TASKS, finish, launch
 from mix_agent.runs.state import transition_run
 from mix_agent.tools.execute import runner_request, save_artifact
 from mix_agent.tools.registry import fingerprint, registry
@@ -494,7 +494,6 @@ def decide_budget_extension(key: str, body: BudgetExtensionDecisionInput, ctx=De
             },
         }
     # Denied: stop the run cleanly so the user can inspect the outcome.
-    from mix_agent.runs.engine import finish
     run.data = {**run.data, "budget_extension_request": None}
     emit(db, run.id, "budget_extension_resolved", {"grant": False})
     finish(db, run, "completed", "予算の延長が許可されなかったため、Runは取得済みの結果で終了しました。")

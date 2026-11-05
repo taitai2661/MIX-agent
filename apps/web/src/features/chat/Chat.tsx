@@ -77,12 +77,28 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const restoredConversation = useRef<string | undefined>(undefined);
   const modelInitializedFor = useRef<string | null>(null);
   const reconciledRun = useRef<string | null>(null);
+  const runResetTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (runResetTimer.current !== null) {
+        clearTimeout(runResetTimer.current);
+        runResetTimer.current = null;
+      }
+    },
+    [],
+  );
   const history = useQuery<ConversationHistory>({
     queryKey: ["messages", id],
     queryFn: ({ signal }) =>
-      api("/conversations/" + id + "/messages", "GET", undefined, undefined, {
-        signal,
-      }),
+      api(
+        "/conversations/" + encodeURIComponent(id ?? "") + "/messages",
+        "GET",
+        undefined,
+        undefined,
+        {
+          signal,
+        },
+      ),
     enabled: !!id,
   });
   const { streamText, reasoning, events, streamConnected } = useChatRunStream({
@@ -95,7 +111,9 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const run = useQuery<Run>({
     queryKey: ["run", runId],
     queryFn: ({ signal }) =>
-      api("/runs/" + runId, "GET", undefined, undefined, { signal }),
+      api("/runs/" + encodeURIComponent(runId), "GET", undefined, undefined, {
+        signal,
+      }),
     enabled: !!runId,
     refetchInterval: (q) =>
       !streamConnected &&
@@ -107,9 +125,15 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const toolHistory = useQuery<ToolCallHistory[]>({
     queryKey: ["tool-calls", id],
     queryFn: ({ signal }) =>
-      api("/conversations/" + id + "/tool-calls", "GET", undefined, undefined, {
-        signal,
-      }),
+      api(
+        "/conversations/" + encodeURIComponent(id ?? "") + "/tool-calls",
+        "GET",
+        undefined,
+        undefined,
+        {
+          signal,
+        },
+      ),
     enabled: !!id,
     refetchInterval: !streamConnected && runActive ? 5000 : false,
   });
@@ -271,7 +295,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     setError(null);
     if (runId) {
       setRunId("");
-      setTimeout(() => setRunId(runId), 10);
+      if (runResetTimer.current !== null) clearTimeout(runResetTimer.current);
+      runResetTimer.current = window.setTimeout(() => setRunId(runId), 10);
     }
     void history.refetch();
     void models.refetch();
@@ -284,9 +309,13 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
-    return api("/approvals/" + approvalId + "/decision", "POST", {
-      decision,
-    })
+    return api(
+      "/approvals/" + encodeURIComponent(approvalId) + "/decision",
+      "POST",
+      {
+        decision,
+      },
+    )
       .then(() => {
         void qc.invalidateQueries({ queryKey: ["tool-calls", id] });
         void qc.invalidateQueries({ queryKey: ["run", runId] });
@@ -319,15 +348,16 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     if (value) setResearchMode(false);
   }
   function stopRun() {
-    void api("/runs/" + runId + "/cancel", "POST").catch((e: unknown) =>
-      setError(e),
+    void api("/runs/" + encodeURIComponent(runId) + "/cancel", "POST").catch(
+      (e: unknown) => setError(e),
     );
   }
   function handleResumed() {
     void qc.invalidateQueries({ queryKey: ["run", runId] });
     void qc.invalidateQueries({ queryKey: ["tool-calls", id] });
     setRunId("");
-    setTimeout(() => setRunId(runId), 10);
+    if (runResetTimer.current !== null) clearTimeout(runResetTimer.current);
+    runResetTimer.current = window.setTimeout(() => setRunId(runId), 10);
   }
   function handleBudgetResolved() {
     void qc.invalidateQueries({ queryKey: ["run", runId] });

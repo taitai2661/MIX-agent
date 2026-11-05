@@ -237,9 +237,21 @@ impl Tool for TerminalTool {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
         }
-        args.get("command")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        let command = args.get("command").and_then(|v| v.as_str())?;
+        let extra: Vec<String> = args
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if extra.is_empty() {
+            Some(command.to_string())
+        } else {
+            Some(format!("{command} {}", extra.join(" ")))
+        }
     }
 
     async fn invoke(
@@ -514,8 +526,9 @@ impl TerminalTool {
                     SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 );
                 let sandbox_root = self.sandbox_enabled().then_some(session_dir);
+                let cwd_str = session_dir.to_string_lossy().to_string();
                 let spawned = ShellSession::spawn(
-                    &key,
+                    &cwd_str,
                     &session_id,
                     sandbox_root,
                     self.sandbox_network_enabled(),

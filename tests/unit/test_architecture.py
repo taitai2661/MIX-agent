@@ -58,13 +58,18 @@ def test_route_modules_do_not_grow_unbounded():
         "routes.py": 38,
         "routes_artifacts.py": 60,
         # +1: request_client_ip keeps login throttling correct behind a proxy.
-        "routes_auth.py": 205,
+        # +1: /auth/me returns 401 when the user row is gone.
+        "routes_auth.py": 206,
         # +6: title_is_placeholder records user-provided titles explicitly.
         "routes_collections.py": 248,
         "routes_conversations.py": 431,
-        "routes_mcp.py": 464,
+        # +13: MCP install/sync never reuse a closed request session; fresh
+        # SessionLocal for post-I/O work plus orphan-secret cleanup.
+        "routes_mcp.py": 477,
         "routes_memories.py": 206,
-        "routes_messages.py": 374,
+        # Idempotency lookup and tool selection moved to
+        # message_idempotency.py / message_tools.py.
+        "routes_messages.py": 385,
         "routes_notifications.py": 105,
         # ChatGPT-specific HTTP lives in routes_chatgpt.py; this module keeps
         # one small normalization branch for the preset and its skip-sync rule.
@@ -77,7 +82,7 @@ def test_route_modules_do_not_grow_unbounded():
         # Extracted from routes_messages so the router can stay a thin HTTP
         # surface. Keep them from quietly growing back into a second monolith.
         "message_context.py": 268,
-        "message_runs.py": 197,
+        "message_runs.py": 181,
     }
     offenders = {}
     for path in [*API_DIR.glob("routes*.py"), *API_DIR.glob("message_*.py")]:

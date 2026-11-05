@@ -125,7 +125,10 @@ def login(body: Credentials, request: Request, response: Response, db=Depends(ge
 @router.get("/auth/me")
 def me(ctx=Depends(context)):
     db, session = ctx
-    return {"username": db.get(User, session.owner_id).username, "csrf": session.csrf}
+    user = db.get(User, session.owner_id)
+    if user is None:
+        raise APIError(401, "auth.login_required")
+    return {"username": user.username, "csrf": session.csrf}
 
 
 @router.post("/auth/logout")

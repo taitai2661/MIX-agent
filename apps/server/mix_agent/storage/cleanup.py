@@ -57,7 +57,6 @@ def _delete_run_dependents(db, run_ids) -> None:
         scheduled.run_id = None
 
 
-
 def _collect_used_artifact_ids(db, owner_id: str) -> set:
     """Return all artifact IDs currently referenced by any message or run for owner."""
     used: set = set()

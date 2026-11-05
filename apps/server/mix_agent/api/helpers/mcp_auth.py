@@ -30,9 +30,7 @@ def create_transient_secret(db, owner, verifier, client_secret):
 
 
 def purge_expired_auth_states(db) -> None:
-    for stale in db.scalars(
-        select(MCPAuthState).where(MCPAuthState.created_at < now() - timedelta(hours=1))
-    ):
+    for stale in db.scalars(select(MCPAuthState).where(MCPAuthState.created_at < now() - timedelta(hours=1))):
         delete_auth_state(db, stale)
 
 

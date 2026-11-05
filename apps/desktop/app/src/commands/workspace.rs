@@ -383,21 +383,38 @@ pub async fn git_diff(
     path: Option<String>,
 ) -> Result<GitDiffView, String> {
     let root = resolve_root(&app, &state, &root_path).await?;
-    let mut args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
+    let mut args: Vec<String> = vec![
+        "diff".into(),
+        "--no-ext-diff".into(),
+        "--no-textconv".into(),
+        "--no-color".into(),
+    ];
     let path = path.filter(|p| !p.trim().is_empty());
     match scope.as_str() {
-        "staged" => args.push("--cached"),
+        "staged" => args.push("--cached".into()),
         "file" => {}
         // Default: full working tree (unstaged) diff.
         _ => {}
     }
-    // Validate the path against traversal before handing it to git.
+    // Validate the path against traversal before handing it to git, then use
+    // the normalized root-relative form so `a/../b` cannot smuggle a
+    // different target past the check into the subprocess.
+    let mut rel_holder: Option<String> = None;
     if let Some(p) = &path {
-        mixd_tools::files::FilesTool::safe_join(&root, p).map_err(crate::error::cmd_err)?;
-        args.push("--");
-        args.push(p);
+        let target =
+            mixd_tools::files::FilesTool::safe_join(&root, p).map_err(crate::error::cmd_err)?;
+        let rel = target
+            .strip_prefix(&root)
+            .map(|r| r.to_string_lossy().to_string())
+            .unwrap_or_else(|_| p.clone());
+        rel_holder = Some(rel);
     }
-    let output = match run_git(&root, &args).await {
+    if let Some(rel) = rel_holder.as_deref() {
+        args.push("--".into());
+        args.push(rel.to_string());
+    }
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let output = match run_git(&root, &args_ref).await {
         Ok(output) => output,
         Err(_) => {
             return Ok(GitDiffView {
@@ -505,14 +522,24 @@ pub async fn git_restore(
     staged: bool,
 ) -> Result<(), String> {
     let root = resolve_root(&app, &state, &root_path).await?;
-    mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
+    let target =
+        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
+    let rel = target
+        .strip_prefix(&root)
+        .map(|r| r.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.clone());
 
-    let mut args = vec!["restore"];
-    if staged {
-        args.push("--staged");
-    }
-    args.push("--");
-    args.push(&path);
+    let args_vec: Vec<String> = if staged {
+        vec![
+            "restore".to_string(),
+            "--staged".to_string(),
+            "--".to_string(),
+            rel.clone(),
+        ]
+    } else {
+        vec!["restore".to_string(), "--".to_string(), rel.clone()]
+    };
+    let args: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
 
     let output = run_git(&root, &args)
         .await
@@ -520,12 +547,9 @@ pub async fn git_restore(
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        if !staged && err.contains("did not match any file") {
-            let target = root.join(&path);
-            if target.is_file() {
-                let _ = tokio::fs::remove_file(target).await;
-                return Ok(());
-            }
+        if !staged && err.contains("did not match any file") && target.is_file() {
+            let _ = tokio::fs::remove_file(&target).await;
+            return Ok(());
         }
         return Err(format!("git restore error: {err}"));
     }
@@ -543,13 +567,24 @@ pub async fn git_stage(
     unstage: bool,
 ) -> Result<(), String> {
     let root = resolve_root(&app, &state, &root_path).await?;
-    mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
+    let target =
+        mixd_tools::files::FilesTool::safe_join(&root, &path).map_err(crate::error::cmd_err)?;
+    let rel = target
+        .strip_prefix(&root)
+        .map(|r| r.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.clone());
 
-    let args: Vec<&str> = if unstage {
-        vec!["restore", "--staged", "--", &path]
+    let args_vec: Vec<String> = if unstage {
+        vec![
+            "restore".to_string(),
+            "--staged".to_string(),
+            "--".to_string(),
+            rel,
+        ]
     } else {
-        vec!["add", "--", &path]
+        vec!["add".to_string(), "--".to_string(), rel]
     };
+    let args: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
 
     let output = run_git(&root, &args)
         .await

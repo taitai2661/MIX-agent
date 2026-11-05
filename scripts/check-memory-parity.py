@@ -323,7 +323,7 @@ def check_extraction_prompt(expected: str, edition: str, actual: str, errors: li
         return
     expected_lines = expected.splitlines()
     actual_lines = actual.splitlines()
-    for index, (left, right) in enumerate(zip(expected_lines, actual_lines), start=1):
+    for index, (left, right) in enumerate(zip(expected_lines, actual_lines, strict=False), start=1):
         if left != right:
             errors.append(
                 f"{edition} extraction prompt diverges from spec §6 at line {index}: {left!r} != {right!r}"
@@ -395,7 +395,7 @@ def main() -> int:
     if texts["docker"] != texts["desktop"]:
         docker_lines = texts["docker"].splitlines()
         desktop_lines = texts["desktop"].splitlines()
-        for index, (left, right) in enumerate(zip(docker_lines, desktop_lines), start=1):
+        for index, (left, right) in enumerate(zip(docker_lines, desktop_lines, strict=False), start=1):
             if left != right:
                 errors.append(f"specs diverge at line {index}: {left!r} != {right!r}")
                 break

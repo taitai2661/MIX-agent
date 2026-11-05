@@ -6,6 +6,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from mix_agent import config
@@ -14,7 +15,9 @@ from mix_agent.api.message_context import (
     _build_history_payload,
     _model_window_info as _model_window_info,  # re-exported for api.routes
 )
-from mix_agent.api.message_runs import persist_message_run, _resolve_tool_ids
+from mix_agent.api.message_idempotency import find_existing_run
+from mix_agent.api.message_runs import persist_message_run
+from mix_agent.api.message_tools import resolve_tool_ids
 from mix_agent.api.schemas import FeedbackInput, MessageInput, SendMessageView
 from mix_agent.db.models import (
     Agent,
@@ -87,7 +90,7 @@ async def _create_message_run(
     agent = own(db, Agent, requested_agent_id, s.owner_id).data if requested_agent_id else {}
     artifacts = [own(db, Artifact, artifact_id, s.owner_id) for artifact_id in body.artifact_ids]
     artifact_mimes = [artifact.data["mime"] for artifact in artifacts]
-    tool_ids = _resolve_tool_ids(agent, requested_agent_id, mode, temporary_mode, body, settings)
+    tool_ids = resolve_tool_ids(agent, requested_agent_id, mode, temporary_mode, body, settings)
     if body.research_mode and not any(t in tool_ids for t in ("web_search", "web_fetch", "browser_open")):
         raise HTTPException(422, "調査モードにはWeb検索またはBrowser Toolが必要です")
     artifact_requested = bool(
@@ -218,7 +221,7 @@ async def _create_message_run(
     # `persist_message_run` commits once, so either both happen or neither does.
     # The orphaned files are unlinked only after that commit succeeds — a
     # rollback must restore the rows without the bytes having already vanished.
-    run = await run_in_threadpool(
+    run, created = await run_in_threadpool(
         persist_message_run,
         db,
         s,
@@ -238,7 +241,7 @@ async def _create_message_run(
         truncate_from_message_id,
         keep_artifact_ids,
     )
-    return run
+    return run, created
 
 
 @router.post("/conversations/{key}/messages", response_model=SendMessageView)
@@ -251,15 +254,19 @@ async def send_message(key: str, body: MessageInput, request: Request, ctx=Depen
     request_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
     if not 8 <= len(request_key) <= 100:
         raise HTTPException(422, "Idempotency-Keyが必要です")
-    existing = db.scalar(select(Run).where(Run.request_key == request_key))
+    existing = find_existing_run(db, request_key, s.owner_id, key, request_hash)
     if existing:
-        if existing.owner_id != s.owner_id or existing.conversation_id != key:
-            raise HTTPException(409)
-        if existing.data.get("request_hash") != request_hash:
-            raise HTTPException(409, "同じIdempotency-Keyで異なる入力は送信できません")
         return {"run_id": existing.id}
-    run = await _create_message_run(db, s, key, conversation, body, request_key, request_hash)
-    launch(run.id)
+    try:
+        run, created = await _create_message_run(db, s, key, conversation, body, request_key, request_hash)
+    except IntegrityError:
+        db.rollback()
+        existing = find_existing_run(db, request_key, s.owner_id, key, request_hash)
+        if existing is None:
+            raise HTTPException(409, "この会話は実行中です")
+        return {"run_id": existing.id}
+    if created:
+        launch(run.id)
     return {"run_id": run.id}
 
 
@@ -286,12 +293,8 @@ async def edit_message(key: str, message_id: str, body: MessageInput, request: R
     ).hexdigest()
     if not 8 <= len(request_key) <= 100:
         raise HTTPException(422, "Idempotency-Keyが必要です")
-    existing = db.scalar(select(Run).where(Run.request_key == request_key))
+    existing = find_existing_run(db, request_key, s.owner_id, key, request_hash)
     if existing:
-        if existing.owner_id != s.owner_id or existing.conversation_id != key:
-            raise HTTPException(409)
-        if existing.data.get("request_hash") != request_hash:
-            raise HTTPException(409, "同じIdempotency-Keyで異なる入力は送信できません")
         # A retry of an edit that already succeeded: the target turn is gone, so
         # return the Run the first attempt created instead of deleting again.
         return {"run_id": existing.id}
@@ -312,18 +315,26 @@ async def edit_message(key: str, message_id: str, body: MessageInput, request: R
     # so editing an image question does not silently drop the image.
     if not body.artifact_ids and message.data.get("artifact_ids"):
         body.artifact_ids = list(message.data["artifact_ids"])
-    run = await _create_message_run(
-        db,
-        s,
-        key,
-        conversation,
-        body,
-        request_key,
-        request_hash,
-        truncate_from_message_id=message_id,
-        keep_artifact_ids=list(body.artifact_ids),
-    )
-    launch(run.id)
+    try:
+        run, created = await _create_message_run(
+            db,
+            s,
+            key,
+            conversation,
+            body,
+            request_key,
+            request_hash,
+            truncate_from_message_id=message_id,
+            keep_artifact_ids=list(body.artifact_ids),
+        )
+    except IntegrityError:
+        db.rollback()
+        existing = find_existing_run(db, request_key, s.owner_id, key, request_hash)
+        if existing is None:
+            raise HTTPException(409, "この会話は実行中です")
+        return {"run_id": existing.id}
+    if created:
+        launch(run.id)
     return {"run_id": run.id}
 
 

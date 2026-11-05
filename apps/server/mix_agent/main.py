@@ -146,12 +146,20 @@ def _openapi_with_errors():
 app.openapi = _openapi_with_errors
 
 
+def _body_limit(request: Request) -> int:
+    from mix_agent.storage import backup
+
+    return backup.MAX_SIZE if request.url.path.startswith("/api/v1/backups") else config.MAX_REQUEST_BODY
+
+
 def _request_body_too_large(request: Request) -> bool:
     """Reject an oversized body from its declared Content-Length.
 
     This is the cheap first line: it stops a non-chunked giant JSON request
     before FastAPI reads it into memory. Backup restore legitimately accepts a
-    much larger file than a normal JSON request.
+    much larger file than a normal JSON request. A missing Content-Length
+    (chunked / HTTP/2 without length) is NOT approved here; the middleware
+    performs a bounded read for that case instead of letting it bypass.
     """
     raw = request.headers.get("content-length")
     if not raw:
@@ -160,14 +168,40 @@ def _request_body_too_large(request: Request) -> bool:
         size = int(raw)
     except ValueError:
         return True
-    from mix_agent.storage import backup
+    return size > _body_limit(request)
 
-    limit = (
-        backup.MAX_SIZE
-        if request.url.path.startswith("/api/v1/backups")
-        else config.MAX_REQUEST_BODY
-    )
-    return size > limit
+
+def _needs_bounded_read(request: Request) -> bool:
+    """Whether the body size must be enforced by reading.
+
+    Chunked transfer encoding takes precedence over Content-Length: a request
+    may carry both, and the framing that is actually used is the chunked one.
+    Only a body with a real Content-Length and no chunked framing can trust the
+    cheap header check.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return False
+    if "chunked" in request.headers.get("transfer-encoding", "").lower():
+        return True
+    return not request.headers.get("content-length")
+
+
+async def _bounded_body_exceeds(request: Request, limit: int) -> bool:
+    """Read at most limit+1 bytes and report whether the body is too large.
+
+    The consumed bytes are cached on ``request._body`` so downstream handlers
+    (``await request.body()`` / ``request.json()``) still see the full body
+    without re-reading the stream.
+    """
+    total = 0
+    chunks: list[bytes] = []
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            return True
+        chunks.append(chunk)
+    request._body = b"".join(chunks)
+    return False
 
 
 @app.middleware("http")
@@ -186,12 +220,9 @@ async def security_headers(request: Request, call_next):
                 {"detail": "バックアップ／復元処理中です", "code": "common.backup_in_progress"},
                 status_code=503,
             )
-        elif request.method not in ("GET", "HEAD", "OPTIONS") and _request_body_too_large(request):
-            response = JSONResponse(
-                {"detail": "リクエストボディが大きすぎます", "code": "common.request_too_large"},
-                status_code=413,
-            )
         elif request.method not in ("GET", "HEAD", "OPTIONS"):
+            # Reject cheaply and before touching the body: a cross-site request
+            # must not be able to make the server buffer up to the body limit.
             origin = request.headers.get("origin")
             if origin and not await asyncio.to_thread(
                 config.allowed_origin,
@@ -211,6 +242,19 @@ async def security_headers(request: Request, call_next):
                 response = JSONResponse(
                     {"detail": "クロスサイトリクエストは拒否されました", "code": "common.cross_site_blocked"},
                     status_code=403,
+                )
+            elif _request_body_too_large(request):
+                response = JSONResponse(
+                    {"detail": "リクエストボディが大きすぎます", "code": "common.request_too_large"},
+                    status_code=413,
+                )
+            elif _needs_bounded_read(request) and await _bounded_body_exceeds(request, _body_limit(request)):
+                # Chunked (or length-less) bodies bypass the Content-Length
+                # check: enforce the same limit with a bounded read instead of
+                # letting them through unchecked.
+                response = JSONResponse(
+                    {"detail": "リクエストボディが大きすぎます", "code": "common.request_too_large"},
+                    status_code=413,
                 )
             else:
                 early = False

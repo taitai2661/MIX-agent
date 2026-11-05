@@ -4,37 +4,11 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from mix_agent.api.common import title_is_placeholder, with_generated_title
+from mix_agent.api.message_idempotency import find_existing_run
 from mix_agent.api.message_memory import commit_explicit_memory
-from mix_agent.api.routes_conversations import effective_tool_ids
 from mix_agent.context import task_state as context_task_state
 from mix_agent.db.models import Message, Run, now
 from mix_agent.storage.cleanup import _delete_message_tail
-from mix_agent.tools.registry import BUILTINS
-
-
-def _resolve_tool_ids(agent, requested_agent_id, mode, temporary_mode, body, settings):
-    """Resolve the effective tool id list for a run given mode, agent and settings."""
-    tool_ids = agent.get("tool_ids", [t["id"] for t in BUILTINS])
-    if mode == "agent" and not temporary_mode and not requested_agent_id and agent.get("auto_learn", True):
-        tool_ids = list(
-            dict.fromkeys(
-                [
-                    *tool_ids,
-                    "memory_search",
-                    "memory_add",
-                    "memory_update",
-                    "skill_search",
-                    "skill_add",
-                    "skill_update",
-                ]
-            )
-        )
-    tool_ids = (
-        effective_tool_ids(settings, agent, tool_ids) if (not temporary_mode or body.allow_tools) else []
-    )
-    return [
-        tool_id for tool_id in tool_ids if not temporary_mode or not tool_id.startswith(("memory_", "skill_"))
-    ]
 
 
 def _build_run_record(
@@ -134,8 +108,11 @@ def _build_run_record(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, "この会話は実行中です")
-    return run
+        existing = find_existing_run(db, request_key, s.owner_id, key, request_hash)
+        if existing is None:
+            raise HTTPException(409, "この会話は実行中です")
+        return existing, False
+    return run, True
 
 
 def persist_message_run(
@@ -163,7 +140,9 @@ def persist_message_run(
     the orphan cleanup are the slowest synchronous parts of sending a message,
     and with one uvicorn worker they would otherwise stall every other request.
     The delete and the insert share the transaction, so a failure leaves both
-    untouched; files are unlinked only after the commit succeeds.
+    untouched; files are unlinked only after the commit succeeds. If a
+    concurrent request won the Idempotency-Key race, its Run is returned and
+    this attempt's rollback means the tail's files must not be unlinked.
     """
     orphaned_paths = []
     if truncate_from_message_id:
@@ -173,7 +152,7 @@ def persist_message_run(
             truncate_from_message_id,
             keep_artifact_ids=keep_artifact_ids,
         )
-    run = _build_run_record(
+    run, created = _build_run_record(
         db,
         s,
         conversation,
@@ -190,8 +169,13 @@ def persist_message_run(
         temporary_mode,
         prior_content,
     )
+    if not created:
+        # The insert lost the race to another request with the same key. The
+        # rollback restored the deleted tail, so its artifact files are still
+        # referenced; do not unlink them and do not persist the memory twice.
+        return run, False
     # Best-effort: the Run is already committed.
     commit_explicit_memory(db, s.owner_id, body.content, temporary_mode)
     for path in orphaned_paths:
         path.unlink(missing_ok=True)
-    return run
+    return run, True

@@ -100,6 +100,17 @@ def scan(path: str, text: str) -> list[str]:
 
 def main() -> int:
     include_skipped = "--all" in sys.argv[1:]
+    if not include_skipped:
+        # SKIP_PREFIXES (tests/docs/examples) are NOT scanned by default.
+        # That allowlist is out of scope for this run, but a credential added
+        # under tests/ or docs/ is still a credential — re-run with --all
+        # before committing fixtures or examples containing token-like text.
+        print(
+            "note: skipping credential-shaped content under "
+            + ", ".join(SKIP_PREFIXES)
+            + " (re-run with --all to include it)",
+            file=sys.stderr,
+        )
     findings = []
     for path in tracked_files():
         if not include_skipped and skipped(path):

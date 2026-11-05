@@ -157,7 +157,9 @@ export function useChatRunStream({
     }
     setEvents([]);
     resetStreamBuffers();
-    const source = new EventSource("/api/v1/runs/" + runId + "/events");
+    const source = new EventSource(
+      "/api/v1/runs/" + encodeURIComponent(runId) + "/events",
+    );
     eventSourceRef.current = source;
     let reconnectErrors = 0;
     source.onopen = () => {
@@ -211,6 +213,7 @@ export function useChatRunStream({
       invalidationTimers.forEach((timer) => clearTimeout(timer));
       invalidationTimers.clear();
       source.close();
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
       flushEvents();
       flushStreamBuffers();
       finishRef.current();
@@ -284,6 +287,7 @@ export function useChatRunStream({
       if (source.readyState === EventSource.CLOSED || reconnectErrors >= 5) {
         clearTimeout(watchdog);
         source.close();
+        if (eventSourceRef.current === source) eventSourceRef.current = null;
         finishRef.current();
         lostRef.current(new Error(ja.streamLost));
         invalidateMessages();

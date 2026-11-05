@@ -37,7 +37,7 @@ export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
       {isImage ? (
         <div className="artifact-image-container">
           <img
-            src={`/api/v1/artifacts/${artifact.artifact_id}`}
+            src={`/api/v1/artifacts/${encodeURIComponent(artifact.artifact_id)}`}
             alt={artifact.name || ""}
             className="artifact-preview-image"
           />
@@ -56,7 +56,7 @@ export function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
       </div>
       <a
         className="artifact-download"
-        href={`/api/v1/artifacts/${artifact.artifact_id}`}
+        href={`/api/v1/artifacts/${encodeURIComponent(artifact.artifact_id)}`}
         download={artifact.name || true}
       >
         <Download aria-hidden="true" size={17} /> {t("ダウンロード")}

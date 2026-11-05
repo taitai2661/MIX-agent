@@ -130,11 +130,49 @@ pub async fn import_skill(
 
 async fn read_input(input: &SkillImportInput) -> Result<Vec<u8>, String> {
     use base64::Engine;
+    // Bound both ingress paths before the zip parser runs: a huge base64
+    // payload would otherwise be decoded into memory, and a huge file read
+    // would do the same, before `read_entries` can enforce its own ceiling.
+    const MAX_SKILL_ZIP_BYTES: u64 = 64 * 1024 * 1024;
+    const MAX_BASE64_CHARS: usize = 90 * 1024 * 1024;
     match (&input.payload, &input.path) {
-        (Some(p), _) => base64::engine::general_purpose::STANDARD
-            .decode(p.as_bytes())
-            .map_err(crate::error::cmd_err),
-        (None, Some(p)) => tokio::fs::read(p).await.map_err(crate::error::cmd_err),
+        (Some(p), _) => {
+            if p.len() > MAX_BASE64_CHARS {
+                return Err("skill payload exceeds the size limit".to_string());
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(p.as_bytes())
+                .map_err(crate::error::cmd_err)?;
+            if bytes.len() as u64 > MAX_SKILL_ZIP_BYTES {
+                return Err("skill archive exceeds the size limit".to_string());
+            }
+            Ok(bytes)
+        }
+        (None, Some(p)) => {
+            // Open first and read through the handle: a path swapped between
+            // metadata() and read() could otherwise grow past the cap.
+            use tokio::io::AsyncReadExt as _;
+            let file = tokio::fs::File::open(p)
+                .await
+                .map_err(crate::error::cmd_err)?;
+            let meta = file.metadata().await.map_err(crate::error::cmd_err)?;
+            if !meta.is_file() {
+                return Err("skill archive must be a regular file".to_string());
+            }
+            if meta.len() > MAX_SKILL_ZIP_BYTES {
+                return Err("skill archive exceeds the size limit".to_string());
+            }
+            let mut limited = file.take(MAX_SKILL_ZIP_BYTES + 1);
+            let mut bytes = Vec::new();
+            limited
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(crate::error::cmd_err)?;
+            if bytes.len() as u64 > MAX_SKILL_ZIP_BYTES {
+                return Err("skill archive exceeds the size limit".to_string());
+            }
+            Ok(bytes)
+        }
         _ => Err("either payload (base64) or path is required".into()),
     }
 }

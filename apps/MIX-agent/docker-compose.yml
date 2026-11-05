@@ -6,6 +6,18 @@ services:
     entrypoint:
     - python
     - /bootstrap.py
+    user: 0:0
+    read_only: true
+    cap_drop:
+    - ALL
+    cap_add:
+    - CHOWN
+    - DAC_OVERRIDE
+    - FOWNER
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:size=64m,mode=1777
     network_mode: none
     volumes:
     - keys:/keys

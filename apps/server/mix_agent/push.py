@@ -143,6 +143,8 @@ def deliver_pending():
                 .order_by(Notification.created_at, Notification.id)
                 .limit(20)
             ).all()
+            batch_end_at, batch_end_id = sub.cursor_at, sub.cursor_id
+            sub_alive = True
             for notification in pending:
                 try:
                     data = json.dumps(
@@ -162,12 +164,35 @@ def deliver_pending():
                     if response.status_code in (404, 410):
                         db.delete(sub)
                         db.commit()
+                        sub_alive = False
                         break
                     response.raise_for_status()
-                except (httpx.HTTPError, ValueError, KeyError) as exc:
+                except (ValueError, KeyError) as exc:
+                    # Poison row (bad keys/endpoint): skip it so one broken
+                    # notification cannot pin the cursor forever.
+                    log.warning("Web Push skipping poison notification: %s", type(exc).__name__)
+                    batch_end_at, batch_end_id = notification.created_at, notification.id
+                    continue
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    # A permanent 4xx (bad auth, malformed request, payload too
+                    # large) will fail identically on every retry. Treat it as a
+                    # poison row instead of pinning the cursor forever; keep
+                    # retrying transient statuses (408/429) and all 5xx.
+                    if 400 <= status < 500 and status not in (408, 429):
+                        log.warning("Web Push skipping permanent %s response", status)
+                        batch_end_at, batch_end_id = notification.created_at, notification.id
+                        continue
+                    log.warning("Web Push delivery failed: %s", status)
+                    break
+                except httpx.HTTPError as exc:
                     log.warning("Web Push delivery failed: %s", type(exc).__name__)
                     break
-                sub.cursor_at, sub.cursor_id = notification.created_at, notification.id
+                batch_end_at, batch_end_id = notification.created_at, notification.id
+            # Batch the cursor commit: progress made this pass is persisted
+            # once per subscription instead of once per notification.
+            if sub_alive and (batch_end_at, batch_end_id) != (sub.cursor_at, sub.cursor_id):
+                sub.cursor_at, sub.cursor_id = batch_end_at, batch_end_id
                 db.commit()
 
 

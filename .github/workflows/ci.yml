@@ -167,6 +167,11 @@ jobs:
       # one edition import a bundle the other refuses (or silently truncates).
       - name: Skill package parity check
         run: python3 scripts/check-skill-parity.py
+      # The execution/mcp images COPY the shared snapshot helper into /app;
+      # this fails when a stage copies it from anywhere but the canonical
+      # packages/tool_contracts path (a silent backup/restore fork).
+      - name: Snapshot copy parity check
+        run: python3 scripts/check-snapshot-parity.py
 
   # Cheap, dependency-free repository gates: no container, no network. These
   # used to rely on human discipline (README was translated by hand, nothing

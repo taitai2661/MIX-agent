@@ -17,9 +17,7 @@ from mix_agent.db.models import MCPConnection, Tool
 def create_connection(db, owner_id, body):
     data = body.model_dump(exclude={"credentials"})
     if body.credentials:
-        data["secret_id"] = store_optional_secret(
-            db, owner_id, json.dumps(body.credentials), "mcp"
-        )
+        data["secret_id"] = store_optional_secret(db, owner_id, json.dumps(body.credentials), "mcp")
     row = MCPConnection(owner_id=owner_id, data=data)
     db.add(row)
     db.flush()

@@ -382,12 +382,19 @@ async def test_safe_tool_calls_share_a_model_turn_and_keep_provider_order(signed
 
     active = 0
     maximum = 0
+    # Barrier: neither call may finish until both have started, so the overlap
+    # assertion below does not depend on scheduler timing (flaky sleeps).
+    entered = 0
+    release = asyncio.Event()
 
     async def delayed_execute(*args):
-        nonlocal active, maximum
+        nonlocal active, maximum, entered
         active += 1
         maximum = max(maximum, active)
-        await asyncio.sleep(0.02)
+        entered += 1
+        if entered == 2:
+            release.set()
+        await asyncio.wait_for(release.wait(), 5)
         active -= 1
         return {"call": args[-1]}
 
@@ -1066,3 +1073,24 @@ def test_message_uses_auto_then_conversation_selection_when_omitted(signed, monk
     with SessionLocal() as db:
         assert db.get(Run, first.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"
         assert db.get(Run, second.json()["run_id"]).data["snapshot"]["requested_model_id"] == "auto"
+
+
+def test_messages_are_scoped_to_their_conversation(signed):
+    # `messages.conversation_id` is a real FK, so a true orphan cannot exist;
+    # the history endpoint must still scope rows by the requested conversation
+    # and 404 an unknown key instead of returning another thread's turns.
+    source = signed.post("/api/v1/conversations", json={}).json()
+    other = signed.post("/api/v1/conversations", json={}).json()
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        db.add(
+            Message(
+                owner_id=owner,
+                conversation_id=source["id"],
+                data={"role": "user", "content": "scoped-turn"},
+            )
+        )
+        db.commit()
+    history = signed.get("/api/v1/conversations/" + other["id"] + "/messages").json()
+    assert all(message["data"].get("content") != "scoped-turn" for message in history["messages"])
+    assert signed.get("/api/v1/conversations/does-not-exist/messages").status_code == 404

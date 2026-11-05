@@ -208,8 +208,15 @@ fn le_u32(bytes: &[u8], at: usize) -> Result<u32, String> {
 /// memory before the entry is rejected.
 const MAX_ENTRY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
+/// Raw input ceiling bounding the EOCD backwards scan. Without it a
+/// multi-hundred-megabyte "zip" forces a byte-by-byte scan (and a full
+/// in-memory copy) before any entry limit is even reached.
+const MAX_ZIP_BYTES: usize = 64 * 1024 * 1024;
 
 fn read_entries(bytes: &[u8]) -> Result<Vec<ZipEntry>, String> {
+    if bytes.len() > MAX_ZIP_BYTES {
+        return Err("zip archive exceeds the input size limit".to_string());
+    }
     // Locate the End Of Central Directory record. It occupies the final 22
     // bytes when there is no archive comment, so its signature starts at
     // `len() - 22` inclusive.
