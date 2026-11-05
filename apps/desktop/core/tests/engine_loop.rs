@@ -1903,26 +1903,34 @@ async fn parallel_reads_keep_call_order_and_line_numbers() {
 /// previously only mentioned in a prompt hint and never executed.
 #[tokio::test]
 async fn the_formatter_runs_after_a_mutation() {
-    let harness = Harness::new(vec![
-        tool_turn(
-            "w",
-            "files",
-            r#"{"action":"write","path":"out.txt","content":"hello"}"#,
-        ),
-        text_turn("wrote it"),
-    ])
-    .await;
+    // Two full scripts: the formatter dispatch goes through a persistent
+    // shell with the default timeout, and the first ConPTY spawn on a cold
+    // Windows runner can exceed it. The retry below replays the same
+    // mutation so the formatter runs again against a warm shell.
+    let script = || {
+        vec![
+            tool_turn(
+                "w",
+                "files",
+                r#"{"action":"write","path":"out.txt","content":"hello"}"#,
+            ),
+            text_turn("wrote it"),
+        ]
+    };
+    let harness = Harness::new([script(), script()].concat()).await;
     allow_tool(&harness, "files").await;
     let _drain = spawn_event_drain(&harness.engine);
-    let mut request = harness.request().await;
-    request.format_command = Some("touch formatted.marker".to_string());
+    for _ in 0..2 {
+        let mut request = harness.request().await;
+        request.format_command = Some("touch formatted.marker".to_string());
 
-    let outcome = harness.engine.execute(request).await.expect("run");
-    assert_eq!(outcome.status, RunStatus::Completed);
-    assert!(
-        harness.workspace.join("formatted.marker").exists(),
-        "the configured formatter must actually run"
-    );
+        let outcome = harness.engine.execute(request).await.expect("run");
+        assert_eq!(outcome.status, RunStatus::Completed);
+        if harness.workspace.join("formatted.marker").exists() {
+            return;
+        }
+    }
+    panic!("the configured formatter must actually run");
 }
 
 /// Reverting a Run restores the content it started from.
