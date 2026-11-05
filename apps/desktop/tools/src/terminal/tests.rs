@@ -536,6 +536,32 @@ async fn an_explicit_cwd_outside_the_workspace_is_rejected() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Invoke `payload` on a persistent shell, retrying once when the shell never
+/// answered. The first ConPTY/Git Bash (or PowerShell) spawn on a cold CI
+/// runner can still be loading profiles when the timeout fires, producing
+/// zero bytes; the tool already evicted that dead session, so the retry
+/// spawns a fresh shell with warm caches. A shell that is broken rather than
+/// slow still fails the retry and the test.
+async fn invoke_with_cold_start_retry(
+    tool: &TerminalTool,
+    context: &ToolContext,
+    payload: serde_json::Value,
+) -> anyhow::Result<ToolResult> {
+    let first = tool.invoke(context.clone(), payload.clone()).await?;
+    let needs_retry = first.content.get("persistent").and_then(|v| v.as_bool()) == Some(true)
+        && first.content.get("exit_code").is_none_or(|v| v.is_null())
+        && first
+            .content
+            .get("stdout")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .contains("timed out");
+    if needs_retry {
+        return tool.invoke(context.clone(), payload).await;
+    }
+    Ok(first)
+}
+
 #[tokio::test]
 async fn reports_a_nonzero_exit_code() {
     let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
@@ -550,13 +576,13 @@ async fn reports_a_nonzero_exit_code() {
     let command = "cmd.exe /c exit 3";
     #[cfg(not(windows))]
     let command = "(exit 3)";
-    let result = tool
-        .invoke(
-            context,
-            serde_json::json!({ "command": command, "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
-        )
-        .await
-        .expect("invoke");
+    let result = invoke_with_cold_start_retry(
+        &tool,
+        &context,
+        serde_json::json!({ "command": command, "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS }),
+    )
+    .await
+    .expect("invoke");
     if result.content["persistent"] == true {
         assert!(!result.ok, "exit 3 must not report success");
         assert_eq!(result.content["exit_code"], 3);
@@ -620,16 +646,16 @@ async fn powershell_fallback_runs_commands_and_reports_exit_code() {
     let tool = TerminalTool::default();
     let (context, dir) = ctx_for("powershell");
 
-    let output = tool
-        .invoke(
-            context.clone(),
-            serde_json::json!({
-                "command": "Write-Output 'hello from powershell'",
-                "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
-            }),
-        )
-        .await
-        .expect("powershell output call");
+    let output = invoke_with_cold_start_retry(
+        &tool,
+        &context,
+        serde_json::json!({
+            "command": "Write-Output 'hello from powershell'",
+            "max_wall_clock_ms": PTY_TEST_TIMEOUT_MS,
+        }),
+    )
+    .await
+    .expect("powershell output call");
     assert_eq!(output.content["persistent"].as_bool(), Some(true));
     assert_eq!(
         output.content["exit_code"].as_i64(),
