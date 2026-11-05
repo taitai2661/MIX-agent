@@ -349,6 +349,9 @@ export interface SettingsView {
   onboarding_completed: boolean | null;
   /** Check GitHub Releases for a newer build once per launch. Ships enabled. */
   auto_check_updates: boolean;
+  /** Download a found update in the background. It is installed on the next
+   *  normal quit; the app never restarts itself. Ships enabled. */
+  auto_download_updates: boolean;
   /** Sweep loopback for local runtimes after launch. Ships enabled. */
   local_scan_on_start: boolean;
   /** Stop only app-started runtime processes on exit. Ships enabled. */
@@ -364,6 +367,32 @@ export interface SettingsView {
   local_context_window: number | null;
   /** Give locally hosted models a bonus in Auto routing. Ships disabled. */
   local_prefer: boolean;
+  /**
+   * Publish conversation/project/knowledge metadata to the macOS Spotlight
+   * index. Ships **off**: a system-wide search surface is an explicit opt-in.
+   */
+  spotlight_enabled: boolean;
+  /** Also send conversation/knowledge body text to Spotlight. Ships off. */
+  spotlight_index_body: boolean;
+}
+
+/** macOS Spotlight index status shown in Settings. */
+export interface SpotlightStatus {
+  supported: boolean;
+  reason: string | null;
+  enabled: boolean;
+  body_indexed: boolean;
+  indexed_count: number;
+  pending_count: number;
+  last_sync: string | null;
+  last_error: string | null;
+}
+
+/** A result click from Spotlight, delivered as `spotlight://open`. */
+export interface SpotlightTarget {
+  kind: "conversation" | "project" | "knowledge";
+  id: string;
+  mode?: string | null;
 }
 
 /** An update announced by the release manifest (`latest.json`). */
@@ -383,8 +412,9 @@ export interface UpdateProgress {
   downloaded: number;
   /** `null` when the server sends no `Content-Length`. */
   total: number | null;
-  /** `"installing"` once the payload has been verified and is being written. */
-  stage?: "downloading" | "installing";
+  /** `"verifying"` once the last chunk has arrived and the signature is being
+   *  checked; `"ready"` is delivered as a separate `update://ready` event. */
+  stage?: "downloading" | "verifying" | "ready";
 }
 
 export interface ToolView {

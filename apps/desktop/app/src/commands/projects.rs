@@ -1,3 +1,4 @@
+use crate::spotlight::payload::SpotlightKind;
 use crate::AppState;
 use mixd_core::instructions::{load_project_instructions, project_root_marker, DEFAULT_MAX_BYTES};
 use mixd_storage::records::ProjectData;
@@ -279,6 +280,7 @@ pub async fn create_project(
         .execute(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
+    state.spotlight.schedule(SpotlightKind::Project, &id).await;
     Ok(to_view(id, data))
 }
 
@@ -311,6 +313,7 @@ pub async fn update_project(
     let mut data = load_data(pool, &id)
         .await?
         .ok_or_else(|| "プロジェクトが見つかりません".to_string())?;
+    let previous_name = data.name.clone();
     if let Some(name) = input.name {
         data.name = name;
     }
@@ -352,6 +355,24 @@ pub async fn update_project(
     if root_changed {
         state.engine.invalidate_catalogues().await;
     }
+    state.spotlight.schedule(SpotlightKind::Project, &id).await;
+    if data.name != previous_name {
+        // Conversation items carry the project name as a keyword, so a rename
+        // has to refresh them too.
+        let linked: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM conversations WHERE json_extract(data, '$.projectId') = ?",
+        )
+        .bind(&id)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+        for (conversation_id,) in linked {
+            state
+                .spotlight
+                .schedule(SpotlightKind::Conversation, &conversation_id)
+                .await;
+        }
+    }
     Ok(to_view(id, data))
 }
 
@@ -375,6 +396,14 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
             "the project has a run in state `{status}`; stop it before deleting"
         ));
     }
+    // Conversations keep their project name in the Spotlight keywords, so
+    // remember which ones are about to be unlinked.
+    let affected: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM conversations WHERE json_extract(data, '$.projectId') = ?")
+            .bind(&id)
+            .fetch_all(pool)
+            .await
+            .map_err(crate::error::cmd_err)?;
     // Unlink conversations so their chats survive the project (Docker edition parity).
     sqlx::query(
         "UPDATE conversations SET data = json_set(data, '$.projectId', NULL) \
@@ -393,6 +422,16 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
         return Err(format!("project not found: {id}"));
     }
     state.engine.invalidate_catalogues().await;
+    state
+        .spotlight
+        .schedule_deleted(SpotlightKind::Project, &id)
+        .await;
+    for (conversation_id,) in affected {
+        state
+            .spotlight
+            .schedule(SpotlightKind::Conversation, &conversation_id)
+            .await;
+    }
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::spotlight::payload::SpotlightKind;
 use crate::AppState;
 use base64::Engine as _;
 use chrono::Utc;
@@ -530,6 +531,10 @@ pub async fn create_conversation(
         .execute(pool)
         .await
         .map_err(crate::error::cmd_err)?;
+    state
+        .spotlight
+        .schedule(SpotlightKind::Conversation, &id)
+        .await;
     Ok(ConversationSummary {
         id,
         title,
@@ -564,6 +569,10 @@ pub async fn set_conversation_project(
         .execute(pool)
         .await
         .map_err(crate::error::cmd_err)?;
+    state
+        .spotlight
+        .schedule(SpotlightKind::Conversation, &conversation_id)
+        .await;
     Ok(())
 }
 
@@ -606,7 +615,15 @@ pub async fn send_message(
     state: State<'_, AppState>,
     input: SendMessageInput,
 ) -> Result<SendMessageOutput, String> {
-    dispatch_run(&state, input).await
+    let conversation_id = input.conversation_id.clone();
+    let output = dispatch_run(&state, input).await?;
+    // Index the new user turn immediately; the Run's terminal event will
+    // refresh the assistant preview/title when it finishes.
+    state
+        .spotlight
+        .schedule(SpotlightKind::Conversation, &conversation_id)
+        .await;
+    Ok(output)
 }
 
 /// Start a Run for a user turn.
@@ -1346,7 +1363,8 @@ pub async fn edit_message(
     // The in-flight Run guard, the truncation and the replacement Run all live
     // in one transaction inside `dispatch`, so a Run cannot start against a
     // deleted tail and a failed dispatch cannot leave the transcript empty.
-    dispatch(
+    let conversation_id = input.conversation_id.clone();
+    let output = dispatch(
         &state,
         SendMessageInput {
             conversation_id: input.conversation_id,
@@ -1363,7 +1381,12 @@ pub async fn edit_message(
         },
         Some(TruncateTail { created_at, rowid }),
     )
-    .await
+    .await?;
+    state
+        .spotlight
+        .schedule(SpotlightKind::Conversation, &conversation_id)
+        .await;
+    Ok(output)
 }
 
 /// Delete every row that hangs off a Run, in foreign-key dependency order.
@@ -1752,6 +1775,10 @@ pub async fn delete_conversation(state: State<'_, AppState>, id: String) -> Resu
     }
 
     tx.commit().await.map_err(crate::error::cmd_err)?;
+    state
+        .spotlight
+        .schedule_deleted(SpotlightKind::Conversation, &id)
+        .await;
     Ok(())
 }
 
@@ -1775,6 +1802,10 @@ pub async fn rename_conversation(
     if result.rows_affected() == 0 {
         return Err(format!("conversation not found: {id}"));
     }
+    state
+        .spotlight
+        .schedule(SpotlightKind::Conversation, &id)
+        .await;
     Ok(())
 }
 
@@ -1790,7 +1821,13 @@ pub async fn fork_conversation(
     conversation_id: String,
     message_id: String,
 ) -> Result<String, String> {
-    fork_conversation_with(state.storage.pool(), &conversation_id, &message_id).await
+    let forked =
+        fork_conversation_with(state.storage.pool(), &conversation_id, &message_id).await?;
+    state
+        .spotlight
+        .schedule(SpotlightKind::Conversation, &forked)
+        .await;
+    Ok(forked)
 }
 
 pub async fn fork_conversation_with(

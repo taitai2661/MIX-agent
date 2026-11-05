@@ -25,7 +25,11 @@ import {
 } from "./lib/queries";
 import { useHealth } from "./lib/health";
 import { SETTINGS_QUERY_KEY } from "./lib/settings";
-import { useUpdateCheck } from "./lib/updates";
+import {
+  useUpdateBootstrap,
+  useUpdateCheck,
+  useUpdateStore,
+} from "./lib/updates";
 import { markOnce } from "./lib/perf";
 
 // The chat pane itself is split as well: the shell (sidebar, title bar,
@@ -133,6 +137,8 @@ function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
   const openSettings = useUi((s) => s.openSettings);
   const health = useHealth();
   const check = useUpdateCheck(autoCheck);
+  const pending = useUpdateStore((s) => s.pending);
+  const phase = useUpdateStore((s) => s.phase);
   const update = check.data;
   const state = health.isError
     ? "error"
@@ -145,10 +151,15 @@ function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
       : state === "error"
         ? t("接続エラー")
         : t("確認中");
-  const updateLabel = update
-    ? tf("v{version} が利用可能です", { version: update.version })
-    : "";
-  const summary = updateLabel
+  const updateLabel = pending
+    ? tf("v{version} を適用待ち", { version: pending.version })
+    : phase === "downloading"
+      ? t("更新をダウンロード中…")
+      : update
+        ? tf("v{version} が利用可能です", { version: update.version })
+        : "";
+  const hasUpdate = updateLabel.length > 0;
+  const summary = hasUpdate
     ? `${t("ヘルス")}: ${label} · ${updateLabel}`
     : `${t("ヘルス")}: ${label}`;
 
@@ -173,7 +184,7 @@ function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
             label={`${t("ヘルス")}: ${label}`}
             className="px-1"
           />
-          {update && (
+          {hasUpdate && (
             <span
               aria-hidden="true"
               className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-brand"
@@ -202,7 +213,7 @@ function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
           <ShieldAlert size={13} className="text-muted" aria-hidden="true" />
           <span className="flex-1">{t("診断を開く")}</span>
         </DropdownMenuItem>
-        {update && (
+        {hasUpdate && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => openSettings("updates")}>
@@ -303,10 +314,18 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.data]);
 
+  // Check, download and stage updates once at the app root. The install itself
+  // happens in Rust when the user quits normally; nothing here restarts the
+  // app.
+  useUpdateBootstrap({
+    autoCheck: settings.data?.auto_check_updates === true,
+    autoDownload: settings.data?.auto_download_updates === true,
+  });
+
   const startNewThread = useNewThread();
-  // The sidebar and the file tree are fixed-width `shrink-0` panes; the right
-  // panel is an overlay drawer, so opening it never takes width from the
-  // centre column. `panelCap` only clamps the inline panes on narrow windows.
+  // The sidebar, file tree and docked right panel are `shrink-0` panes with
+  // drag handles; each remembers its own width. `panelCap` only clamps them on
+  // narrow windows.
   const [shellRow, setShellRow] = useState<HTMLDivElement | null>(null);
   const panelCap = usePanelCap(shellRow);
   // The wizard replaces the shell's render, but these hooks stay mounted. Keep

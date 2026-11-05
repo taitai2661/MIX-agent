@@ -14,6 +14,7 @@ pub mod path_grants;
 pub mod push;
 pub mod run_events;
 pub mod scheduler;
+pub mod spotlight;
 pub mod tray;
 pub mod workspace_baseline;
 
@@ -909,6 +910,8 @@ pub struct AppState {
     /// string the WebView sent, so a compromised renderer cannot read or write
     /// arbitrary files without a visible prompt.
     pub grants: Arc<path_grants::PathGrants>,
+    /// macOS Spotlight index queue and routing. No-op on other platforms.
+    pub spotlight: Arc<spotlight::SpotlightService>,
 }
 
 /// Rebuild the engine's Tool Registry from the live parts.
@@ -1253,12 +1256,14 @@ pub async fn build_app_state(
             }
         });
     }
-    let local_runtime = local_runtime::LocalRuntimeManager::new(app_handle, storage.clone());
+    let local_runtime =
+        local_runtime::LocalRuntimeManager::new(app_handle.clone(), storage.clone());
     // Existing projects were chosen through a dialog on an earlier launch, so
     // their roots are trusted without a fresh prompt. Ad-hoc paths still go
     // through the picker or the native confirmation.
     let grants = Arc::new(path_grants::PathGrants::default());
     seed_project_grants(storage.as_ref(), grants.as_ref()).await;
+    let spotlight = spotlight::SpotlightService::new(storage.clone()).await;
     tracing::info!(
         target: "startup",
         ms = build_started.elapsed().as_millis() as u64,
@@ -1277,6 +1282,7 @@ pub async fn build_app_state(
         egress,
         local_runtime,
         grants,
+        spotlight,
     })
 }
 
@@ -1520,10 +1526,20 @@ pub async fn register_adapter(
             .await;
         return;
     }
-    let api_key = secrets
+    let api_key = match secrets
         .get_string(&format!("provider/{id}"), "api_key")
         .await
-        .ok();
+    {
+        Ok(key) => Some(key),
+        Err(err) => {
+            // A provider may legitimately have no key (Ollama, LM Studio), so
+            // this stays non-fatal. Log it, though: a decryption/keychain
+            // failure used to be swallowed here and surfaced much later as the
+            // misleading "requires an API key" message.
+            tracing::debug!(provider = id, %err, "no readable API key for provider");
+            None
+        }
+    };
     registry
         .register(
             id.to_string(),
@@ -1869,6 +1885,14 @@ pub fn run() {
                 }
             };
             app.manage(state);
+            // Update downloads are staged under the app-data directory and
+            // applied when the user quits. The state is separate from
+            // `AppState` because the quit hook and the update commands are its
+            // only consumers.
+            app.manage(commands::update::UpdateState::new(
+                data_dir.join("updates"),
+                app.package_info().version.to_string(),
+            ));
             // Forward Run Engine broadcast events into the WebView.
             let managed = app.state::<AppState>();
             // The everyday database snapshot runs after the window exists; a
@@ -1879,7 +1903,12 @@ pub fn run() {
                 snapshot_storage.snapshot_if_due().await;
                 snapshot_storage.maintenance().await;
             });
-            run_events::spawn(app_handle.clone(), managed.engine.clone());
+            run_events::spawn(
+                app_handle.clone(),
+                managed.engine.clone(),
+                managed.spotlight.clone(),
+            );
+            spotlight::install(&app_handle, managed.spotlight.clone());
             // Language servers and other subprocess-holding tools release
             // themselves after ten idle minutes. The sweep is deliberately
             // low-frequency: it is housekeeping, not a request.
@@ -2066,6 +2095,10 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::sandbox_status,
+            commands::spotlight::spotlight_status,
+            commands::spotlight::spotlight_rebuild,
+            commands::spotlight::spotlight_clear,
+            commands::spotlight::spotlight_take_pending,
             commands::agents::list_agents,
             commands::agents::create_agent,
             commands::agents::update_agent,
@@ -2078,7 +2111,8 @@ pub fn run() {
             commands::diagnostics::export_diagnostics,
             commands::update::app_version,
             commands::update::check_for_update,
-            commands::update::install_update,
+            commands::update::download_update,
+            commands::update::pending_update,
         ])
         .build(tauri::generate_context!());
 
@@ -2090,6 +2124,26 @@ pub fn run() {
         }
     };
     app.run(|app_handle, event| {
+        // A downloaded update is applied on a normal quit, never by an
+        // automatic restart. `prevent_exit` buys the async install time to
+        // finish; the second `ExitRequested` (from `exit(0)` below) is let
+        // through by the state's `allow_exit` flag. `app.restart()` is exempt:
+        // it ignores `prevent_exit`, so an update must not try to run there.
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+            if *code != Some(tauri::RESTART_EXIT_CODE) {
+                if let Some(update) = app_handle.try_state::<commands::update::UpdateState>() {
+                    if update.should_apply_on_exit() {
+                        api.prevent_exit();
+                        let handle = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            commands::update::apply_pending_on_exit(handle.clone()).await;
+                            handle.exit(0);
+                        });
+                        return;
+                    }
+                }
+            }
+        }
         // Give the runtime manager a chance to stop only the processes it
         // started. `local_stop_on_exit` can keep them alive for a persistent
         // local server; anything launched externally is never touched.

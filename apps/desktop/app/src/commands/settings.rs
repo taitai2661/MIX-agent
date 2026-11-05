@@ -114,6 +114,14 @@ pub struct SettingsView {
     /// embedded public key, and the check is a single manifest request. The
     /// user can still turn it off (and check manually) in Settings → Updates.
     pub auto_check_updates: bool,
+    /// Download a newer build in the background once the launch check finds
+    /// one.
+    ///
+    /// Defaults to `true`, matching `auto_check_updates`. The payload is only
+    /// staged: it is installed when the user quits the app normally, so the
+    /// next launch runs the new build. This setting never makes the app quit
+    /// or restart by itself.
+    pub auto_download_updates: bool,
     /// Sweep loopback for local runtimes once after launch so the Providers
     /// pane and auto-start do not begin from an empty table.
     pub local_scan_on_start: bool,
@@ -140,6 +148,16 @@ pub struct SettingsView {
     pub local_context_window: Option<u32>,
     /// Give locally hosted models a modest bonus in Auto routing.
     pub local_prefer: bool,
+    /// Publish conversation/project/knowledge metadata to the macOS Spotlight
+    /// index. **Defaults off**: thread titles can contain customer or project
+    /// names, and a system-wide search surface is a privacy decision the user
+    /// should make explicitly.
+    pub spotlight_enabled: bool,
+    /// Also send conversation and knowledge body text to Spotlight. Separate
+    /// from [`Self::spotlight_enabled`] because body text can contain secrets;
+    /// credentials are redacted before indexing, but the metadata-only mode is
+    /// still the safer default.
+    pub spotlight_index_body: bool,
 }
 
 impl Default for SettingsView {
@@ -172,12 +190,16 @@ impl Default for SettingsView {
             database_encryption: false,
             onboarding_completed: None,
             auto_check_updates: true,
+            auto_download_updates: true,
             local_scan_on_start: true,
             local_stop_on_exit: true,
             local_auto_start: false,
             local_keep_alive: None,
             local_context_window: None,
             local_prefer: false,
+            // Opt-in: the OS index is visible outside the app.
+            spotlight_enabled: false,
+            spotlight_index_body: false,
         }
     }
 }
@@ -194,6 +216,10 @@ pub async fn update_settings(
 ) -> Result<SettingsView, String> {
     validate_settings(&input)?;
     let view = write_settings(state.storage.pool(), input).await?;
+    // Turning Spotlight on/off (or changing body indexing) applies now, not at
+    // the next launch. The service reacts to the transition: enable -> rebuild,
+    // disable -> delete, body toggle -> rebuild.
+    state.spotlight.apply_settings(&view);
     // Apply the browser opt-in immediately; waiting for a relaunch would make
     // the setting look broken.
     state
@@ -469,5 +495,8 @@ mod tests {
         assert!(!settings.local_auto_start);
         assert_eq!(settings.local_context_window, None);
         assert_eq!(DEFAULT_LOCAL_CONTEXT_WINDOW, 8192);
+        // A system-wide search surface is opt-in.
+        assert!(!settings.spotlight_enabled);
+        assert!(!settings.spotlight_index_body);
     }
 }

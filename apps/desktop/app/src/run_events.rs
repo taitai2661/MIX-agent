@@ -11,13 +11,19 @@ use std::time::Duration;
 use mixd_core::runs::engine::{RunEngine, RunEvent};
 use tauri::{AppHandle, Emitter, Runtime};
 
+use crate::spotlight::SpotlightService;
+
 /// Token deltas are coalesced for this long before crossing the IPC boundary.
 /// The UI already batches its own renders, but every `app.emit` is still one
 /// WebView message; a fast model used to produce hundreds per second.
 const IPC_BATCH_WINDOW: Duration = Duration::from_millis(50);
 const IPC_BATCH_MAX: usize = 64;
 
-pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Arc<RunEngine>) {
+pub fn spawn<R: Runtime>(
+    app: AppHandle<R>,
+    engine: Arc<RunEngine>,
+    spotlight: Arc<SpotlightService>,
+) {
     tauri::async_runtime::spawn(async move {
         let mut receiver = engine.subscribe();
         let mut pending: Vec<RunEvent> = Vec::new();
@@ -27,6 +33,27 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>, engine: Arc<RunEngine>) {
             // delayed behind buffered text.
             match tokio::time::timeout(IPC_BATCH_WINDOW, receiver.recv()).await {
                 Ok(Ok(event)) => {
+                    // A finished Run can change the auto-generated title or the
+                    // last assistant preview. Queue the conversation here; the
+                    // Spotlight work itself stays off this forwarding loop.
+                    if event.kind == "status"
+                        && event
+                            .data
+                            .get("status")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|status| {
+                                matches!(
+                                    status,
+                                    "completed" | "failed" | "cancelled" | "interrupted"
+                                )
+                            })
+                    {
+                        let spotlight = spotlight.clone();
+                        let run_id = event.run_id.to_string();
+                        tauri::async_runtime::spawn(async move {
+                            spotlight.schedule_run(&run_id).await;
+                        });
+                    }
                     let stream = matches!(event.kind.as_str(), "text" | "reasoning");
                     pending.push(event);
                     if !stream || pending.len() >= IPC_BATCH_MAX {

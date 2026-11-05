@@ -289,9 +289,10 @@ Docker 版にはローカル作業フォルダを直接扱う equivalent がな�
 | --- | --- | --- |
 | — | `update::app_version()` | 6 |
 | — | `update::check_for_update()` | 6 |
-| — | `update::install_update()` | 6 |
+| — | `update::download_update()` | 6 |
+| — | `update::pending_update()` | 6 |
 
-Tauri updater plugin は Rust 側からのみ駆動し、WebView には `updater:*` 権限を渡しません。`check_for_update` は `latest.json` を取得して新バージョンの有無を返し、`install_update` は再取得・署名検証・ダウンロード・インストールを行います（進捗は `update://progress` イベント）。詳細は [`architecture.md`](architecture.md) の「更新方法」を参照してください。
+Tauri updater plugin は Rust 側からのみ駆動し、WebView には `updater:*` 権限を渡しません。`check_for_update` は `latest.json` を取得して新バージョンの有無を返し、`download_update` は署名検証してペイロードをステージします（進捗は `update://progress`、完了は `update://ready` イベント）。適用はアプリ終了時の Rust フックが行い、`pending_update` は次回起動時にステージ済みの更新を復元します。再起動は自動化しません。詳細は [`architecture.md`](architecture.md) の「更新方法」を参照してください。
 
 ## 対応していない Docker 版エンドポイント
 

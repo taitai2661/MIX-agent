@@ -202,8 +202,12 @@ struct SecretsReport {
 fn inspect_secrets(data_dir: &Path) -> SecretsReport {
     let backend = match std::env::var("MIX_SECRET_BACKEND").as_deref() {
         Ok("keychain") => "keychain",
+        Ok("keychain-seed") => "keychain-seed",
         Ok("file") => "file",
-        _ if cfg!(any(target_os = "macos", target_os = "windows")) => "keychain-seed",
+        // macOS uses the file seed (with a one-time Keychain import) because
+        // the app is ad-hoc signed; Windows keeps the Keychain-hybrid layout.
+        _ if cfg!(target_os = "macos") => "file",
+        _ if cfg!(target_os = "windows") => "keychain-seed",
         _ => "file",
     };
     let runtime = match tokio::runtime::Builder::new_current_thread()

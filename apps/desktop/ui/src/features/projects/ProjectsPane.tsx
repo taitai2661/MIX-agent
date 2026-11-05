@@ -74,6 +74,18 @@ export function ProjectsPane() {
   useEffect(() => {
     if (projects.data) pruneStaleActiveProject(projects.data.map((p) => p.id));
   }, [projects.data]);
+
+  // A Spotlight result (or any caller that sets the active project) should
+  // land on that project's detail, not just the list. `selectedId` stays the
+  // local "what is open" state; activating is a separate user action.
+  useEffect(() => {
+    if (
+      activeProjectId &&
+      projects.data?.some((project) => project.id === activeProjectId)
+    ) {
+      setSelectedId(activeProjectId);
+    }
+  }, [activeProjectId, projects.data]);
   const linked = selected ? (conversations.data?.items ?? []) : [];
 
   // Keep the command drafts in step with the saved project. Keyed on the saved

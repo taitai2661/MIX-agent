@@ -64,7 +64,7 @@ function ChatPaneBody() {
   const clearLive = useRunEvents((s) => s.clearRun);
 
   const conversations = useLatestConversation(
-    surface === "desktop-agent" ? ["agent"] : ["chat", "thinking"],
+    surface === "desktop-agent" ? ["agent", "plan"] : ["chat", "thinking"],
   );
   const stats = useConversationStats();
   const models = useModels();

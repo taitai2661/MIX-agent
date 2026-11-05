@@ -4,7 +4,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 742 crates
+- **Rust Dependencies**: 745 crates
 - **Python Dependencies**: 82 packages
 - **Node.js / Web Dependencies**: 48 packages
 
@@ -164,7 +164,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 742 crates compiled into Desktop binaries.
+Total: 745 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -515,7 +515,9 @@ Total: 742 crates compiled into Desktop binaries.
 | `objc2-core-graphics` | `0.3.2` | Rust |
 | `objc2-core-image` | `0.3.2` | Rust |
 | `objc2-core-location` | `0.3.2` | Rust |
+| `objc2-core-spotlight` | `0.3.2` | Rust |
 | `objc2-core-text` | `0.3.2` | Rust |
+| `objc2-core-video` | `0.3.2` | Rust |
 | `objc2-encode` | `4.1.0` | Rust |
 | `objc2-exception-helper` | `0.1.1` | Rust |
 | `objc2-foundation` | `0.3.2` | Rust |
@@ -523,6 +525,7 @@ Total: 742 crates compiled into Desktop binaries.
 | `objc2-osa-kit` | `0.3.2` | Rust |
 | `objc2-quartz-core` | `0.3.2` | Rust |
 | `objc2-ui-kit` | `0.3.2` | Rust |
+| `objc2-uniform-type-identifiers` | `0.3.2` | Rust |
 | `objc2-user-notifications` | `0.3.2` | Rust |
 | `objc2-web-kit` | `0.3.2` | Rust |
 | `once_cell` | `1.21.4` | Rust |

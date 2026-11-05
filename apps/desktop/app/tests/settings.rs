@@ -42,6 +42,11 @@ fn full_settings() -> SettingsView {
         database_encryption: false,
         onboarding_completed: Some(true),
         auto_check_updates: false,
+        auto_download_updates: false,
+        // Non-default on purpose, so the round trip proves the Spotlight keys
+        // survive alongside the update flags.
+        spotlight_enabled: true,
+        spotlight_index_body: true,
         local_scan_on_start: false,
         local_stop_on_exit: false,
         local_auto_start: false,
@@ -75,6 +80,16 @@ async fn a_missing_row_reads_back_as_the_defaults() {
     assert!(
         !read.memory_link_embedding_neighbors,
         "embedding-neighbour links must default off (spec §4)"
+    );
+    // The update flow ships on: check and stage a download, then install on
+    // the next normal quit. Neither action restarts the app by itself.
+    assert!(
+        read.auto_check_updates,
+        "the launch update check ships enabled"
+    );
+    assert!(
+        read.auto_download_updates,
+        "background update downloads ship enabled"
     );
 }
 

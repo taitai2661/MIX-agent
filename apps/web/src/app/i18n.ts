@@ -1223,6 +1223,22 @@ export const en: Record<string, string> = {
   "サーバーディレクトリから取込": "Import from the server directory",
   "バイナリ（表示のみ）": "Binary (view only)",
   "バイナリファイルは表示できません。": "Binary files cannot be displayed.",
+  "通知": "Notifications",
+  "会話の操作": "Conversation actions",
+  "エラーの詳細": "Error details",
+  "出力 {tokens} tokens / 生成 {ms}ms":
+    "Generated {tokens} tokens in {ms} ms",
+  "{title}のメニュー": "Menu for {title}",
+  "{title}をピン留め": "Pin {title}",
+  "{title}のピン留めを解除": "Unpin {title}",
+  "{title}のフォルダ": "Folder for {title}",
+  "{title}のプロジェクト": "Project for {title}",
+  "{title}をアーカイブ": "Archive {title}",
+  "{title}を書き出し": "Export {title}",
+  "{title}をごみ箱へ移動": "Move {title} to Trash",
+  "{title}を復元": "Restore {title}",
+  "{title}を完全削除": "Delete {title} permanently",
+  "{name}フォルダを削除": "Delete folder {name}",
 };
 
 export function t(

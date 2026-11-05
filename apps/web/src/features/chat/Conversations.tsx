@@ -159,12 +159,13 @@ export function Conversations() {
                 <Folder size={13} />
                 {f.data.name}
                 <button
-                  aria-label={`${f.data.name}フォルダを削除`}
+                  aria-label={t("{name}フォルダを削除", { name: f.data.name })}
                   onClick={() =>
                     setPending({
                       title: t("フォルダを削除"),
-                      message:
+                      message: t(
                         "フォルダを削除しますか？ 会話は未分類に戻ります。",
+                      ),
                       confirmLabel: t("削除"),
                       run: async () => {
                         await api(`/conversation-folders/${f.id}`, "DELETE");
@@ -241,7 +242,12 @@ export function Conversations() {
                   <>
                     <button
                       className="icon"
-                      aria-label={`${row.data.title}を${row.data.pinned ? t("ピン留め解除") : t("ピン留め")}`}
+                      aria-label={t(
+                        row.data.pinned
+                          ? "{title}のピン留めを解除"
+                          : "{title}をピン留め",
+                        { title: row.data.title },
+                      )}
                       onClick={() =>
                         change(row.id, { pinned: !row.data.pinned })
                       }
@@ -249,7 +255,9 @@ export function Conversations() {
                       <Pin size={16} />
                     </button>
                     <select
-                      aria-label={`${row.data.title}のフォルダ`}
+                      aria-label={t("{title}のフォルダ", {
+                        title: row.data.title,
+                      })}
                       value={row.data.folder_id || ""}
                       onChange={(e) =>
                         change(row.id, { folder_id: e.target.value || null })
@@ -263,7 +271,9 @@ export function Conversations() {
                       ))}
                     </select>
                     <select
-                      aria-label={`${row.data.title}のプロジェクト`}
+                      aria-label={t("{title}のプロジェクト", {
+                        title: row.data.title,
+                      })}
                       value={row.data.project_id || ""}
                       onChange={(e) =>
                         change(row.id, { project_id: e.target.value || null })
@@ -278,14 +288,18 @@ export function Conversations() {
                     </select>
                     <button
                       className="icon"
-                      aria-label={`${row.data.title}をアーカイブ`}
+                      aria-label={t("{title}をアーカイブ", {
+                        title: row.data.title,
+                      })}
                       onClick={() => change(row.id, { archived: true })}
                     >
                       <Archive size={16} />
                     </button>
                     <button
                       className="icon"
-                      aria-label={`${row.data.title}を書き出し`}
+                      aria-label={t("{title}を書き出し", {
+                        title: row.data.title,
+                      })}
                       onClick={() => download(row.id, row.data.title)}
                     >
                       <Download size={16} />
@@ -296,14 +310,18 @@ export function Conversations() {
                   <>
                     <button
                       className="icon"
-                      aria-label={`${row.data.title}をアーカイブから戻す`}
+                      aria-label={t("{title}をアーカイブから戻す", {
+                        title: row.data.title,
+                      })}
                       onClick={() => change(row.id, { archived: false })}
                     >
                       <RotateCcw size={16} />
                     </button>
                     <button
                       className="icon"
-                      aria-label={`${row.data.title}を書き出し`}
+                      aria-label={t("{title}を書き出し", {
+                        title: row.data.title,
+                      })}
                       onClick={() => download(row.id, row.data.title)}
                     >
                       <Download size={16} />

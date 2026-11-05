@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, type Ref } from "react";
+import { Suspense, lazy, useEffect, useRef, useState, type Ref } from "react";
 import {
   Activity,
   Columns2,
@@ -11,7 +11,12 @@ import {
   X,
 } from "lucide-react";
 import { t } from "@/lib/i18n";
-import { useUi, WIDE_RIGHT_PANEL_WIDTH } from "@/lib/ui";
+import {
+  MAX_RIGHT_PANEL_WIDTH,
+  MIN_RIGHT_PANEL_WIDTH,
+  useUi,
+  WIDE_RIGHT_PANEL_WIDTH,
+} from "@/lib/ui";
 import { ActivityPanel } from "@/features/chat/ActivityPanel";
 import { UsagePanel } from "@/features/chat/UsagePanel";
 import { DiffPanel } from "@/features/chat/DiffView";
@@ -20,6 +25,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { panelStyle } from "./usePanelCap";
+import { ResizableHandle } from "./ResizableHandle";
 
 const BrowserPanel = lazy(() =>
   import("@/features/browser/BrowserPanel").then((m) => ({
@@ -41,7 +47,13 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
   const isWide = rightPanelWidth >= WIDE_RIGHT_PANEL_WIDTH;
   const diffTarget = useUi((s) => s.diffTarget);
   const filePreviewPath = useUi((s) => s.filePreviewPath);
+  const setRightPanelWidth = useUi((s) => s.setRightPanelWidth);
   const asideRef = useRef<HTMLElement | null>(null);
+  // Keep drag updates local: the store writes to localStorage on every setter
+  // call, and pointermove can fire far more often than the persisted value
+  // needs to change. Commit once when the drag ends.
+  const [resizingWidth, setResizingWidth] = useState<number | null>(null);
+  const panelWidthValue = resizingWidth ?? rightPanelWidth;
 
   // `rightPanel` is persisted but its targets are session-only. After a
   // restart with "diff"/"file" stored, the panel restored as a 380px blank
@@ -91,6 +103,23 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     rightPanel === "changes" ||
     rightPanel === "browser";
 
+  const commitWidth = (next: number) => {
+    setResizingWidth(null);
+    setRightPanelWidth(next);
+  };
+  const resizeHandle = (
+    <ResizableHandle
+      value={panelWidthValue}
+      min={MIN_RIGHT_PANEL_WIDTH}
+      max={MAX_RIGHT_PANEL_WIDTH}
+      direction={-1}
+      label={t("サイドパネルの幅を変更")}
+      onChange={setResizingWidth}
+      onCommit={commitWidth}
+      edge="left"
+    />
+  );
+
   // Can be rendered either as a docked flex sibling (split-view) or as an
   // overlay drawer depending on `isDocked`. An overlay drawer is out of flow:
   // it takes no width from the centre column, so the inline-panel cap must not
@@ -100,7 +129,7 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
       ref={asideRef as Ref<HTMLElement>}
       tabIndex={-1}
       data-side-panel=""
-      style={panelStyle(rightPanelWidth, isDocked ? cap : null)}
+      style={panelStyle(panelWidthValue, isDocked ? cap : null)}
       role={isDocked ? "region" : "dialog"}
       aria-modal="false"
       aria-label={t("サイドパネル")}
@@ -110,6 +139,7 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
           : "absolute inset-y-0 right-0 z-30 flex max-w-[85vw] flex-col overflow-hidden border-l border-line bg-bg shadow-pop animate-fade"
       }
     >
+      {resizeHandle}
       {tabbed && (
         <div className="flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-bg/85 px-3 backdrop-blur-md">
           {/* Named differently from the drawer's own `サイドパネル` label:

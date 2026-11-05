@@ -1,4 +1,4 @@
-import { Bot, Brain, MessageSquare } from "lucide-react";
+import { Bot, Brain, ClipboardList, MessageSquare } from "lucide-react";
 import type { ComposerMode } from "./composerTypes";
 
 export interface ModeMeta {
@@ -23,5 +23,11 @@ export const ALL_MODES: ModeMeta[] = [
     label: "エージェント",
     hint: "ツールで自律的に作業",
     Icon: Bot,
+  },
+  {
+    id: "plan",
+    label: "計画",
+    hint: "読み取り専用で計画を提示",
+    Icon: ClipboardList,
   },
 ];

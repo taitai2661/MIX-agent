@@ -1,9 +1,20 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+const pkg = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+) as { version?: string };
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    // Keep the visible build version in lockstep with the package manifest
+    // instead of a hand-edited literal in the sidebar.
+    __APP_VERSION__: JSON.stringify(pkg.version ?? "0.0.0"),
+  },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     rollupOptions: {

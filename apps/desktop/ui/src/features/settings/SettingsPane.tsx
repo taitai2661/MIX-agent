@@ -22,7 +22,7 @@ import {
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { useSettingsForm } from "@/lib/settings";
-import { usePendingApprovals } from "@/lib/queries";
+import { SPOTLIGHT_STATUS_QUERY_KEY, usePendingApprovals } from "@/lib/queries";
 import { useUi, type SettingsTab } from "@/lib/ui";
 import type { SettingsView } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +45,9 @@ import { MemoryPane } from "@/features/memory/MemoryPane";
 import { KnowledgePane } from "@/features/knowledge/KnowledgePane";
 import { SkillsPane } from "@/features/skills/SkillsPane";
 import { BrowserPane } from "@/features/browser/BrowserPane";
+import { isMacPlatform } from "@/lib/platform";
 import { DiagnosticsPane } from "@/features/system/DiagnosticsPane";
+import { SpotlightSettings } from "./SpotlightSettings";
 
 interface SettingsTabEntry {
   id: SettingsTab;
@@ -62,6 +64,7 @@ const SETTINGS_NAV: { title: string; tabs: SettingsTabEntry[] }[] = [
       { id: "network", label: "ネットワーク", icon: <Globe size={15} /> },
       { id: "updates", label: "アップデート", icon: <RefreshCw size={15} /> },
       { id: "backup", label: "バックアップ", icon: <Archive size={15} /> },
+      { id: "spotlight", label: "Spotlight", icon: <Search size={15} /> },
       { id: "diagnostics", label: "診断", icon: <ShieldCheck size={15} /> },
     ],
   },
@@ -94,6 +97,7 @@ const SAVE_TABS: ReadonlySet<SettingsTab> = new Set([
   "network",
   "updates",
   "backup",
+  "spotlight",
 ]);
 
 const ALL_TABS = SETTINGS_NAV.flatMap((s) => s.tabs);
@@ -108,6 +112,7 @@ export function SettingsPane() {
     mutationFn: (input: SettingsView) => api.updateSettings(input),
     onSuccess: (_res, input) => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      queryClient.invalidateQueries({ queryKey: SPOTLIGHT_STATUS_QUERY_KEY });
       setSavedSnapshot(JSON.stringify(input));
     },
   });
@@ -133,12 +138,16 @@ export function SettingsPane() {
     ...section,
     tabs: section.tabs.filter(
       (tab) =>
-        !query ||
-        t(tab.label).toLowerCase().includes(query) ||
-        tab.label.toLowerCase().includes(query),
+        (tab.id !== "spotlight" || isMacPlatform()) &&
+        (!query ||
+          t(tab.label).toLowerCase().includes(query) ||
+          tab.label.toLowerCase().includes(query)),
     ),
   })).filter((section) => section.tabs.length > 0);
   const visibleTabs = visibleSections.flatMap((section) => section.tabs);
+  const platformTabs = ALL_TABS.filter(
+    (tab) => tab.id !== "spotlight" || isMacPlatform(),
+  );
   const dirty =
     savedSnapshot !== null && JSON.stringify(data) !== savedSnapshot;
   // Saving before `get_settings` resolves would replace the stored row with
@@ -220,7 +229,8 @@ export function SettingsPane() {
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-base font-semibold tracking-tight text-fg">
                 {t(
-                  ALL_TABS.find((tab) => tab.id === activeTab)?.label ?? "設定",
+                  platformTabs.find((tab) => tab.id === activeTab)?.label ??
+                    "設定",
                 )}
               </h1>
             </div>
@@ -251,11 +261,13 @@ export function SettingsPane() {
               value={activeTab}
               onChange={(e) => setSettingsTab(e.target.value as SettingsTab)}
             >
-              {(visibleTabs.length > 0 ? visibleTabs : ALL_TABS).map((tab) => (
-                <option key={tab.id} value={tab.id}>
-                  {t(tab.label)}
-                </option>
-              ))}
+              {(visibleTabs.length > 0 ? visibleTabs : platformTabs).map(
+                (tab) => (
+                  <option key={tab.id} value={tab.id}>
+                    {t(tab.label)}
+                  </option>
+                ),
+              )}
             </Select>
           </div>
         </header>
@@ -275,6 +287,7 @@ export function SettingsPane() {
             {activeTab === "network" && <NetworkSettings />}
             {activeTab === "updates" && <UpdateSettings />}
             {activeTab === "backup" && <BackupSettings />}
+            {activeTab === "spotlight" && <SpotlightSettings />}
             {activeTab === "chatgpt" && <ChatGptPane />}
             {activeTab === "providers" && <ProvidersPane />}
             {activeTab === "models" && <ModelsPane />}

@@ -49,6 +49,9 @@ reqwest.workspace = true
 ignore = "0.4.30"
 # GUI-only local runtimes (Jan, GPT4All) are opened through the OS handler.
 open = "5"
+# Stable content hash for the Spotlight index queue. The browser and MCP
+# crates already pin this version.
+sha2 = "0.10"
 
 tauri = { version = "2.1", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2.0"
@@ -64,7 +67,31 @@ tauri-plugin-cli = "2.0"
 # WebView never calls its IPC surface (no `updater:*` capability grant). It
 # needs Rust 1.90+, which the pinned 1.91 toolchain already satisfies.
 tauri-plugin-updater = "2"
+# Compare a staged update version against the running bundle when deciding
+# whether the cache is stale (e.g. after Windows applies an update and exits
+# before the old process can clean the download).
+semver = "1"
 
 [target.'cfg(unix)'.dependencies]
 # SIGTERM for a runtime child process on Unix; Windows uses `start_kill`.
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Core Spotlight indexing (macOS only). `objc2-core-spotlight` is a pure-Rust
+# binding; it avoids a Swift build step and keeps the macOS 12 deployment
+# target. `objc2-uniform-type-identifiers` is only needed for `UTType.text`.
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = { version = "0.3", features = [
+    "NSBundle",
+    "NSUserActivity",
+    "NSArray",
+    "NSDictionary",
+    "NSString",
+    "NSError",
+    "NSDate",
+    "NSURL",
+] }
+objc2-core-spotlight = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
+objc2-uniform-type-identifiers = "0.3"
+block2 = "0.6"

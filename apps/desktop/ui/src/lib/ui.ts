@@ -25,7 +25,7 @@ export type View = "chat" | "agents" | "projects" | "schedules" | "settings";
 export type Surface = "chat" | "desktop-agent";
 
 /** Run mode understood by the Rust Run Engine (see `core/src/mode.rs`). */
-export type RunMode = "chat" | "thinking" | "agent";
+export type RunMode = "chat" | "thinking" | "agent" | "plan";
 
 /** Canonical union for every run mode the engine understands.
  *
@@ -41,7 +41,10 @@ export type ThreadFilter = "all" | Surface;
 /** Modes a surface allows the user to pick from in the Composer. */
 export const SURFACE_MODES: Record<Surface, RunMode[]> = {
   chat: ["chat", "thinking"],
-  "desktop-agent": ["agent"],
+  // `plan` is the engine's read-only mode: it may read and search, refuses
+  // every mutation, and proposes the change with `user_plan`. It lives on the
+  // agent surface because it needs a workspace to investigate.
+  "desktop-agent": ["agent", "plan"],
 };
 
 /** Tabs inside the Settings pane (see features/settings/SettingsPane.tsx). */
@@ -51,6 +54,7 @@ export type SettingsTab =
   | "network"
   | "updates"
   | "backup"
+  | "spotlight"
   | "chatgpt"
   | "providers"
   | "models"
@@ -233,6 +237,8 @@ export const MAX_ZOOM = 1.5;
 
 export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
 export const WIDE_RIGHT_PANEL_WIDTH = 560;
+export const MIN_RIGHT_PANEL_WIDTH = 320;
+export const MAX_RIGHT_PANEL_WIDTH = 900;
 
 const SURFACES: Surface[] = ["chat", "desktop-agent"];
 const THREAD_FILTERS: ThreadFilter[] = ["all", "chat", "desktop-agent"];
@@ -294,6 +300,7 @@ const SETTING_TABS: SettingsTab[] = [
   "network",
   "updates",
   "backup",
+  "spotlight",
   "chatgpt",
   "providers",
   "models",
@@ -368,7 +375,13 @@ function readRightPanelWidth(): number {
 function readPanelWidthValue(stored: string | null): number {
   if (stored) {
     const val = Number(stored);
-    if (!Number.isNaN(val) && val >= 320 && val <= 900) return val;
+    if (
+      !Number.isNaN(val) &&
+      val >= MIN_RIGHT_PANEL_WIDTH &&
+      val <= MAX_RIGHT_PANEL_WIDTH
+    ) {
+      return val;
+    }
   }
   return DEFAULT_RIGHT_PANEL_WIDTH;
 }
@@ -391,11 +404,11 @@ export function defaultModeForSurface(surface: Surface): RunMode {
  *
  * `ConversationSummary` carries a `mode`, not a surface, so the sidebar's
  * thread filter has to map one back to the other. It is the inverse of
- * `SURFACE_MODES`: `agent` runs live on the desktop-agent surface, everything
- * else (`chat`, `thinking`) is the chat surface.
+ * `SURFACE_MODES`: `agent` and `plan` runs live on the desktop-agent surface,
+ * everything else (`chat`, `thinking`) is the chat surface.
  */
 export function surfaceForMode(mode: Mode | (string & {})): Surface {
-  return mode === "agent" ? "desktop-agent" : "chat";
+  return mode === "agent" || mode === "plan" ? "desktop-agent" : "chat";
 }
 
 const initialSurface = readSurface();

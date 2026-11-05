@@ -620,4 +620,55 @@ describe("Composer", () => {
     expect((box as HTMLTextAreaElement).value).not.toBe("/");
     expect((box as HTMLTextAreaElement).value.length).toBeGreaterThan(1);
   });
+
+  it("switches to plan mode when /plan is selected", async () => {
+    const setMode = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="agent"
+        setMode={setMode}
+        allowedModes={["agent", "plan"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText(
+      "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)",
+    );
+    await user.type(box, "/plan");
+    await screen.findByRole("listbox", { name: "クイックコマンド" });
+    await user.keyboard("{Enter}");
+
+    expect(setMode).toHaveBeenCalledWith("plan");
+    expect((box as HTMLTextAreaElement).value).toContain("実装計画");
+    expect((box as HTMLTextAreaElement).value).not.toContain("/plan");
+  });
+
+  it("hides /plan where the surface does not allow plan mode", async () => {
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        allowedModes={["chat", "thinking"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "/plan");
+
+    expect(
+      screen.queryByRole("option", { name: /\/plan/ }),
+    ).not.toBeInTheDocument();
+  });
 });

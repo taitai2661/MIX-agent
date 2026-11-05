@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { chord } from "@/lib/platform";
+import { chord, isMacPlatform } from "@/lib/platform";
 import {
   MODELS_QUERY_KEY,
   useConversationSearch,
@@ -90,6 +90,7 @@ const SETTINGS_TARGETS: { tab: SettingsTab; label: string }[] = [
   { tab: "network", label: "ネットワーク" },
   { tab: "updates", label: "アップデート" },
   { tab: "backup", label: "バックアップ" },
+  { tab: "spotlight", label: "Spotlight" },
   { tab: "chatgpt", label: "ChatGPT" },
   { tab: "providers", label: "プロバイダー" },
   { tab: "models", label: "モデル" },
@@ -160,16 +161,16 @@ export function CommandPalette() {
         run: () => setView(id),
       }),
     );
-    const settingsTabs: PaletteItem[] = SETTINGS_TARGETS.map(
-      ({ tab, label }) => ({
-        id: `settings:${tab}`,
-        label: t(label),
-        hint: t("設定"),
-        icon: <Settings2 size={15} />,
-        kind: "settings",
-        run: () => openSettings(tab),
-      }),
-    );
+    const settingsTabs: PaletteItem[] = SETTINGS_TARGETS.filter(
+      ({ tab }) => tab !== "spotlight" || isMacPlatform(),
+    ).map(({ tab, label }) => ({
+      id: `settings:${tab}`,
+      label: t(label),
+      hint: t("設定"),
+      icon: <Settings2 size={15} />,
+      kind: "settings",
+      run: () => openSettings(tab),
+    }));
     // The palette is the advertised search surface: a query is resolved by
     // SQLite over every title, while an empty query shows the newest page.
     const threadRows = deferredQuery.trim()
@@ -181,9 +182,11 @@ export function CommandPalette() {
       hint: t(
         c.mode === "agent"
           ? "エージェント"
-          : c.mode === "thinking"
-            ? "思考"
-            : "チャット",
+          : c.mode === "plan"
+            ? "計画"
+            : c.mode === "thinking"
+              ? "思考"
+              : "チャット",
       ),
       icon: <MessageSquare size={15} />,
       kind: "thread",

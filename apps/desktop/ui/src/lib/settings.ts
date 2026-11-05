@@ -45,6 +45,9 @@ export const DEFAULT_SETTINGS: SettingsView = {
   // The backend defaults this to `true` too: auto-check is one manifest
   // request and the payload is signature-verified before installation.
   auto_check_updates: true,
+  // Downloading is safe to start in the background; applying still waits for
+  // the user to quit the app normally.
+  auto_download_updates: true,
   local_scan_on_start: true,
   local_stop_on_exit: true,
   // Spawning `ollama serve` for a user who manages it as a service was a
@@ -53,6 +56,9 @@ export const DEFAULT_SETTINGS: SettingsView = {
   local_keep_alive: null,
   local_context_window: null,
   local_prefer: false,
+  // System-wide search is opt-in; the backend defaults are `false` too.
+  spotlight_enabled: false,
+  spotlight_index_body: false,
 };
 
 /** Shared access to the settings draft: one query, one cache entry, and a

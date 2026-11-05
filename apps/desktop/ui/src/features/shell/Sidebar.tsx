@@ -60,6 +60,8 @@ import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
 import { Spinner } from "@/components/ui/spinner";
 import { useNewThread } from "./useShellEvents";
 import { panelStyle } from "./usePanelCap";
+import { ResizableHandle } from "./ResizableHandle";
+import { usePanelWidth } from "./usePanelWidth";
 
 const NAV_ITEMS: { id: View; label: string; icon: React.ReactNode }[] = [
   { id: "projects", label: "プロジェクト", icon: <Folder size={15} /> },
@@ -94,6 +96,7 @@ const MODE_LABEL: Record<string, string> = {
   chat: "チャット",
   thinking: "思考",
   agent: "エージェント",
+  plan: "計画",
 };
 
 const THEME_ICON = {
@@ -113,11 +116,12 @@ const LANGUAGES = [
   { value: "en", label: "English" },
 ] as const;
 
-/** Fixed Codex-like width. The sidebar used to be resizable (210–440px) with a
- * drag handle, but every drag pixel reflowed the centre column and flipped the
- * composer's container-query toolbar mid-drag — the classic "unstable" feel.
- * A fixed width keeps the transcript and composer geometry constant. */
+/** Codex-like default width. The user can drag the right edge to resize
+ * (210–440px); the width is remembered across launches. */
 const SIDEBAR_WIDTH = 264;
+const SIDEBAR_MIN_WIDTH = 210;
+const SIDEBAR_MAX_WIDTH = 440;
+const SIDEBAR_WIDTH_KEY = "mix-agent-sidebar-width";
 
 export function Sidebar({ cap = null }: { cap?: number | null }) {
   const view = useUi((s) => s.view);
@@ -135,6 +139,16 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const queryClient = useQueryClient();
   const { confirm, dialog } = useConfirm();
   const now = useNow();
+  const {
+    width: sidebarWidth,
+    setWidth: setSidebarWidth,
+    commitWidth: commitSidebarWidth,
+  } = usePanelWidth(
+    SIDEBAR_WIDTH_KEY,
+    SIDEBAR_WIDTH,
+    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_MAX_WIDTH,
+  );
   const [search, setSearch] = useState("");
   // Defer the filter so typing stays at 60fps with hundreds of threads.
   const deferredSearch = useDeferredValue(search);
@@ -364,407 +378,442 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   }
 
   return (
-    <aside
-      aria-label={t("サイドバー")}
-      data-side-panel=""
-      // Fixed width; `cap` only clamps it on very narrow windows.
-      style={panelStyle(SIDEBAR_WIDTH, cap)}
-      className="flex shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar"
-    >
-      {/* Primary action + search, pinned so they are always reachable. */}
-      <div className="flex shrink-0 flex-col gap-2 p-3 pb-1.5">
-        {isAgent && (
-          <div className="flex items-center justify-between rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-xs shadow-xs">
-            <div className="flex min-w-0 items-center gap-2">
-              <Folder size={14} className="shrink-0 text-brand" />
-              <span
-                className="truncate font-medium text-fg"
-                title={
-                  activeProject?.rootPath ?? activeProject?.name ?? undefined
-                }
-              >
-                {activeProject?.name ?? t("プロジェクト未選択")}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setView("projects")}
-              className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
-              title={t("プロジェクトを変更")}
-            >
-              {t("変更")}
-            </Button>
-          </div>
-        )}
-        <Button
-          variant="primary"
-          size="lg"
-          className="h-10 w-full justify-start gap-2"
-          onClick={() => newThread()}
-        >
-          {isAgent ? <Bot size={15} /> : <Plus size={15} />}
-          {isAgent ? t("新規タスク") : t("新規チャット")}
-        </Button>
-        <SearchField
-          icon={<Search size={13} />}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={
-            isAgent
-              ? t("タスクのタイトル・プレビューを検索")
-              : t("チャットのタイトル・プレビューを検索")
-          }
-          aria-label={
-            isAgent
-              ? t("タスクのタイトル・プレビューを検索")
-              : t("チャットのタイトル・プレビューを検索")
-          }
-          {...(search
-            ? { onClear: () => setSearch(""), clearLabel: t("クリア") }
-            : {})}
-        />
-        {(exportError || rename.isError || remove.isError) && (
-          <ErrorBox error={exportError ?? rename.error ?? remove.error} />
-        )}
-      </div>
-
-      {/* Thread history — the main content of the sidebar. */}
-      {/* Key delegation: titles are native buttons (Tab/Enter free); arrows
-          move between them from one handler instead of N. */}
-      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-      <div
-        ref={threadListRef}
-        onKeyDown={onThreadListKeyDown}
-        onScroll={(event) => {
-          const el = event.currentTarget;
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
-            loadMore();
-          }
-        }}
-        className="stable-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 pt-1.5"
+    <>
+      <aside
+        aria-label={t("サイドバー")}
+        data-side-panel=""
+        // The remembered width; `cap` only clamps it on very narrow windows.
+        style={panelStyle(sidebarWidth, cap)}
+        className="flex shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar"
       >
-        {hasThreads || hasMoreThreads ? (
-          <>
-            {GROUP_ORDER.map((group) => {
-              const items = threads.get(group);
-              if (!items?.length) return null;
-              return (
-                <section key={group}>
-                  <SectionLabel
-                    trailing={
-                      <span className="font-mono font-normal text-2xs text-faint">
-                        {items.length}
-                      </span>
-                    }
-                  >
-                    {t(GROUP_LABEL[group])}
-                  </SectionLabel>
-                  <ul className="flex flex-col gap-0.5">
-                    {items.map((c) => (
-                      // Off-screen rows skip layout/paint. The intrinsic size
-                      // keeps the scrollbar honest until a row is measured.
-                      <li
-                        key={c.id}
-                        className="[content-visibility:auto] [contain-intrinsic-size:auto_64px]"
-                      >
-                        {/* A real `<button>`, not a `div role="button"`. The row
+        {/* Primary action + search, pinned so they are always reachable. */}
+        <div className="flex shrink-0 flex-col gap-2 p-3 pb-1.5">
+          {isAgent && (
+            <div className="flex items-center justify-between rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-xs shadow-xs">
+              <div className="flex min-w-0 items-center gap-2">
+                <Folder size={14} className="shrink-0 text-brand" />
+                <span
+                  className="truncate font-medium text-fg"
+                  title={
+                    activeProject?.rootPath ?? activeProject?.name ?? undefined
+                  }
+                >
+                  {activeProject?.name ?? t("プロジェクト未選択")}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setView("projects")}
+                className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
+                title={t("プロジェクトを変更")}
+              >
+                {t("変更")}
+              </Button>
+            </div>
+          )}
+          <Button
+            variant="primary"
+            size="lg"
+            className="h-10 w-full justify-start gap-2"
+            onClick={() => newThread()}
+          >
+            {isAgent ? <Bot size={15} /> : <Plus size={15} />}
+            {isAgent ? t("新規タスク") : t("新規チャット")}
+          </Button>
+          <SearchField
+            icon={<Search size={13} />}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={
+              isAgent
+                ? t("タスクのタイトル・プレビューを検索")
+                : t("チャットのタイトル・プレビューを検索")
+            }
+            aria-label={
+              isAgent
+                ? t("タスクのタイトル・プレビューを検索")
+                : t("チャットのタイトル・プレビューを検索")
+            }
+            {...(search
+              ? { onClear: () => setSearch(""), clearLabel: t("クリア") }
+              : {})}
+          />
+          {(exportError || rename.isError || remove.isError) && (
+            <ErrorBox error={exportError ?? rename.error ?? remove.error} />
+          )}
+        </div>
+
+        {/* Thread history — the main content of the sidebar. */}
+        {/* Key delegation: titles are native buttons (Tab/Enter free); arrows
+          move between them from one handler instead of N. */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+        <div
+          ref={threadListRef}
+          onKeyDown={onThreadListKeyDown}
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+              loadMore();
+            }
+          }}
+          className="stable-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 pt-1.5"
+        >
+          {hasThreads || hasMoreThreads ? (
+            <>
+              {GROUP_ORDER.map((group) => {
+                const items = threads.get(group);
+                if (!items?.length) return null;
+                return (
+                  <section key={group}>
+                    <SectionLabel
+                      trailing={
+                        <span className="font-mono font-normal text-2xs text-faint">
+                          {items.length}
+                        </span>
+                      }
+                    >
+                      {t(GROUP_LABEL[group])}
+                    </SectionLabel>
+                    <ul className="flex flex-col gap-0.5">
+                      {items.map((c) => (
+                        // Off-screen rows skip layout/paint. The intrinsic size
+                        // keeps the scrollbar honest until a row is measured.
+                        <li
+                          key={c.id}
+                          className="[content-visibility:auto] [contain-intrinsic-size:auto_64px]"
+                        >
+                          {/* A real `<button>`, not a `div role="button"`. The row
                             also holds rename / export / delete buttons, so the
                             title stretches over the row with a pseudo-element. */}
-                        <div
-                          className={cn(
-                            "group relative flex flex-col gap-1 rounded-lg py-2 pe-9 ps-2.5",
-                            "transition-colors duration-100 hover:bg-hover",
-                            conversationId === c.id &&
-                              "bg-brand-soft ring-1 ring-brand/20 ring-inset",
-                          )}
-                        >
-                          {renaming === c.id ? (
-                            <Input
-                              className="h-7 px-2 text-sm"
-                              value={renameDraft}
-                              // Mounted only while renaming: focus must enter
-                              // the field or keyboard users are stranded.
-                              // eslint-disable-next-line jsx-a11y/no-autofocus
-                              autoFocus
-                              onChange={(e) => setRenameDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                e.stopPropagation();
-                                if (e.key === "Enter" && renameDraft.trim()) {
-                                  // Commit through blur so Enter + blur cannot
-                                  // fire the rename twice.
-                                  e.currentTarget.blur();
-                                }
-                                if (e.key === "Escape") setRenaming(null);
-                              }}
-                              onBlur={() => {
-                                commitRename(c.id, c.title);
-                              }}
-                            />
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                data-thread-open
-                                onClick={() => openThread(c)}
-                                aria-current={
-                                  conversationId === c.id ? "true" : undefined
-                                }
-                                className="flex min-w-0 items-center gap-1.5 text-start after:absolute after:inset-0 after:z-0 after:content-['']"
-                              >
-                                {c.project_id && (
-                                  <span
-                                    className="size-1.5 shrink-0 rounded-full bg-brand"
-                                    aria-hidden="true"
-                                    title={t("プロジェクト紐付けあり")}
-                                  />
-                                )}
-                                {runningConversationIds.has(c.id) && (
-                                  <span
-                                    role="img"
-                                    aria-label={t("実行中")}
-                                    title={t("実行中")}
-                                    className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
-                                  />
-                                )}
-                                <span
-                                  className="truncate text-sm font-medium text-fg"
-                                  title={c.title}
+                          <div
+                            className={cn(
+                              "group relative flex flex-col gap-1 rounded-lg py-2 pe-9 ps-2.5",
+                              "transition-colors duration-100 hover:bg-hover",
+                              conversationId === c.id &&
+                                "bg-brand-soft ring-1 ring-brand/20 ring-inset",
+                            )}
+                          >
+                            {renaming === c.id ? (
+                              <Input
+                                className="h-7 px-2 text-sm"
+                                value={renameDraft}
+                                // Mounted only while renaming: focus must enter
+                                // the field or keyboard users are stranded.
+                                // eslint-disable-next-line jsx-a11y/no-autofocus
+                                autoFocus
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  e.stopPropagation();
+                                  if (e.key === "Enter" && renameDraft.trim()) {
+                                    // Commit through blur so Enter + blur cannot
+                                    // fire the rename twice.
+                                    e.currentTarget.blur();
+                                  }
+                                  if (e.key === "Escape") setRenaming(null);
+                                }}
+                                onBlur={() => {
+                                  commitRename(c.id, c.title);
+                                }}
+                              />
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  data-thread-open
+                                  onClick={() => openThread(c)}
+                                  aria-current={
+                                    conversationId === c.id ? "true" : undefined
+                                  }
+                                  className="flex min-w-0 items-center gap-1.5 text-start after:absolute after:inset-0 after:z-0 after:content-['']"
                                 >
-                                  {c.title}
-                                </span>
-                                {pinnedSet.has(c.id) && (
-                                  <Pin
-                                    size={12}
-                                    className="shrink-0 text-brand fill-brand/30"
-                                    aria-hidden="true"
-                                  />
+                                  {c.project_id && (
+                                    <span
+                                      className="size-1.5 shrink-0 rounded-full bg-brand"
+                                      aria-hidden="true"
+                                      title={t("プロジェクト紐付けあり")}
+                                    />
+                                  )}
+                                  {runningConversationIds.has(c.id) && (
+                                    <span
+                                      role="img"
+                                      aria-label={t("実行中")}
+                                      title={t("実行中")}
+                                      className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
+                                    />
+                                  )}
+                                  <span
+                                    className="truncate text-sm font-medium text-fg"
+                                    title={c.title}
+                                  >
+                                    {c.title}
+                                  </span>
+                                  {pinnedSet.has(c.id) && (
+                                    <Pin
+                                      size={12}
+                                      className="shrink-0 text-brand fill-brand/30"
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                </button>
+                                {c.preview && (
+                                  <span className="pointer-events-none truncate text-xs text-muted">
+                                    {c.preview}
+                                  </span>
                                 )}
-                              </button>
-                              {c.preview && (
-                                <span className="pointer-events-none truncate text-xs text-muted">
-                                  {c.preview}
+                                <span className="pointer-events-none flex items-center gap-1 text-xs text-faint">
+                                  <time
+                                    dateTime={c.updated_at}
+                                    title={absoluteTime(c.updated_at)}
+                                  >
+                                    {relativeTime(c.updated_at, new Date(now))}
+                                  </time>
+                                  <span className="text-line">·</span>
+                                  <span>{t(MODE_LABEL[c.mode] ?? c.mode)}</span>
+                                  {c.message_count > 0 && (
+                                    <>
+                                      <span className="text-line">·</span>
+                                      <span className="font-mono">
+                                        {c.message_count}
+                                      </span>
+                                    </>
+                                  )}
                                 </span>
-                              )}
-                              <span className="pointer-events-none flex items-center gap-1 text-xs text-faint">
-                                <time
-                                  dateTime={c.updated_at}
-                                  title={absoluteTime(c.updated_at)}
-                                >
-                                  {relativeTime(c.updated_at, new Date(now))}
-                                </time>
-                                <span className="text-line">·</span>
-                                <span>{t(MODE_LABEL[c.mode] ?? c.mode)}</span>
-                                {c.message_count > 0 && (
-                                  <>
-                                    <span className="text-line">·</span>
-                                    <span className="font-mono">
-                                      {c.message_count}
-                                    </span>
-                                  </>
-                                )}
-                              </span>
 
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    title={t("スレッド操作")}
-                                    aria-label={t("スレッド操作")}
-                                    className={cn(
-                                      "absolute end-1 top-1.5 z-10 bg-sidebar/90 shadow-xs backdrop-blur-sm",
-                                      "opacity-0 transition-opacity duration-100",
-                                      "group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-                                      conversationId === c.id && "opacity-100",
-                                    )}
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      title={t("スレッド操作")}
+                                      aria-label={t("スレッド操作")}
+                                      className={cn(
+                                        "absolute end-1 top-1.5 z-10 bg-sidebar/90 shadow-xs backdrop-blur-sm",
+                                        "opacity-0 transition-opacity duration-100",
+                                        "group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                                        conversationId === c.id &&
+                                          "opacity-100",
+                                      )}
+                                    >
+                                      <MoreHorizontal size={14} />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="end"
+                                    className="min-w-44"
                                   >
-                                    <MoreHorizontal size={14} />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                  align="end"
-                                  className="min-w-44"
-                                >
-                                  <DropdownMenuItem
-                                    onSelect={() => togglePin(c.id)}
-                                  >
-                                    {pinnedSet.has(c.id) ? (
-                                      <PinOff
+                                    <DropdownMenuItem
+                                      onSelect={() => togglePin(c.id)}
+                                    >
+                                      {pinnedSet.has(c.id) ? (
+                                        <PinOff
+                                          size={13}
+                                          className="text-muted"
+                                        />
+                                      ) : (
+                                        <Pin size={13} className="text-muted" />
+                                      )}
+                                      <span className="flex-1">
+                                        {pinnedSet.has(c.id)
+                                          ? t("ピン留めを解除")
+                                          : t("ピン留め")}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onSelect={() => {
+                                        setRenaming(c.id);
+                                        setRenameDraft(c.title);
+                                      }}
+                                    >
+                                      <Pencil
                                         size={13}
                                         className="text-muted"
                                       />
-                                    ) : (
-                                      <Pin size={13} className="text-muted" />
-                                    )}
-                                    <span className="flex-1">
-                                      {pinnedSet.has(c.id)
-                                        ? t("ピン留めを解除")
-                                        : t("ピン留め")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() => {
-                                      setRenaming(c.id);
-                                      setRenameDraft(c.title);
-                                    }}
-                                  >
-                                    <Pencil size={13} className="text-muted" />
-                                    <span className="flex-1">
-                                      {t("名前を変更")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() => void exportThread(c)}
-                                  >
-                                    <Download
-                                      size={13}
-                                      className="text-muted"
-                                    />
-                                    <span className="flex-1">
-                                      {t("エクスポート")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    disabled={remove.isPending}
-                                    onSelect={() => void removeThread(c)}
-                                    className="text-danger focus:bg-danger-soft focus:text-danger"
-                                  >
-                                    <Trash2 size={13} />
-                                    <span className="flex-1">
-                                      {remove.isPending
-                                        ? t("削除中…")
-                                        : t("削除")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              );
-            })}
-            {filteredThreadCount === 0 && !hasMoreThreads && (
-              <SearchEmptyState
-                compact
-                title={
-                  isAgent
-                    ? t("一致するタスクがありません")
-                    : t("一致するチャットがありません")
-                }
-                onClear={() => setSearch("")}
-              />
-            )}
-            {hasMoreThreads && (
-              <div className="flex justify-center pt-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={loadMore}
-                  disabled={isFetchingNextPage}
-                  className="text-muted"
-                >
-                  {isFetchingNextPage ? (
-                    <Spinner size={11} label={t("読み込み中…")} />
-                  ) : (
-                    t("以前のスレッドを読み込む")
-                  )}
-                </Button>
-              </div>
-            )}
-          </>
-        ) : conversations.isError ? (
-          <ErrorBox error={conversations.error || t("エラー")} />
-        ) : conversations.isPending ? (
-          <ListSkeleton rows={3} label={t("読み込み中…")} />
-        ) : (
-          <EmptyState
-            compact
-            title={
-              isAgent ? t("タスクがありません") : t("チャット履歴がありません")
-            }
-            sub={
-              isAgent
-                ? t("新しいタスクを始めましょう")
-                : t("新しい会話を始めましょう")
-            }
-          />
-        )}
-      </div>
+                                      <span className="flex-1">
+                                        {t("名前を変更")}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onSelect={() => void exportThread(c)}
+                                    >
+                                      <Download
+                                        size={13}
+                                        className="text-muted"
+                                      />
+                                      <span className="flex-1">
+                                        {t("エクスポート")}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      disabled={remove.isPending}
+                                      onSelect={() => void removeThread(c)}
+                                      className="text-danger focus:bg-danger-soft focus:text-danger"
+                                    >
+                                      <Trash2 size={13} />
+                                      <span className="flex-1">
+                                        {remove.isPending
+                                          ? t("削除中…")
+                                          : t("削除")}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })}
+              {filteredThreadCount === 0 && !hasMoreThreads && (
+                <SearchEmptyState
+                  compact
+                  title={
+                    isAgent
+                      ? t("一致するタスクがありません")
+                      : t("一致するチャットがありません")
+                  }
+                  onClear={() => setSearch("")}
+                />
+              )}
+              {hasMoreThreads && (
+                <div className="flex justify-center pt-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={loadMore}
+                    disabled={isFetchingNextPage}
+                    className="text-muted"
+                  >
+                    {isFetchingNextPage ? (
+                      <Spinner size={11} label={t("読み込み中…")} />
+                    ) : (
+                      t("以前のスレッドを読み込む")
+                    )}
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : conversations.isError ? (
+            <ErrorBox error={conversations.error || t("エラー")} />
+          ) : conversations.isPending ? (
+            <ListSkeleton rows={3} label={t("読み込み中…")} />
+          ) : (
+            <EmptyState
+              compact
+              title={
+                isAgent
+                  ? t("タスクがありません")
+                  : t("チャット履歴がありません")
+              }
+              sub={
+                isAgent
+                  ? t("新しいタスクを始めましょう")
+                  : t("新しい会話を始めましょう")
+              }
+            />
+          )}
+        </div>
 
-      {/* Secondary destinations, below the history so threads stay primary. */}
-      <nav className="flex shrink-0 flex-col gap-0.5 border-t border-line p-3 pt-2.5">
-        {/* Shown on both workspaces. They were agent-only, yet ⌘K opened them
+        {/* Secondary destinations, below the history so threads stay primary. */}
+        <nav className="flex shrink-0 flex-col gap-0.5 border-t border-line p-3 pt-2.5">
+          {/* Shown on both workspaces. They were agent-only, yet ⌘K opened them
             from Chat too — where the sidebar then hid their only navigation and
             the page had no way back. */}
-        <SectionLabel>{t("ワークスペース")}</SectionLabel>
-        {NAV_ITEMS.map((item) => (
-          <NavRow
-            key={item.id}
-            icon={item.icon}
-            selected={view === item.id}
-            onClick={() => setView(item.id)}
-          >
-            {t(item.label)}
-          </NavRow>
-        ))}
-        <NavRow
-          icon={<Settings2 size={15} />}
-          selected={view === "settings"}
-          onClick={() => setView("settings")}
-          trailing={
-            pendingCount > 0 ? (
-              <Badge tone="warning" size="sm">
-                {pendingCount}
-              </Badge>
-            ) : undefined
-          }
-        >
-          {t("設定")}
-        </NavRow>
-      </nav>
-
-      <div className="flex shrink-0 items-center gap-1 border-t border-line px-2.5 py-2">
-        <span className="truncate px-1 text-xs font-semibold text-faint">
-          MIX-agent
-        </span>
-        <span className="flex-1" />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="gap-1 px-2"
-              title={t("表示設定")}
-              aria-label={t("表示設定")}
+          <SectionLabel>{t("ワークスペース")}</SectionLabel>
+          {NAV_ITEMS.map((item) => (
+            <NavRow
+              key={item.id}
+              icon={item.icon}
+              selected={view === item.id}
+              onClick={() => setView(item.id)}
             >
-              <ThemeIcon size={12} aria-hidden="true" />
-              <span className="font-mono text-2xs">
-                {locale === "ja" ? "JA" : "EN"}
-              </span>
-              <ChevronDown size={10} aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-48">
-            <DropdownMenuLabel>{t("テーマ")}</DropdownMenuLabel>
-            {THEMES.map(({ value, label }) => {
-              const Icon = THEME_ICON[value];
-              return (
+              {t(item.label)}
+            </NavRow>
+          ))}
+          <NavRow
+            icon={<Settings2 size={15} />}
+            selected={view === "settings"}
+            onClick={() => setView("settings")}
+            trailing={
+              pendingCount > 0 ? (
+                <Badge tone="warning" size="sm">
+                  {pendingCount}
+                </Badge>
+              ) : undefined
+            }
+          >
+            {t("設定")}
+          </NavRow>
+        </nav>
+
+        <div className="flex shrink-0 items-center gap-1 border-t border-line px-2.5 py-2">
+          <span className="truncate px-1 text-xs font-semibold text-faint">
+            MIX-agent
+          </span>
+          <span className="flex-1" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1 px-2"
+                title={t("表示設定")}
+                aria-label={t("表示設定")}
+              >
+                <ThemeIcon size={12} aria-hidden="true" />
+                <span className="font-mono text-2xs">
+                  {locale === "ja" ? "JA" : "EN"}
+                </span>
+                <ChevronDown size={10} aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48">
+              <DropdownMenuLabel>{t("テーマ")}</DropdownMenuLabel>
+              {THEMES.map(({ value, label }) => {
+                const Icon = THEME_ICON[value];
+                return (
+                  <DropdownMenuItem
+                    key={value}
+                    onSelect={() => {
+                      setTheme(value);
+                      void applySettings({ theme: value });
+                    }}
+                  >
+                    <Icon size={13} className="text-muted" aria-hidden="true" />
+                    <span className="flex-1">{t(label)}</span>
+                    {theme === value && (
+                      <Check
+                        size={13}
+                        className="text-brand"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>{t("言語")}</DropdownMenuLabel>
+              {LANGUAGES.map(({ value, label }) => (
                 <DropdownMenuItem
                   key={value}
                   onSelect={() => {
-                    setTheme(value);
-                    void applySettings({ theme: value });
+                    setLocale(value);
+                    // Persisted immediately: a local-only switch was overwritten
+                    // by the stored setting on the next launch.
+                    void applySettings({ language: value });
                   }}
                 >
-                  <Icon size={13} className="text-muted" aria-hidden="true" />
-                  <span className="flex-1">{t(label)}</span>
-                  {theme === value && (
+                  <Languages
+                    size={13}
+                    className="text-muted"
+                    aria-hidden="true"
+                  />
+                  <span className="flex-1">{label}</span>
+                  {locale === value && (
                     <Check
                       size={13}
                       className="text-brand"
@@ -772,35 +821,20 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                     />
                   )}
                 </DropdownMenuItem>
-              );
-            })}
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>{t("言語")}</DropdownMenuLabel>
-            {LANGUAGES.map(({ value, label }) => (
-              <DropdownMenuItem
-                key={value}
-                onSelect={() => {
-                  setLocale(value);
-                  // Persisted immediately: a local-only switch was overwritten
-                  // by the stored setting on the next launch.
-                  void applySettings({ language: value });
-                }}
-              >
-                <Languages
-                  size={13}
-                  className="text-muted"
-                  aria-hidden="true"
-                />
-                <span className="flex-1">{label}</span>
-                {locale === value && (
-                  <Check size={13} className="text-brand" aria-hidden="true" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {dialog}
-    </aside>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {dialog}
+      </aside>
+      <ResizableHandle
+        value={sidebarWidth}
+        min={SIDEBAR_MIN_WIDTH}
+        max={SIDEBAR_MAX_WIDTH}
+        label={t("サイドバーの幅を変更")}
+        onChange={setSidebarWidth}
+        onCommit={commitSidebarWidth}
+      />
+    </>
   );
 }

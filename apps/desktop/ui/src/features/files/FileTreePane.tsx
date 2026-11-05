@@ -37,6 +37,8 @@ import { GitStatusBadge } from "@/components/ui/status";
 import { EmptyState, ErrorAlert, ListSkeleton } from "@/components/shared";
 import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
 import { panelStyle } from "@/features/shell/usePanelCap";
+import { ResizableHandle } from "@/features/shell/ResizableHandle";
+import { usePanelWidth } from "@/features/shell/usePanelWidth";
 
 const TEXT_EXTS = new Set([
   "txt",
@@ -233,11 +235,23 @@ const DirRows = memo(function DirRows({
   );
 });
 
-/** Fixed width, like the sidebar: dragging the tree's edge used to reflow the
- * transcript on every pointermove. */
+/** Default width; the user can drag the tree's right edge to resize it. */
 const FILE_TREE_WIDTH = 240;
+const FILE_TREE_MIN_WIDTH = 180;
+const FILE_TREE_MAX_WIDTH = 420;
+const FILE_TREE_WIDTH_KEY = "mix-agent-file-tree-width";
 
 export function FileTreePane({ cap = null }: { cap?: number | null }) {
+  const {
+    width: fileTreeWidth,
+    setWidth: setFileTreeWidth,
+    commitWidth: commitFileTreeWidth,
+  } = usePanelWidth(
+    FILE_TREE_WIDTH_KEY,
+    FILE_TREE_WIDTH,
+    FILE_TREE_MIN_WIDTH,
+    FILE_TREE_MAX_WIDTH,
+  );
   const project = useActiveProject();
   const root = project?.rootPath ?? null;
   const toggleFileTree = useUi((s) => s.toggleFileTree);
@@ -399,152 +413,162 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
   };
 
   return (
-    <aside
-      aria-label={t("ファイルツリー")}
-      data-side-panel=""
-      style={panelStyle(FILE_TREE_WIDTH, cap)}
-      className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-sidebar"
-    >
-      <PanelHeader
-        icon={<FolderTree size={14} />}
-        title={project ? project.name : t("プロジェクト")}
-        onClose={toggleFileTree}
-        trailing={
-          <>
-            {git.data?.available && git.data.branch && (
-              // Branch names are as long as the team wants them to be, and the
-              // title next to them only has `flex-1`. `shrink-0` with no width
-              // of its own meant a long branch pushed the header — and the
-              // panel's right edge — out of the window, so the badge gives up
-              // width instead and the name goes to an ellipsis.
-              <Badge
-                tone="neutral"
-                size="sm"
-                className="min-w-0 max-w-28 shrink font-mono"
-                title={git.data.branch}
+    <>
+      <aside
+        aria-label={t("ファイルツリー")}
+        data-side-panel=""
+        style={panelStyle(fileTreeWidth, cap)}
+        className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-sidebar"
+      >
+        <PanelHeader
+          icon={<FolderTree size={14} />}
+          title={project ? project.name : t("プロジェクト")}
+          onClose={toggleFileTree}
+          trailing={
+            <>
+              {git.data?.available && git.data.branch && (
+                // Branch names are as long as the team wants them to be, and the
+                // title next to them only has `flex-1`. `shrink-0` with no width
+                // of its own meant a long branch pushed the header — and the
+                // panel's right edge — out of the window, so the badge gives up
+                // width instead and the name goes to an ellipsis.
+                <Badge
+                  tone="neutral"
+                  size="sm"
+                  className="min-w-0 max-w-28 shrink font-mono"
+                  title={git.data.branch}
+                >
+                  <span className="min-w-0 truncate">{git.data.branch}</span>
+                </Badge>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={
+                  showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
+                }
+                aria-label={
+                  showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
+                }
+                onClick={() => setShowHidden((v) => !v)}
               >
-                <span className="min-w-0 truncate">{git.data.branch}</span>
-              </Badge>
-            )}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title={
-                showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
-              }
-              aria-label={
-                showHidden ? t("隠しファイルを隠す") : t("隠しファイルを表示")
-              }
-              onClick={() => setShowHidden((v) => !v)}
-            >
-              {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title={t("更新")}
-              aria-label={t("更新")}
-              onClick={refresh}
-            >
-              <RefreshCw size={12} />
-            </Button>
-          </>
-        }
-      />
-
-      {root && (
-        <div className="shrink-0 px-2 pb-1.5">
-          <SearchField
-            icon={<Search size={12} />}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder={t("ファイルを検索")}
-            aria-label={t("ファイルを検索")}
-            {...(filter
-              ? { onClear: () => setFilter(""), clearLabel: t("クリア") }
-              : {})}
-          />
-        </div>
-      )}
-
-      {root ? (
-        deferredFilter ? (
-          // Keyboard travel is delegated from the container to its native
-          // buttons, the same pattern the thread sidebar uses.
-          // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-          <div
-            ref={treeRef}
-            onKeyDown={onTreeKeyDown}
-            aria-label={t("検索結果")}
-            className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
-          >
-            {search.isPending ? (
-              <ListSkeleton rows={3} />
-            ) : search.isError ? (
-              <ErrorAlert error={search.error} />
-            ) : (search.data ?? []).length === 0 ? (
-              <EmptyState compact title={t("一致するファイルがありません")} />
-            ) : (
-              (search.data ?? []).map((path) => {
-                const at = path.lastIndexOf("/");
-                return (
-                  <button
-                    key={path}
-                    type="button"
-                    data-tree-row
-                    data-tree-path={path}
-                    data-tree-depth={0}
-                    onClick={() => openFilePreview(path)}
-                    title={path}
-                    className={rowClass}
-                  >
-                    <File size={12} className="shrink-0 text-faint" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {at >= 0 ? (
-                        <>
-                          <span className="text-faint">
-                            {path.slice(0, at + 1)}
-                          </span>
-                          {path.slice(at + 1)}
-                        </>
-                      ) : (
-                        path
-                      )}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        ) : (
-          // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-          <div
-            ref={treeRef}
-            onKeyDown={onTreeKeyDown}
-            aria-label={t("ファイル")}
-            className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
-          >
-            <DirRows path="" depth={0} ctx={ctx} />
-          </div>
-        )
-      ) : (
-        <EmptyState
-          compact
-          className="flex flex-1 flex-col items-center justify-center"
-          title={t("プロジェクトにフォルダを設定してください")}
-          action={
-            <Button size="sm" onClick={() => setView("projects")}>
-              {t("プロジェクト")}
-            </Button>
+                {showHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={t("更新")}
+                aria-label={t("更新")}
+                onClick={refresh}
+              >
+                <RefreshCw size={12} />
+              </Button>
+            </>
           }
         />
-      )}
 
-      {root && git.isError && (
-        <div className="p-2">
-          <ErrorAlert error={t("git を利用できません")} />
-        </div>
-      )}
-    </aside>
+        {root && (
+          <div className="shrink-0 px-2 pb-1.5">
+            <SearchField
+              icon={<Search size={12} />}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t("ファイルを検索")}
+              aria-label={t("ファイルを検索")}
+              {...(filter
+                ? { onClear: () => setFilter(""), clearLabel: t("クリア") }
+                : {})}
+            />
+          </div>
+        )}
+
+        {root ? (
+          deferredFilter ? (
+            // Keyboard travel is delegated from the container to its native
+            // buttons, the same pattern the thread sidebar uses.
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+            <div
+              ref={treeRef}
+              onKeyDown={onTreeKeyDown}
+              aria-label={t("検索結果")}
+              className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
+            >
+              {search.isPending ? (
+                <ListSkeleton rows={3} />
+              ) : search.isError ? (
+                <ErrorAlert error={search.error} />
+              ) : (search.data ?? []).length === 0 ? (
+                <EmptyState compact title={t("一致するファイルがありません")} />
+              ) : (
+                (search.data ?? []).map((path) => {
+                  const at = path.lastIndexOf("/");
+                  return (
+                    <button
+                      key={path}
+                      type="button"
+                      data-tree-row
+                      data-tree-path={path}
+                      data-tree-depth={0}
+                      onClick={() => openFilePreview(path)}
+                      title={path}
+                      className={rowClass}
+                    >
+                      <File size={12} className="shrink-0 text-faint" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {at >= 0 ? (
+                          <>
+                            <span className="text-faint">
+                              {path.slice(0, at + 1)}
+                            </span>
+                            {path.slice(at + 1)}
+                          </>
+                        ) : (
+                          path
+                        )}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+            <div
+              ref={treeRef}
+              onKeyDown={onTreeKeyDown}
+              aria-label={t("ファイル")}
+              className="stable-scroll flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
+            >
+              <DirRows path="" depth={0} ctx={ctx} />
+            </div>
+          )
+        ) : (
+          <EmptyState
+            compact
+            className="flex flex-1 flex-col items-center justify-center"
+            title={t("プロジェクトにフォルダを設定してください")}
+            action={
+              <Button size="sm" onClick={() => setView("projects")}>
+                {t("プロジェクト")}
+              </Button>
+            }
+          />
+        )}
+
+        {root && git.isError && (
+          <div className="p-2">
+            <ErrorAlert error={t("git を利用できません")} />
+          </div>
+        )}
+      </aside>
+      <ResizableHandle
+        value={fileTreeWidth}
+        min={FILE_TREE_MIN_WIDTH}
+        max={FILE_TREE_MAX_WIDTH}
+        label={t("ファイルツリーの幅を変更")}
+        onChange={setFileTreeWidth}
+        onCommit={commitFileTreeWidth}
+      />
+    </>
   );
 }

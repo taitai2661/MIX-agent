@@ -86,15 +86,26 @@ export const Composer = memo(function Composer(props: ComposerProps) {
   const canSteer = busy && !!onSteer && state.draft.trim().length > 0;
 
   const placeholder =
-    mode === "agent"
-      ? t("エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)")
-      : mode === "thinking"
-        ? t("深く考えてほしいことを入力…")
-        : t("MIX-agent に話しかける…");
+    mode === "plan"
+      ? t("計画したいタスクを入力…（読み取り専用）")
+      : mode === "agent"
+        ? t("エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)")
+        : mode === "thinking"
+          ? t("深く考えてほしいことを入力…")
+          : t("MIX-agent に話しかける…");
 
   return (
     <div className="border-t border-line bg-bg px-4 pb-4 pt-3">
-      <div className="mx-auto flex w-full max-w-content flex-col gap-2">
+      <div className="relative mx-auto flex w-full max-w-content flex-col gap-2">
+        {state.slashQuery !== null && state.mentionQuery === null && (
+          <SlashCommandPopover
+            query={state.slashQuery}
+            onSelect={state.onSelectSlashCommand}
+            selectedIndex={state.slashIndex}
+            setSelectedIndex={state.setSlashIndex}
+            allowedModes={allowedModes}
+          />
+        )}
         <div
           onDragOver={(e) => {
             if ([...(e.dataTransfer?.types ?? [])].includes("Files")) {
@@ -139,14 +150,6 @@ export const Composer = memo(function Composer(props: ComposerProps) {
                 onClose={() => state.setMentionQuery(null)}
                 selectedIndex={state.mentionIndex}
                 setSelectedIndex={state.setMentionIndex}
-              />
-            )}
-            {state.slashQuery !== null && state.mentionQuery === null && (
-              <SlashCommandPopover
-                query={state.slashQuery}
-                onSelect={state.onSelectSlashCommand}
-                selectedIndex={state.slashIndex}
-                setSelectedIndex={state.setSlashIndex}
               />
             )}
             <textarea

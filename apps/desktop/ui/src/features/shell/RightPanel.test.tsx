@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setLanguage } from "@/lib/i18n";
 import { createTimeline } from "@/lib/runEvents";
@@ -48,6 +48,8 @@ afterEach(() => {
   useUi.setState({
     surface: "desktop-agent",
     rightPanel: "none",
+    rightPanelDocked: true,
+    rightPanelWidth: 380,
     conversationId: null,
     activityRunId: null,
   });
@@ -92,5 +94,39 @@ describe("RightPanel on the chat surface", () => {
     expect(screen.queryByRole("radio", { name: "変更" })).toBeNull();
     expect(screen.queryByRole("radio", { name: "ブラウザ" })).toBeNull();
     expect(await screen.findByText("gpt-4o")).toBeInTheDocument();
+  });
+
+  it("resizes the docked panel by dragging its left edge", () => {
+    useUi.setState({
+      surface: "chat",
+      rightPanel: "usage",
+      conversationId: "conv-1",
+      rightPanelDocked: true,
+      rightPanelWidth: 380,
+    });
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    try {
+      renderPanel();
+      const separator = screen.getByRole("separator", {
+        name: "サイドパネルの幅を変更",
+      });
+
+      fireEvent.pointerDown(separator, {
+        pointerId: 1,
+        clientX: 600,
+        button: 0,
+      });
+      fireEvent.pointerMove(separator, { pointerId: 1, clientX: 520 });
+      fireEvent.pointerUp(separator, { pointerId: 1, clientX: 520 });
+
+      // Dragging the right panel's left edge leftwards grows the pane.
+      expect(useUi.getState().rightPanelWidth).toBe(460);
+    } finally {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+    }
   });
 });

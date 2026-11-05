@@ -54,6 +54,7 @@
 | [`desktop/chromium-on-demand-plan.md`](desktop/chromium-on-demand-plan.md) | 設計記録 | Chromium を同梱から初回インストールへ変えた理由と代替案（現行手順は `desktop/architecture.md` の「Managed Chromium」） |
 | [`desktop/performance-plan.md`](desktop/performance-plan.md) | 計画 | 起動・描画・実行時処理・常駐リソースの軽量化（Phase 0〜5、計測と受け入れ条件） |
 | [`desktop/agent-speed-plan.md`](desktop/agent-speed-plan.md) | 計画 | エージェント 1 ターンの高速化（コンテキスト予算・キャッシュ・検証段階化・ルーティング。品質ゲート付き） |
+| [`desktop/spotlight-plan.md`](desktop/spotlight-plan.md) | 計画 | macOS Spotlight（Core Spotlight）への会話・プロジェクト・ナレッジ索引とクリック遷移（Phase 0〜3） |
 
 - Desktop 版の現行挙動は `desktop/architecture.md` に集約する。`*-plan.md` は決定の理由と経緯だけを残し、実装手順や現行仕様を重複して書かない。
 - 計画書に「未決事項」を残したまま実装を完了させない。決めた内容は計画書へ追記し、現行仕様へ反映する。

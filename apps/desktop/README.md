@@ -3,7 +3,7 @@
 Tauri 2 + Rust + React 19 で実装された、**OpenCode のように自律動作するデスクトップ・コーディングエージェント**。
 ローカルマシンの作業ディレクトリ（ワークスペース）に直接接続し、コード探索（`grep`/`glob`）、構造化計画立案、最小差分のコード編集（`edit`）、永続 PTY シェルでのビルド・テスト・検証ループ（`terminal`）を自律的に回せる開発相棒です。
 
-Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）の仕様を踏襲しつつ、**Docker 不要の単一バイナリ・OS Keychain 連携・ローカル直接作業**に特化しています。
+Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 契約）の仕様を踏襲しつつ、**Docker 不要の単一バイナリ・OS 安全ストレージ連携・ローカル直接作業**に特化しています。
 
 > [!IMPORTANT]
 > **Docker 版との完全分離**: `apps/desktop/` は Docker 版の Python / FastAPI バックエンドや PostgreSQL に一切依存しません。同一の仕様書（[`docs/desktop/architecture.md`](../../docs/desktop/architecture.md) および [`docs/desktop/api-mapping.md`](../../docs/desktop/api-mapping.md)）に基づいて独立して Rust で再実装されています。
@@ -19,7 +19,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 | **起動環境** | Docker 不要。`.dmg` / `.exe` / `.deb` インストーラーから即起動 | Docker Engine & Docker Compose が必要 |
 | **プロセス構成** | 単一デスクトップバイナリ（tokio in-proc タスク） | 5 つの Docker コンテナ（app, web, db, runner, proxy） |
 | **データ管理** | SQLite (WAL モード + FTS5 全文検索)。DB 本体は平文のため、保存時の保護は OS のディスク暗号化（FileVault / BitLocker / LUKS）に依存 | PostgreSQL (pg_trgm インデックス) |
-| **秘密情報保護** | **OS Keychain にマスター鍵**（macOS Keychain / Windows Credential Manager）+ AES-256-GCM 暗号化ファイル。Linux は Secret Service があれば Keychain 方式 | 暗号化 DB カラム (AES-GCM + scrypt) |
+| **秘密情報保護** | AES-256-GCM 暗号化ファイル。macOS は `.master_seed`（0600）方式、Windows は Credential Manager にマスター鍵。Linux はファイル方式（Secret Service があれば `MIX_SECRET_BACKEND=keychain-seed` で切替可） | 暗号化 DB カラム (AES-GCM + scrypt) |
 | **ターミナル実行** | ローカルマシンの **永続 PTY シェル**（環境変数や `cd` が継続） | execution-runner コンテナ内の非 root シェル |
 | **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを tokio 子プロセスで直接制御 | execution-runner コンテナ内の Playwright |
 | **ファイル操作** | ホストマシンのファイルに直接アクセス・インライン差分編集 (`edit`) | マウントされたボリュームのみ操作可能 |
@@ -42,7 +42,7 @@ apps/desktop/
 ├── tools/                # Tool Registry + ツール実行基盤
 ├── browser/              # Browser Operator + chromiumoxide backend
 ├── mcp/                  # MCP client host (stdio / Remote HTTP)
-├── storage/              # SQLite + OS Keychain (keyring-rs)
+├── storage/              # SQLite + 秘密ストア (file seed / keyring-rs)
 ├── scripts/              # pin-chromium.mjs（Chrome for Testing のバージョン固定）
 └── ui/                   # React 19 + Vite + Tailwind（Desktop 専用ネイティブ UI）
 ```
@@ -142,7 +142,7 @@ pnpm tauri:build     # 現在の OS の全ターゲット（Windows は NSIS + M
 "MIX-agent Desktop" --version
 ```
 
-`--doctor` はデータディレクトリの書き込み可否、DB の schema version と `quick_check`、秘密情報バックエンド（Keychain master seed / file）の到達性を読み取り専用で確認します。DB を変更しないため、破損時の一次切り分けに使えます。
+`--doctor` はデータディレクトリの書き込み可否、DB の schema version と `quick_check`、秘密情報バックエンド（`file` / `keychain-seed` / `keychain`）の到達性を読み取り専用で確認します。macOS の既定は `file` で、旧 Keychain seed の移行後は Keychain にアクセスしません。DB を変更しないため、破損時の一次切り分けに使えます。
 
 ### 言語サーバー（任意）
 

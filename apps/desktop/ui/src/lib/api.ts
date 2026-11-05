@@ -53,6 +53,8 @@ import type {
   ScheduleJobView,
   SendMessageOutput,
   SettingsView,
+  SpotlightStatus,
+  SpotlightTarget,
   SkillResourceView,
   SkillView,
   ToolView,
@@ -513,6 +515,12 @@ export const api = {
   updateSettings: (input: SettingsView) =>
     invoke<SettingsView>("update_settings", { input }),
 
+  spotlightStatus: () => invoke<SpotlightStatus>("spotlight_status"),
+  spotlightRebuild: () => invoke<void>("spotlight_rebuild"),
+  spotlightClear: () => invoke<void>("spotlight_clear"),
+  spotlightTakePending: () =>
+    invoke<SpotlightTarget | null>("spotlight_take_pending"),
+
   listAgents: () => invoke<AgentView[]>("list_agents"),
   createAgent: (input: {
     name: string;
@@ -587,11 +595,14 @@ export const api = {
     invoke<number>("save_base64_file", { path, dataBase64 }),
 
   // In-app updates. `checkForUpdate` resolves `null` when the running build is
-  // already the newest; `installUpdate` re-checks, downloads, verifies the
-  // signature and installs (then the caller relaunches).
+  // already the newest; `downloadUpdate` verifies and stages the payload, and
+  // `pendingUpdate` restores that staged state after a restart. The staged
+  // update is applied on the next normal quit; there is no install command the
+  // WebView can call to restart the app.
   appVersion: () => invoke<string>("app_version"),
   checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
-  installUpdate: () => invoke<UpdateInfo>("install_update"),
+  downloadUpdate: () => invoke<UpdateInfo>("download_update"),
+  pendingUpdate: () => invoke<UpdateInfo | null>("pending_update"),
 };
 
 export interface RunEventPayload {

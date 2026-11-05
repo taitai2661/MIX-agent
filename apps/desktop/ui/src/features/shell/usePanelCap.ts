@@ -45,6 +45,20 @@ export function usePanelCap(row: HTMLElement | null): number | null {
         setCap(measureCap(row));
       });
     };
+    // Which panels exist and how wide they are. `ResizeObserver` on the row
+    // alone misses a pane being dragged narrower or wider, because the row
+    // itself keeps its size. Re-observe on child changes so opening (and
+    // unmounting) a pane does not leave a stale observer behind.
+    const panes = new ResizeObserver(measure);
+    const observePanes = () => {
+      panes.disconnect();
+      for (const pane of row.querySelectorAll<HTMLElement>(
+        "[data-side-panel]",
+      )) {
+        panes.observe(pane);
+      }
+    };
+    observePanes();
     measure();
     // The window. Both of these matter: `resize` is what a native window
     // actually delivers, and a ResizeObserver on the row is what catches the
@@ -52,15 +66,19 @@ export function usePanelCap(row: HTMLElement | null): number | null {
     window.addEventListener("resize", measure);
     const sizes = new ResizeObserver(measure);
     sizes.observe(row);
-    // Which panels exist: opening or closing one does not change the row's own
-    // size, so neither of the above hears about it and the cap would be left at
-    // the value computed for the previous set.
-    const contents = new MutationObserver(measure);
+    // Opening or closing a panel does not change the row's own size, so
+    // neither of the above hears about it and the cap would be left at the
+    // value computed for the previous set.
+    const contents = new MutationObserver(() => {
+      observePanes();
+      measure();
+    });
     contents.observe(row, { childList: true, subtree: true });
     return () => {
       if (frame) window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", measure);
       sizes.disconnect();
+      panes.disconnect();
       contents.disconnect();
     };
   }, [row]);

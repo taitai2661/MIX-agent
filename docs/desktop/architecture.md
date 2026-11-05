@@ -19,7 +19,7 @@ MIX-agent/
 │   │   ├── tools/       Tool Registry + executor
 │   │   ├── browser/     Browser Operator + chromiumoxide backend
 │   │   ├── mcp/         MCP client host
-│   │   ├── storage/     SQLite + Keychain
+│   │   ├── storage/     SQLite + Secret store
 │   │   ├── scripts/     pin-chromium.mjs
 │   │   └── ui/          React 19 + Vite + Tailwind (Desktop独自UI)
 │   ├── server/                 # Docker 版バックエンド (FastAPI + Python)
@@ -274,9 +274,43 @@ cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURL
 - 推論リクエストは `Accept: text/event-stream` を明示し、一時的な 5xx / 接続断 /
   クォータ未達の 429 はバックオフ付きで再試行する。
 
+## macOS Spotlight 索引
+
+macOS の **Core Spotlight**（`CSSearchableIndex`）へ、会話・プロジェクト・
+ナレッジを登録する。実装は `app/src/spotlight/` に閉じ、他プラットフォームでは
+no-op になる。
+
+- **対象**: `conversation:<id>` / `project:<id>` / `knowledge:<docId>`。
+  content type は `public.text`。タイトル、短い説明、キーワード、更新日時を
+  登録し、本文索引を有効にした場合だけ本文も `textContent` に入れる。
+- **既定**: `spotlight_enabled = false`、`spotlight_index_body = false`。
+  システム全体の検索結果に出るため opt-in。無効化すると
+  `deleteAllSearchableItems` でこのアプリの索引を削除する。
+- **キュー**: `spotlight_items`（`item_id` / `domain` / `source_id` /
+  `content_hash` / `state`）と `spotlight_meta`。起動 5 秒後に差分
+  reconcile し、変更系コマンドと Run の終了時は 2 秒デバウンスで
+  バッチ索引する。失敗は `last_error` に残し、次の pass で再試行する。
+- **クリック**: tao の `NSApplicationDelegate` は browsing-web 以外の
+  `NSUserActivity` を `false` で落とすため、
+  `application:continueUserActivity:restorationHandler:` と
+  `application:willContinueUserActivityWithType:` の IMP を差し替える。
+  `CSSearchableItemActivityIdentifier` を `conversation:` などの接頭辞で
+  解釈し、`spotlight://open` を UI へ emit する。コールドスタート用に
+  最後の target を pending スロットへ残し、UI は
+  `spotlight_take_pending` で drain する。
+- **開発時の制約**: `tauri dev` の非バンドル実行には
+  `CFBundleIdentifier` がなく、Core Spotlight に登録できない。設定画面は
+  「この環境では利用できません」と表示する。動作確認は `tauri build` で
+  生成した `.app` を `/Applications` に置いて行う。手動スモークは
+  `cargo build -p mix-agent-desktop --example spotlight_smoke` で作った
+  バイナリを最小 `.app` に包んで実行する。
+- **設定**: macOS のみ「設定 ▸ Spotlight」タブ。有効化 / 本文索引 /
+  索引済み・未処理件数 / 最終同期 / 最終エラー / 再構築 / 索引から削除。
+- **設計経緯**: [`spotlight-plan.md`](spotlight-plan.md)。
+
 ## セキュリティ
 
-- **Secret store**: macOS / Windows では **マスター seed を OS Keychain**（`keyring-rs`）に置き、AES-256-GCM の暗号文は `secrets.enc.json`（0600）に残します。これによりデータディレクトリだけを読んでも資格情報は復号できません。既存のファイル seed は「コピー → 読み戻し確認 → 削除」で自動移行します。`MIX_SECRET_BACKEND=file|keychain` で従来のファイル方式 / 全 Keychain 方式を強制できます。Linux は Secret Service が常にあるとは限らないため既定でファイル方式です。
+- **Secret store**: AES-256-GCM の暗号文は `secrets.enc.json`（0600）に保存します。macOS は **マスター seed をデータディレクトリ内の `.master_seed`（0600）** に置きます。Desktop 版は ad-hoc 署名で配布しており、ログイン Keychain は再ビルドごとに別アプリと認識してパスワードダイアログを出すため、通常起動では Keychain を読みません。旧版で Keychain に seed がある場合は初回だけ読み取り、`.master_seed` へコピーして以後はアクセスしません（旧ファイル seed は `.master_seed_backup` として残し、復号のフォールバックに使います）。Windows は従来どおり **Credential Manager にマスター seed** を置きます（同一ユーザーではプロンプトが出ないため）。Linux は Secret Service が常にあるとは限らないためファイル方式です。`MIX_SECRET_BACKEND=file|keychain|keychain-seed` で明示的に切り替えられます。
 - **DB 暗号化設定 (Codex 互換)**: 標準は **OFF（平文 SQLite）** で動作し、所有者のみ読み書き可（0600）のアクセス権で保護されます（Codex parity）。設定（GeneralSettings）から保存時の暗号化を **ON / OFF** 切り替え可能で、ON に設定された場合は OS Keychain にマスター暗号化鍵（`db.master`）が生成・保管されます。診断画面（Diagnostics）でも暗号化状態が確認できます。
 - **Egress allowlist + private IP deny**: `tools::network` が reqwest 実行前に検査。allowlist が空なら公開ホストのみ許可し、private IP は常に拒否します。保存済みルールは `*.example.com` のようなワイルドカードに対応します。
 - **WebView CSP**: `app/tauri.conf.json` の `app.security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
@@ -413,7 +447,7 @@ Tauri updater plugin を有効にし、`bundle.createUpdaterArtifacts = true` �
 
 署名秘密鍵は GitHub Actions の Repository Secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` にのみ置きます。公開鍵は `tauri.conf.json` の `plugins.updater.pubkey` に埋め込みます。秘密鍵を失うと既存インストールへ更新を配信できなくなるため、リポジトリ外にオフラインバックアップを保管してください。
 
-アプリ内の更新は Rust の `commands::update`（`app_version` / `check_for_update` / `install_update`）を経由します。WebView には `updater:*` 権限を渡しません。起動時チェックは設定 `auto_check_updates`（既定 `true`）で制御し、「設定 ▸ アップデート」から手動確認・ダウンロード・インストール・再起動ができます。更新の適用前にプラグインが公開鍵で署名を検証し、不一致のペイロードはインストールしません。
+アプリ内の更新は Rust の `commands::update`（`app_version` / `check_for_update` / `download_update` / `pending_update`）を経由します。WebView には `updater:*` 権限を渡しません。起動時チェックは設定 `auto_check_updates`（既定 `true`）、自動ダウンロードは `auto_download_updates`（既定 `true`）で制御します。ダウンロードしたペイロードは `<app-data>/updates` に署名検証済みで保存し、ユーザーがアプリを通常終了したときにインストールします。再起動は自動では行わず、次回起動が新バージョンになります。Linux の deb はアプリ内更新の対象外です。
 
 macOS は引き続き Developer ID 署名・公証なし（ad-hoc 署名のみ）、Windows インストーラーは未署名です。これはアップデータ署名とは独立で、Gatekeeper / SmartScreen の警告は残ります。配布物の `SHA256SUMS` も従来どおり添付します。
 
@@ -427,8 +461,8 @@ macOS は引き続き Developer ID 署名・公証なし（ad-hoc 署名のみ�
   （稼働中の WAL DB をファイルコピーすると破れたページを取り込むため不可）。
 - `tar` → zlib → AES-256-GCM。鍵は Argon2id でパスワードから導出。
 - コンテナヘッダは `MIXBAK\x01\x00` + salt(16) + nonce(12) + ciphertext。
-- **API key は含めない**。OS Keychain にあり、バックアップに書くと復号鍵が
-  ディスクへ平文で出るため。復元後に再入力が必要。
+- **API key は含めない**。秘密ストア（`.master_seed` / OS 安全ストレージ）に
+  あり、バックアップに書くと復号鍵がディスクへ平文で出るため。復元後に再入力が必要。
 - Restore は復号を検証したうえで `mix-agent.restored.db` に**ステージング**
   する。実行中プロセスは SQLite プールを開いているため、その場でファイルを
   差し替えると破損する危険がある。`Storage::open` が起動時に

@@ -152,6 +152,8 @@ export function App() {
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const sidebarCloseRef = useRef<HTMLButtonElement>(null);
+  const conversationMenuRef = useRef<HTMLDivElement>(null);
+  const conversationMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const qc = useQueryClient();
   const [openConversationMenu, setOpenConversationMenu] = useState<
     string | null

@@ -9,8 +9,28 @@ import {
   CONVERSATIONS_QUERY_KEY,
   PENDING_APPROVALS_QUERY_KEY,
 } from "@/lib/queries";
-import { useUi, type SettingsTab, type View } from "@/lib/ui";
+import { surfaceForMode, useUi, type SettingsTab, type View } from "@/lib/ui";
 import { t } from "@/lib/i18n";
+import type { SpotlightTarget } from "@/lib/types";
+
+/** Navigate to the target carried by a Spotlight result click. */
+function applySpotlightTarget(target: SpotlightTarget) {
+  const state = useUi.getState();
+  switch (target.kind) {
+    case "conversation":
+      state.setSurface(surfaceForMode(target.mode ?? "chat"));
+      state.setConversationId(target.id);
+      state.setView("chat");
+      break;
+    case "project":
+      state.setActiveProjectId(target.id);
+      state.setView("projects");
+      break;
+    case "knowledge":
+      state.openSettings("knowledge");
+      break;
+  }
+}
 
 /**
  * Open a blank chat without creating an empty conversation row.
@@ -42,7 +62,7 @@ export function useCreateThread() {
       const { surface, mode, modelId, activeProjectId } = useUi.getState();
       const isAgent = surface === "desktop-agent";
       const threadMode = isAgent
-        ? "agent"
+        ? mode
         : mode === "thinking"
           ? "thinking"
           : "chat";
@@ -210,6 +230,28 @@ export function useShellEvents(handlers: {
         if (active) void queryClient.invalidateQueries({ queryKey: ["mcp"] });
       }),
     );
+
+    // A Spotlight result click arrives as the identifier's navigation target.
+    // The event and the pending drain cover the two races: the app is already
+    // running, or the click cold-started it before this listener existed.
+    track(
+      listen<SpotlightTarget>("spotlight://open", (event) => {
+        if (!active) return;
+        applySpotlightTarget(event.payload);
+        // The event and the pending slot are two delivery paths for one click;
+        // once the event arrived, clear the cold-start copy so a WebView remount
+        // does not replay the navigation.
+        void api.spotlightTakePending().catch(() => undefined);
+      }),
+    );
+    void api
+      .spotlightTakePending()
+      .then((target) => {
+        if (active && target) applySpotlightTarget(target);
+      })
+      .catch(() => {
+        // Older builds without the command simply never produce a target.
+      });
 
     return () => {
       active = false;

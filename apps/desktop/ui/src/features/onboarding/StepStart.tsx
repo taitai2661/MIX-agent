@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Folder, MessageSquare } from "lucide-react";
+import { Check, Folder, MessageSquare, ShieldCheck } from "lucide-react";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { useActiveProject, useModels, useProviders } from "@/lib/queries";
@@ -59,19 +59,8 @@ export function StepStart({
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <h2 className="text-xl font-semibold tracking-tight text-fg">
-          {t("準備ができました")}
-        </h2>
-        <p className="text-sm text-muted">
-          {t(
-            "チャットを始められます。ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。",
-          )}
-        </p>
-      </div>
-
-      <ul className="flex flex-col gap-2">
+    <div className="flex flex-col gap-5">
+      <ul className="flex flex-col gap-2.5">
         <SummaryRow
           done={modelCount > 0}
           label={t("モデル")}
@@ -89,6 +78,17 @@ export function StepStart({
           }
         />
       </ul>
+
+      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-inset/50 p-3.5">
+        <ShieldCheck
+          size={15}
+          className="mt-0.5 shrink-0 text-brand"
+          aria-hidden="true"
+        />
+        <span className="text-xs leading-5 text-muted">
+          {t("ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。")}
+        </span>
+      </div>
 
       <Row className="flex-wrap">
         <Button
@@ -136,19 +136,19 @@ function SummaryRow({
   value: string;
 }) {
   return (
-    <li className="flex items-center gap-2.5 rounded-xl border border-line bg-surface px-3 py-3">
+    <li className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3">
       <span
         aria-hidden="true"
         className={cn(
-          "flex size-5 shrink-0 items-center justify-center rounded-full",
+          "flex size-7 shrink-0 items-center justify-center rounded-full",
           done ? "bg-success-soft text-success" : "bg-inset text-faint",
         )}
       >
-        <Check size={11} className={done ? undefined : "opacity-40"} />
+        <Check size={13} className={done ? undefined : "opacity-40"} />
       </span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-xs text-faint">{label}</span>
-        <span className="truncate text-xs text-fg">{value}</span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-2xs text-faint">{label}</span>
+        <span className="truncate text-xs font-medium text-fg">{value}</span>
       </span>
     </li>
   );

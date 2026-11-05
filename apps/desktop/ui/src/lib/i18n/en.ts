@@ -72,6 +72,8 @@ export const en: Record<string, string> = {
   // Chat composer
   "MIX-agent に話しかける…": "Message MIX-agent…",
   "深く考えてほしいことを入力…": "Ask for a deep, careful answer…",
+  "計画したいタスクを入力…（読み取り専用）":
+    "Describe what to plan… (read-only)",
   "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)":
     "Instruct the agent… (terminal execution & file edits allowed)",
   "プロジェクトを選択": "Select a project",
@@ -291,6 +293,9 @@ export const en: Record<string, string> = {
     "Send with {shortcut}+Enter (Enter for newline)",
   "標準幅に戻す": "Reset panel width",
   "パネル幅を拡大": "Expand panel width",
+  "サイドバーの幅を変更": "Resize sidebar",
+  "ファイルツリーの幅を変更": "Resize file tree",
+  "サイドパネルの幅を変更": "Resize side panel",
   "ネットワーク": "Network",
   "アップデート": "Updates",
   "アプリのアップデート": "App updates",
@@ -300,15 +305,21 @@ export const en: Record<string, string> = {
   "更新を確認": "Check for updates",
   "ダウンロード中…": "Downloading…",
   "ダウンロード中… {percent}%": "Downloading… {percent}%",
+  "署名を検証しています…": "Verifying the signature…",
+  "更新をダウンロード中…": "Downloading the update…",
   "再起動": "Restart",
-  "v{version} をインストールしました。再起動すると適用されます。":
-    "Installed v{version}. Restart to apply it.",
+  "v{version} をダウンロードしました。次回 MIX-agent を終了（Quit）すると適用されます。":
+    "Downloaded v{version}. It will be applied the next time you quit MIX-agent.",
+  "v{version} を適用待ち": "v{version} waiting to be applied",
   "v{version} が利用可能です": "v{version} is available",
-  "ダウンロードしてインストール": "Download and install",
+  "ダウンロード": "Download",
   "最新バージョンです。": "You are up to date.",
   "起動時に更新を確認": "Check for updates on launch",
-  "起動時にGitHub Releasesのマニフェストを確認します。ダウンロードとインストールは署名を検証した上で、確認ダイアログから実行します。":
-    "Checks the GitHub Releases manifest on launch. Downloads and installs only after the signature is verified and you confirm.",
+  "起動時にGitHub Releasesのマニフェストを確認します。":
+    "Checks the GitHub Releases manifest on launch.",
+  "更新を自動でダウンロード": "Download updates automatically",
+  "起動時に新しいバージョンを見つけたら自動でダウンロードします。適用はメニュー／トレイの Quit で終了したときに行われ、再起動は手動です。":
+    "Downloads a newer version automatically when the launch check finds one. It is applied when you quit from the menu or tray; restarting is manual.",
   "Linuxのdebパッケージはアプリ内更新の対象外です。debで導入した場合はGitHub Releasesから手動で更新してください（AppImageは自動更新できます）。":
     "The Linux .deb package cannot update in-app; if you installed the .deb, update manually from GitHub Releases (AppImage builds update in-app).",
   "このビルドはアプリ内更新に対応していません。GitHub Releasesから手動で更新してください。":
@@ -347,6 +358,7 @@ export const en: Record<string, string> = {
   "素早い質疑応答": "Quick replies",
   "深く考えて回答": "Answer with deeper reasoning",
   "ツールで自律的に作業": "Work autonomously with tools",
+  "読み取り専用で計画を提示": "Propose a plan without editing",
 
   // Knowledge pane
   "ファイル名 (例: architecture.md)": "Filename (e.g. architecture.md)",
@@ -683,6 +695,42 @@ export const en: Record<string, string> = {
   "ブラウザ操作": "Browser control",
   "実際にブラウザを操作して検証": "Drives a real browser to verify results",
 
+  // Renewed first-run wizard (2026-11). The rail is a vertical map beside the
+  // task surface, so it also carries the step's intent.
+  "初回セットアップ": "First-run setup",
+  "デスクトップ": "Desktop",
+  "モデルを接続": "Connect a model",
+  "このアプリの頭脳になるモデルを選びます。ローカルでもクラウドでもかまいません。":
+    "Choose the model that powers this app — local or cloud.",
+  "頭脳をつなぐ": "Connect the brain",
+  "LM Studio や Ollama、またはクラウド API。あなたの環境に合うモデルを選べます。":
+    "LM Studio, Ollama, or a cloud API — choose what fits your environment.",
+  "作業フォルダを選ぶ": "Choose a working folder",
+  "エージェントがファイルを読み書きする場所を決めます。あとから変更できます。":
+    "Decide where the agent may read and write files. You can change this later.",
+  "作業場所を決める": "Choose the workspace",
+  "指定したフォルダの中だけが、エージェントの作業範囲になります。":
+    "The agent's workspace is limited to the folder you choose.",
+  "設定を確認して、最初のスレッドを開きましょう。":
+    "Review your setup and open your first thread.",
+  "さあ、始めましょう": "Let's get started",
+  "設定はいつでも変更できます。まずは気軽に話しかけてみてください。":
+    "You can change any of this later. Start by saying hello.",
+  "ローカルで動く AI ワークスペース": "A local AI workspace",
+  "会話もファイルも、あなたの端末の中に。プライバシーを保ったまま、日常の作業を任せられます。":
+    "Conversations and files stay on your device. Keep your privacy while delegating everyday work.",
+  "ローカルに保存": "Stored locally",
+  "会話・ファイル・設定はこの端末の中に保存されます。":
+    "Conversations, files, and settings are stored on this device.",
+  "現在": "Current",
+  "ステップ {n} / {total}": "Step {n} of {total}",
+  "3 つのステップで、すぐに使い始められます。":
+    "Three quick steps and you're ready to go.",
+  "ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。":
+    "Reading or writing files and running shell commands asks for confirmation every time.",
+  "選択したフォルダ": "Selected folder",
+  "フォルダが選ばれていません": "No folder selected",
+
   "モデル提供元の種類": "Kind of model provider",
   "この PC で動かす": "Runs on this PC",
   "クラウド API": "Cloud API",
@@ -779,8 +827,6 @@ export const en: Record<string, string> = {
   "接続してモデル一覧を取得": "Connect and fetch models",
 
   "フォルダを選択してください": "Choose a folder first",
-  "MIX-agent がファイルを読む・書く場所です。プロジェクトを作ると、そのフォルダの中だけが対象になります。":
-    "This is where MIX-agent reads and writes files. Creating a project limits it to the contents of that folder.",
   "既存のフォルダを選んでください（新しいフォルダは作成されません）":
     "Pick a folder that already exists — this wizard does not create one.",
   "このプロジェクトを使う": "Use this project",
@@ -788,8 +834,6 @@ export const en: Record<string, string> = {
   "あとから設定する": "Decide later",
 
   "準備ができました": "You're all set",
-  "チャットを始められます。ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。":
-    "You can start chatting. Reading or writing files, and running shell commands, always ask first.",
   "件": "models",
   "未設定（チャットはプロジェクトなしで始まります）":
     "Not set (chats will start without a project)",
@@ -1199,9 +1243,6 @@ export const en: Record<string, string> = {
   "現在のデータはバックアップの内容に置き換わります。この操作は元に戻せません。":
     "Current data will be replaced by the backup. This cannot be undone.",
   "再起動して適用": "Restart and apply",
-  "v{version} をインストールしますか？": "Install v{version}?",
-  "ダウンロードとインストールを開始します。インストール後はアプリの再起動が必要です。作業中の実行は完了してからにしてください。":
-    "The download and installation will start. The app must restart afterwards, so wait for any running task to finish first.",
 
   // Naming: agent profile vs. agent workspace / run mode
   "エージェントプロファイル": "Agent profiles",
@@ -1341,4 +1382,31 @@ export const en: Record<string, string> = {
   "このRunの変更をGitのスナップショットまで戻します。edit / files に加え、ターミナルが作成・変更したファイルも対象です。Run終了後に手で加えた変更も失われます。":
     "Restores this Run to its Git snapshot, covering files the terminal created or changed as well as edit / files. Manual changes made after the Run finished are lost too.",
   "{count} 件の変更を確認": "Review {count} changed file(s)",
+  "Spotlight": "Spotlight",
+  "macOS Spotlight": "macOS Spotlight",
+  "Spotlightに索引を提供": "Publish to Spotlight",
+  "会話・プロジェクト・ナレッジのタイトルをmacOSのSpotlight検索結果に表示します。":
+    "Show conversation, project, and knowledge titles in macOS Spotlight results.",
+  "本文も索引に含める": "Index body text too",
+  "会話とナレッジの本文も検索対象にします。ツール出力・添付ファイル・認証情報は含まれません。":
+    "Include conversation and knowledge body text in search. Tool output, attachments, and credentials are excluded.",
+  "索引はこのMacのローカルにのみ保存されます。アプリを削除しても索引が残る場合があります。":
+    "The index is stored locally on this Mac. It may remain after the app is uninstalled.",
+  "この環境ではSpotlight索引を利用できません":
+    "Spotlight indexing is unavailable in this environment",
+  "索引の操作に失敗しました。しばらくしてから再試行してください。":
+    "The index operation failed. Try again in a moment.",
+  "索引の再構築はバックグラウンドで実行されます。":
+    "Rebuilding runs in the background.",
+  "今すぐ再構築": "Rebuild now",
+  "索引から削除": "Remove from index",
+  "Spotlightの索引を削除しますか？": "Remove the Spotlight index?",
+  "MIX-agentが登録した索引をこのMacのSpotlightから削除します。設定を有効にしたままにすると、次回の変更時に再登録されます。":
+    "Removes MIX-agent's entries from Spotlight on this Mac. If the setting stays enabled, they are added again on the next change.",
+  "索引の状態": "Index status",
+  "索引済み": "Indexed",
+  "未処理": "Pending",
+  "最終同期": "Last sync",
+  "未実行": "Never",
+  "本文索引": "Body indexing",
 };

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -21,6 +21,7 @@ from openai import (
 from mix_agent.providers import chatgpt as chatgpt_oauth
 from mix_agent.providers.capability_probe import VISION_DATA_URL
 from mix_agent.providers.catalog import get_preset
+from mix_agent.providers.chatgpt_config import CODEX_CLIENT_VERSION
 from mix_agent.providers.metadata import context_limit, resolve
 from mix_agent.providers.model_roles import chat_capability
 from mix_agent.providers.reasoning import request_options, show_summary
@@ -85,20 +86,6 @@ DEFAULT_URLS = {
     "compatible": "",
 }
 CAPABILITIES = ("chat", "tools", "vision", "reasoning", "structured_output")
-
-
-def _client_version():
-    """Version sent to the Codex model catalog.
-
-    The source checkout has no installed distribution metadata, so fall back to
-    a stable value rather than omitting the query parameter entirely.
-    """
-    try:
-        from importlib.metadata import version
-
-        return version("mix-agent")
-    except Exception:  # noqa: BLE001 - metadata is optional in tests/source
-        return "0.0.0"
 
 
 # Default embedding model per provider kind (memory spec §5). A provider record
@@ -366,7 +353,7 @@ class Adapter:
         chatgpt = self.chatgpt
         if chatgpt is None:
             raise ProviderConfigurationError("ChatGPT transport is not configured")
-        url = self.url.rstrip("/") + "/models?client_version=" + quote(_client_version())
+        url = self.url.rstrip("/") + "/models?client_version=" + CODEX_CLIENT_VERSION
         headers = chatgpt.headers()
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             response = await client.get(url, headers=headers)

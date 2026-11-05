@@ -8,7 +8,7 @@ export interface DraftAttachment {
   filename: string;
 }
 
-export type ComposerMode = "chat" | "thinking" | "agent";
+export type ComposerMode = "chat" | "thinking" | "agent" | "plan";
 
 export interface ComposerProps {
   /** Direct-from-store defaults apply when omitted: ChatPane renders

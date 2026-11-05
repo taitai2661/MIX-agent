@@ -10,6 +10,8 @@ interface ResizableHandleProps {
   label: string;
   onChange: (value: number) => void;
   onCommit: (value: number) => void;
+  /** Overlay the handle on a pane edge instead of reserving flex space. */
+  edge?: "left" | "right";
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -24,6 +26,7 @@ export function ResizableHandle({
   label,
   onChange,
   onCommit,
+  edge,
 }: ResizableHandleProps) {
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{
@@ -113,8 +116,10 @@ export function ResizableHandle({
       onPointerCancel={finishDrag}
       onKeyDown={onKeyDown}
       className={cn(
-        "group relative z-10 w-2.5 shrink-0 cursor-col-resize touch-none outline-none",
-        "-mx-0.5",
+        "group z-10 w-2.5 cursor-col-resize touch-none outline-none",
+        edge
+          ? `absolute inset-y-0 ${edge === "right" ? "right-0" : "left-0"}`
+          : "relative shrink-0 -mx-0.5",
         "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2",
         "after:bg-transparent after:transition-colors hover:after:bg-brand/50",
         "focus-visible:after:bg-brand focus-visible:after:w-0.5 data-[dragging=true]:after:bg-brand data-[dragging=true]:after:w-0.5",

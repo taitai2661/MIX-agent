@@ -52,7 +52,10 @@ describe("useUi surface state", () => {
 
   it("SURFACE_MODES matches the documented split", () => {
     expect(SURFACE_MODES.chat).toEqual<RunMode[]>(["chat", "thinking"]);
-    expect(SURFACE_MODES["desktop-agent"]).toEqual<RunMode[]>(["agent"]);
+    expect(SURFACE_MODES["desktop-agent"]).toEqual<RunMode[]>([
+      "agent",
+      "plan",
+    ]);
   });
 
   it("defaultModeForSurface returns the first allowed mode", () => {
@@ -96,6 +99,18 @@ describe("useUi surface state", () => {
     useUi.setState({ surface: "desktop-agent", mode: "agent" });
     useUi.getState().setMode("agent");
     expect(useUi.getState().mode).toBe("agent");
+  });
+
+  it("setMode accepts plan on the desktop-agent surface", () => {
+    useUi.setState({ surface: "desktop-agent", mode: "agent" });
+    useUi.getState().setMode("plan");
+    expect(useUi.getState().mode).toBe("plan");
+  });
+
+  it("setMode refuses plan on the chat surface", () => {
+    useUi.setState({ surface: "chat", mode: "chat" });
+    useUi.getState().setMode("plan");
+    expect(useUi.getState().mode).toBe("chat");
   });
 
   it("setThreadFilter persists to localStorage", () => {

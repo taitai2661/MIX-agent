@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { CheckCircle2, AlertTriangle, Info, X, XCircle } from "lucide-react";
+import { t } from "@/app/i18n";
 
 export type ToastType = "success" | "error" | "warning" | "info";
 
@@ -61,7 +62,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
       {children}
-      <div className="toast-container" role="region" aria-label="通知">
+      <div
+        className="toast-container"
+        role="region"
+        aria-label={t("通知")}
+      >
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];
           const Icon = config.icon;
@@ -79,7 +84,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 className="toast-close"
-                aria-label="閉じる"
+                aria-label={t("閉じる")}
                 onClick={() => removeToast(toast.id)}
               >
                 <X size={14} />

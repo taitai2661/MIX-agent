@@ -234,7 +234,10 @@ function ChatMessageImpl({
           return (
             <div
               className="message-performance"
-              title={`出力 ${String(output)} tokens / 生成 ${String(ms)}ms`}
+              title={t("出力 {tokens} tokens / 生成 {ms}ms", {
+                tokens: String(output),
+                ms: String(ms),
+              })}
             >
               {tps.toFixed(1)} tokens/s
             </div>
