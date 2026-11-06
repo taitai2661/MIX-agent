@@ -4,6 +4,7 @@ import { Button } from "@/components/button";
 import { ConfirmButton } from "@/components/modal";
 import { CardSkeleton } from "@/components/loading";
 import { Empty, ErrorBox, Title } from "@/components/shared";
+import { useToast } from "@/components/toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -19,6 +20,7 @@ export function Projects() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { addToast } = useToast();
   const projects = useQuery<Project[]>({
     queryKey: ["/projects"],
     queryFn: () => api("/projects"),
@@ -47,18 +49,21 @@ export function Projects() {
       });
       setName("");
       await qc.invalidateQueries({ queryKey: ["/projects"] });
+      addToast({ type: "success", title: t("プロジェクトを作成しました") });
     } catch (cause) {
       setError(cause);
     }
   }
-  async function update(value: object) {
-    if (!project) return;
+  async function update(value: object): Promise<boolean> {
+    if (!project) return false;
     try {
       setError(null);
       await api(`/projects/${project.id}`, "PATCH", value);
       await qc.invalidateQueries({ queryKey: ["/projects"] });
+      return true;
     } catch (cause) {
       setError(cause);
+      return false;
     }
   }
   return (
@@ -115,7 +120,17 @@ export function Projects() {
               maxLength={20000}
             />
           </label>
-          <Button variant="outline" onClick={() => update({ instructions })}>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (await update({ instructions })) {
+                addToast({
+                  type: "success",
+                  title: t("指示を保存しました"),
+                });
+              }
+            }}
+          >
             {t("指示を保存")}
           </Button>
           <h3>{t("資料テキスト")}</h3>
@@ -127,7 +142,7 @@ export function Projects() {
                 <button
                   type="button"
                   onClick={() =>
-                    update({
+                    void update({
                       sources: project.data.sources.filter(
                         (_, i) => i !== index,
                       ),
@@ -149,11 +164,16 @@ export function Projects() {
           <Button
             variant="outline"
             disabled={!source.trim() || project.data.sources.length >= 20}
-            onClick={() => {
-              void update({
-                sources: [...project.data.sources, source.trim()],
-              });
-              setSource("");
+            onClick={async () => {
+              const text = source.trim();
+              if (!text) return;
+              if (await update({ sources: [...project.data.sources, text] })) {
+                setSource("");
+                addToast({
+                  type: "success",
+                  title: t("資料を追加しました"),
+                });
+              }
             }}
           >
             {t("資料を追加")}

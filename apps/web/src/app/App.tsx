@@ -1,5 +1,11 @@
 import { api, setCSRF, type Row } from "@/app/api";
 import { queryKeys } from "@/lib/queries";
+import {
+  HISTORY_GROUPS,
+  historyGroup,
+  historyTime,
+  type HistoryGroup,
+} from "@/lib/format";
 import { safeStorage } from "@/lib/storage";
 import { BrowserInstallNotifier } from "@/app/browser-install-notifier";
 import { ja } from "@/app/strings";
@@ -21,11 +27,13 @@ import {
   Folder,
   Trash2,
   X,
+  Search,
   MoreVertical,
   Pencil,
   Pin,
 } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -49,7 +57,7 @@ import { Empty, ErrorBox, Logo } from "@/components/shared";
 import { ThemeController } from "@/components/theme";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ConfirmModal, PromptModal } from "@/components/modal";
-import { ToastProvider } from "@/components/toast";
+import { useToast } from "@/components/toast";
 import { Tour } from "@/components/tour";
 import { Agents } from "@/features/agents/Agents";
 import { Auth } from "@/features/auth/Auth";
@@ -121,6 +129,7 @@ function ProjectChatRoute({
 
 export function App() {
   useLanguage();
+  const { addToast } = useToast();
   const sidebarMinimum = 220,
     sidebarMaximum = 380,
     sidebarDefault = 248;
@@ -154,16 +163,20 @@ export function App() {
   const sidebarCloseRef = useRef<HTMLButtonElement>(null);
   const conversationMenuRef = useRef<HTMLDivElement>(null);
   const conversationMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const returnMenuFocusRef = useRef(false);
   const qc = useQueryClient();
   const [openConversationMenu, setOpenConversationMenu] = useState<
     string | null
   >(null);
+  const [conversationQuery, setConversationQuery] = useState("");
+  const [folderFilter, setFolderFilter] = useState("");
   const [renameTarget, setRenameTarget] = useState<Row | null>(null);
   const [trashTarget, setTrashTarget] = useState<Row | null>(null);
   const [showTour, setShowTour] = useState(false);
   const updateConversation = useCallback(
     async (id: string, data: object) => {
       await api(`/conversations/${id}/state`, "PATCH", data);
+      returnMenuFocusRef.current = true;
       setOpenConversationMenu(null);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["/conversations"] }),
@@ -276,6 +289,50 @@ export function App() {
       }),
     enabled: !!user,
   });
+  const filteredConversations = useMemo(() => {
+    const query = conversationQuery.trim().toLocaleLowerCase();
+    return (conversations.data ?? []).filter((conversation) => {
+      if (
+        folderFilter &&
+        String(conversation.data.folder_id || "") !== folderFilter
+      )
+        return false;
+      if (!query) return true;
+      return String(conversation.data.title || "")
+        .toLocaleLowerCase()
+        .includes(query);
+    });
+  }, [conversationQuery, conversations.data, folderFilter]);
+  const pinnedConversations = useMemo(
+    () =>
+      filteredConversations.filter((conversation) => conversation.data.pinned),
+    [filteredConversations],
+  );
+  const groupedConversations = useMemo(() => {
+    const groups: Record<HistoryGroup, Row[]> = {
+      today: [],
+      yesterday: [],
+      week: [],
+      older: [],
+    };
+    filteredConversations
+      .filter((conversation) => !conversation.data.pinned)
+      .forEach((conversation) => {
+        groups[
+          historyGroup(
+            conversation.data.last_message_at || conversation.created_at,
+          )
+        ].push(conversation);
+      });
+    return groups;
+  }, [filteredConversations]);
+  const folderName = useCallback(
+    (id?: string | null) =>
+      folders.data?.find((folder) => folder.id === id)?.data.name as
+        | string
+        | undefined,
+    [folders.data],
+  );
   useEffect(() => {
     if (!openConversationMenu) return;
     const close = (event: MouseEvent) => {
@@ -283,7 +340,10 @@ export function App() {
         setOpenConversationMenu(null);
     };
     const keydown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setOpenConversationMenu(null);
+      if (event.key === "Escape") {
+        returnMenuFocusRef.current = true;
+        setOpenConversationMenu(null);
+      }
       const target = conversations.data?.find(
         (row) => row.id === openConversationMenu,
       );
@@ -314,6 +374,22 @@ export function App() {
       document.removeEventListener("keydown", keydown);
     };
   }, [openConversationMenu, conversations.data, updateConversation]);
+  useEffect(() => {
+    // Opening the menu should move keyboard focus into it. Without this the
+    // trigger kept focus, so ArrowDown/ArrowUp never reached the menu's key
+    // handler and the menu was effectively mouse-only.
+    if (!openConversationMenu) return;
+    conversationMenuRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]')
+      ?.focus();
+  }, [openConversationMenu]);
+  useEffect(() => {
+    // Escape unmounts the focused item, which would otherwise leave focus on
+    // <body>. Return it to the trigger after the menu has been removed.
+    if (openConversationMenu || !returnMenuFocusRef.current) return;
+    returnMenuFocusRef.current = false;
+    conversationMenuTriggerRef.current?.focus();
+  }, [openConversationMenu]);
   useEffect(() => {
     // A session can expire while the tab is open.  The API client emits this
     // event instead of surfacing a generic network error, so drop the cached
@@ -482,16 +558,36 @@ export function App() {
           onClick={() => setSidebar(false)}
           className="conversation-sidebar-link"
           to={"/chat/" + conversation.id}
+          title={conversation.data.title}
         >
-          {conversation.data.title}
+          <span className="conversation-sidebar-title">
+            {conversation.data.title}
+          </span>
+          <span className="conversation-sidebar-meta">
+            <span>
+              {historyTime(
+                conversation.data.last_message_at || conversation.created_at,
+              )}
+            </span>
+            {folderName(conversation.data.folder_id) && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{folderName(conversation.data.folder_id)}</span>
+              </>
+            )}
+          </span>
         </NavLink>
         <button
           className="conversation-sidebar-menu-button"
-          aria-label={`${conversation.data.title} ${t("のメニュー")}`}
+          aria-label={t("{title}のメニュー", {
+            title: conversation.data.title,
+          })}
+          aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            conversationMenuTriggerRef.current = event.currentTarget;
             setOpenConversationMenu(menuOpen ? null : conversation.id);
           }}
         >
@@ -499,8 +595,10 @@ export function App() {
         </button>
         {menuOpen && (
           <div
+            ref={conversationMenuRef}
             className="conversation-sidebar-menu"
             role="menu"
+            aria-label={t("会話の操作")}
             tabIndex={-1}
             onKeyDown={(event) => {
               const items = Array.from(
@@ -508,6 +606,7 @@ export function App() {
                   '[role="menuitem"]',
                 ),
               );
+              if (!items.length) return;
               const index = items.indexOf(
                 document.activeElement as HTMLElement,
               );
@@ -516,9 +615,16 @@ export function App() {
                 items[(index + 1) % items.length]?.focus();
               } else if (event.key === "ArrowUp") {
                 event.preventDefault();
-                items[(index - 1 + items.length) % items.length]?.focus();
+                items[index <= 0 ? items.length - 1 : index - 1]?.focus();
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                items[0]?.focus();
+              } else if (event.key === "End") {
+                event.preventDefault();
+                items[items.length - 1]?.focus();
               } else if (event.key === "Escape") {
                 event.preventDefault();
+                returnMenuFocusRef.current = true;
                 setOpenConversationMenu(null);
               }
             }}
@@ -620,7 +726,7 @@ export function App() {
     event.preventDefault();
   }
   return (
-    <ToastProvider>
+    <>
       <BrowserInstallNotifier />
       <div
         className={
@@ -655,7 +761,9 @@ export function App() {
               <Logo />
             )}
             <div className="sidebar-controls">
-              <ThemeController />
+              <div className="sidebar-theme">
+                <ThemeController />
+              </div>
               <button
                 className="icon sidebar-collapse-toggle"
                 onClick={() => setCollapsed(true)}
@@ -733,20 +841,79 @@ export function App() {
               {t("定期実行")}
             </NavLink>
           </nav>
-          {conversations.data?.some((c) => c.data.pinned) && (
+          <div className="sidebar-search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              value={conversationQuery}
+              onChange={(event) => setConversationQuery(event.target.value)}
+              placeholder={t("会話を検索")}
+              aria-label={t("会話を検索")}
+            />
+            {conversationQuery && (
+              <button
+                type="button"
+                className="icon"
+                onClick={() => setConversationQuery("")}
+                aria-label={t("検索をクリア")}
+                title={t("検索をクリア")}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          {folders.data?.length ? (
+            <div className="sidebar-folders" aria-label={t("フォルダ")}>
+              <button
+                type="button"
+                className={folderFilter ? "" : "active"}
+                aria-pressed={!folderFilter}
+                onClick={() => setFolderFilter("")}
+              >
+                {t("すべて")}
+              </button>
+              {folders.data.map((folder) => (
+                <button
+                  key={folder.id}
+                  type="button"
+                  className={folderFilter === folder.id ? "active" : ""}
+                  aria-pressed={folderFilter === folder.id}
+                  onClick={() =>
+                    setFolderFilter((current) =>
+                      current === folder.id ? "" : folder.id,
+                    )
+                  }
+                >
+                  {folder.data.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {pinnedConversations.length > 0 && (
             <div className="sidebar-label">{t("ピン留め")}</div>
           )}
           <div className="history">
-            {conversations.data
-              ?.filter((c) => c.data.pinned)
-              .map(conversationItem)}
-            <div className="sidebar-label compact">
-              <Folder size={12} />
-              {t("最近のチャット")}
-            </div>
-            {conversations.data
-              ?.filter((c) => !c.data.pinned)
-              .map(conversationItem)}
+            {pinnedConversations.map(conversationItem)}
+            {HISTORY_GROUPS.map((group) => {
+              const items = groupedConversations[group];
+              if (!items.length) return null;
+              const label = {
+                today: t("今日"),
+                yesterday: t("昨日"),
+                week: t("過去7日"),
+                older: t("それ以前"),
+              }[group];
+              return (
+                <Fragment key={group}>
+                  <div className="sidebar-label compact">{label}</div>
+                  {items.map(conversationItem)}
+                </Fragment>
+              );
+            })}
+            {!filteredConversations.length && (
+              <div className="sidebar-empty">
+                {t("該当する会話はありません。")}
+              </div>
+            )}
             <NavLink
               className="conversation-manage-link"
               to="/history"
@@ -767,7 +934,8 @@ export function App() {
           <div className="sidebar-bottom">
             <div className="local-badge">
               <span />
-              SELF-HOSTED<span className="version">v0.1</span>
+              SELF-HOSTED
+              <span className="version">v{__APP_VERSION__}</span>
             </div>
             <NavLink
               to="/settings/providers"
@@ -960,13 +1128,20 @@ export function App() {
                     await qc.invalidateQueries({
                       queryKey: ["/conversations"],
                     });
+                    addToast({
+                      type: "success",
+                      title: t("名前を変更しました"),
+                    });
                   } catch (cause) {
                     // A failed rename used to be an unhandled rejection: the
                     // dialog closed and the old title stayed with no
                     // explanation. Surface the server's message instead.
-                    window.alert(
-                      cause instanceof Error ? cause.message : String(cause),
-                    );
+                    addToast({
+                      type: "error",
+                      title: t("操作に失敗しました"),
+                      message:
+                        cause instanceof Error ? cause.message : String(cause),
+                    });
                   }
                 })();
               }}
@@ -989,10 +1164,17 @@ export function App() {
                     await qc.invalidateQueries({
                       queryKey: ["/conversations"],
                     });
+                    addToast({
+                      type: "success",
+                      title: t("ごみ箱へ移動しました"),
+                    });
                   } catch (cause) {
-                    window.alert(
-                      cause instanceof Error ? cause.message : String(cause),
-                    );
+                    addToast({
+                      type: "error",
+                      title: t("操作に失敗しました"),
+                      message:
+                        cause instanceof Error ? cause.message : String(cause),
+                    });
                   }
                 })();
               }}
@@ -1009,6 +1191,6 @@ export function App() {
           )}
         </main>
       </div>
-    </ToastProvider>
+    </>
   );
 }

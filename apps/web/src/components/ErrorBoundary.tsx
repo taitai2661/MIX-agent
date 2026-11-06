@@ -38,7 +38,10 @@ export class ErrorBoundary extends Component<Props, State> {
               >
                 {t("再試行")}
               </Button>
-              <Button variant="outline" onClick={() => window.location.reload()}>
+              <Button
+                variant="outline"
+                onClick={() => window.location.reload()}
+              >
                 {t("再読み込み")}
               </Button>
             </div>

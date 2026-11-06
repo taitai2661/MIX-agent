@@ -1,6 +1,7 @@
 import { t } from "@/app/i18n";
 import { api } from "@/app/api";
 import { Button } from "@/components/button";
+import { useConfirm } from "@/components/confirm";
 import { useState } from "react";
 
 import type { Run, RunCheckpoint } from "./types";
@@ -15,6 +16,7 @@ export function CheckpointsPanel({
   onResumed: () => void;
 }) {
   const checkpoints: RunCheckpoint[] = run.checkpoints || [];
+  const confirm = useConfirm();
   const [selected, setSelected] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -25,15 +27,14 @@ export function CheckpointsPanel({
           variant="outline"
           disabled={busy}
           onClick={async () => {
-            if (
-              !confirm(
-                t(
-                  "結果不明の操作は再実行しません。外部状態を確認してから続けてください。",
-                ),
-              )
-            ) {
-              return;
-            }
+            const ok = await confirm({
+              title: t("再開の確認"),
+              message: t(
+                "結果不明の操作は再実行しません。外部状態を確認してから続けてください。",
+              ),
+              confirmLabel: t("再開"),
+            });
+            if (!ok) return;
             setBusy(true);
             try {
               await api("/runs/" + run.id + "/resume", "POST", {
@@ -90,15 +91,14 @@ export function CheckpointsPanel({
           variant="outline"
           disabled={busy || !selected}
           onClick={async () => {
-            if (
-              !confirm(
-                t(
-                  "選択したチェックポイントから再開します。結果不明の操作は破棄されます。",
-                ),
-              )
-            ) {
-              return;
-            }
+            const ok = await confirm({
+              title: t("チェックポイントから再開"),
+              message: t(
+                "選択したチェックポイントから再開します。結果不明の操作は破棄されます。",
+              ),
+              confirmLabel: t("再開"),
+            });
+            if (!ok) return;
             setBusy(true);
             try {
               await api("/runs/" + run.id + "/resume", "POST", {
@@ -119,15 +119,14 @@ export function CheckpointsPanel({
           variant="ghost"
           disabled={busy}
           onClick={async () => {
-            if (
-              !confirm(
-                t(
-                  "結果不明の操作は再実行しません。外部状態を確認してから続けてください。",
-                ),
-              )
-            ) {
-              return;
-            }
+            const ok = await confirm({
+              title: t("再開の確認"),
+              message: t(
+                "結果不明の操作は再実行しません。外部状態を確認してから続けてください。",
+              ),
+              confirmLabel: t("再開"),
+            });
+            if (!ok) return;
             setBusy(true);
             try {
               await api("/runs/" + run.id + "/resume", "POST", {

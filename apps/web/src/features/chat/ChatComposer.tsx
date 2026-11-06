@@ -123,7 +123,12 @@ export function ChatComposer({
   const fileRef = useRef<HTMLInputElement>(null);
   const selected = models?.find((x) => x.id === model);
   const selectedAgent = agents?.find((a) => a.id === agent);
-  const modeLabel = mode;
+  const modeLabels: Record<ChatMode, string> = {
+    chat: t("チャット"),
+    thinking: t("思考"),
+    agent: t("エージェント"),
+  };
+  const modeLabel = modeLabels[mode];
   const modelLabel =
     model === "auto"
       ? "Auto"
@@ -295,7 +300,7 @@ export function ChatComposer({
                           ) : (
                             <Bot size={13} />
                           )}
-                          {m}
+                          {modeLabels[m]}
                         </button>
                       ))}
                     </div>

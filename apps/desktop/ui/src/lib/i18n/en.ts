@@ -1161,7 +1161,6 @@ export const en: Record<string, string> = {
   "ファイルをメンション (@)": "Mention file (@)",
   "一致するファイルがありません": "No matching files",
   "クイックコマンド": "Quick commands",
-  "クイックコマンド (/)": "Quick commands (/)",
   "テストを実行しエラーを自己修復": "Run tests and self-repair errors",
   "バグや問題点を特定して修正": "Identify and fix bugs or issues",
   "変更差分をレビューして改善点を指摘": "Review diff and suggest improvements",

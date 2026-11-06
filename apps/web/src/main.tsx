@@ -3,7 +3,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./app/App";
+import { ConfirmProvider } from "./components/confirm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ToastProvider } from "./components/toast";
 import "./style.css";
 const client = new QueryClient({
   defaultOptions: {
@@ -20,7 +22,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={client}>
       <BrowserRouter>
         <ErrorBoundary>
-          <App />
+          <ToastProvider>
+            <ConfirmProvider>
+              <App />
+            </ConfirmProvider>
+          </ToastProvider>
         </ErrorBoundary>
       </BrowserRouter>
     </QueryClientProvider>

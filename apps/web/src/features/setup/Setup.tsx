@@ -24,9 +24,12 @@ export function Setup() {
 
   const [installBrowser, setInstallBrowser] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<
-    "openai" | "anthropic" | "gemini" | ""
+    "openai" | "anthropic" | "gemini" | "ollama" | "lmstudio" | ""
   >("");
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const isLocalProvider =
+    selectedProvider === "ollama" || selectedProvider === "lmstudio";
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -37,11 +40,15 @@ export function Setup() {
   }
 
   async function connectProvider() {
-    if (!selectedProvider || !apiKey) return true;
+    if (!selectedProvider) return true;
+    if (!isLocalProvider && !apiKey) return true;
     setBusy(true);
     setError(null);
     try {
-      const presets = {
+      const presets: Record<
+        string,
+        { name: string; kind: string; url: string; local?: boolean }
+      > = {
         openai: {
           name: "OpenAI",
           kind: "openai",
@@ -57,20 +64,37 @@ export function Setup() {
           kind: "gemini",
           url: "https://generativelanguage.googleapis.com",
         },
+        ollama: {
+          name: "Ollama",
+          kind: "ollama",
+          url: "http://host.docker.internal:11434/v1",
+          local: true,
+        },
+        lmstudio: {
+          name: "LM Studio",
+          kind: "lmstudio",
+          url: "http://host.docker.internal:1234/v1",
+          local: true,
+        },
       };
       const preset = presets[selectedProvider];
 
       await api("/providers", "POST", {
         name: preset.name,
         preset_id: selectedProvider,
-        base_url: preset.url,
-        api_key: apiKey,
+        base_url: baseUrl.trim() || preset.url,
+        api_key: apiKey || null,
         kind: preset.kind,
-        allow_private: false,
+        allow_private: Boolean(preset.local),
         rate_limit_rpm: 0,
         rate_limit_period: "minute",
         extra_config: {},
       });
+      // Prevent the final "complete" step from creating the same provider a
+      // second time after this step already connected it.
+      setSelectedProvider("");
+      setApiKey("");
+      setBaseUrl("");
       return true;
     } catch (e) {
       setError(e);
@@ -84,7 +108,7 @@ export function Setup() {
     setBusy(true);
     setError(null);
     try {
-      if (selectedProvider && apiKey) {
+      if (selectedProvider && (isLocalProvider || apiKey)) {
         const ok = await connectProvider();
         if (!ok) return;
       }
@@ -118,13 +142,27 @@ export function Setup() {
   }
 
   const handleNext = async () => {
-    if (step === 1 && selectedProvider && apiKey) {
+    if (step === 1 && selectedProvider && (isLocalProvider || apiKey)) {
       const ok = await connectProvider();
       if (!ok) return;
     }
     setError(null);
     setStep(step + 1);
   };
+
+  const willConnect = Boolean(selectedProvider && (isLocalProvider || apiKey));
+
+  function chooseProvider(value: typeof selectedProvider) {
+    setSelectedProvider(value);
+    setApiKey("");
+    setBaseUrl(
+      value === "ollama"
+        ? "http://host.docker.internal:11434/v1"
+        : value === "lmstudio"
+          ? "http://host.docker.internal:1234/v1"
+          : "",
+    );
+  }
 
   const steps = [
     {
@@ -185,27 +223,66 @@ export function Setup() {
       desc: t("利用するAIプロバイダを選択し、APIキーを入力してください。"),
       content: (
         <div className="card form-grid" style={{ marginTop: 20 }}>
-          <div className="setup-provider-grid">
-            <Button
-              variant={selectedProvider === "openai" ? "default" : "outline"}
-              onClick={() => setSelectedProvider("openai")}
-            >
-              OpenAI
-            </Button>
-            <Button
-              variant={selectedProvider === "anthropic" ? "default" : "outline"}
-              onClick={() => setSelectedProvider("anthropic")}
-            >
-              Anthropic
-            </Button>
-            <Button
-              variant={selectedProvider === "gemini" ? "default" : "outline"}
-              onClick={() => setSelectedProvider("gemini")}
-            >
-              Gemini
-            </Button>
+          <div className="setup-provider-group">
+            <span className="setup-provider-label">{t("ローカルLLM")}</span>
+            <div className="setup-provider-grid">
+              <Button
+                variant={selectedProvider === "ollama" ? "default" : "outline"}
+                onClick={() => chooseProvider("ollama")}
+              >
+                Ollama
+              </Button>
+              <Button
+                variant={
+                  selectedProvider === "lmstudio" ? "default" : "outline"
+                }
+                onClick={() => chooseProvider("lmstudio")}
+              >
+                LM Studio
+              </Button>
+            </div>
+            <small className="setup-provider-hint">
+              {t(
+                "Docker版では host.docker.internal 経由でホストのローカルLLMに接続します。",
+              )}
+            </small>
           </div>
-          {selectedProvider && (
+          <div className="setup-provider-group">
+            <span className="setup-provider-label">{t("クラウドAPI")}</span>
+            <div className="setup-provider-grid">
+              <Button
+                variant={selectedProvider === "openai" ? "default" : "outline"}
+                onClick={() => chooseProvider("openai")}
+              >
+                OpenAI
+              </Button>
+              <Button
+                variant={
+                  selectedProvider === "anthropic" ? "default" : "outline"
+                }
+                onClick={() => chooseProvider("anthropic")}
+              >
+                Anthropic
+              </Button>
+              <Button
+                variant={selectedProvider === "gemini" ? "default" : "outline"}
+                onClick={() => chooseProvider("gemini")}
+              >
+                Gemini
+              </Button>
+            </div>
+          </div>
+          {isLocalProvider && (
+            <Field label={t("接続先URL")}>
+              <input
+                type="url"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="http://host.docker.internal:11434/v1"
+              />
+            </Field>
+          )}
+          {selectedProvider && !isLocalProvider && (
             <Field label="API Key">
               <input
                 type="password"
@@ -217,7 +294,9 @@ export function Setup() {
           )}
           <p className="muted" style={{ marginTop: 10 }}>
             {t(
-              "※API Keyは暗号化して保存されます。スキップして後から設定することも可能です。",
+              isLocalProvider
+                ? "ローカルLLMはAPIキー不要です。接続後、モデル一覧を自動取得します。"
+                : "※API Keyは暗号化して保存されます。スキップして後から設定することも可能です。",
             )}
           </p>
         </div>
@@ -295,7 +374,10 @@ export function Setup() {
         >
           <div>
             <p className="eyebrow">
-              STEP {step + 1} OF {steps.length}
+              {t("ステップ {n} / {total}", {
+                n: step + 1,
+                total: steps.length,
+              })}
             </p>
             <h1 style={{ fontSize: 24, marginTop: 8 }}>
               {t(steps[step].title)}
@@ -353,7 +435,11 @@ export function Setup() {
           {step < steps.length - 1 ? (
             <Button disabled={busy} onClick={handleNext}>
               {t(
-                selectedProvider && !apiKey && step === 1 ? "スキップ" : "次へ",
+                step === 1 && willConnect
+                  ? "接続して次へ"
+                  : step === 1 && selectedProvider && !isLocalProvider
+                    ? "スキップ"
+                    : "次へ",
               )}
               <ChevronRight size={15} />
             </Button>

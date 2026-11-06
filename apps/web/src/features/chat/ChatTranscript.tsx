@@ -1,7 +1,7 @@
 import type { Row } from "@/app/api";
 import { t } from "@/app/i18n";
 import { ArrowDown } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatMessage } from "./ChatMessage";
 import { ChatRunPanels } from "./ChatRunPanels";
@@ -94,6 +94,13 @@ export function ChatTranscript({
   const [announcement, setAnnouncement] = useState("");
   const latestStream = useRef(streamText);
   latestStream.current = streamText;
+  const lastAssistantMessageId = useMemo(
+    () =>
+      [...(messages ?? [])]
+        .reverse()
+        .find((message) => message.data.role === "assistant")?.id,
+    [messages],
+  );
   useEffect(() => {
     if (!active) {
       setAnnouncement("");
@@ -173,6 +180,8 @@ export function ChatTranscript({
                 : latestUserMessageId === m.id)
             }
             todos={todos}
+            isLastAssistant={lastAssistantMessageId === m.id}
+            onRegenerate={canRetry ? onRetryRun : undefined}
             onEditChange={onEditChange}
             onEditCancel={onEditCancel}
             onEditSave={onEditSave}

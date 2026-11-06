@@ -4,6 +4,12 @@ import { Button } from "@/components/button";
 import { Empty, ErrorBox, Title } from "@/components/shared";
 import { Skeleton } from "@/components/loading";
 import { ConfirmModal } from "@/components/modal";
+import {
+  HISTORY_GROUPS,
+  historyGroup,
+  historyTime,
+  type HistoryGroup,
+} from "@/lib/format";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -14,7 +20,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 type FolderRow = Row & { data: { name: string } };
@@ -24,6 +30,7 @@ type ConversationRow = Row & {
     folder_id?: string | null;
     project_id?: string | null;
     pinned?: boolean;
+    last_message_at?: string | null;
   };
 };
 const states: Record<string, [string, string]> = {
@@ -101,6 +108,20 @@ export function Conversations() {
       },
     });
   };
+  const grouped = useMemo(() => {
+    const groups: Record<HistoryGroup, ConversationRow[]> = {
+      today: [],
+      yesterday: [],
+      week: [],
+      older: [],
+    };
+    for (const row of conversations.data ?? []) {
+      groups[historyGroup(row.data.last_message_at || row.created_at)].push(
+        row,
+      );
+    }
+    return groups;
+  }, [conversations.data]);
   const download = async (id: string, title: string) => {
     try {
       setError(null);
@@ -225,147 +246,178 @@ export function Conversations() {
         </div>
       ) : (
         <div className="conversation-list">
-          {conversations.data?.map((row) => (
-            <article key={row.id} className="conversation-row">
-              <div>
-                <Link to={`/chat/${row.id}`}>
-                  <b>{row.data.title}</b>
-                </Link>
-                <small>
-                  {row.data.pinned ? t("ピン留め · ") : ""}
-                  {folders.data?.find((f) => f.id === row.data.folder_id)?.data
-                    .name || t("未分類")}
-                </small>
-              </div>
-              <div className="row-actions">
-                {current === "active" && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={t(
-                        row.data.pinned
-                          ? "{title}のピン留めを解除"
-                          : "{title}をピン留め",
-                        { title: row.data.title },
+          {HISTORY_GROUPS.map((group) => {
+            const rows = grouped[group];
+            if (!rows.length) return null;
+            const label = {
+              today: t("今日"),
+              yesterday: t("昨日"),
+              week: t("過去7日"),
+              older: t("それ以前"),
+            }[group];
+            return (
+              <Fragment key={group}>
+                <h3 className="conversation-group-label">{label}</h3>
+                {rows.map((row) => (
+                  <article key={row.id} className="conversation-row">
+                    <div>
+                      <Link to={`/chat/${row.id}`}>
+                        <b>{row.data.title}</b>
+                      </Link>
+                      <small>
+                        {row.data.pinned ? t("ピン留め · ") : ""}
+                        {folders.data?.find((f) => f.id === row.data.folder_id)
+                          ?.data.name || t("未分類")}
+                        {row.data.last_message_at
+                          ? ` · ${historyTime(row.data.last_message_at)}`
+                          : ""}
+                      </small>
+                    </div>
+                    <div className="row-actions">
+                      {current === "active" && (
+                        <>
+                          <button
+                            className="icon"
+                            aria-label={t(
+                              row.data.pinned
+                                ? "{title}のピン留めを解除"
+                                : "{title}をピン留め",
+                              { title: row.data.title },
+                            )}
+                            onClick={() =>
+                              change(row.id, { pinned: !row.data.pinned })
+                            }
+                          >
+                            <Pin size={16} />
+                          </button>
+                          <select
+                            aria-label={t("{title}のフォルダ", {
+                              title: row.data.title,
+                            })}
+                            value={row.data.folder_id || ""}
+                            onChange={(e) =>
+                              change(row.id, {
+                                folder_id: e.target.value || null,
+                              })
+                            }
+                          >
+                            <option value="">{t("未分類")}</option>
+                            {folders.data?.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.data.name}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label={t("{title}のプロジェクト", {
+                              title: row.data.title,
+                            })}
+                            value={row.data.project_id || ""}
+                            onChange={(e) =>
+                              change(row.id, {
+                                project_id: e.target.value || null,
+                              })
+                            }
+                          >
+                            <option value="">{t("プロジェクトなし")}</option>
+                            {projects.data?.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.data.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}をアーカイブ", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => change(row.id, { archived: true })}
+                          >
+                            <Archive size={16} />
+                          </button>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}を書き出し", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => download(row.id, row.data.title)}
+                          >
+                            <Download size={16} />
+                          </button>
+                        </>
                       )}
-                      onClick={() =>
-                        change(row.id, { pinned: !row.data.pinned })
-                      }
-                    >
-                      <Pin size={16} />
-                    </button>
-                    <select
-                      aria-label={t("{title}のフォルダ", {
-                        title: row.data.title,
-                      })}
-                      value={row.data.folder_id || ""}
-                      onChange={(e) =>
-                        change(row.id, { folder_id: e.target.value || null })
-                      }
-                    >
-                      <option value="">{t("未分類")}</option>
-                      {folders.data?.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.data.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      aria-label={t("{title}のプロジェクト", {
-                        title: row.data.title,
-                      })}
-                      value={row.data.project_id || ""}
-                      onChange={(e) =>
-                        change(row.id, { project_id: e.target.value || null })
-                      }
-                    >
-                      <option value="">{t("プロジェクトなし")}</option>
-                      {projects.data?.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.data.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="icon"
-                      aria-label={t("{title}をアーカイブ", {
-                        title: row.data.title,
-                      })}
-                      onClick={() => change(row.id, { archived: true })}
-                    >
-                      <Archive size={16} />
-                    </button>
-                    <button
-                      className="icon"
-                      aria-label={t("{title}を書き出し", {
-                        title: row.data.title,
-                      })}
-                      onClick={() => download(row.id, row.data.title)}
-                    >
-                      <Download size={16} />
-                    </button>
-                  </>
-                )}
-                {current === "archived" && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={t("{title}をアーカイブから戻す", {
-                        title: row.data.title,
-                      })}
-                      onClick={() => change(row.id, { archived: false })}
-                    >
-                      <RotateCcw size={16} />
-                    </button>
-                    <button
-                      className="icon"
-                      aria-label={t("{title}を書き出し", {
-                        title: row.data.title,
-                      })}
-                      onClick={() => download(row.id, row.data.title)}
-                    >
-                      <Download size={16} />
-                    </button>
-                  </>
-                )}
-                {current === "trash" && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}を復元`}
-                      onClick={async () => {
-                        try {
-                          setError(null);
-                          await api(`/conversations/${row.id}/restore`, "POST");
-                          await refresh();
-                        } catch (cause) {
-                          setError(cause);
-                        }
-                      }}
-                    >
-                      <RotateCcw size={16} />
-                    </button>
-                    <button
-                      className="icon danger"
-                      aria-label={`${row.data.title}を完全削除`}
-                      onClick={() => remove(row.id, true)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </>
-                )}
-                {current !== "trash" && (
-                  <button
-                    className="icon danger"
-                    aria-label={`${row.data.title}をごみ箱へ移動`}
-                    onClick={() => remove(row.id)}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
+                      {current === "archived" && (
+                        <>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}をアーカイブから戻す", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => change(row.id, { archived: false })}
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}を書き出し", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => download(row.id, row.data.title)}
+                          >
+                            <Download size={16} />
+                          </button>
+                        </>
+                      )}
+                      {current === "trash" && (
+                        <>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}を復元", {
+                              title: row.data.title,
+                            })}
+                            onClick={async () => {
+                              try {
+                                setError(null);
+                                await api(
+                                  `/conversations/${row.id}/restore`,
+                                  "POST",
+                                );
+                                await refresh();
+                              } catch (cause) {
+                                setError(cause);
+                              }
+                            }}
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                          <button
+                            className="icon danger"
+                            aria-label={t("{title}を完全削除", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => remove(row.id, true)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </>
+                      )}
+                      {current !== "trash" && (
+                        <button
+                          className="icon danger"
+                          aria-label={t("{title}をごみ箱へ移動", {
+                            title: row.data.title,
+                          })}
+                          onClick={() => remove(row.id)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </Fragment>
+            );
+          })}
           {!conversations.isError && !error && !conversations.data?.length && (
             <Empty>{t("該当する会話はありません。")}</Empty>
           )}

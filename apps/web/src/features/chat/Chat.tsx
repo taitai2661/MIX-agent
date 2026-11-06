@@ -1,10 +1,13 @@
 import { api, type Row } from "@/app/api";
 import { t } from "@/app/i18n";
+import { PromptModal } from "@/components/modal";
 import { useRows } from "@/components/shared";
+import { useToast } from "@/components/toast";
 import { useSettings } from "@/lib/queries";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Pencil, Pin, PinOff } from "lucide-react";
 
 import { ChatComposer } from "./ChatComposer";
 import { ChatTranscript } from "./ChatTranscript";
@@ -44,6 +47,22 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     }),
     permissionRules = useRows<PermissionRule>("/permission-rules");
   const settings = useSettings<{ data: { default_model_id?: string } }>();
+  const { addToast } = useToast();
+  // Reuses App's cache: the sidebar already fetches the active list, and the
+  // header needs the stored title rather than a copy of the last user turn.
+  const conversationRows = useQuery<Row[]>({
+    queryKey: ["/conversations"],
+    queryFn: ({ signal }) =>
+      api("/conversations?state=active", "GET", undefined, undefined, {
+        signal,
+      }),
+    enabled: !!id,
+  });
+  const currentConversation = conversationRows.data?.find(
+    (row) => row.id === id,
+  );
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const [model, setModel] = useState("auto"),
     [temporaryMode, setTemporaryMode] = useState(false),
     [allowTools, setAllowTools] = useState(false),
@@ -363,6 +382,8 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     void qc.invalidateQueries({ queryKey: ["run", runId] });
   }
   const conversationTitle = (() => {
+    const stored = String(currentConversation?.data.title || "").trim();
+    if (stored) return stored;
     const content = String(lastUserMessage?.data.content || "").trim();
     if (!content) return t("チャット");
     return content.length > 60 ? content.slice(0, 60) + "…" : content;
@@ -375,6 +396,43 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
     setText(prompt);
     composer.current?.focus();
   }
+  async function togglePinned() {
+    if (!id || !currentConversation) return;
+    try {
+      await api(`/conversations/${id}/state`, "PATCH", {
+        pinned: !currentConversation.data.pinned,
+      });
+      await qc.invalidateQueries({ queryKey: ["/conversations"] });
+    } catch (cause) {
+      addToast({
+        type: "error",
+        title: t("操作に失敗しました"),
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+  async function renameConversation(value: string) {
+    const title = value.trim();
+    setRenameOpen(false);
+    if (!id || !title || title === currentConversation?.data.title) return;
+    try {
+      await api(`/conversations/${id}`, "PATCH", { title });
+      await qc.invalidateQueries({ queryKey: ["/conversations"] });
+      addToast({ type: "success", title: t("名前を変更しました") });
+    } catch (cause) {
+      addToast({
+        type: "error",
+        title: t("操作に失敗しました"),
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+  useEffect(() => {
+    // A brand-new chat should be typable immediately on desktop. On touch
+    // devices an autofocus would pop the keyboard and cover the welcome hero.
+    if (id || !window.matchMedia("(min-width: 761px)").matches) return;
+    composer.current?.focus();
+  }, [id]);
   const showSkeleton = !!id && history.isLoading;
   const showWelcome =
     !id && !history.data?.messages?.length && Boolean(welcome);
@@ -383,6 +441,42 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       {id && (
         <header className="chat-heading">
           <h1 title={conversationTitle}>{conversationTitle}</h1>
+          <div className="chat-heading-actions">
+            <button
+              type="button"
+              className="icon"
+              onClick={() => void togglePinned()}
+              aria-pressed={Boolean(currentConversation?.data.pinned)}
+              aria-label={t(
+                currentConversation?.data.pinned
+                  ? "ピン留めを外す"
+                  : "ピン留めする",
+              )}
+              title={t(
+                currentConversation?.data.pinned
+                  ? "ピン留めを外す"
+                  : "ピン留めする",
+              )}
+            >
+              {currentConversation?.data.pinned ? (
+                <PinOff size={15} />
+              ) : (
+                <Pin size={15} />
+              )}
+            </button>
+            <button
+              type="button"
+              className="icon"
+              onClick={() => {
+                setRenameValue(conversationTitle);
+                setRenameOpen(true);
+              }}
+              aria-label={t("チャット名を変更")}
+              title={t("チャット名を変更")}
+            >
+              <Pencil size={15} />
+            </button>
+          </div>
         </header>
       )}
       <div className="chat-body">
@@ -480,6 +574,14 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
           />
         </div>
       </div>
+      {renameOpen && (
+        <PromptModal
+          title={t("チャット名を変更")}
+          defaultValue={renameValue}
+          onConfirm={(value) => void renameConversation(value)}
+          onCancel={() => setRenameOpen(false)}
+        />
+      )}
     </div>
   );
 }

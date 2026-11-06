@@ -1933,6 +1933,9 @@ svg {
   display: flex;
   gap: 4px;
 }
+.message-auto.message-feedback-only {
+  justify-content: flex-end;
+}
 .message-auto button {
   display: grid;
   place-items: center;
@@ -7632,4 +7635,213 @@ body {
   font-size: 11px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+   Message actions, code copy, and sidebar history controls
+   ------------------------------------------------------------------------- */
+
+.message-action {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft);
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.message-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.message-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.code-block {
+  position: relative;
+}
+.code-block pre {
+  margin: 0;
+}
+.code-block .code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0;
+  background: var(--surface);
+  box-shadow: 0 1px 4px #0002;
+  transition: opacity 0.12s ease;
+}
+.code-block:hover .code-copy,
+.code-block .code-copy:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .code-block .code-copy {
+    opacity: 1;
+  }
+}
+
+.chat-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+.chat-heading h1 {
+  flex: 1;
+}
+.chat-heading-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 236px;
+  height: 36px;
+  margin: 4px 0 8px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--faint);
+}
+.sidebar-search:focus-within {
+  border-color: var(--accent);
+}
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.sidebar-search input::placeholder {
+  color: var(--faint);
+}
+.sidebar-search .icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.sidebar-folders {
+  display: flex;
+  gap: 6px;
+  min-width: 236px;
+  padding: 0 2px 7px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.sidebar-folders button {
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sidebar-folders button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.conversation-sidebar-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.conversation-sidebar-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-sidebar-meta {
+  display: flex;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.sidebar-empty {
+  padding: 14px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+@media (max-width: 760px) {
+  .sidebar-search,
+  .sidebar-folders {
+    min-width: 0;
+  }
+}
+
+.settings-summary-link {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-nav-empty {
+  margin: 12px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.setup-provider-group {
+  display: grid;
+  gap: 8px;
+}
+.setup-provider-group .setup-provider-grid {
+  margin-bottom: 4px;
+}
+.setup-provider-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.setup-provider-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.conversation-group-label {
+  margin: 22px 2px 8px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.conversation-group-label:first-child {
+  margin-top: 4px;
+}
+.setup-provider-group {
+  grid-column: 1 / -1;
+}
+.welcome h1 {
+  text-wrap: balance;
 }

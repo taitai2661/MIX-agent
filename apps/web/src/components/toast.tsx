@@ -62,11 +62,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
       {children}
-      <div
-        className="toast-container"
-        role="region"
-        aria-label={t("通知")}
-      >
+      <div className="toast-container" role="region" aria-label={t("通知")}>
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];
           const Icon = config.icon;

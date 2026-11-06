@@ -2,7 +2,8 @@ import type { Row } from "@/app/api";
 import { t } from "@/app/i18n";
 import { isMacPlatform } from "@/app/platform";
 import { Button } from "@/components/button";
-import { Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
+import { CopyButton } from "@/components/copy-button";
+import { Pencil, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { memo } from "react";
 
 import { ArtifactCard, type ChatArtifact } from "./ArtifactCard";
@@ -32,6 +33,9 @@ export type ChatMessageProps = {
   editDisabled: boolean;
   showTodos: boolean;
   todos?: unknown;
+  /** The final assistant turn can be regenerated without deleting later work. */
+  isLastAssistant?: boolean;
+  onRegenerate?: () => void;
   onEditChange: (value: string) => void;
   onEditCancel: () => void;
   onEditSave: (message: Row) => void;
@@ -65,6 +69,8 @@ function ChatMessageImpl({
   editDisabled,
   showTodos,
   todos,
+  isLastAssistant = false,
+  onRegenerate,
   onEditChange,
   onEditCancel,
   onEditSave,
@@ -243,28 +249,48 @@ function ChatMessageImpl({
             </div>
           );
         })()}
-        {m.data.auto_selection && (
-          <div className="message-auto">
-            <small>
-              Auto:{" "}
-              {(() => {
-                const selection = m.data.auto_selection as {
-                  model_name?: unknown;
-                  model_id?: unknown;
-                };
-                const name =
-                  typeof selection.model_name === "string" &&
-                  selection.model_name
-                    ? selection.model_name
-                    : typeof selection.model_id === "string"
-                      ? selection.model_id
-                      : selection.model_id == null
-                        ? ""
-                        : String(selection.model_id);
-                return name;
-              })()}
-            </small>
+        {!isUser && (
+          <div
+            className={
+              "message-auto" +
+              (m.data.auto_selection ? "" : " message-feedback-only")
+            }
+          >
+            {m.data.auto_selection && (
+              <small>
+                Auto:{" "}
+                {(() => {
+                  const selection = m.data.auto_selection as {
+                    model_name?: unknown;
+                    model_id?: unknown;
+                  };
+                  const name =
+                    typeof selection.model_name === "string" &&
+                    selection.model_name
+                      ? selection.model_name
+                      : typeof selection.model_id === "string"
+                        ? selection.model_id
+                        : selection.model_id == null
+                          ? ""
+                          : String(selection.model_id);
+                  return name;
+                })()}
+              </small>
+            )}
             <span>
+              <CopyButton value={content} label={t("メッセージをコピー")} />
+              {isLastAssistant && onRegenerate && (
+                <button
+                  type="button"
+                  className="message-action"
+                  disabled={editDisabled || active}
+                  onClick={onRegenerate}
+                  title={t("回答を再生成")}
+                  aria-label={t("回答を再生成")}
+                >
+                  <RefreshCw size={14} />
+                </button>
+              )}
               <button
                 className={m.data.feedback === "up" ? "selected" : ""}
                 onClick={() => onRate(m.id, m.data.feedback, "up")}

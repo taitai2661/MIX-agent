@@ -96,6 +96,20 @@ describe("ChatMessage", () => {
     expect(html).toContain('class="selected"');
   });
 
+  it("keeps feedback available when a model was chosen explicitly", () => {
+    const html = renderToStaticMarkup(
+      <ChatMessage
+        {...props({
+          message: message({ role: "assistant", content: "回答です" }),
+        })}
+      />,
+    );
+    expect(html).toContain('aria-label="良い回答"');
+    expect(html).toContain('aria-label="良くない回答"');
+    expect(html).toContain("message-feedback-only");
+    expect(html).not.toContain("Auto:");
+  });
+
   it("switches to the inline editor with keyboard hints", () => {
     const html = renderToStaticMarkup(
       <ChatMessage
