@@ -350,7 +350,12 @@ function readZoom(): number {
   return Number.isFinite(stored) && stored > 0 ? clampZoom(stored) : 1;
 }
 
-/** Push the display preferences onto the document root. */
+/** Push the display preferences onto the document root.
+ *
+ * `zoom` is a Chromium/WebKit proprietary property but Tauri only ever runs
+ * on those engines (WKWebView / WebView2 / WebKitGTK), so it is the cheapest
+ * layout-zoom path. Firefox ignores it, so we also set a standard
+ * `font-size` fallback on the root: `rem`-based layouts still scale. */
 export function applyDisplayPrefs(prefs: {
   zoom: number;
   codeWrap: boolean;
@@ -358,7 +363,12 @@ export function applyDisplayPrefs(prefs: {
 }): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.style.zoom = String(clampZoom(prefs.zoom));
+  const zoom = clampZoom(prefs.zoom);
+  // `zoom` in `CSSStyleDeclaration` is non-standard: lib.dom omits it, so go
+  // through `setProperty` to stay type-safe.
+  (root.style as CSSStyleDeclaration).setProperty("zoom", String(zoom));
+  // Standard fallback for engines without `zoom` (e.g. Firefox dev preview).
+  root.style.fontSize = `${16 * zoom}px`;
   root.dataset.codeWrap = prefs.codeWrap ? "wrap" : "scroll";
   root.dataset.reduceMotion = prefs.reduceMotion ? "true" : "false";
 }

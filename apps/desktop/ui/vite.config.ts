@@ -27,7 +27,10 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
-    sourcemap: false,
+    sourcemap: "hidden",
+    // `hidden` writes .map files for crash symbolication without adding a
+    // `sourceMappingURL` comment, so production stays clean while beta
+    // backtraces remain actionable. `false` blinded prod debugging entirely.
     // Budget: the desktop WebView loads from disk, but the chat path still
     // owns the startup experience — keep the initial chunk small and push
     // everything else into named async chunks (see the `lazy` panes in

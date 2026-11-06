@@ -732,7 +732,7 @@ async fn prune_backups(data_dir: &Path) {
 /// Restrict a database file to owner-only access (Unix 0o600). Best-effort:
 /// failures only warn, since the database itself is already open at this
 /// point and a chmod failure must not abort startup.
-fn restrict_permissions(path: &Path) {
+pub(crate) fn restrict_permissions(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

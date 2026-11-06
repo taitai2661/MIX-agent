@@ -1,5 +1,20 @@
 use super::*;
 
+/// Normalise a sandbox root for kernel matching.
+///
+/// The kernel matches the *resolved* path: `/var` is a symlink to
+/// `/private/var` on macOS, so an un-canonicalised `$TMPDIR` never matches.
+/// A trailing slash also makes `subpath` miss its children. Pure function so
+/// it is unit-testable on every platform (including Linux CI where
+/// `sandbox-exec` does not exist).
+pub(crate) fn normalize_sandbox_path(path: &std::path::Path) -> String {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    canonical
+        .to_string_lossy()
+        .trim_end_matches('/')
+        .to_string()
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn sandbox_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
@@ -41,14 +56,10 @@ pub(crate) fn sandbox_profile(root: &std::path::Path, deny_network: bool) -> Opt
     let mut profile =
         String::from("(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write*\n");
     for path in roots {
-        // The kernel matches the *resolved* path: `/var` is a symlink to
-        // `/private/var` on macOS, so an un-canonicalised `$TMPDIR` never
-        // matched. A trailing slash also makes `subpath` miss its children.
-        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
-        let rendered = canonical.to_string_lossy();
-        let normalized = rendered.trim_end_matches('/');
+        // See `normalize_sandbox_path`: canonicalise + strip trailing `/`.
+        let normalized = normalize_sandbox_path(&path);
         profile.push_str("  (subpath ");
-        profile.push_str(&sandbox_string(normalized));
+        profile.push_str(&sandbox_string(&normalized));
         profile.push_str(")\n");
     }
     profile.push_str("  (subpath \"/dev\")\n)\n");
@@ -418,5 +429,34 @@ mod tests {
         // the allow block, not spliced into it.
         assert!(no_network.contains("(deny file-write*)"));
         assert!(no_network.contains("(allow file-write*"));
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod cross_platform_tests {
+    use super::normalize_sandbox_path;
+
+    #[test]
+    fn trailing_slash_never_survives() {
+        let dir = std::env::temp_dir();
+        let with_slash = std::path::PathBuf::from(format!("{}/", dir.to_string_lossy()));
+        let normalized = normalize_sandbox_path(&with_slash);
+        assert!(!normalized.ends_with('/'), "{normalized}");
+        assert!(!normalized.is_empty());
+    }
+
+    #[test]
+    fn missing_path_falls_back_without_slash() {
+        let missing = std::path::PathBuf::from("/definitely-not-a-mix-agent-dir-xyz/");
+        let normalized = normalize_sandbox_path(&missing);
+        assert_eq!(normalized, "/definitely-not-a-mix-agent-dir-xyz");
+    }
+
+    #[test]
+    fn sandbox_unavailable_reason_is_actionable() {
+        // On Linux CI without bwrap/firejail this is Some(install hint);
+        // on machines with a helper it is None. Either way it must not panic.
+        let _ = super::sandbox_available();
+        let _ = super::sandbox_unavailable_reason();
     }
 }
