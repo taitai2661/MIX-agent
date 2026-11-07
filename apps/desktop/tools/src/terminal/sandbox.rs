@@ -7,6 +7,7 @@ use super::*;
 /// A trailing slash also makes `subpath` miss its children. Pure function so
 /// it is unit-testable on every platform (including Linux CI where
 /// `sandbox-exec` does not exist).
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn normalize_sandbox_path(path: &std::path::Path) -> String {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     canonical
