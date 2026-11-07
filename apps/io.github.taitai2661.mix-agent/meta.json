@@ -1,0 +1,26 @@
+{
+  "tagline": "Your AI workspace on a trusted home network.",
+  "description": "Self-hosted chat, agents, tools and MCP. For one administrator on a trusted LAN or VPN; not suitable for internet exposure.",
+  "tips": {
+    "before_install": "Uses port 8080 and multiple containers including PostgreSQL, browser and MCP runners. Requires significant memory and disk. Install only on a trusted LAN/VPN. MCP management mounts the Docker socket. Back up existing MIX-agent data before an upgrade. Set PUBLIC_ORIGIN to your real HTTPS URL for OAuth and web push."
+  },
+  "author": "MIX-agent contributors",
+  "developer": "MIX-agent contributors",
+  "category": "AI",
+  "architectures": [
+    "amd64"
+  ],
+  "update_at": "2026-11-04",
+  "title": "MIX-agent",
+  "release_note": "Feature release: unofficial ChatGPT/Codex subscription support, language-server diagnostics, Agent Skills resources, launch at login, Git-backed run rollback, conversation search and paging, and UI performance work.",
+  "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
+  "id": "io.github.taitai2661.mix-agent",
+  "version": "0.5.6",
+  "categories": [
+    "ai"
+  ],
+  "min_memory": 0,
+  "min_image_size": {
+    "amd64": 1356727653
+  }
+}

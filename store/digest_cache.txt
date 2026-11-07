@@ -1,0 +1,8 @@
+ghcr.io/taitai2661/mix-agent-app:v0.5.6 sha256:eb1444e4b59bb0c391dd352986c678978438c9ded95d62ba8b3d4feb6437b420
+ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.6 sha256:0c0a372e20de1cd23b55dfe6f198514d7b358e8ff5c47c54abdcfc2240507126
+ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.6 sha256:43c799f4380edd4db114b0a53193f25f548aa3163144032e3fe33f938bf21a23
+ghcr.io/taitai2661/mix-agent-egress:v0.5.6 sha256:cf3aa9ca9137d7ad7712c89c5d4e22da3ddfdc8ce64d5e60dca01956225c0ae1
+ghcr.io/taitai2661/mix-agent-execution:v0.5.6 sha256:18de0f0ae70d3620d6aefe0d253c52b16ff2435ca0d2d70cc1cc8511bc55307c
+ghcr.io/taitai2661/mix-agent-init:v0.5.6 sha256:a8b8eb4b254749dffa28709772914fd3f1181d7303a54b5abf35136d45f45598
+ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.6 sha256:f56129aa542c0334eeb27519e8bd3705036407ebc1b4a04409fe535ba9e87bd1
+ghcr.io/taitai2661/mix-agent-mcp:v0.5.6 sha256:545493219c8ab9bee7c4ced6f037985d626f9091fd667cc9101de4dad3969d7e
