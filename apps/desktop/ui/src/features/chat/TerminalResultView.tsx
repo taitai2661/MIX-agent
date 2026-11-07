@@ -137,14 +137,12 @@ export const TerminalResultView = memo(function TerminalResultView({
             {copied ? (
               <>
                 <Check size={12} className="text-success" />
-                <span className="text-[11px] text-success">
-                  {t("コピー済み")}
-                </span>
+                <span className="text-2xs text-success">{t("コピー済み")}</span>
               </>
             ) : (
               <>
                 <Copy size={12} />
-                <span className="text-[11px]">{t("コピー")}</span>
+                <span className="text-2xs">{t("コピー")}</span>
               </>
             )}
           </button>

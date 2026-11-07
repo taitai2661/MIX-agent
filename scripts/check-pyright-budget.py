@@ -2,7 +2,7 @@
 """Type-check gate with a warning budget.
 
 ``pyright`` exits non-zero only for *errors*; the project deliberately keeps a
-handful of third-party typing mismatches (parsel, google-genai, chromiumoxide)
+handful of third-party typing mismatches (parsel, google-genai)
 as warnings.  Running pyright directly in CI therefore let new warnings slip
 in unnoticed.  This wrapper fails when:
 

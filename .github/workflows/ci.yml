@@ -374,14 +374,10 @@ jobs:
         working-directory: apps/desktop
         run: pnpm tauri build --no-bundle
 
-      - name: Chromium pin script is valid
-        working-directory: apps/desktop
-        run: node --check scripts/pin-chromium.mjs
 
   # Packaging is not covered by `tauri build --no-bundle` on Linux: NSIS/MSI
   # configuration, Windows resource paths and the WiX language settings only
-  # fail on an actual Windows bundle. Chromium is no longer bundled, so this
-  # job does not download a browser on every pull request.
+  # fail on an actual Windows bundle.
   desktop-package-windows:
     runs-on: windows-latest
     timeout-minutes: 45

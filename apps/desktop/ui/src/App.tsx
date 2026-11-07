@@ -1,6 +1,8 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Activity,
+  Check,
   Download,
   Folder,
   FolderTree,
@@ -69,6 +71,11 @@ const FileTreePane = lazy(() =>
 const BrowserPanel = lazy(() =>
   import("./features/browser/BrowserPanel").then((m) => ({
     default: m.BrowserPanel,
+  })),
+);
+const ApprovalDrawer = lazy(() =>
+  import("./features/tools/ApprovalDrawer").then((m) => ({
+    default: m.ApprovalDrawer,
   })),
 );
 import { Sidebar } from "./features/shell/Sidebar";
@@ -229,7 +236,8 @@ function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
 
 /** Header chip that makes a blocked run visible from any view. */
 function ApprovalIndicator() {
-  const openSettings = useUi((s) => s.openSettings);
+  const approvalsOpen = useUi((s) => s.approvalsOpen);
+  const setApprovalsOpen = useUi((s) => s.setApprovalsOpen);
   const approvals = usePendingApprovals();
   const count = approvals.data?.length ?? 0;
   if (!count) return null;
@@ -238,9 +246,10 @@ function ApprovalIndicator() {
     <Button
       variant="ghost"
       size="sm"
-      onClick={() => openSettings("approvals")}
+      onClick={() => setApprovalsOpen(!approvalsOpen)}
       title={label}
       aria-label={label}
+      aria-pressed={approvalsOpen}
       className="gap-1 border border-warning/40 bg-warning-soft text-warning hover:bg-warning/20"
     >
       <ShieldAlert size={14} aria-hidden="true" />
@@ -327,7 +336,7 @@ export function App() {
   // drag handles; each remembers its own width. `panelCap` only clamps them on
   // narrow windows.
   const [shellRow, setShellRow] = useState<HTMLDivElement | null>(null);
-  const panelCap = usePanelCap(shellRow);
+  const panelBounds = usePanelCap(shellRow);
   // The wizard replaces the shell's render, but these hooks stay mounted. Keep
   // their side effects quiet while it is up: otherwise ⌘K during onboarding
   // silently opened the palette and it appeared the moment setup finished,
@@ -354,6 +363,7 @@ export function App() {
   // (and the search/index bundle behind the palette) stays out of the initial
   // chunk.
   const paletteOpen = useUi((s) => s.paletteOpen);
+  const approvalsOpen = useUi((s) => s.approvalsOpen);
   const shortcutsOpen = useUi((s) => s.shortcutsOpen);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const activeConversation = useConversation(conversationId);
@@ -409,7 +419,7 @@ export function App() {
     sidePanelMode === "full";
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-bg">
+    <div className="relative flex h-full min-w-0 flex-col bg-bg">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-1 focus:left-1 focus:z-50 focus:rounded-md focus:bg-surface focus:px-3 focus:py-1.5 focus:text-sm focus:shadow-pop"
@@ -474,145 +484,172 @@ export function App() {
             aria-keyshortcuts="meta+k ctrl+k"
             title={`${t("コマンドパレット")} · ${chord("Mod", "K")}`}
             className={
-              "hidden h-7 min-w-44 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 " +
-              "text-xs text-faint shadow-xs transition-colors duration-100 hover:border-line-strong hover:text-muted md:flex"
+              "flex h-7 min-w-7 items-center gap-2 rounded-lg border border-line bg-surface px-2 " +
+              "text-xs text-faint shadow-xs transition-colors duration-100 hover:border-line-strong hover:text-muted " +
+              "md:min-w-44 md:px-2.5"
             }
           >
             <Search size={13} aria-hidden="true" />
-            <span className="flex-1 text-start">{t("検索")}</span>
-            <Kbd>{chord("Mod", "K")}</Kbd>
+            <span className="hidden flex-1 text-start md:inline">
+              {t("検索")}
+            </span>
+            <Kbd className="hidden md:inline-flex">{chord("Mod", "K")}</Kbd>
           </button>
 
           <StatusMenu autoCheck={settings.data?.auto_check_updates === true} />
           <ApprovalIndicator />
 
-          {view === "chat" && agentSurface && (
+          {view === "chat" && (
             <div className="flex items-center gap-1 border-s border-line ps-1.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={toggleFileTree}
-                title={`${t("ファイルツリー")} · ${chord("Mod", "Shift", "E")}`}
-                aria-label={t("ファイルツリー")}
-                aria-pressed={fileTreeOpen}
-              >
-                <FolderTree size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  setRightPanel(rightPanel === "changes" ? "none" : "changes")
-                }
-                title={
-                  changedFiles > 0
-                    ? tf("変更を確認 ({count})", { count: changedFiles })
-                    : t("変更を確認")
-                }
-                aria-label={
-                  changedFiles > 0
-                    ? tf("変更を確認 ({count}件)", { count: changedFiles })
-                    : t("変更を確認")
-                }
-                aria-pressed={rightPanel === "changes"}
-                className="relative"
-              >
-                <GitCompareArrows size={16} />
-                {changedFiles > 0 && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute -top-0.5 -right-0.5 grid min-w-3.5 place-items-center rounded-full bg-brand px-0.5 font-mono text-[9px] leading-3.5 text-on-solid"
+              {agentSurface && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={toggleFileTree}
+                    title={`${t("ファイルツリー")} · ${chord("Mod", "Shift", "E")}`}
+                    aria-label={t("ファイルツリー")}
+                    aria-pressed={fileTreeOpen}
                   >
-                    {changedFiles > 99 ? "99+" : changedFiles}
-                  </span>
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  rightPanel === "browser"
-                    ? dismissBrowserPanel()
-                    : openBrowserPanel("user")
-                }
-                title={
-                  rightPanel === "browser"
-                    ? t("ブラウザを閉じる")
-                    : t("ブラウザを表示")
-                }
-                aria-label={
-                  rightPanel === "browser"
-                    ? t("ブラウザを閉じる")
-                    : t("ブラウザを表示")
-                }
-                aria-pressed={rightPanel === "browser"}
-              >
-                <Globe size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  setRightPanel(rightPanel === "usage" ? "none" : "usage")
-                }
-                title={
-                  rightPanel === "usage"
-                    ? t("使用状況を閉じる")
-                    : t("使用状況を表示")
-                }
-                aria-label={
-                  rightPanel === "usage"
-                    ? t("使用状況を閉じる")
-                    : t("使用状況を表示")
-                }
-                aria-pressed={rightPanel === "usage"}
-              >
-                <Gauge size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  setRightPanel(rightPanel === "none" ? "activity" : "none")
-                }
-                title={
-                  rightPanel === "none"
-                    ? t("アクティビティを表示")
-                    : t("サイドパネルを閉じる")
-                }
-                aria-label={
-                  rightPanel === "none"
-                    ? t("アクティビティを表示")
-                    : t("サイドパネルを閉じる")
-                }
-                aria-pressed={rightPanel !== "none"}
-              >
-                <PanelRight size={16} />
-              </Button>
-            </div>
-          )}
-          {view === "chat" && !agentSurface && (
-            <div className="flex items-center gap-1 border-s border-line ps-1.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  setRightPanel(rightPanel === "usage" ? "none" : "usage")
-                }
-                title={
-                  rightPanel === "usage"
-                    ? t("使用状況を閉じる")
-                    : t("使用状況を表示")
-                }
-                aria-label={
-                  rightPanel === "usage"
-                    ? t("使用状況を閉じる")
-                    : t("使用状況を表示")
-                }
-                aria-pressed={rightPanel === "usage"}
-              >
-                <Gauge size={16} />
-              </Button>
+                    <FolderTree size={16} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() =>
+                      rightPanel === "browser"
+                        ? dismissBrowserPanel()
+                        : openBrowserPanel("user")
+                    }
+                    title={
+                      rightPanel === "browser"
+                        ? t("ブラウザを閉じる")
+                        : t("ブラウザを表示")
+                    }
+                    aria-label={
+                      rightPanel === "browser"
+                        ? t("ブラウザを閉じる")
+                        : t("ブラウザを表示")
+                    }
+                    aria-pressed={rightPanel === "browser"}
+                  >
+                    <Globe size={16} />
+                  </Button>
+                </>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="relative"
+                    title={t("表示パネル")}
+                    aria-label={t("表示パネル")}
+                    aria-pressed={
+                      rightPanel === "changes" ||
+                      rightPanel === "usage" ||
+                      rightPanel === "activity"
+                    }
+                  >
+                    <PanelRight size={16} />
+                    {agentSurface && changedFiles > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -top-0.5 -right-0.5 grid min-w-3.5 place-items-center rounded-full bg-brand px-0.5 font-mono text-[9px] leading-3.5 text-on-solid"
+                      >
+                        {changedFiles > 99 ? "99+" : changedFiles}
+                      </span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-52">
+                  <DropdownMenuLabel>{t("表示パネル")}</DropdownMenuLabel>
+                  {agentSurface && (
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        setRightPanel(
+                          rightPanel === "changes" ? "none" : "changes",
+                        )
+                      }
+                    >
+                      <GitCompareArrows
+                        size={13}
+                        className="text-muted"
+                        aria-hidden="true"
+                      />
+                      <span className="flex-1">{t("変更")}</span>
+                      {changedFiles > 0 && (
+                        <span className="font-mono text-2xs text-faint">
+                          {changedFiles > 99 ? "99+" : changedFiles}
+                        </span>
+                      )}
+                      {rightPanel === "changes" && (
+                        <Check
+                          size={13}
+                          className="text-brand"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      setRightPanel(rightPanel === "usage" ? "none" : "usage")
+                    }
+                  >
+                    <Gauge
+                      size={13}
+                      className="text-muted"
+                      aria-hidden="true"
+                    />
+                    <span className="flex-1">{t("使用状況")}</span>
+                    {rightPanel === "usage" && (
+                      <Check
+                        size={13}
+                        className="text-brand"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      setRightPanel(
+                        rightPanel === "activity" ? "none" : "activity",
+                      )
+                    }
+                  >
+                    <Activity
+                      size={13}
+                      className="text-muted"
+                      aria-hidden="true"
+                    />
+                    <span className="flex-1">{t("アクティビティ")}</span>
+                    {rightPanel === "activity" && (
+                      <Check
+                        size={13}
+                        className="text-brand"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                  {rightPanel !== "none" &&
+                    rightPanel !== "changes" &&
+                    rightPanel !== "usage" &&
+                    rightPanel !== "activity" &&
+                    rightPanel !== "browser" && (
+                      <DropdownMenuItem onSelect={() => setRightPanel("none")}>
+                        <PanelRight
+                          size={13}
+                          className="text-muted"
+                          aria-hidden="true"
+                        />
+                        <span className="flex-1">
+                          {t("サイドパネルを閉じる")}
+                        </span>
+                      </DropdownMenuItem>
+                    )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
           <WindowControls />
@@ -622,7 +659,7 @@ export function App() {
       <HealthBanner />
 
       <div ref={setShellRow} className="relative flex min-h-0 min-w-0 flex-1">
-        <Sidebar cap={panelCap} />
+        <Sidebar cap={panelBounds.cap} />
         <section
           id="main-content"
           tabIndex={-1}
@@ -641,7 +678,7 @@ export function App() {
               fileTreeOpen &&
               !browserFull && (
                 <Suspense fallback={<PaneFallback />}>
-                  <FileTreePane cap={panelCap} />
+                  <FileTreePane cap={panelBounds.cap} />
                 </Suspense>
               )}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -686,10 +723,18 @@ export function App() {
         </section>
         {view === "chat" && !browserFull && (
           <PaneErrorBoundary name="RightPanel" resetKeys={[view, agentSurface]}>
-            <RightPanel cap={panelCap} />
+            <RightPanel
+              rightMax={panelBounds.rightMax}
+              rowWidth={panelBounds.rowWidth}
+            />
           </PaneErrorBoundary>
         )}
       </div>
+      {approvalsOpen && (
+        <Suspense fallback={null}>
+          <ApprovalDrawer />
+        </Suspense>
+      )}
       {paletteOpen && (
         <Suspense fallback={null}>
           <CommandPalette />

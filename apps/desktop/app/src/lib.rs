@@ -16,9 +16,11 @@ pub mod run_events;
 pub mod scheduler;
 pub mod spotlight;
 pub mod tray;
+pub mod webview_browser;
 pub mod workspace_baseline;
 pub mod worktree;
 
+use mixd_browser::BrowserHost as _;
 use mixd_core::runs::engine::{ProviderRegistry, RunEngine};
 use mixd_mcp::McpHost;
 use mixd_providers::{
@@ -584,10 +586,7 @@ pub struct AppState {
     pub storage: Arc<Storage>,
     pub secrets: Arc<SecretStore>,
     pub engine: Arc<RunEngine>,
-    pub browser: Arc<mixd_browser::BrowserOperator>,
-    /// On-demand Chromium download state. Kept beside the operator because the
-    /// installer writes the tree the operator resolves.
-    pub chromium_installer: Arc<mixd_browser::ChromiumInstaller>,
+    pub browser: Arc<webview_browser::WebviewBrowserHost>,
     pub mcp: Arc<McpHost>,
     /// Flips to `true` once the background MCP connection pass has finished.
     ///
@@ -604,10 +603,9 @@ pub struct AppState {
     /// the same provider, and so a provider/settings change can invalidate the
     /// one cached answer through [`embedding::EmbeddingResolver::invalidate`].
     pub embeddings: Arc<embedding::EmbeddingResolver>,
-    /// The same allowlist the Tool Registry uses. The manual browser pane
-    /// bypassed it because it called the operator directly; keeping the policy
-    /// here lets the command apply the same gate. Behind a lock so saving the
-    /// settings form takes effect immediately instead of at the next launch.
+    /// The same allowlist the Tool Registry uses. The UI browser commands
+    /// apply the same gate as agent calls. Behind a lock so saving the settings
+    /// form takes effect immediately instead of at the next launch.
     pub egress: Arc<tokio::sync::RwLock<mixd_tools::EgressPolicy>>,
     /// Lifecycle, health and model jobs for local runtimes. One instance for
     /// the whole process so the WebView, the health loop and shutdown all see
@@ -624,13 +622,12 @@ pub struct AppState {
 
 /// Rebuild the engine's Tool Registry from the live parts.
 ///
-/// MCP connect/disconnect and Chromium install/remove all change what the
-/// model should be told exists. This used to live in the MCP command module;
-/// sharing it keeps a browser install from requiring an app relaunch before
-/// the `browser` tool appears.
+/// MCP connect/disconnect changes what the model should be told exists. This
+/// used to live in the MCP command module; sharing it keeps a registry rebuild
+/// from requiring an app relaunch.
 pub(crate) async fn refresh_registry(state: &AppState) {
     let egress = load_egress_policy(state.storage.as_ref()).await;
-    // The manual browser pane reads this copy, so it has to move with the
+    // The UI browser commands read this copy, so it has to move with the
     // registry. Saving the egress allowlist used to require a relaunch for the
     // pane while the agent got the new policy on its next registry rebuild.
     *state.egress.write().await = egress.clone();
@@ -671,7 +668,7 @@ pub(crate) async fn refresh_registry(state: &AppState) {
 /// registries have to recall Memory through one shared, cacheable source.
 pub(crate) fn build_registry(
     storage: &Arc<Storage>,
-    browser: &Arc<mixd_browser::BrowserOperator>,
+    browser: &Arc<webview_browser::WebviewBrowserHost>,
     mcp: &Arc<McpHost>,
     agent_runner: &Arc<EngineAgentRunner>,
     embeddings: &Arc<embedding::EmbeddingResolver>,
@@ -706,15 +703,9 @@ pub(crate) fn build_registry(
         .with_knowledge(Arc::new(CoreKnowledgeDispatch {
             storage: storage.clone(),
         }));
-    // Do not advertise a tool that cannot launch. The browser pane still
-    // reports `disabled` and the UI can point at installation instructions;
-    // the model simply never sees a dead tool.
-    if !matches!(
-        browser.resolve_executable().0,
-        mixd_browser::BrowserBackend::Disabled
-    ) {
-        registry = registry.with_browser(browser.clone());
-    }
+    // The native child WebView is always available; there is no install step
+    // or executable to resolve anymore.
+    registry = registry.with_browser(browser.clone());
     registry
 }
 
@@ -723,7 +714,6 @@ pub async fn build_app_state(
     storage: Arc<Storage>,
     secrets: Arc<SecretStore>,
     app_data: &std::path::Path,
-    resource_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<AppState> {
     let build_started = std::time::Instant::now();
     // Old delegate checkouts are removed here rather than on every `agent`
@@ -742,45 +732,24 @@ pub async fn build_app_state(
             );
         });
     }
-    // The browser is always headless: the in-app side panel is the only view,
-    // so a second visible Chromium window would just duplicate the page and
-    // keep an extra compositor alive.
-    let browser = Arc::new(mixd_browser::BrowserOperator::with_resources(
+    // The browser is a native child WebView in the main window. No Chromium
+    // child process, download step or screencast is involved.
+    let browser = Arc::new(webview_browser::WebviewBrowserHost::new(
+        app_handle.clone(),
         app_data,
-        resource_dir,
     ));
-    // Forward CDP screencast frames to the WebView. Polling remains the
-    // fallback, so a failed screencast degrades instead of going blank.
-    let frame_app = app_handle.clone();
-    browser
-        .set_frame_sink(Arc::new(move |frame| {
-            let payload = crate::commands::browser::BrowserFrameEventPayload {
-                workspace_id: frame.workspace_id.to_string(),
-                data: format!("data:image/jpeg;base64,{}", frame.jpeg_base64),
-                width: frame.width,
-                height: frame.height,
-            };
-            let _ = frame_app.emit(crate::commands::browser::BROWSER_FRAME_EVENT, payload);
-        }))
-        .await;
-    // Free the hundreds of megabytes a parked Chromium keeps. The live view
-    // polls every 2 s, which refreshes `last_used`, so an open panel never
-    // expires.
-    let idle_browser = browser.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            ticker.tick().await;
-            idle_browser
-                .close_idle(mixd_browser::operator::idle_timeout())
-                .await;
-        }
-    });
-    let chromium_installer = Arc::new(mixd_browser::ChromiumInstaller::new(app_data));
+    // The managed Chromium tree from older releases is dead weight now that
+    // the page is a native WebView. Remove it in the background so an upgrade
+    // reclaims the ~200 MB without delaying startup.
     {
-        let installer = chromium_installer.clone();
+        let cleanup_dir = app_data.to_path_buf();
         tauri::async_runtime::spawn(async move {
-            installer.cleanup_stale().await;
+            let chromium = cleanup_dir.join("chromium");
+            if tokio::fs::remove_dir_all(&chromium).await.is_ok() {
+                tracing::info!(path = %chromium.display(), "removed the legacy managed Chromium tree");
+            }
+            let state = cleanup_dir.join("chromium-install-state.json");
+            let _ = tokio::fs::remove_file(state).await;
         });
     }
 
@@ -982,7 +951,6 @@ pub async fn build_app_state(
         secrets,
         engine,
         browser,
-        chromium_installer,
         mcp,
         mcp_ready: mcp_ready_rx,
         agent_runner,
@@ -1560,26 +1528,11 @@ pub fn run() {
                     }
                 };
             let secrets = std::sync::Arc::new(mixd_storage::SecretStore::open(&data_dir));
-            // Tauri's resolved resource dir is where the legacy bundled
-            // Chromium lived; guessing it from app_data breaks on installed
-            // builds. New installs use <app-data>/chromium instead.
-            // Under cargo/tauri dev that dir is `target/debug`, whose Chromium
-            // mirror has lost the macOS framework symlinks, so debug builds read
-            // the pristine payload next to this crate instead. `env!` is
-            // resolved at compile time and cfg-gated out of release builds, so
-            // no local path is baked into a shipped binary.
-            let manifest_resources =
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
-            let resource_dir = mixd_browser::resolve_resource_dir(
-                app.path().resource_dir().ok().as_deref(),
-                Some(manifest_resources.as_path()),
-            );
             let state = match tauri::async_runtime::block_on(build_app_state(
                 app_handle.clone(),
                 storage,
                 secrets,
                 &data_dir,
-                resource_dir,
             )) {
                 Ok(state) => state,
                 Err(err) => {
@@ -1747,19 +1700,11 @@ pub fn run() {
             commands::mcp::start_oauth,
             commands::mcp::connect,
             commands::mcp::handle_oauth_callback,
-            commands::browser::browser_status,
-            commands::browser::browser_install,
-            commands::browser::browser_install_cancel,
-            commands::browser::browser_uninstall,
             commands::browser::browser_invoke,
-            commands::browser::browser_profiles,
-            commands::browser::browser_reset_profile,
+            commands::browser::browser_surface_bounds,
+            commands::browser::browser_clear_data,
             commands::browser::browser_artifact,
-            commands::browser::browser_frame,
-            commands::browser::browser_keepalive,
             commands::browser::browser_stop,
-            commands::browser::browser_screencast_start,
-            commands::browser::browser_screencast_stop,
             commands::memories::list_memories,
             commands::memories::create_memory,
             commands::memories::update_memory,
@@ -1886,6 +1831,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    /// The untrusted browser child WebView must not inherit the main
+    /// WebView's IPC capability. A `windows = ["main"]` grant applies to every
+    /// webview in that window, so the capability must be scoped by webview.
+    #[test]
+    fn browser_capability_is_scoped_to_the_main_webview() {
+        let capability = include_str!("../capabilities/default.toml");
+        assert!(capability.contains("webviews = [\"main\"]"));
+        assert!(
+            !capability
+                .lines()
+                .any(|line| line.trim_start().starts_with("windows =")),
+            "a window-scoped capability would expose IPC to the browser WebView"
+        );
+    }
+
     /// The log directory is derived from the bundle identifier without a Tauri
     /// handle, so the constant has to stay in sync with the config file by
     /// hand — this is what catches the drift. The Keychain service name is the

@@ -416,7 +416,7 @@ export function FileTreePane({ cap = null }: { cap?: number | null }) {
     <>
       <aside
         aria-label={t("ファイルツリー")}
-        data-side-panel=""
+        data-side-panel="files"
         style={panelStyle(fileTreeWidth, cap)}
         className="flex shrink-0 flex-col overflow-hidden border-e border-line bg-sidebar"
       >

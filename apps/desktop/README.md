@@ -21,7 +21,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 | **データ管理** | SQLite (WAL モード + FTS5 全文検索)。DB 本体は平文のため、保存時の保護は OS のディスク暗号化（FileVault / BitLocker / LUKS）に依存 | PostgreSQL (pg_trgm インデックス) |
 | **秘密情報保護** | AES-256-GCM 暗号化ファイル。macOS は `.master_seed`（0600）方式、Windows は Credential Manager にマスター鍵。Linux はファイル方式（Secret Service があれば `MIX_SECRET_BACKEND=keychain-seed` で切替可） | 暗号化 DB カラム (AES-GCM + scrypt) |
 | **ターミナル実行** | ローカルマシンの **永続 PTY シェル**（環境変数や `cd` が継続） | execution-runner コンテナ内の非 root シェル |
-| **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを tokio 子プロセスで直接制御 | execution-runner コンテナ内の Playwright |
+| **ブラウザ操作** | アプリ内のネイティブ子 WebView をエージェントと共有 | execution-runner コンテナ内の Playwright |
 | **ファイル操作** | ホストマシンのファイルに直接アクセス・インライン差分編集 (`edit`) | マウントされたボリュームのみ操作可能 |
 
 ---
@@ -40,10 +40,10 @@ apps/desktop/
 ├── core/                 # Run Engine / state / events / context（純粋ロジック）
 ├── providers/            # wire 実装（OpenAI / Anthropic / Gemini）+ ラッパー
 ├── tools/                # Tool Registry + ツール実行基盤
-├── browser/              # Browser Operator + chromiumoxide backend
+├── browser/              # Browser tool contract（エンジン非依存）
 ├── mcp/                  # MCP client host (stdio / Remote HTTP)
 ├── storage/              # SQLite + 秘密ストア (file seed / keyring-rs)
-├── scripts/              # pin-chromium.mjs（Chrome for Testing のバージョン固定）
+├── scripts/              # UI / リリース用ヘルパー
 └── ui/                   # React 19 + Vite + Tailwind（Desktop 専用ネイティブ UI）
 ```
 
@@ -63,26 +63,17 @@ apps/desktop/
 - **Windows**: Visual Studio Build Tools 2022 (C++ workload) + WebView2。ターミナルで POSIX コマンドを使う場合は Git for Windows（Git Bash）を推奨。無い場合は PowerShell にフォールバックします。
 - **Linux**: `libwebkit2gtk-4.1-dev`, `libssl-dev`, `librsvg2-dev`, `libappindicator3-dev`, `libayatana-appindicator3-dev`, `libxdo-dev`, `libgtk-3-dev`, `patchelf`
 
-### Chromium（初回インストール）
-Desktop版はブラウザを同梱しない。初回利用時に設定 ▸ ブラウザから Chrome for Testing を
-`<app-data>/chromium` へ導入する。バージョンと SHA-256 は
-`browser/src/chromium-manifest.json` に固定されており、更新は次のコマンドで行う。
+### 内蔵ブラウザ（ネイティブ子 WebView）
+Desktop版は Chromium を同梱・ダウンロードしない。Tauri の子 WebView
+（macOS: WKWebView / Windows: WebView2 / Linux: WebKitGTK）をメインウィンドウに
+追加し、チャット右側のブラウザパネル（Codex 風のツールバー・複数タブ・
+フル/スプリット表示）から操作する。`⌘⇧B`（macOS）/ `Ctrl+Shift+B`
+（Windows / Linux）で開閉でき、エージェントが `browser` ツールを使うと
+自動で表示される。
 
-```sh
-pnpm chromium:pin                                  # 最新 Stable を固定
-node scripts/pin-chromium.mjs --version 156.0.8078.73
-node scripts/pin-chromium.mjs --verify             # 固定アーカイブを再検証
-```
-
-開発時はシステムの Chromium にフォールバックする。任意のビルドを使う場合は
-`MIX_CHROMIUM_HOME=/path/to/chromium`（`chrome-mac/` などを含むディレクトリ）を指定する。
-Linuxの`.deb`はChromiumの実行時ライブラリを`depends`に含むが、AppImageはホスト側の
-ライブラリに依存する。
-
-Chromium は常にヘッドレスで起動し、チャット右側のブラウザパネル（Codex 風の
-ツールバー・複数タブ・フル/スプリット表示）から操作する。`⌘⇧B`（macOS）/ `Ctrl+Shift+B`（Windows / Linux）で開閉でき、
-エージェントが `browser` ツールを使うと自動で表示される。メモリ節約のため、
-同時に開くワークスペースは 2 個、5 分未使用のブラウザは自動終了する。
+ページのスクロール・IME・ホバー・コピペは OS WebView のネイティブ動作で、
+エージェントも同じページを `eval_with_callback` で操作する。Cookie とログインは
+このアプリ専用のブラウザデータに保存され、通常の Chrome とは共有されない。
 
 ---
 
@@ -183,7 +174,7 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 | `web_search` | DuckDuckGo による Web 検索 | allow |
 | `web_fetch` | URL からのコンテンツ取得（egress 制御 & プライベート IP 拒否） | ask |
 | `web_fetch_pdf` | Web 上の PDF からテキスト抽出 | ask |
-| `browser` | 実 Chromium を自動操作（snapshot + ref、実クリック/入力、タブ、スクショ等）。localhost は「ブラウザのローカルアクセス」を ON にした場合のみ | ask |
+| `browser` | アプリ内のネイティブ WebView を操作（snapshot + ref、クリック/入力、タブ、スクショ等）。localhost は「ブラウザのローカルアクセス」を ON にした場合のみ | ask |
 | `mcp__<conn>__<tool>` | 接続された外部 MCP サーバーのツール | ask |
 
 ### 権限ゲート（Permission Gate）とスコープ制限

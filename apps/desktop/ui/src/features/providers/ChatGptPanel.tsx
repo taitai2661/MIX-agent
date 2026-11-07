@@ -14,14 +14,6 @@ import type {
 import { Card, Row } from "@/components/layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 
 export type ChatGptLogin = ChatGptDeviceStart & {
@@ -318,7 +310,7 @@ export function ChatGptQuotaCard({
   );
 }
 
-export function ChatGptLoginDialog({
+export function ChatGptLoginCard({
   login,
   onComplete,
   onFailed,

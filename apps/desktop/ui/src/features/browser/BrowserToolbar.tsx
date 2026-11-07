@@ -5,15 +5,8 @@ import {
   ExternalLink,
   Globe,
   Lock,
-  Maximize2,
-  Minimize2,
-  Pin,
-  PinOff,
-  Play,
   RefreshCw,
   RotateCw,
-  Settings2,
-  Square,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -22,14 +15,13 @@ import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import type { LiveBrowser } from "./BrowserViewport";
+import { BrowserSessionMenu } from "./BrowserSessionMenu";
+import type { WebviewBrowser } from "./useWebviewBrowser";
 
 /** Turn whatever the user typed into a URL the egress gate can evaluate. */
 export function normalizeAddress(raw: string): string {
   const value = raw.trim();
   if (!value) return "";
-  // Only treat a real scheme delimiter as a scheme: `localhost:3000` looks
-  // superficially like `scheme:`, but it is a host:port.
   if (/^(https?:\/\/|about:)/i.test(value)) return value;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
   if (
@@ -53,47 +45,58 @@ export function displayAddress(raw: string | null): string {
 }
 
 interface BrowserToolbarProps {
-  live: LiveBrowser;
+  browser: WebviewBrowser;
+  workspaceId: string | null;
   agentBusy: boolean;
   autoOpen: boolean;
   full: boolean;
+  docked: boolean;
   autoFocusAddress: boolean;
   onToggleAutoOpen: () => void;
   onToggleFull: () => void;
+  onToggleDocked: () => void;
+  onResetRatio: () => void;
+  onClearData: () => void;
   onOpenSettings: () => void;
   onClose: () => void;
+  onMenuOpenChange: (open: boolean) => void;
 }
 
 export function BrowserToolbar({
-  live,
+  browser,
+  workspaceId,
   agentBusy,
   autoOpen,
   full,
+  docked,
   autoFocusAddress,
   onToggleAutoOpen,
   onToggleFull,
+  onToggleDocked,
+  onResetRatio,
+  onClearData,
   onOpenSettings,
   onClose,
+  onMenuOpenChange,
 }: BrowserToolbarProps) {
   const [address, setAddress] = useState("");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const currentUrl = live.page.url ?? "";
+  const currentUrl = browser.page.url ?? "";
+  const navigating = busy || browser.navigating;
   useEffect(() => {
-    if (!editing) setAddress(displayAddress(live.page.url));
-  }, [editing, live.page.url]);
+    if (!editing) setAddress(displayAddress(browser.page.url));
+  }, [editing, browser.page.url]);
 
   useEffect(() => {
     if (!autoFocusAddress) return;
-    if (live.page.url && live.page.url !== "about:blank") return;
+    if (browser.page.url && browser.page.url !== "about:blank") return;
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, [autoFocusAddress, live.page.url]);
+  }, [autoFocusAddress, browser.page.url]);
 
-  // ⌘L / the command palette can ask for the address bar without knowing
-  // where the input lives.
   useEffect(() => {
     const focus = () => {
       setEditing(true);
@@ -117,7 +120,7 @@ export function BrowserToolbar({
     try {
       await task();
     } finally {
-      window.setTimeout(() => setBusy(false), 600);
+      window.setTimeout(() => setBusy(false), 400);
     }
   };
 
@@ -126,49 +129,49 @@ export function BrowserToolbar({
     if (!url) return;
     setEditing(false);
     inputRef.current?.blur();
-    await withBusy(() => live.navigate(url));
+    await withBusy(() => browser.navigate(url));
   };
 
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line bg-bg/85 px-2 backdrop-blur-md">
+    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line bg-bg/90 px-2 backdrop-blur-md">
       <Button
         variant="ghost"
         size="icon-sm"
-        onClick={() => void withBusy(() => live.back())}
-        disabled={!live.page.canGoBack}
+        onClick={() => void withBusy(() => browser.back())}
+        disabled={!browser.page.canGoBack}
         title={t("戻る")}
         aria-label={t("戻る")}
       >
-        <ArrowLeft size={13} />
+        <ArrowLeft size={14} />
       </Button>
       <Button
         variant="ghost"
         size="icon-sm"
-        onClick={() => void withBusy(() => live.forward())}
-        disabled={!live.page.canGoForward}
+        onClick={() => void withBusy(() => browser.forward())}
+        disabled={!browser.page.canGoForward}
         title={t("進む")}
         aria-label={t("進む")}
       >
-        <ArrowRight size={13} />
+        <ArrowRight size={14} />
       </Button>
       <Button
         variant="ghost"
         size="icon-sm"
         onClick={() =>
-          void withBusy(() => (busy ? live.stop() : live.reload()))
+          void withBusy(() => (navigating ? browser.stop() : browser.reload()))
         }
-        title={busy ? t("停止") : t("再読み込み")}
-        aria-label={busy ? t("停止") : t("再読み込み")}
+        title={navigating ? t("停止") : t("再読み込み")}
+        aria-label={navigating ? t("停止") : t("再読み込み")}
       >
-        {busy ? <X size={13} /> : <RefreshCw size={13} />}
+        {navigating ? <X size={14} /> : <RefreshCw size={14} />}
       </Button>
 
       <div
         className={cn(
-          "group flex h-7 min-w-0 flex-1 items-center gap-1 rounded-lg border px-2 transition-colors",
+          "group flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-full border px-3 transition-colors",
           editing
             ? "border-line-strong bg-surface"
-            : "border-transparent bg-inset hover:border-line",
+            : "border-line/70 bg-inset hover:border-line-strong",
         )}
       >
         <SecurityIcon
@@ -187,7 +190,7 @@ export function BrowserToolbar({
           }}
           onBlur={() => {
             setEditing(false);
-            setAddress(displayAddress(live.page.url));
+            setAddress(displayAddress(browser.page.url));
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -195,11 +198,9 @@ export function BrowserToolbar({
               void submit();
             } else if (event.key === "Escape") {
               event.preventDefault();
-              // Keep the app-level "Esc closes the side panel" shortcut from
-              // firing while the user is cancelling address editing.
               event.stopPropagation();
               setEditing(false);
-              setAddress(displayAddress(live.page.url));
+              setAddress(displayAddress(browser.page.url));
               event.currentTarget.blur();
             }
           }}
@@ -235,62 +236,21 @@ export function BrowserToolbar({
         </span>
       )}
 
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => live.setLive((value) => !value)}
-        title={live.live ? t("ライブ表示を停止") : t("ライブ表示を開始")}
-        aria-label={live.live ? t("ライブ表示を停止") : t("ライブ表示を開始")}
-        aria-pressed={live.live}
-      >
-        {live.live ? <Square size={12} /> : <Play size={12} />}
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onToggleAutoOpen}
-        title={
-          autoOpen
-            ? t("エージェント使用時の自動表示をオフ")
-            : t("エージェント使用時に自動表示")
-        }
-        aria-label={
-          autoOpen
-            ? t("エージェント使用時の自動表示をオフ")
-            : t("エージェント使用時に自動表示")
-        }
-        aria-pressed={autoOpen}
-      >
-        {autoOpen ? <Pin size={13} /> : <PinOff size={13} />}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onToggleFull}
-        title={full ? t("スプリット表示に戻す") : t("フル表示")}
-        aria-label={full ? t("スプリット表示に戻す") : t("フル表示")}
-      >
-        {full ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onOpenSettings}
-        title={t("ブラウザ設定を開く")}
-        aria-label={t("ブラウザ設定を開く")}
-      >
-        <Settings2 size={13} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onClose}
-        title={t("閉じる")}
-        aria-label={t("閉じる")}
-      >
-        <X size={14} />
-      </Button>
+      <BrowserSessionMenu
+        browser={browser}
+        workspaceId={workspaceId}
+        autoOpen={autoOpen}
+        full={full}
+        docked={docked}
+        onToggleAutoOpen={onToggleAutoOpen}
+        onToggleFull={onToggleFull}
+        onToggleDocked={onToggleDocked}
+        onResetRatio={onResetRatio}
+        onClearData={onClearData}
+        onOpenSettings={onOpenSettings}
+        onClosePanel={onClose}
+        onOpenChange={onMenuOpenChange}
+      />
     </div>
   );
 }

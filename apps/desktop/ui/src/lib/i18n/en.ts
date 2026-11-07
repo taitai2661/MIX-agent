@@ -115,6 +115,9 @@ export const en: Record<string, string> = {
   "思考プロセスをコピー": "Copy reasoning",
   "思考中…": "Thinking…",
   "実行中…": "Running…",
+  "待機中…": "Queued…",
+  "{tool} を実行中…": "Running {tool}…",
+  "このRunの経過時間": "Time elapsed for this run",
   "件のツール": "tools",
   "ステップ": "steps",
   "差分": "Diff",
@@ -161,8 +164,6 @@ export const en: Record<string, string> = {
 
   // Usage
   "使用状況": "Usage",
-  "使用状況を表示": "Show usage",
-  "使用状況を閉じる": "Close usage",
   "使用": "Usage",
   "このスレッドにはまだ使用状況がありません": "No usage in this thread yet",
   "メッセージを送ると、トークン数と推定コストが表示されます。":
@@ -176,6 +177,48 @@ export const en: Record<string, string> = {
   "キャッシュ読取": "Cache read",
   "キャッシュ書込": "Cache write",
   "推定コスト": "Estimated cost",
+  "合計トークン": "Total tokens",
+  "キャッシュヒット率": "Cache hit rate",
+  "{n} Run": "{n} runs",
+  "モデル詳細": "Model details",
+  "コンテキストウィンドウ": "Context window",
+  "ファミリー": "Family",
+  "パラメータ数": "Parameters",
+  "量子化": "Quantization",
+  "サイズ": "Size",
+  "非対応": "No",
+  "Runの詳細": "Run details",
+  "ステップ数": "Steps",
+  "ツール呼び出し": "Tool calls",
+  "失敗したツール呼び出し": "Failed tool calls",
+  "トークン上限": "Token limit",
+  "所要時間": "Duration",
+  "開始": "Started",
+  "Run ID": "Run ID",
+  "待機中": "Queued",
+  "予算延長待ち": "Awaiting budget",
+  "中断済み": "Interrupted",
+  "Run履歴": "Run history",
+  "{n} ステップ": "{n} steps",
+  "{n} ツール": "{n} tools",
+  "残り": "Remaining",
+  "残りトークン": "Tokens left",
+  "時間上限": "Time limit",
+  "予算延長": "Budget extensions",
+  "平均コスト": "Average cost",
+  "速度": "Speed",
+  "平均出力速度": "Average output speed",
+  "平均合計速度": "Average total speed",
+  "1ステップあたり": "Per step",
+  "1ツール呼び出しあたり": "Per tool call",
+  "コスト/分": "Cost / min",
+  "ツール実行や待ち時間を含む、Run全体の平均です。":
+    "Averages across the whole run, including tool calls and waits.",
+  "種別": "Kind",
+  "接続先": "Endpoint",
+  "対象": "Eligible",
+  "対象外": "Not eligible",
+  "Auto候補": "Auto candidate",
 
   // Tool activity
   "このRunのアクティビティ": "Run activity",
@@ -281,7 +324,6 @@ export const en: Record<string, string> = {
 
   // Settings pane tabs / groups
   "アプリ": "App",
-  "構成": "Configuration",
   "外観": "Appearance",
   "一般": "General",
   "メッセージ送信キー": "Message send key",
@@ -333,13 +375,14 @@ export const en: Record<string, string> = {
   "設定セクションを選択": "Select a settings section",
 
   // Workspaces (top-level switcher)
-  "作成、学習、探索": "Create, learn, explore",
+  "作成、学習、探索。プロジェクトなしで使えます。":
+    "Create, learn and explore. Works without a project.",
   "ワークスペースを切り替え": "Switch workspace",
+  "コード": "Code",
 
   // Keys referenced from files owned elsewhere (App.tsx, LocalDiscoveryCard,
   // ProvidersPane, McpPane, …) — registered here so English never falls back
   // to the Japanese original.
-  "アクティビティを表示": "Show activity",
   "サイドパネルを閉じる": "Close side panel",
   "プロバイダーが未設定です": "No providers configured",
   "接続に失敗しました": "Connection failed",
@@ -450,28 +493,16 @@ export const en: Record<string, string> = {
   "承認待ち": "Approval required",
   "実行はバックグラウンドで継続しています。トレイから再表示できます。":
     "The run continues in the background. Reopen it from the tray.",
-  "プレビューを読み込めません": "Could not load the preview",
-  "スクリーンショットを保存": "Save screenshot",
-  "ブラウザのスクリーンショット": "Browser screenshot",
-  "ライブ画面": "Live view",
-  "画面を更新": "Refresh frame",
-  "ライブ表示": "Start live view",
-  "ブラウザのライブ画面": "Live browser view",
-  "ブラウザのライブ画面をクリックして操作":
-    "Click the live browser view to act",
   "ブラウザ画面": "Browser view",
-  "Releases を開く": "Open Releases",
   "ブラウザ画面を開く": "Open the browser view",
-  "画面を取得しています…": "Capturing frame…",
-  "画面をクリックするとその位置を操作します。入力欄をクリックしてから下の欄に入力してください。":
-    "Click the frame to act at that point. Click an input first, then type below.",
-  "ブラウザへの入力": "Browser input",
-  "フォーカス中の欄に入力": "Type into the focused field",
-  "入力する": "Type",
-  "ライブ表示を開始すると、ブラウザ画面をここで確認できます。":
-    "Start live view to watch and control the browser from here.",
   "ブラウザを表示": "Show browser",
   "ブラウザを閉じる": "Close browser",
+  "ブラウザメニュー": "Browser menu",
+  "50%に戻す": "Reset to 50%",
+  "ブラウザセッション": "Browser session",
+  "全タブを閉じる": "Close all tabs",
+  "Cookie・localStorage・キャッシュが消えます。開いているタブも閉じます。":
+    "Cookies, localStorage and cache will be cleared. Open tabs will close too.",
   "進む": "Forward",
   "アドレスバー": "Address bar",
   "URL または localhost:3000": "URL or localhost:3000",
@@ -483,23 +514,10 @@ export const en: Record<string, string> = {
   "フル表示": "Full view",
   "スプリット表示に戻す": "Back to split view",
   "ブラウザ設定を開く": "Open browser settings",
-  "ライブ表示を開始": "Start live view",
-  "ライブ表示を停止": "Stop live view",
   "スレッドを開始するとブラウザを使えます。":
     "Start a thread to use the browser.",
-  "インストール中…": "Installing…",
-  "Chromium をインストール": "Install Chromium",
   "新しいタブ": "New tab",
   "タブを閉じる": "Close tab",
-  "スナップショットの ref（例: r12）": "Snapshot ref (e.g. r12)",
-  "スナップショットの ref（任意・selectorより優先）":
-    "Snapshot ref (optional; takes precedence over selector)",
-  "入力前にフィールドを空にする": "Clear the field before typing",
-  "送信するキー": "Key to press",
-  "選択する値": "Value to select",
-  "option の value": "option value",
-  "チェックする": "Checked",
-  "本文に含まれるまで待機…": "Wait until the body contains…",
   "承認待ちが{count}件あります": "{count} approval(s) waiting",
   "詳細を確認": "Check details",
   "承認待ちのアクションはありません": "No actions are waiting for approval",
@@ -561,33 +579,10 @@ export const en: Record<string, string> = {
 
   // Browser pane (English-canonical keys live alongside Japanese ones here;
   // both spellings stay registered while call sites migrate)
-  "Chromiumが見つかりません。上の「インストール」から導入するか、システムのChromiumを用意してください。":
-    "No Chromium binary resolved. Use Install above, or prepare a system Chromium.",
-  "Chromium": "Chromium",
-  "インストール済み": "Installed",
-  "インストール中": "Installing",
-  "インストール": "Install",
-  "更新する": "Update",
-  "更新あり": "Update available",
-  "インストールに失敗しました": "The installation failed",
-  "Chromiumを削除しますか？": "Remove Chromium?",
-  "管理対象のChromiumだけを削除します。システムのブラウザは残ります。":
-    "Only the managed Chromium is removed. A system browser stays available.",
-  "Chrome for Testingをアプリ管理下にインストールしています。更新は次回のアプリ更新時に確認できます。":
-    "Chrome for Testing is installed under the app's management. Updates are offered with the next app update.",
-  "ブラウザ機能を使うにはChromiumをインストールしてください。約200MBをダウンロードします。":
-    "Install Chromium to use the browser features. This downloads about 200 MB.",
-  "preparing": "Preparing…",
   "downloading": "Downloading…",
   "verifying": "Verifying…",
-  "extracting": "Extracting…",
-  "launching": "Launching…",
   "done": "Ready",
-  "バージョン不明": "Version unknown",
-  "installed": "Managed",
-  "bundled": "Bundled",
   "system": "System",
-  "override": "Override",
   "none": "None",
 
   // Health indicator
@@ -620,7 +615,6 @@ export const en: Record<string, string> = {
 
   // Settings: quick prompts, network, updates, mode select
   "ブラウザのローカルアクセス": "Browser local access",
-  "ローカルアクセス許可": "Local access allowed",
   "ローカル開発サーバーへのアクセスを許可": "Allow access to local dev servers",
   "localhost や社内 LAN の開発サーバーをブラウザ Tool で開けるようにします。クラウドメタデータ（169.254.169.254）は許可しても遮断されます。":
     "Lets the browser tool open localhost or LAN development servers. Cloud metadata (169.254.169.254) stays blocked even when this is on.",
@@ -632,6 +626,16 @@ export const en: Record<string, string> = {
   "サイドバー": "Sidebar",
   "サイドパネル": "Side panel",
   "パネル切り替え": "Switch panel",
+  "表示パネル": "View panels",
+  "基本": "Basics",
+  "モデルと接続": "Models & connections",
+  "データと検索": "Data & search",
+  "詳細・診断": "Advanced & diagnostics",
+  "UX イベント（この端末のみ）": "UX events (this device only)",
+  "計測をクリア": "Clear metrics",
+  "画面操作の回数をこの端末にだけ記録します。プロンプトやファイルの内容は保存しません。":
+    "Records how often screens are used, on this device only. Prompts and file contents are never stored.",
+  "まだ記録はありません": "No events recorded yet",
   "表": "Table",
   "メインコンテンツへ移動": "Skip to main content",
   "絞り込みをクリア": "Clear filters",
@@ -647,9 +651,6 @@ export const en: Record<string, string> = {
   "ファイルを選択": "Choose a file",
   "参照": "Browse",
   "URL": "URL",
-  "待機条件": "Wait condition",
-  "JavaScript 式": "JavaScript expression",
-  "実行する JavaScript": "JavaScript to run",
   "バックアップを検証し、再起動時に復元":
     "Verify a backup and reload it on restart",
   "復元": "Restore",
@@ -910,14 +911,7 @@ export const en: Record<string, string> = {
     "Binary files cannot be previewed.",
 
   // Browser
-  "プロファイルをリセットしますか？": "Reset this profile?",
-  "Cookie・localStorage・キャッシュが消えます。":
-    "Its cookies, localStorage and cache are cleared.",
   "リセット": "Reset",
-  "実行": "Run",
-  "開くURL": "URL to open",
-
-  // Local runtime scan
   "検出中…": "Scanning…",
   "ランタイム": "Runtime",
   "オンライン": "Online",
@@ -1102,26 +1096,6 @@ export const en: Record<string, string> = {
   "復元する": "restore",
   "検証する": "verify",
   "ピン留め": "Pin",
-  "バックエンド": "Backend",
-  "状態を更新": "Refresh status",
-  "ヘッドレス": "headless",
-  "プロファイル": "profiles",
-  "成果物": "artifacts",
-  "ワークスペースのプロファイル": "Workspace profile",
-  "新規プロファイル": "new profile",
-  "(未作成)": "(not provisioned)",
-  "操作": "Action",
-  "まだ操作がありません。": "No actions yet.",
-  "出力": "output",
-  "既知のプロファイル": "Known profiles",
-  "準備完了": "ready",
-  "空": "empty",
-  "各ワークスペースは独自のCookie・localStorage・キャッシュを持ち、エージェントのワークスペースと一致します。":
-    "Each workspace keeps its own cookies, localStorage and cache, matching the agent's workspace.",
-  "CSSセレクター（例: #search、body）": "CSS selector, e.g. #search or body",
-  "入力する文字": "text to type",
-  "URLに含まれるまで待機…": "wait until URL contains…",
-  "縦スクロール量": "scroll dy",
   "コンテキスト": "Context",
   "推論": "Reasoning",
   "ストレージ": "Storage",
@@ -1246,8 +1220,6 @@ export const en: Record<string, string> = {
   // Naming: agent profile vs. agent workspace / run mode
   "エージェントプロファイル": "Agent profiles",
   "変更を確認": "Review changes",
-  "変更を確認 ({count})": "Review changes ({count})",
-  "変更を確認 ({count}件)": "Review changes ({count})",
   "{count}件失敗": "{count} failed",
   "設定を検索": "Search settings",
   "一致する設定がありません": "No matching settings",
@@ -1269,7 +1241,10 @@ export const en: Record<string, string> = {
 
   // Workspace / mode naming
   "コーディング": "Coding",
-  "ファイル編集とターミナルを使うワークスペース":
+  "チャットの履歴": "Chat history",
+  "コーディングの履歴": "Coding history",
+  "{label}の履歴を見る": "View {label} history",
+  "ファイル編集とターミナルを使うワークスペース。":
     "A workspace for file edits and terminal work",
   "コマンド・スレッドを検索…": "Search commands and threads…",
   "タスクのタイトル・プレビューを検索": "Search task titles and previews",
@@ -1408,4 +1383,14 @@ export const en: Record<string, string> = {
   "最終同期": "Last sync",
   "未実行": "Never",
   "本文索引": "Body indexing",
+  "このブラウザの閲覧データを削除しますか？":
+    "Clear this browser's browsing data?",
+  "内蔵ブラウザ": "Built-in browser",
+  "ページはアプリ内のネイティブ WebView で表示されます。エージェントと同じ画面を共有し、スクロール・入力・IME はそのまま動きます。":
+    "The page is rendered in a native WebView inside the app. You and the agent share the same page, with native scrolling, typing and IME.",
+  "Cookie とログインはこのアプリ専用のブラウザデータに保存されます。通常の Chrome とは共有されません。":
+    "Cookies and sign-ins are stored in this app's own browser data and are not shared with your regular Chrome.",
+  "閲覧データを削除": "Clear browsing data",
+  "スレッドを開始すると使えます。": "Start a thread to use it.",
+  "ネイティブブラウザを読み込んでいます…": "Loading the native browser…",
 };

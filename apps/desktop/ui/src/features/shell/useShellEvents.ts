@@ -11,7 +11,28 @@ import {
 } from "@/lib/queries";
 import { surfaceForMode, useUi, type SettingsTab, type View } from "@/lib/ui";
 import { t } from "@/lib/i18n";
+import { recordUxEvent } from "@/lib/uxEvents";
 import type { SpotlightTarget } from "@/lib/types";
+
+/** Read the browser tool's optional presentation hint.
+ *
+ * The tool schema advertises `split_ratio` as a 0.2–0.8 share of the shell
+ * width. It is not an action and the backend ignores it; the UI applies it
+ * when the agent opens the pane. A missing/invalid value means "leave the
+ * user's remembered split alone".
+ */
+export function browserSplitRatio(argumentsValue: unknown): number | null {
+  if (!argumentsValue || typeof argumentsValue !== "object") return null;
+  const raw = (argumentsValue as Record<string, unknown>).split_ratio;
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number(raw)
+        : Number.NaN;
+  if (!Number.isFinite(value)) return null;
+  return Math.min(0.8, Math.max(0.2, value));
+}
 
 /** Navigate to the target carried by a Spotlight result click. */
 function applySpotlightTarget(target: SpotlightTarget) {
@@ -42,6 +63,7 @@ export function useNewThread() {
   const startNewThread = useUi((s) => s.startNewThread);
   const setView = useUi((s) => s.setView);
   return () => {
+    recordUxEvent("new_thread", { surface: useUi.getState().surface });
     startNewThread();
     setView("chat");
   };
@@ -76,6 +98,10 @@ export function useCreateThread() {
       });
     },
     onSuccess: (created) => {
+      recordUxEvent("new_thread", {
+        surface: useUi.getState().surface,
+        created: true,
+      });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
       setConversationId(created.id);
       setView("chat");
@@ -120,9 +146,18 @@ export function useShellEvents(handlers: {
         // without stealing focus. It never replaces another pane the user is
         // reading, and a manual close is respected until the next run event.
         if (evt.kind === "tool_started") {
-          const data = (evt.data ?? {}) as { name?: unknown };
+          const data = (evt.data ?? {}) as {
+            name?: unknown;
+            arguments?: unknown;
+          };
           if (data.name === "browser") {
             const state = useUi.getState();
+            const requestedRatio = browserSplitRatio(data.arguments);
+            // A presentation hint is only meaningful while the browser owns
+            // the panel. Do not replace a diff/usage pane the user is reading.
+            if (requestedRatio !== null && state.rightPanel === "browser") {
+              state.setRightPanelRatio(requestedRatio);
+            }
             const conversation = conversationForRun(evt.run_id);
             if (
               state.browserAutoOpen &&
@@ -132,7 +167,10 @@ export function useShellEvents(handlers: {
               state.browserDismissedRunId !== evt.run_id &&
               conversation === state.conversationId
             ) {
-              state.openBrowserPanel("agent");
+              state.openBrowserPanel(
+                "agent",
+                requestedRatio !== null ? { ratio: requestedRatio } : undefined,
+              );
             }
           }
         }
@@ -277,6 +315,7 @@ export function useAppShortcuts(enabled = true) {
   const setRightPanel = useUi((s) => s.setRightPanel);
   const setSurface = useUi((s) => s.setSurface);
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
+  const setApprovalsOpen = useUi((s) => s.setApprovalsOpen);
   const setters = useRef({
     setPaletteOpen,
     toggleFileTree,
@@ -285,6 +324,7 @@ export function useAppShortcuts(enabled = true) {
     setRightPanel,
     setSurface,
     setShortcutsOpen,
+    setApprovalsOpen,
   });
   useEffect(() => {
     setters.current = {
@@ -295,6 +335,7 @@ export function useAppShortcuts(enabled = true) {
       setRightPanel,
       setSurface,
       setShortcutsOpen,
+      setApprovalsOpen,
     };
   });
 
@@ -308,6 +349,7 @@ export function useAppShortcuts(enabled = true) {
         setRightPanel: rightPanelSetter,
         setSurface: surface,
         setShortcutsOpen: shortcuts,
+        setApprovalsOpen: approvals,
       } = setters.current;
 
       const isMod = e.metaKey || e.ctrlKey;
@@ -422,6 +464,11 @@ export function useAppShortcuts(enabled = true) {
         !e.defaultPrevented
       ) {
         const state = useUi.getState();
+        if (state.approvalsOpen) {
+          e.preventDefault();
+          approvals(false);
+          return;
+        }
         if (
           state.rightPanel !== "none" &&
           !state.paletteOpen &&

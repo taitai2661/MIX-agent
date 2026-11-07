@@ -1,7 +1,8 @@
 //! The Browser Tool contract surfaced to the Tool Registry.
 //!
-//! Concrete backends live behind [`crate::operator::BrowserOperator`], so the
-//! Agent never depends on `chromiumoxide` directly.
+//! The Desktop implementation lives in `app/src/webview_browser`; Docker keeps
+//! its Playwright backend. Neither the Agent nor the Tool Registry depends on a
+//! concrete browser engine.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -145,29 +146,6 @@ pub struct BrowserResponse {
     pub error: Option<String>,
 }
 
-/// One non-persisted live-view frame plus the page metadata the side panel
-/// needs to draw its toolbar. The JPEG is encoded at half the CSS viewport;
-/// `width`/`height` are the CSS viewport, not the image pixels.
-#[derive(Debug, Clone)]
-pub struct BrowserFrame {
-    pub jpeg: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// A screencast frame pushed from the CDP handler. `jpeg_base64` is already
-/// base64-encoded by Chromium, so the app layer can put it straight into a
-/// `data:` URL without a second encode.
-#[derive(Debug, Clone)]
-pub struct ScreencastFrame {
-    pub workspace_id: uuid::Uuid,
-    pub jpeg_base64: String,
-    pub width: u32,
-    pub height: u32,
-}
-
-pub type FrameSink = std::sync::Arc<dyn Fn(ScreencastFrame) + Send + Sync>;
-
 impl BrowserResponse {
     pub fn ok(payload: serde_json::Value) -> Self {
         Self {
@@ -189,9 +167,16 @@ impl BrowserResponse {
     }
 }
 
+/// The engine-neutral surface the Tool Registry drives.
+///
+/// Desktop implements this with an in-window Tauri child WebView. Docker does
+/// not use this trait (it exposes `browser_*` tools directly), but the action
+/// vocabulary is shared.
 #[async_trait]
-pub trait BrowserTool: Send + Sync {
+pub trait BrowserHost: Send + Sync {
     async fn invoke(&self, call: BrowserCall) -> anyhow::Result<BrowserResponse>;
+    fn allows_local(&self) -> bool;
+    async fn set_allow_local(&self, value: bool);
 }
 
 /// Hard ceiling on an `evaluate` / `wait_for(function)` script.
@@ -263,9 +248,9 @@ pub fn desktop_agent_actions() -> Vec<String> {
 ///
 /// A substring gate cannot stop `eval("fe"+"tch")` or a redirect chain, so it
 /// is only the first layer. The durable check lives in
-/// `ChromiumBackend::ensure_egress_guard`: every page target gets
+/// the browser backend: every page target gets
 /// `Fetch` request interception, which resolves the host and refuses private /
-/// link-local answers before Chromium dials. This function stays as a cheap
+/// link-local answers before the engine dials. This function stays as a cheap
 /// early rejection that produces a useful tool error instead of a failed page
 /// load.
 pub fn validate_evaluate_script(script: &str) -> anyhow::Result<()> {
@@ -302,8 +287,8 @@ pub fn validate_evaluate_script(script: &str) -> anyhow::Result<()> {
 ///
 /// Two layers: the synchronous literal check below rejects a private IP
 /// written directly in the URL (the cloud-metadata / loopback SSRF shape)
-/// before Chromium ever dials it. Hostnames are *not* resolved here — use
-/// [`reject_private_navigate_url_resolved`] on the async path (the Chromium
+/// before the engine ever dials it. Hostnames are *not* resolved here — use
+/// [`reject_private_navigate_url_resolved`] on the async path (the browser
 /// backend's `navigate` and `wait_for(url)` both call it) so a hostname that
 /// *resolves* to a private address is refused too. A TOCTOU remains (DNS can
 /// change between the check and the dial); the durable fix is CDP request
@@ -322,7 +307,7 @@ pub fn reject_private_navigate_url_with(url: &str, allow_private: bool) -> anyho
         "http" | "https" => {}
         // `about:blank` is the initial document and a safe way to clear the
         // tab. Every other non-web scheme is refused rather than passed to
-        // Chromium.
+        // the browser engine.
         "about" if is_about_blank(&parsed) => return Ok(()),
         other => anyhow::bail!(
             "refusing to navigate to unsupported scheme `{other}`; only http, https and about:blank are allowed"
@@ -396,7 +381,7 @@ pub async fn reject_private_navigate_url_resolved_with(
         }
         Err(err) => {
             // Fail closed: an unresolvable navigation target is refused rather
-            // than handed to Chromium to resolve on its own (which would skip
+            // than handed to the engine to resolve on its own (which would skip
             // the gate entirely).
             anyhow::bail!("refusing to navigate to {url}: DNS resolution failed: {err:#}");
         }
@@ -501,7 +486,7 @@ pub fn browser_tool_spec() -> serde_json::Value {
     let actions = desktop_agent_actions();
     serde_json::json!({
         "name": "browser",
-        "description": "Drive a real Chromium instance: navigate, inspect an accessibility snapshot, click/type with real keyboard and mouse events, hover, select, check, scroll, read capped DOM/structured content, screenshot, evaluate JavaScript, wait for conditions, and manage tabs. Each workspace keeps its own persistent profile so logins survive between runs.",
+        "description": "Drive the app's native browser WebView: navigate, inspect an accessibility snapshot, click/type, hover, select, check, scroll, read capped DOM/structured content, screenshot, evaluate JavaScript, wait for conditions, and manage tabs. The user and the agent share the same page and browser data.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -526,7 +511,13 @@ pub fn browser_tool_spec() -> serde_json::Value {
                 "max_nodes": { "type": "integer", "minimum": 1, "maximum": 300, "default": 300, "description": "Snapshot node cap." },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "Extract item cap." },
                 "tab_id": { "type": "string", "description": "Target id for switch_tab / close_tab (from `tabs`)." },
-                "timeout_ms": { "type": "integer", "default": 10000, "description": "Maximum wait in milliseconds (capped at 60000)." }
+                "timeout_ms": { "type": "integer", "default": 10000, "description": "Maximum wait in milliseconds (capped at 60000)." },
+                "split_ratio": {
+                    "type": "number",
+                    "minimum": 0.2,
+                    "maximum": 0.8,
+                    "description": "Optional presentation hint for the desktop app: share of the window width used by the browser split view (0.2–0.8). Does not change page content."
+                }
             },
             "required": ["action"]
         }
@@ -584,7 +575,7 @@ mod tests {
         ] {
             assert!(
                 reject_private_navigate_url(url).is_err(),
-                "{url} must not reach Chromium"
+                "{url} must not reach the browser engine"
             );
         }
         assert!(reject_private_navigate_url("about:blank").is_ok());
@@ -603,6 +594,18 @@ mod tests {
         assert!(!actions.contains(&"type_active"));
         assert!(actions.contains(&"click"));
         assert!(actions.contains(&"snapshot"));
+    }
+
+    #[test]
+    fn the_model_spec_exposes_the_split_hint() {
+        let spec = browser_tool_spec();
+        let ratio = &spec["parameters"]["properties"]["split_ratio"];
+        assert_eq!(ratio["type"], "number");
+        assert_eq!(ratio["minimum"], 0.2);
+        assert_eq!(ratio["maximum"], 0.8);
+        // A hint must never become a required argument.
+        let required = spec["parameters"]["required"].as_array().expect("required");
+        assert!(!required.iter().any(|value| value == "split_ratio"));
     }
 
     #[test]

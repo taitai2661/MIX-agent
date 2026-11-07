@@ -2,7 +2,7 @@
 //!
 //! Besides the built-in Tools the registry routes two dynamic families:
 //!
-//! - `browser` — handled by the Browser Operator (`mixd-browser`).
+//! - `browser` — routed through the engine-neutral `mixd-browser::BrowserHost`.
 //! - `mcp__<connection>__<tool>` — handled by the MCP host (`mixd-mcp`).
 
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ pub trait McpDispatch: Send + Sync {
 pub struct ToolRegistry {
     pub egress: EgressPolicy,
     pub tools: HashMap<String, Arc<dyn Tool>>,
-    pub browser: Option<Arc<mixd_browser::BrowserOperator>>,
+    pub browser: Option<Arc<dyn mixd_browser::BrowserHost>>,
     pub mcp: Option<Arc<dyn McpDispatch>>,
     /// Checklist shared with the Run Engine so it can re-render the list each turn.
     pub todos: TodoStore,
@@ -202,9 +202,9 @@ impl ToolRegistry {
         }
     }
 
-    /// Attach the Browser Operator so the `browser` Tool becomes available.
-    pub fn with_browser(mut self, operator: Arc<mixd_browser::BrowserOperator>) -> Self {
-        self.browser = Some(operator);
+    /// Attach the browser host so the `browser` Tool becomes available.
+    pub fn with_browser(mut self, host: Arc<dyn mixd_browser::BrowserHost>) -> Self {
+        self.browser = Some(host);
         self
     }
 
@@ -351,7 +351,7 @@ impl ToolRegistry {
         args: serde_json::Value,
     ) -> anyhow::Result<ToolResult> {
         if name == "browser" {
-            let Some(operator) = &self.browser else {
+            let Some(host) = &self.browser else {
                 return Err(anyhow::anyhow!("browser backend is not available"));
             };
             let action = browser_action(&args)?;
@@ -362,7 +362,7 @@ impl ToolRegistry {
             // poll would be the hole the navigate gate closed (the backend
             // re-checks with DNS resolution before dialling; this parse-time
             // literal check fails fast on the obvious shapes).
-            let allow_local = operator.allows_local();
+            let allow_local = host.allows_local();
             if let mixd_browser::BrowserAction::Navigate { url } = &action {
                 self.egress.resolve_async_with(url, allow_local).await?;
                 mixd_browser::reject_private_navigate_url_with(url, allow_local)?;
@@ -376,15 +376,15 @@ impl ToolRegistry {
                 mixd_browser::reject_private_navigate_url_with(url, allow_local)?;
             }
             // `new_tab` is a second navigation entry point. Without this arm it
-            // reached Chromium with `file:`/`data:` untouched (and its http(s)
-            // URL only checked inside the backend).
+            // reached the engine with `file:`/`data:` untouched (and its
+            // http(s) URL only checked inside the backend).
             if let mixd_browser::BrowserAction::NewTab { url: Some(url) } = &action {
                 if url != "about:blank" {
                     self.egress.resolve_async_with(url, allow_local).await?;
                     mixd_browser::reject_private_navigate_url_with(url, allow_local)?;
                 }
             }
-            let response = operator
+            let response = host
                 .invoke(mixd_browser::BrowserCall {
                     workspace_id: ctx.workspace_id,
                     action,

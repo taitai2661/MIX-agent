@@ -6,6 +6,7 @@ import {
   type Accent,
 } from "./accent";
 import { getLanguage, setLanguage, type Language } from "./i18n";
+import { recordUxEvent } from "./uxEvents";
 import { storedTheme, storeTheme, type Theme } from "./theme";
 import {
   getBoolean,
@@ -115,6 +116,11 @@ interface UiState {
   newThreadDraft: boolean;
   /** Open a blank thread. The conversation row is created on first send. */
   startNewThread: () => void;
+  /** Per-surface draft flags. Switching workspaces must not drop a blank
+   *  "new thread" on the other side — the composer draft is saved separately,
+   *  but `newThreadDraft` decides whether that draft is shown at all. */
+  chatNewThreadDraft: boolean;
+  agentNewThreadDraft: boolean;
   chatConversationId: string | null;
   setChatConversationId: (id: string | null) => void;
   agentConversationId: string | null;
@@ -148,8 +154,15 @@ interface UiState {
   sidePanelMode: SidePanelMode;
   setSidePanelMode: (mode: SidePanelMode) => void;
   toggleSidePanelMode: () => void;
-  /** Open the browser pane and remember whether the agent or the user did it. */
-  openBrowserPanel: (by: BrowserOpenedBy) => void;
+  /** Open the browser pane and remember whether the agent or the user did it.
+   *
+   * `options.ratio` is the agent's presentation hint: a 0.2–0.85 share of the
+   * shell width. A user-opened pane keeps the remembered split; an agent-opened
+   * pane defaults to 50% so a first browser run is readable. */
+  openBrowserPanel: (
+    by: BrowserOpenedBy,
+    options?: { ratio?: number | null },
+  ) => void;
   /** Close the browser pane and remember the run it was dismissed in. */
   dismissBrowserPanel: () => void;
   browserOpenedBy: BrowserOpenedBy | null;
@@ -180,6 +193,13 @@ interface UiState {
   rightPanelWidth: number;
   setRightPanelWidth: (width: number) => void;
   toggleRightPanelWidth: () => void;
+  /** Share of the shell width used by the browser pane (0.2–0.85).
+   *
+   * `null` means "use `rightPanelWidth`". The agent sets this when it asks for
+   * a specific split; a user drag writes the ratio back so the split survives
+   * window resizes. Non-browser panels keep using pixels. */
+  rightPanelRatio: number | null;
+  setRightPanelRatio: (ratio: number | null) => void;
   locale: Language;
   setLocale: (locale: Language) => void;
   theme: Theme;
@@ -198,6 +218,10 @@ interface UiState {
   setReduceMotion: (value: boolean) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /** Global approval inbox. Session-only, like the palette: it is opened to
+   *  answer a blocked run, not a panel the user expects to persist. */
+  approvalsOpen: boolean;
+  setApprovalsOpen: (open: boolean) => void;
   /** The keyboard-shortcut cheat sheet. Session-only (not persisted): it is a
    *  reference the user opens on demand, not a remembered panel. */
   shortcutsOpen: boolean;
@@ -225,6 +249,7 @@ const SURFACE_KEY = "mix-agent-surface";
 const THREAD_FILTER_KEY = "mix-agent-thread-filter";
 const SEND_SHORTCUT_KEY = "mix-agent-send-shortcut";
 const RIGHT_PANEL_WIDTH_KEY = "mix-agent-right-panel-width";
+const RIGHT_PANEL_RATIO_KEY = "mix-agent-right-panel-ratio";
 const RIGHT_PANEL_DOCKED_KEY = "mix-agent-right-panel-docked";
 const CHAT_CONVERSATION_KEY = "mix-agent-chat-conversation-id";
 const AGENT_CONVERSATION_KEY = "mix-agent-agent-conversation-id";
@@ -238,7 +263,10 @@ export const MAX_ZOOM = 1.5;
 export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
 export const WIDE_RIGHT_PANEL_WIDTH = 560;
 export const MIN_RIGHT_PANEL_WIDTH = 320;
-export const MAX_RIGHT_PANEL_WIDTH = 900;
+export const MAX_RIGHT_PANEL_WIDTH = 1600;
+export const DEFAULT_BROWSER_PANEL_RATIO = 0.5;
+export const MIN_BROWSER_PANEL_RATIO = 0.2;
+export const MAX_BROWSER_PANEL_RATIO = 0.85;
 
 const SURFACES: Surface[] = ["chat", "desktop-agent"];
 const THREAD_FILTERS: ThreadFilter[] = ["all", "chat", "desktop-agent"];
@@ -396,9 +424,36 @@ function readPanelWidthValue(stored: string | null): number {
   return DEFAULT_RIGHT_PANEL_WIDTH;
 }
 
+/** Clamp a split ratio into the range the panel can render. */
+export function clampBrowserPanelRatio(value: number): number {
+  return Math.min(
+    MAX_BROWSER_PANEL_RATIO,
+    Math.max(MIN_BROWSER_PANEL_RATIO, value),
+  );
+}
+
 /** Codex remembers the side-panel width per workspace; so do we. */
 function workspaceWidthKey(workspaceId: string): string {
   return `${RIGHT_PANEL_WIDTH_KEY}:${workspaceId}`;
+}
+
+/** The split ratio is remembered per workspace as well. */
+function workspaceRatioKey(workspaceId: string): string {
+  return `${RIGHT_PANEL_RATIO_KEY}:${workspaceId}`;
+}
+
+function readRightPanelRatioValue(stored: string | null): number | null {
+  if (!stored) return null;
+  const value = Number(stored);
+  if (!Number.isFinite(value)) return null;
+  if (value < MIN_BROWSER_PANEL_RATIO || value > MAX_BROWSER_PANEL_RATIO) {
+    return null;
+  }
+  return value;
+}
+
+function readRightPanelRatio(): number | null {
+  return readRightPanelRatioValue(getString(RIGHT_PANEL_RATIO_KEY));
 }
 
 /**
@@ -432,12 +487,14 @@ export const useUi = create<UiState>((set, get) => ({
   setView: (view) => set({ view }),
   settingsTab: readSettingsTab(),
   setSettingsTab: (settingsTab) => {
+    recordUxEvent("settings_opened", { tab: settingsTab });
     setString(SETTINGS_TAB_KEY, settingsTab);
     set({ settingsTab });
   },
   openSettings: (tab) =>
     set((state) => {
       const settingsTab = tab ?? state.settingsTab;
+      recordUxEvent("settings_opened", { tab: settingsTab });
       // Persist the target tab: without this a reload always reopened the
       // default tab even when the user was deep in another section.
       setString(SETTINGS_TAB_KEY, settingsTab);
@@ -463,6 +520,7 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: id,
           agentConversationId: id,
+          agentNewThreadDraft: false,
           newThreadDraft: false,
           ...cleared,
         };
@@ -472,12 +530,15 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: id,
           chatConversationId: id,
+          chatNewThreadDraft: false,
           newThreadDraft: false,
           ...cleared,
         };
       }
     }),
   newThreadDraft: false,
+  chatNewThreadDraft: false,
+  agentNewThreadDraft: false,
   startNewThread: () =>
     set((state) => {
       const cleared = {
@@ -490,6 +551,7 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: null,
           agentConversationId: null,
+          agentNewThreadDraft: true,
           newThreadDraft: true,
           ...cleared,
         };
@@ -498,6 +560,7 @@ export const useUi = create<UiState>((set, get) => ({
       return {
         conversationId: null,
         chatConversationId: null,
+        chatNewThreadDraft: true,
         newThreadDraft: true,
         ...cleared,
       };
@@ -507,6 +570,7 @@ export const useUi = create<UiState>((set, get) => ({
     else removeKey(CHAT_CONVERSATION_KEY);
     set((state) => ({
       chatConversationId: id,
+      chatNewThreadDraft: false,
       newThreadDraft: false,
       conversationId: state.surface === "chat" ? id : state.conversationId,
     }));
@@ -516,6 +580,7 @@ export const useUi = create<UiState>((set, get) => ({
     else removeKey(AGENT_CONVERSATION_KEY);
     set((state) => ({
       agentConversationId: id,
+      agentNewThreadDraft: false,
       newThreadDraft: false,
       conversationId:
         state.surface === "desktop-agent" ? id : state.conversationId,
@@ -525,11 +590,18 @@ export const useUi = create<UiState>((set, get) => ({
   setWorkspaceId: (workspaceId) =>
     set(() => {
       if (!workspaceId) return { workspaceId };
-      const stored = getString(workspaceWidthKey(workspaceId));
-      if (stored === null) return { workspaceId };
+      const storedWidth = getString(workspaceWidthKey(workspaceId));
+      const storedRatio = readRightPanelRatioValue(
+        getString(workspaceRatioKey(workspaceId)),
+      );
+      if (storedWidth === null && storedRatio === null) return { workspaceId };
       return {
         workspaceId,
-        rightPanelWidth: readPanelWidthValue(stored),
+        rightPanelWidth:
+          storedWidth === null
+            ? get().rightPanelWidth
+            : readPanelWidthValue(storedWidth),
+        rightPanelRatio: storedRatio,
       };
     }),
   runId: null,
@@ -560,11 +632,15 @@ export const useUi = create<UiState>((set, get) => ({
         surface === "desktop-agent"
           ? state.agentConversationId
           : state.chatConversationId;
+      const draft =
+        surface === "desktop-agent"
+          ? state.agentNewThreadDraft
+          : state.chatNewThreadDraft;
       return {
         surface,
         mode: nextMode,
-        conversationId: targetConvId,
-        newThreadDraft: false,
+        conversationId: draft ? null : targetConvId,
+        newThreadDraft: draft,
         view: "chat",
         activityRunId: null,
         diffTarget: null,
@@ -619,12 +695,28 @@ export const useUi = create<UiState>((set, get) => ({
     }),
   browserOpenedBy: null,
   browserDismissedRunId: null,
-  openBrowserPanel: (browserOpenedBy) => {
+  openBrowserPanel: (browserOpenedBy, options = {}) => {
     setString(RIGHT_PANEL_KEY, "browser");
+    // Resolve the requested ratio before `set` so the same render that opens
+    // the pane already has the right width. An agent-open without a hint gets
+    // the Codex-like 50% default; a user-open keeps the remembered split.
+    let rightPanelRatio = get().rightPanelRatio;
+    const requested = options.ratio;
+    if (typeof requested === "number" && Number.isFinite(requested)) {
+      rightPanelRatio = clampBrowserPanelRatio(requested);
+      setString(RIGHT_PANEL_RATIO_KEY, String(rightPanelRatio));
+      const workspaceId = get().workspaceId;
+      if (workspaceId) {
+        setString(workspaceRatioKey(workspaceId), String(rightPanelRatio));
+      }
+    } else if (browserOpenedBy === "agent" && rightPanelRatio === null) {
+      rightPanelRatio = DEFAULT_BROWSER_PANEL_RATIO;
+    }
     set((state) => ({
       rightPanel: "browser",
       browserOpenedBy,
       browserDismissedRunId: null,
+      rightPanelRatio,
       // Full view is a transient expansion of an already-open pane. Opening
       // from closed (especially an agent auto-open) starts in split view so
       // the chat does not disappear.
@@ -681,6 +773,24 @@ export const useUi = create<UiState>((set, get) => ({
     }
     set({ rightPanelWidth });
   },
+  rightPanelRatio: readRightPanelRatio(),
+  setRightPanelRatio: (rightPanelRatio) => {
+    if (rightPanelRatio === null) {
+      removeKey(RIGHT_PANEL_RATIO_KEY);
+    } else {
+      const ratio = clampBrowserPanelRatio(rightPanelRatio);
+      setString(RIGHT_PANEL_RATIO_KEY, String(ratio));
+      const workspaceId = get().workspaceId;
+      if (workspaceId) {
+        setString(workspaceRatioKey(workspaceId), String(ratio));
+      }
+      set({ rightPanelRatio: ratio });
+      return;
+    }
+    const workspaceId = get().workspaceId;
+    if (workspaceId) removeKey(workspaceRatioKey(workspaceId));
+    set({ rightPanelRatio: null });
+  },
   toggleRightPanelWidth: () => {
     const state = get();
     state.setRightPanelWidth(
@@ -724,7 +834,12 @@ export const useUi = create<UiState>((set, get) => ({
     applyDisplayPrefs({ ...get(), reduceMotion });
   },
   paletteOpen: false,
-  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  setPaletteOpen: (paletteOpen) => {
+    if (paletteOpen) recordUxEvent("search_opened", { location: "palette" });
+    set({ paletteOpen });
+  },
+  approvalsOpen: false,
+  setApprovalsOpen: (approvalsOpen) => set({ approvalsOpen }),
   shortcutsOpen: false,
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   onboardingForcedOpen: false,
@@ -747,6 +862,7 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   THREAD_FILTER_KEY,
   SEND_SHORTCUT_KEY,
   RIGHT_PANEL_WIDTH_KEY,
+  RIGHT_PANEL_RATIO_KEY,
   RIGHT_PANEL_DOCKED_KEY,
   CHAT_CONVERSATION_KEY,
   AGENT_CONVERSATION_KEY,
@@ -807,6 +923,11 @@ if (typeof window !== "undefined") {
       case RIGHT_PANEL_WIDTH_KEY: {
         const next = readRightPanelWidth();
         if (next !== state.rightPanelWidth) state.setRightPanelWidth(next);
+        break;
+      }
+      case RIGHT_PANEL_RATIO_KEY: {
+        const next = readRightPanelRatio();
+        if (next !== state.rightPanelRatio) state.setRightPanelRatio(next);
         break;
       }
       case RIGHT_PANEL_DOCKED_KEY: {

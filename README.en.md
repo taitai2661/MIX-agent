@@ -40,10 +40,10 @@ Choose the edition that best fits your environment and workflow:
 | **Setup Effort** | ⭐⭐⭐ **Effortless** (No Docker required)<br>Download installer from Releases and launch | ⭐⭐ **Standard** (Requires Docker Engine & Compose)<br>`git clone` and `docker compose up -d` |
 | **User Interface** | OS Native Window, Diff Inspector, System Tray | Web Browser (Responsive UI) |
 | **Tech Stack** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
-| **Process Architecture** | Single binary + tokio in-proc (+ Chromium child process) | Docker Compose (app, web, db, runner, proxy containers) |
+| **Process Architecture** | Single binary + tokio in-proc (browser is a Tauri child WebView) | Docker Compose (app, web, db, runner, proxy containers) |
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + AES-GCM encrypted file (`.master_seed` on macOS, Credential Manager on Windows) | PostgreSQL + AES-GCM Encryption (Docker volumes) |
 | **Terminal & Files** | Direct host file editing, **persistent PTY shell** | Operations isolated inside mounted `/project` or runner |
-| **Browser Operator** | On-demand Chromium install / direct system browser automation | Playwright inside dedicated `execution-runner` |
+| **Browser Operator** | Shared native child WebView inside the app | Playwright inside dedicated `execution-runner` |
 | **Security & Sandbox** | OS user permissions + **per-action scoped approval rules** + optional macOS `sandbox-exec` write confinement | Container sandbox (non-root runner, egress-proxy rules) |
 
 ---

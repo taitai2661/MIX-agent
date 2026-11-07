@@ -7,6 +7,7 @@ import {
   PENDING_APPROVALS_QUERY_KEY,
   usePendingApprovals,
 } from "@/lib/queries";
+import { recordUxEvent } from "@/lib/uxEvents";
 import { surfaceForMode, useUi } from "@/lib/ui";
 import { Card, Row, Section } from "@/components/layout";
 import {
@@ -25,7 +26,12 @@ import {
   useApprovalRemaining,
 } from "@/features/chat/ApprovalCountdown";
 
-export function ApprovalsPane() {
+export function ApprovalsPane({
+  location = "settings",
+}: {
+  /** Where the inbox is rendered, for the local UX counter only. */
+  location?: "settings" | "drawer";
+}) {
   const pending = usePendingApprovals();
 
   const items = pending.data ?? [];
@@ -42,13 +48,21 @@ export function ApprovalsPane() {
           sub={t("チャット内でもインラインで承認できます。")}
         />
       ) : (
-        items.map((p) => <ApprovalRow key={p.approval_id} approval={p} />)
+        items.map((p) => (
+          <ApprovalRow key={p.approval_id} approval={p} location={location} />
+        ))
       )}
     </Section>
   );
 }
 
-function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
+function ApprovalRow({
+  approval,
+  location,
+}: {
+  approval: PendingApprovalView;
+  location: "settings" | "drawer";
+}) {
   const queryClient = useQueryClient();
   const setConversationId = useUi((s) => s.setConversationId);
   const setView = useUi((s) => s.setView);
@@ -63,8 +77,16 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
       remember: boolean;
       rememberSession?: boolean;
     }) => api.decideApproval(input),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY }),
+    onSuccess: (_result, input) => {
+      recordUxEvent("approval_decided", {
+        location,
+        grant: input.grant,
+        remember: input.remember,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: PENDING_APPROVALS_QUERY_KEY,
+      });
+    },
   });
 
   const disabled = decide.isPending || expired;

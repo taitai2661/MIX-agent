@@ -2,11 +2,9 @@ import { memo } from "react";
 import { EyeOff, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { chord } from "@/lib/platform";
 import { useUi } from "@/lib/ui";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Kbd } from "@/components/layout";
 import { ErrorBox } from "@/components/shared";
 import {
   ComposerAttachments,
@@ -244,29 +242,6 @@ export const Composer = memo(function Composer(props: ComposerProps) {
           id="composer-hints"
           className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint"
         >
-          {sendShortcut === "modifier" ? (
-            <span
-              className="hidden items-center gap-1 sm:inline-flex"
-              aria-hidden="true"
-            >
-              <Kbd>{chord("Mod", "Enter")}</Kbd>
-              <span>{t("送信")}</span>
-              <span className="mx-1 text-line">·</span>
-              <Kbd>Enter</Kbd>
-              <span>{t("改行")}</span>
-            </span>
-          ) : (
-            <span
-              className="hidden items-center gap-1 sm:inline-flex"
-              aria-hidden="true"
-            >
-              <Kbd>Enter</Kbd>
-              <span>{t("送信")}</span>
-              <span className="mx-1 text-line">·</span>
-              <Kbd>{chord("Shift", "Enter")}</Kbd>
-              <span>{t("改行")}</span>
-            </span>
-          )}
           <span className="min-w-0 flex-1" />
           {state.temporaryMode && (
             <Badge tone="warning">

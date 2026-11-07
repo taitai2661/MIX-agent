@@ -1,27 +1,18 @@
-import { useCallback, useEffect, useRef } from "react";
-import {
-  Download,
-  Globe,
-  Maximize2,
-  Minimize2,
-  Settings2,
-  X,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Globe, Maximize2, Minimize2, X } from "lucide-react";
 import { t } from "@/lib/i18n";
-import { errorMessage } from "@/lib/errors";
-import { useUi } from "@/lib/ui";
+import { DEFAULT_BROWSER_PANEL_RATIO, useUi } from "@/lib/ui";
 import { useRunEvents } from "@/lib/runStore";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { useConfirm } from "@/components/ui/dialog";
+import { BrowserSurface } from "./BrowserSurface";
 import { BrowserTabStrip } from "./BrowserTabStrip";
 import { BrowserToolbar } from "./BrowserToolbar";
-import { BrowserViewport } from "./BrowserViewport";
-import { useBrowserStatus } from "./useBrowserStatus";
-import { useLiveFrame } from "./useLiveFrame";
+import { useWebviewBrowser } from "./useWebviewBrowser";
 
 /** Minimal chrome for the states that cannot show the page toolbar (missing
- *  workspace, loading, no Chromium). Full view has no `RightPanel` header, so
- *  each of those states still needs its own close/full-view controls. */
+ *  workspace). Full view has no `RightPanel` header, so the close/full-view
+ *  controls still need somewhere to live. */
 function PanelChrome({
   full,
   onToggleFull,
@@ -65,9 +56,8 @@ function PanelChrome({
 }
 
 /**
- * The thread side-panel browser. Codex-like layout: toolbar, page tabs, live
- * viewport. Chromium management stays in Settings ▸ Browser; this pane only
- * surfaces an install CTA when the backend has no executable.
+ * The thread side-panel browser. The page is a native Tauri child WebView;
+ * React owns only the tab strip, the omnibox and the surface rectangle.
  */
 export function BrowserPanel() {
   const workspaceId = useUi((s) => s.workspaceId);
@@ -75,10 +65,15 @@ export function BrowserPanel() {
   const autoOpen = useUi((s) => s.browserAutoOpen);
   const setBrowserAutoOpen = useUi((s) => s.setBrowserAutoOpen);
   const full = useUi((s) => s.sidePanelMode === "full");
+  const docked = useUi((s) => s.rightPanelDocked);
   const toggleSidePanelMode = useUi((s) => s.toggleSidePanelMode);
+  const toggleDocked = useUi((s) => s.toggleRightPanelDocked);
   const dismissBrowserPanel = useUi((s) => s.dismissBrowserPanel);
   const openSettings = useUi((s) => s.openSettings);
   const conversationId = useUi((s) => s.conversationId);
+  const setRightPanelRatio = useUi((s) => s.setRightPanelRatio);
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   const browserToolRunning = useRunEvents((s) => {
     if (!conversationId) return false;
@@ -89,30 +84,44 @@ export function BrowserPanel() {
     );
   });
 
-  const reportError = useCallback((error: unknown) => {
-    console.warn("browser panel:", errorMessage(error));
-  }, []);
-  const { status, loading, installBusy, installActive, startInstall, refresh } =
-    useBrowserStatus(reportError);
-  const live = useLiveFrame(workspaceId, {
-    // Only start once we know Chromium exists: an auto-opened pane during a
-    // missing-install state should show the install CTA, not launch a doomed
-    // screencast.
-    autoStart: openedBy === "agent" && Boolean(status?.executable),
-  });
+  const browser = useWebviewBrowser(workspaceId);
+  const setSurfaceBounds = browser.setSurfaceBounds;
 
-  const liveRef = useRef(live);
-  liveRef.current = live;
+  // The native WebView owns most of the screen; hide it while a React menu or
+  // confirmation dialog needs to paint above the page.
   useEffect(() => {
-    const newTab = () => void liveRef.current.newTab();
-    const reload = () => void liveRef.current.reload();
-    window.addEventListener("mix:browser-new-tab", newTab);
-    window.addEventListener("mix:browser-reload", reload);
-    return () => {
-      window.removeEventListener("mix:browser-new-tab", newTab);
-      window.removeEventListener("mix:browser-reload", reload);
-    };
-  }, []);
+    if (!overlayOpen) return;
+    const node = document.querySelector("[data-browser-surface]");
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    setSurfaceBounds({
+      x: rect.x,
+      y: rect.y,
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+      visible: false,
+    });
+  }, [setSurfaceBounds, overlayOpen]);
+
+  const clearData = async () => {
+    if (!workspaceId) return;
+    setOverlayOpen(true);
+    const ok = await confirm({
+      title: t("このブラウザの閲覧データを削除しますか？"),
+      description: t(
+        "Cookie・localStorage・キャッシュが消えます。開いているタブも閉じます。",
+      ),
+      confirmLabel: t("削除"),
+      tone: "danger",
+    });
+    setOverlayOpen(false);
+    if (!ok) return;
+    try {
+      await browser.clearData();
+    } catch {
+      // The error is surfaced by the hook on the next info refresh.
+    }
+  };
 
   if (!workspaceId) {
     return (
@@ -129,100 +138,42 @@ export function BrowserPanel() {
     );
   }
 
-  if (loading && !status) {
-    return (
-      <PanelChrome
-        full={full}
-        onToggleFull={toggleSidePanelMode}
-        onClose={dismissBrowserPanel}
-      >
-        <div className="flex flex-1 items-center justify-center">
-          <Spinner size={14} label={t("読み込み中…")} />
-        </div>
-      </PanelChrome>
-    );
-  }
-
-  if (status && !status.executable) {
-    return (
-      <PanelChrome
-        full={full}
-        onToggleFull={toggleSidePanelMode}
-        onClose={dismissBrowserPanel}
-      >
-        <div className="flex flex-1 flex-col gap-3 overflow-auto p-4">
-          <p className="m-0 text-xs text-muted">
-            {t(
-              "ブラウザ機能を使うにはChromiumをインストールしてください。約200MBをダウンロードします。",
-            )}
-          </p>
-          {installActive ? (
-            <div className="flex flex-col gap-1.5">
-              <div className="h-1.5 overflow-hidden rounded-full bg-inset">
-                <div
-                  className="h-full rounded-full bg-brand transition-[width]"
-                  style={{ width: `${status.install.progress ?? 0}%` }}
-                />
-              </div>
-              <span className="text-2xs text-muted">
-                {status.install.stage ?? t("インストール中…")}
-              </span>
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              disabled={installBusy}
-              onClick={() => void startInstall(false)}
-            >
-              <Download size={12} /> {t("Chromium をインストール")}
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start"
-            onClick={() => openSettings("browser")}
-          >
-            <Settings2 size={12} /> {t("ブラウザ設定を開く")}
-          </Button>
-          {status.install.failure && (
-            <p className="m-0 text-xs text-danger">{status.install.failure}</p>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start"
-            onClick={() => void refresh()}
-          >
-            {t("状態を更新")}
-          </Button>
-        </div>
-      </PanelChrome>
-    );
-  }
-
   return (
-    <div data-browser-pane className="flex h-full min-h-0 flex-col">
+    <div data-browser-pane className="flex h-full min-h-0 flex-col bg-bg">
+      <BrowserTabStrip
+        tabs={browser.tabs}
+        loading={browser.navigating}
+        full={full}
+        onSwitch={(id) => void browser.switchTab(id)}
+        onClose={(id) => void browser.closeTab(id)}
+        onNew={() => void browser.newTab()}
+        onToggleFull={toggleSidePanelMode}
+        onClosePanel={dismissBrowserPanel}
+      />
       <BrowserToolbar
-        live={live}
+        browser={browser}
+        workspaceId={workspaceId}
         agentBusy={browserToolRunning}
         autoOpen={autoOpen}
         full={full}
+        docked={docked}
         autoFocusAddress={openedBy === "user"}
         onToggleAutoOpen={() => setBrowserAutoOpen(!autoOpen)}
         onToggleFull={toggleSidePanelMode}
+        onToggleDocked={toggleDocked}
+        onResetRatio={() => setRightPanelRatio(DEFAULT_BROWSER_PANEL_RATIO)}
+        onClearData={() => void clearData()}
         onOpenSettings={() => openSettings("browser")}
         onClose={dismissBrowserPanel}
+        onMenuOpenChange={setOverlayOpen}
       />
-      <BrowserTabStrip
-        tabs={live.tabs}
-        onSwitch={(id) => void live.switchTab(id)}
-        onClose={(id) => void live.closeTab(id)}
-        onNew={() => void live.newTab()}
-      />
-      <div className="flex min-h-0 flex-1 flex-col p-2">
-        <BrowserViewport live={live} fill hideToolbar />
-      </div>
+      <BrowserSurface setBounds={setSurfaceBounds} visible={!overlayOpen} />
+      {browser.error && (
+        <p className="m-0 border-t border-line bg-bg px-2 py-1 text-xs text-danger">
+          {browser.error}
+        </p>
+      )}
+      {dialog}
     </div>
   );
 }

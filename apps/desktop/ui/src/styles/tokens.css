@@ -81,14 +81,17 @@
   --font-mono:
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  --text-2xs: 11px;
-  --text-2xs--line-height: 15px;
-  --text-xs: 12px;
-  --text-xs--line-height: 17px;
-  --text-sm: 13px;
-  --text-sm--line-height: 19px;
-  --text-base: 14px;
-  --text-base--line-height: 21px;
+  /* Japanese UI: 11px meta labels and 13px model output were too small to
+     read comfortably for long sessions. The scale is now 12 / 13 / 14 / 15;
+     only the large display sizes stay untouched so pane heights do not shift. */
+  --text-2xs: 12px;
+  --text-2xs--line-height: 17px;
+  --text-xs: 13px;
+  --text-xs--line-height: 19px;
+  --text-sm: 14px;
+  --text-sm--line-height: 21px;
+  --text-base: 15px;
+  --text-base--line-height: 23px;
   --text-lg: 16px;
   --text-lg--line-height: 24px;
   --text-xl: 19px;
@@ -212,8 +215,8 @@
     margin: 0;
     overflow: hidden;
     font-family: var(--font-sans);
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: 15px;
+    line-height: 1.6;
     color: var(--color-fg);
     background: var(--color-bg);
     -webkit-font-smoothing: antialiased;

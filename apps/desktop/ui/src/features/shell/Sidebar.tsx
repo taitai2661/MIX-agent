@@ -23,7 +23,7 @@ import {
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/cn";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
 import {
   absoluteTime,
   relativeTime,
@@ -134,6 +134,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const setTheme = useUi((s) => s.setTheme);
   const sidebarOpen = useUi((s) => s.sidebarOpen);
   const surface = useUi((s) => s.surface);
+  const setSurface = useUi((s) => s.setSurface);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const applySettings = useApplySettings();
   const queryClient = useQueryClient();
@@ -168,6 +169,8 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const threadListRef = useRef<HTMLDivElement | null>(null);
 
   const isAgent = surface === "desktop-agent";
+  const otherSurface = isAgent ? "chat" : "desktop-agent";
+  const otherSurfaceLabel = isAgent ? t("チャット") : t("コーディング");
   const projects = useProjects();
   const activeProject =
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
@@ -381,7 +384,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     <>
       <aside
         aria-label={t("サイドバー")}
-        data-side-panel=""
+        data-side-panel="sidebar"
         // The remembered width; `cap` only clamps it on very narrow windows.
         style={panelStyle(sidebarWidth, cap)}
         className="flex shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar"
@@ -439,6 +442,22 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
               ? { onClear: () => setSearch(""), clearLabel: t("クリア") }
               : {})}
           />
+          {/* The two workspaces keep separate histories, but the sidebar used
+              to give no sign that the other one existed: switching made the
+              list look empty. Name the current scope and offer the other side. */}
+          <div className="flex items-center justify-between gap-2 px-1 text-2xs text-faint">
+            <span className="truncate">
+              {isAgent ? t("コーディングの履歴") : t("チャットの履歴")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSurface(otherSurface)}
+              className="shrink-0 rounded px-1 py-0.5 text-brand transition-colors hover:bg-brand-soft hover:text-brand"
+              title={tf("{label}の履歴を見る", { label: otherSurfaceLabel })}
+            >
+              {otherSurfaceLabel} →
+            </button>
+          </div>
           {(exportError || rename.isError || remove.isError) && (
             <ErrorBox error={exportError ?? rename.error ?? remove.error} />
           )}
@@ -713,6 +732,15 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                 isAgent
                   ? t("新しいタスクを始めましょう")
                   : t("新しい会話を始めましょう")
+              }
+              action={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSurface(otherSurface)}
+                >
+                  {tf("{label}の履歴を見る", { label: otherSurfaceLabel })}
+                </Button>
               }
             />
           )}

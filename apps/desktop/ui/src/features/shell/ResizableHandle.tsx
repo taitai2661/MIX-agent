@@ -10,6 +10,8 @@ interface ResizableHandleProps {
   label: string;
   onChange: (value: number) => void;
   onCommit: (value: number) => void;
+  /** Double-click reset (e.g. back to a 50% split). */
+  onReset?: () => void;
   /** Overlay the handle on a pane edge instead of reserving flex space. */
   edge?: "left" | "right";
 }
@@ -26,6 +28,7 @@ export function ResizableHandle({
   label,
   onChange,
   onCommit,
+  onReset,
   edge,
 }: ResizableHandleProps) {
   const [dragging, setDragging] = useState(false);
@@ -114,6 +117,7 @@ export function ResizableHandle({
       onPointerMove={onPointerMove}
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
+      onDoubleClick={onReset}
       onKeyDown={onKeyDown}
       className={cn(
         "group z-10 w-2.5 cursor-col-resize touch-none outline-none",

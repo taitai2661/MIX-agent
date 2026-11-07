@@ -614,6 +614,18 @@ export interface PendingApprovalView {
   conversation_mode: string | null;
 }
 
+/** The Run's step / tool-call / wall-clock budget, as persisted on its row. */
+export interface RunBudget {
+  stepLimit?: number;
+  toolCallLimit?: number;
+  wallClockMinutes?: number;
+  /** Token ceiling, or `0` for unlimited. */
+  tokenLimit?: number;
+  tokensUsed?: number;
+  grantsUsed?: number;
+  maxGrants?: number;
+}
+
 export interface RunView {
   id: string;
   conversation_id: string;
@@ -626,7 +638,7 @@ export interface RunView {
   started_at: string;
   updated_at: string;
   summary: string;
-  budget: unknown;
+  budget: RunBudget | null;
   /** Cumulative token/spend summary, absent on Runs older than this field. */
   usage?: RunUsage | null;
   error: string | null;
@@ -648,69 +660,12 @@ export interface RunUsage {
   estimated_cost_usd: number | null;
 }
 
-/** A snapshot frame. Page metadata (URL, title, history) comes from the much
- *  cheaper `info` call, so a 2 s poll does not also pay three extra CDP
- *  round-trips just to draw the toolbar. */
-export interface BrowserFrameView {
-  data: string;
-  width: number;
-  height: number;
-}
-
-/** One CDP screencast frame pushed by the backend (`browser://frame`). */
-export interface BrowserScreencastFrame {
-  workspace_id: string;
-  data: string;
-  width: number;
-  height: number;
-}
-
-/** One Chromium page in the browser tab strip. */
+/** One native WebView tab in the browser tab strip. */
 export interface BrowserTabView {
   id: string;
   url: string | null;
   title: string | null;
   active: boolean;
-}
-
-export type BrowserInstallStatus =
-  | "not_installed"
-  | "downloading"
-  | "verifying"
-  | "extracting"
-  | "ready"
-  | "failed"
-  | "cancelled";
-
-export interface BrowserInstallState {
-  status: BrowserInstallStatus;
-  progress: number | null;
-  stage: string | null;
-  failure: string | null;
-  failure_code: string | null;
-  bytes_done: number | null;
-  bytes_total: number | null;
-  version: string | null;
-}
-
-export interface BrowserStatus {
-  backend: string;
-  source: "installed" | "bundled" | "system" | "override" | "none";
-  executable: string | null;
-  installed_version: string | null;
-  pinned_version: string;
-  update_available: boolean;
-  install: BrowserInstallState;
-  profiles: number;
-  artifacts: number;
-  allow_local: boolean;
-}
-
-export interface BrowserProfileView {
-  workspace_id: string;
-  display_name: string;
-  directory: string;
-  provisioned: boolean;
 }
 
 export interface BrowserInvokeOutput {

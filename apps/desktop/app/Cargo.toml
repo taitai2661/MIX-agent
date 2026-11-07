@@ -53,7 +53,7 @@ open = "5"
 # crates already pin this version.
 sha2 = "0.10"
 
-tauri = { version = "2.1", features = ["macos-private-api", "tray-icon"] }
+tauri = { version = "2.1", features = ["macos-private-api", "tray-icon", "unstable"] }
 tauri-plugin-dialog = "2.0"
 # Desktop notifications are delivered from Rust (`src/push.rs`) and from the
 # UI's shell-events hook, so this plugin stays registered and granted.
@@ -81,7 +81,7 @@ libc = "0.2"
 # binding; it avoids a Swift build step and keeps the macOS 12 deployment
 # target. `objc2-uniform-type-identifiers` is only needed for `UTType.text`.
 objc2 = "0.6"
-objc2-app-kit = "0.3"
+objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep"] }
 objc2-foundation = { version = "0.3", features = [
     "NSBundle",
     "NSUserActivity",
@@ -91,6 +91,12 @@ objc2-foundation = { version = "0.3", features = [
     "NSError",
     "NSDate",
     "NSURL",
+    "NSData",
+    "NSGeometry",
+] }
+objc2-web-kit = { version = "0.3", features = [
+    "WKWebView",
+    "WKSnapshotConfiguration",
 ] }
 objc2-core-spotlight = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
 objc2-uniform-type-identifiers = "0.3"

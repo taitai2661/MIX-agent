@@ -3,12 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentView,
   AttachmentPayload,
-  BrowserFrameView,
   BrowserInvokeOutput,
-  BrowserScreencastFrame,
-  BrowserInstallState,
-  BrowserProfileView,
-  BrowserStatus,
   CheckpointView,
   ChatGptDeviceStart,
   ChatGptDeviceStatus,
@@ -306,17 +301,6 @@ export const api = {
   handleMcpOauthCallback: (url: string) =>
     invoke<void>("handle_oauth_callback", { url }),
 
-  browserStatus: () => invoke<BrowserStatus>("browser_status"),
-  browserInstall: (force = false) =>
-    invoke<BrowserInstallState>("browser_install", { force }),
-  browserInstallCancel: () =>
-    invoke<BrowserInstallState>("browser_install_cancel"),
-  /** Progress/completion events from the background installer. */
-  browserInstallEvent: (handler: (state: BrowserInstallState) => void) =>
-    listen<BrowserInstallState>("browser://install", (event) =>
-      handler(event.payload),
-    ),
-  browserUninstall: () => invoke<void>("browser_uninstall"),
   browserInvoke: (input: {
     workspace_id: string | null;
     action: string;
@@ -338,24 +322,27 @@ export const api = {
     limit?: number | null;
     tab_id?: string | null;
   }) => invoke<BrowserInvokeOutput>("browser_invoke", { input }),
-  browserProfiles: () => invoke<BrowserProfileView[]>("browser_profiles"),
-  browserResetProfile: (workspaceId: string) =>
-    invoke<void>("browser_reset_profile", { workspaceId }),
   browserArtifact: (id: string) => invoke<string>("browser_artifact", { id }),
-  browserFrame: (workspaceId: string, fullPage = false) =>
-    invoke<BrowserFrameView | null>("browser_frame", { workspaceId, fullPage }),
   browserStop: (workspaceId: string) =>
     invoke<void>("browser_stop", { workspaceId }),
-  /** Keep an open panel's workspace out of the idle LRU (no Chromium launch). */
-  browserKeepalive: (workspaceId: string) =>
-    invoke<void>("browser_keepalive", { workspaceId }),
-  browserScreencastStart: (workspaceId: string) =>
-    invoke<void>("browser_screencast_start", { workspaceId }),
-  browserScreencastStop: (workspaceId: string) =>
-    invoke<void>("browser_screencast_stop", { workspaceId }),
-  /** CDP screencast frames (falls back to `browserFrame` polling). */
-  browserFrameEvent: (handler: (frame: BrowserScreencastFrame) => void) =>
-    listen<BrowserScreencastFrame>("browser://frame", (event) =>
+  browserSurfaceBounds: (
+    workspaceId: string,
+    bounds: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      visible: boolean;
+    },
+  ) =>
+    invoke<void>("browser_surface_bounds", {
+      input: { workspace_id: workspaceId, ...bounds },
+    }),
+  browserClearData: (workspaceId: string) =>
+    invoke<void>("browser_clear_data", { workspaceId }),
+  /** Native WebView state changed (page load, title, tab switch). */
+  browserStateEvent: (handler: (event: { workspace_id: string }) => void) =>
+    listen<{ workspace_id: string }>("browser://state", (event) =>
       handler(event.payload),
     ),
 

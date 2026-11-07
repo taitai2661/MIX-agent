@@ -51,7 +51,8 @@
 | [`desktop/coding-eval.md`](desktop/coding-eval.md) | 現行仕様 | コーディングエージェント評価ハーネス（scripted / live、採点、シナリオ追加） |
 | [`desktop/coding-agent-plan.md`](desktop/coding-agent-plan.md) | 設計記録 | コーディングエージェント化（Phase 8.1〜8.4 / 10.0 完了、10.1 以降を計画） |
 | [`desktop/local-runtime-plan.md`](desktop/local-runtime-plan.md) | 設計記録 | ローカル LLM 連携の設計と経緯（L1〜L5 実装済み。現行挙動は `desktop/architecture.md` の「Local runtime management」） |
-| [`desktop/chromium-on-demand-plan.md`](desktop/chromium-on-demand-plan.md) | 設計記録 | Chromium を同梱から初回インストールへ変えた理由と代替案（現行手順は `desktop/architecture.md` の「Managed Chromium」） |
+| [`desktop/webview-browser-plan.md`](desktop/webview-browser-plan.md) | 設計記録 | Tauri 子 WebView ブラウザへの移行、セキュリティ境界、Docker 版への影響 |
+| [`desktop/chromium-on-demand-plan.md`](desktop/chromium-on-demand-plan.md) | 設計記録（廃止） | 旧 Chromium 初回インストール方式の経緯 |
 | [`desktop/performance-plan.md`](desktop/performance-plan.md) | 計画 | 起動・描画・実行時処理・常駐リソースの軽量化（Phase 0〜5、計測と受け入れ条件） |
 | [`desktop/agent-speed-plan.md`](desktop/agent-speed-plan.md) | 計画 | エージェント 1 ターンの高速化（コンテキスト予算・キャッシュ・検証段階化・ルーティング。品質ゲート付き） |
 | [`desktop/spotlight-plan.md`](desktop/spotlight-plan.md) | 計画 | macOS Spotlight（Core Spotlight）への会話・プロジェクト・ナレッジ索引とクリック遷移（Phase 0〜3） |

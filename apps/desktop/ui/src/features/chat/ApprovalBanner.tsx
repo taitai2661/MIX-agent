@@ -12,6 +12,7 @@ import { t } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
 import { prefersReducedMotion } from "@/lib/motion";
 import type { PendingApproval } from "@/lib/runEvents";
+import { recordUxEvent } from "@/lib/uxEvents";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/layout";
 import { ApprovalCountdown, useApprovalRemaining } from "./ApprovalCountdown";
@@ -48,6 +49,11 @@ export const ApprovalBanner = memo(function ApprovalBanner({
       setError(null);
       try {
         await api.decideApproval({ id, grant, remember });
+        recordUxEvent("approval_decided", {
+          location: "banner",
+          grant,
+          remember,
+        });
       } catch (err) {
         setError(errorMessage(err) || t("エラー"));
       } finally {

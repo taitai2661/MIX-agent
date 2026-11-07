@@ -179,7 +179,7 @@ pub async fn delete_connection(state: State<'_, AppState>, id: String) -> Result
 /// Rebuild the engine's Tool Registry after an MCP change.
 ///
 /// The shared implementation lives in [`crate::refresh_registry`] because a
-/// Chromium install also changes the tool list.
+/// A browser backend change also changes the tool list.
 async fn refresh_registry(state: &AppState) {
     crate::refresh_registry(state).await;
 }

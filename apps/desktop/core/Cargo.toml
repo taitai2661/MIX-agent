@@ -22,7 +22,6 @@ uuid.workspace = true
 mixd-providers = { workspace = true }
 mixd-tools = { workspace = true }
 mixd-storage = { workspace = true }
-mixd-browser = { workspace = true }
 mixd-mcp = { workspace = true }
 futures-util = "0.3"
 async-stream = "0.3"

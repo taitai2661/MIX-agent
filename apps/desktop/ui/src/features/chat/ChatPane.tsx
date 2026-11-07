@@ -25,6 +25,8 @@ import {
 } from "./ChatComposerContext";
 import { Composer, type DraftAttachment } from "./Composer";
 import { localRuntimeForModel } from "@/lib/localRuntime";
+import { recordUxEvent } from "@/lib/uxEvents";
+import { RunStatusBar } from "./RunStatusBar";
 import { Transcript } from "./Transcript";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { ErrorBox } from "@/components/shared";
@@ -82,6 +84,10 @@ function ChatPaneBody() {
   // `activeConversationId` would then fall back to the newest *existing*
   // thread and deliver the message into the wrong conversation.
   const retryNeedsNewConversation = useRef(false);
+  // Counters must not be inflated by effect re-runs (StrictMode, cache
+  // invalidations while a run settles) or by a re-render on every token.
+  const recordedCompletions = useRef(new Set<string>());
+  const recordedApprovals = useRef(new Set<string>());
 
   const activeModelId = modelId || "auto";
   // A new chat stays blank until its first send, even though the surface has
@@ -326,7 +332,14 @@ function ChatPaneBody() {
         throw err;
       }
     },
-    onSuccess: ({ runId, conversationId, created, purged }) => {
+    onSuccess: ({ runId, conversationId, created, purged }, variables) => {
+      recordUxEvent("message_sent", {
+        surface,
+        mode,
+        temporary: variables.temporaryMode,
+        tools: variables.allowTools,
+        created,
+      });
       retryNeedsNewConversation.current = false;
       if (created) setConversationId(conversationId);
       if (purged) setTemporaryNewId(conversationId);
@@ -335,6 +348,9 @@ function ChatPaneBody() {
         queryKey: ["messages", conversationId],
       });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+    },
+    onError: () => {
+      recordUxEvent("error_shown", { surface, phase: "send" });
     },
   });
 
@@ -393,6 +409,10 @@ function ChatPaneBody() {
   const status = liveStatus;
   useEffect(() => {
     if (!liveRunId || !status || !isTerminal(status)) return;
+    if (!recordedCompletions.current.has(liveRunId)) {
+      recordedCompletions.current.add(liveRunId);
+      recordUxEvent("run_completed", { surface, status });
+    }
     const target = liveConversationId ?? activeConversationId;
     void queryClient.invalidateQueries({ queryKey: ["messages", target] });
     void queryClient.invalidateQueries({ queryKey: ["runs", target] });
@@ -407,7 +427,20 @@ function ChatPaneBody() {
     activeConversationId,
     queryClient,
     clearLive,
+    surface,
   ]);
+
+  // Approval visibility is a journey in the UX baseline: how often does a run
+  // block, and in which surface? Count once per approval id.
+  useEffect(() => {
+    const id = liveApproval?.approvalId;
+    if (!id || recordedApprovals.current.has(id)) return;
+    recordedApprovals.current.add(id);
+    recordUxEvent("approval_shown", {
+      surface,
+      tool: liveApproval.name,
+    });
+  }, [liveApproval, surface]);
 
   // A temporary run in a brand-new thread deletes that thread. Wait until the
   // refreshed list no longer carries it before letting go, so the clear cannot
@@ -608,6 +641,7 @@ function ChatPaneBody() {
           onLoadOlder={() => void loadOlder()}
         />
       </PaneErrorBoundary>
+      <RunStatusBar conversationId={liveConversationId} />
       {(sendMessage.isError ||
         editMessage.isError ||
         projectError ||

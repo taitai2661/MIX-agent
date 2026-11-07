@@ -147,21 +147,15 @@ Desktop 版は SSE ではなく `app::RunEvent` を `emit` で配信します。
 
 | Docker 版 | Desktop 版 | Phase |
 | --- | --- | --- |
-| `GET /browser/status` | `browser::browser_status()` | 4 |
-| `GET /browser/status`（導入状態） | `browser::browser_status()`（`installed_version` / `pinned_version` / `update_available` を含む） | 6 |
-| `POST /browser/install` | `browser::browser_install()` | 6 |
-| `POST /browser/install`（キャンセル） | `browser::browser_install_cancel()` | 6 |
-| `POST /browser/update` | `browser::browser_install(force=true)` | 6 |
-| `POST /browser/remove`（Desktop独自） | `browser::browser_uninstall()` | 6 |
-| `GET /browser/profiles` | `browser::browser_profiles()` | 4 |
-| `POST /browser/profiles/{key}/reset` | `browser::browser_reset_profile()` | 4 |
 | `POST /runs/{key}/browser/{action}` | `browser::browser_invoke()` | 4 |
-| `GET /runs/{key}/browser-frames/{artifact_id}` | `browser::browser_frame()`（workspace_id 指定のライブ表示用・非永続 PNG） | 4 |
+| `GET /runs/{key}/browser-frames/{artifact_id}` | `browser::browser_artifact()`（ネイティブ WebView のスクリーンショット） | 4 |
+| Desktop独自 | `browser::browser_surface_bounds()`（子 WebView の矩形） | 6 |
+| Desktop独自 | `browser::browser_clear_data()`（閲覧データ削除） | 6 |
 
-Desktop も Docker 版と同じく、実行時に Chromium を導入・更新できる。取得元は
-`apps/desktop/browser/src/chromium-manifest.json` に固定した Chrome for Testing で、
-`browser_install` が `<app-data>/chromium` へインストールする。`browser_uninstall`
-は Desktop 独自の管理対象削除で、システムブラウザには触れない。
+Desktop は Chromium を導入・更新しない。ページは Tauri ウィンドウ内の
+ネイティブ子 WebView（WKWebView / WebView2 / WebKitGTK）が描画し、
+`browser` ツールは `eval_with_callback` で同じページを操作する。
+Docker 版の Playwright Chromium と `browser_*` ツールは別系統として残る。
 
 ## Memories
 

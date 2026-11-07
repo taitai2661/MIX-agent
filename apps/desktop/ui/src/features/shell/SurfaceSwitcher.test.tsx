@@ -10,18 +10,36 @@ beforeAll(() => setLanguage("ja"));
 describe("SurfaceSwitcher", () => {
   beforeEach(() => {
     localStorage.clear();
-    useUi.setState({ surface: "chat", mode: "chat", threadFilter: "all" });
+    useUi.setState({
+      surface: "chat",
+      mode: "chat",
+      threadFilter: "all",
+      newThreadDraft: false,
+      chatNewThreadDraft: false,
+      agentNewThreadDraft: false,
+    });
   });
   afterEach(() => {
     localStorage.clear();
-    useUi.setState({ surface: "chat", mode: "chat", threadFilter: "all" });
+    useUi.setState({
+      surface: "chat",
+      mode: "chat",
+      threadFilter: "all",
+      newThreadDraft: false,
+      chatNewThreadDraft: false,
+      agentNewThreadDraft: false,
+    });
   });
 
-  it("shows the active surface label in the trigger", () => {
+  it("keeps both workspaces visible and marks the active one", () => {
     render(<SurfaceSwitcher />);
-    expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent(
-      "チャット",
+    expect(screen.getByTestId("surface-switcher-item-chat")).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
+    expect(
+      screen.getByTestId("surface-switcher-item-desktop-agent"),
+    ).toHaveAttribute("aria-checked", "false");
   });
 
   it("reflects a switch to the desktop-agent surface", () => {
@@ -29,8 +47,12 @@ describe("SurfaceSwitcher", () => {
       useUi.setState({ surface: "desktop-agent", mode: "agent" });
     });
     render(<SurfaceSwitcher />);
-    expect(screen.getByTestId("surface-switcher-trigger")).toHaveTextContent(
-      "コーディング",
+    expect(
+      screen.getByTestId("surface-switcher-item-desktop-agent"),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("surface-switcher-item-chat")).toHaveAttribute(
+      "aria-checked",
+      "false",
     );
   });
 
@@ -40,7 +62,6 @@ describe("SurfaceSwitcher", () => {
     });
     const user = userEvent.setup();
     render(<SurfaceSwitcher />);
-    await user.click(screen.getByTestId("surface-switcher-trigger"));
     await user.click(screen.getByTestId("surface-switcher-item-desktop-agent"));
     expect(useUi.getState().surface).toBe("desktop-agent");
     // Mode was "thinking" which desktop-agent does not allow, so it snaps to "agent".
@@ -53,7 +74,6 @@ describe("SurfaceSwitcher", () => {
     });
     const user = userEvent.setup();
     render(<SurfaceSwitcher />);
-    await user.click(screen.getByTestId("surface-switcher-trigger"));
     await user.click(screen.getByTestId("surface-switcher-item-chat"));
     expect(useUi.getState().surface).toBe("chat");
     expect(useUi.getState().mode).toBe("chat");

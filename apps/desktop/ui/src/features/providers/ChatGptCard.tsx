@@ -34,7 +34,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useConfirm } from "@/components/ui/dialog";
 import { ErrorBox } from "@/components/shared";
 import {
-  ChatGptLoginDialog,
+  ChatGptLoginCard,
   ChatGptQuotaCard,
   ChatGptWarning,
   type ChatGptLogin,
@@ -336,7 +336,7 @@ export function ChatGptCard() {
       )}
 
       {login && (
-        <ChatGptLoginDialog
+        <ChatGptLoginCard
           login={login}
           onComplete={completeLogin}
           onFailed={(message) => {

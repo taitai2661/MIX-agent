@@ -24,6 +24,7 @@ import { t } from "@/lib/i18n";
 import { useSettingsForm } from "@/lib/settings";
 import { SPOTLIGHT_STATUS_QUERY_KEY, usePendingApprovals } from "@/lib/queries";
 import { useUi, type SettingsTab } from "@/lib/ui";
+import { recordUxEvent } from "@/lib/uxEvents";
 import type { SettingsView } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { ErrorAlert } from "@/components/shared";
@@ -55,37 +56,58 @@ interface SettingsTabEntry {
   icon: React.ReactNode;
 }
 
+/**
+ * Settings navigation grouped by what the user is trying to do, not by how the
+ * backend is organised. The previous three groups ("アプリ / 構成 / ナレッジ")
+ * mixed model setup with backups and pushed 17 equally-weighted tabs; finding
+ * "where do I connect a model?" meant scanning the whole list.
+ */
 const SETTINGS_NAV: { title: string; tabs: SettingsTabEntry[] }[] = [
   {
-    title: "アプリ",
+    title: "基本",
     tabs: [
-      { id: "appearance", label: "外観", icon: <Palette size={15} /> },
       { id: "general", label: "一般", icon: <Zap size={15} /> },
+      { id: "appearance", label: "外観", icon: <Palette size={15} /> },
       { id: "network", label: "ネットワーク", icon: <Globe size={15} /> },
-      { id: "updates", label: "アップデート", icon: <RefreshCw size={15} /> },
-      { id: "backup", label: "バックアップ", icon: <Archive size={15} /> },
-      { id: "spotlight", label: "Spotlight", icon: <Search size={15} /> },
-      { id: "diagnostics", label: "診断", icon: <ShieldCheck size={15} /> },
     ],
   },
   {
-    title: "構成",
+    title: "モデルと接続",
     tabs: [
-      { id: "chatgpt", label: "ChatGPT", icon: <Bot size={15} /> },
       { id: "providers", label: "プロバイダー", icon: <Layers size={15} /> },
       { id: "models", label: "モデル", icon: <Sparkles size={15} /> },
+      { id: "chatgpt", label: "ChatGPT", icon: <Bot size={15} /> },
+    ],
+  },
+  {
+    title: "エージェント",
+    tabs: [
       { id: "tools", label: "ツール", icon: <Wrench size={15} /> },
       { id: "approvals", label: "承認", icon: <ShieldCheck size={15} /> },
       { id: "mcp", label: "MCP", icon: <Globe2 size={15} /> },
+      { id: "skills", label: "スキル", icon: <Terminal size={15} /> },
+    ],
+  },
+  {
+    title: "データと検索",
+    tabs: [
+      { id: "memory", label: "メモリ", icon: <Brain size={15} /> },
+      { id: "knowledge", label: "ナレッジ", icon: <BookOpen size={15} /> },
       { id: "browser", label: "ブラウザ", icon: <Globe size={15} /> },
     ],
   },
   {
-    title: "ナレッジ",
+    title: "アプリ",
     tabs: [
-      { id: "memory", label: "メモリ", icon: <Brain size={15} /> },
-      { id: "knowledge", label: "ナレッジ", icon: <BookOpen size={15} /> },
-      { id: "skills", label: "スキル", icon: <Terminal size={15} /> },
+      { id: "updates", label: "アップデート", icon: <RefreshCw size={15} /> },
+      { id: "backup", label: "バックアップ", icon: <Archive size={15} /> },
+      { id: "spotlight", label: "Spotlight", icon: <Search size={15} /> },
+    ],
+  },
+  {
+    title: "詳細・診断",
+    tabs: [
+      { id: "diagnostics", label: "診断", icon: <ShieldCheck size={15} /> },
     ],
   },
 ];
@@ -111,10 +133,12 @@ export function SettingsPane() {
   const update = useMutation({
     mutationFn: (input: SettingsView) => api.updateSettings(input),
     onSuccess: (_res, input) => {
+      recordUxEvent("settings_saved", { tab: activeTab });
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       queryClient.invalidateQueries({ queryKey: SPOTLIGHT_STATUS_QUERY_KEY });
       setSavedSnapshot(JSON.stringify(input));
     },
+    onError: () => recordUxEvent("settings_save_failed", { tab: activeTab }),
   });
   const pendingCount = approvals.data?.length ?? 0;
   const showSave = SAVE_TABS.has(activeTab);

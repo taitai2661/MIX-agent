@@ -1,4 +1,5 @@
 use crate::AppState;
+use mixd_browser::BrowserHost as _;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

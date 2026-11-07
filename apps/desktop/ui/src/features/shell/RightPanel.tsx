@@ -11,7 +11,9 @@ import {
   X,
 } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { recordUxEvent } from "@/lib/uxEvents";
 import {
+  DEFAULT_BROWSER_PANEL_RATIO,
   MAX_RIGHT_PANEL_WIDTH,
   MIN_RIGHT_PANEL_WIDTH,
   useUi,
@@ -33,14 +35,21 @@ const BrowserPanel = lazy(() =>
   })),
 );
 
-export function RightPanel({ cap = null }: { cap?: number | null }) {
+export function RightPanel({
+  rightMax = null,
+  rowWidth = 0,
+}: {
+  rightMax?: number | null;
+  rowWidth?: number;
+}) {
   const rightPanel = useUi((s) => s.rightPanel);
   const setRightPanel = useUi((s) => s.setRightPanel);
   const surface = useUi((s) => s.surface);
   const isAgentSurface = surface === "desktop-agent";
-  const dismissBrowserPanel = useUi((s) => s.dismissBrowserPanel);
   const openBrowserPanel = useUi((s) => s.openBrowserPanel);
   const rightPanelWidth = useUi((s) => s.rightPanelWidth);
+  const rightPanelRatio = useUi((s) => s.rightPanelRatio);
+  const setRightPanelRatio = useUi((s) => s.setRightPanelRatio);
   const toggleRightPanelWidth = useUi((s) => s.toggleRightPanelWidth);
   const isDocked = useUi((s) => s.rightPanelDocked);
   const toggleDocked = useUi((s) => s.toggleRightPanelDocked);
@@ -53,7 +62,18 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
   // call, and pointermove can fire far more often than the persisted value
   // needs to change. Commit once when the drag ends.
   const [resizingWidth, setResizingWidth] = useState<number | null>(null);
-  const panelWidthValue = resizingWidth ?? rightPanelWidth;
+  // The browser pane stores a share of the shell width, so a window resize
+  // keeps the split instead of freezing at yesterday's pixel count. Other
+  // panels keep their pixel width (their content is not proportional).
+  const ratioWidth =
+    rightPanel === "browser" && rightPanelRatio !== null && rowWidth > 0
+      ? Math.round(rowWidth * rightPanelRatio)
+      : null;
+  const storedWidth = ratioWidth ?? rightPanelWidth;
+  const panelMax = isDocked ? (rightMax ?? MAX_RIGHT_PANEL_WIDTH) : null;
+  const panelWidthValue =
+    resizingWidth ??
+    (panelMax === null ? storedWidth : Math.min(storedWidth, panelMax));
 
   // `rightPanel` is persisted but its targets are session-only. After a
   // restart with "diff"/"file" stored, the panel restored as a 380px blank
@@ -95,6 +115,11 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [isDocked, rightPanel, setRightPanel]);
 
+  useEffect(() => {
+    if (rightPanel === "none") return;
+    recordUxEvent("panel_opened", { panel: rightPanel, surface });
+  }, [rightPanel, surface]);
+
   if (rightPanel === "none") return null;
 
   const tabbed =
@@ -106,16 +131,27 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
   const commitWidth = (next: number) => {
     setResizingWidth(null);
     setRightPanelWidth(next);
+    // A user drag takes over from an agent-specified split. Remember the
+    // share, not just the pixel width, so the page stays the same relative
+    // size when the window changes.
+    if (rightPanel === "browser" && rowWidth > 0) {
+      setRightPanelRatio(next / rowWidth);
+    }
+  };
+  const resetBrowserRatio = () => {
+    setResizingWidth(null);
+    setRightPanelRatio(DEFAULT_BROWSER_PANEL_RATIO);
   };
   const resizeHandle = (
     <ResizableHandle
       value={panelWidthValue}
       min={MIN_RIGHT_PANEL_WIDTH}
-      max={MAX_RIGHT_PANEL_WIDTH}
+      max={panelMax ?? MAX_RIGHT_PANEL_WIDTH}
       direction={-1}
       label={t("サイドパネルの幅を変更")}
       onChange={setResizingWidth}
       onCommit={commitWidth}
+      onReset={rightPanel === "browser" ? resetBrowserRatio : undefined}
       edge="left"
     />
   );
@@ -128,8 +164,8 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
     <aside
       ref={asideRef as Ref<HTMLElement>}
       tabIndex={-1}
-      data-side-panel=""
-      style={panelStyle(panelWidthValue, isDocked ? cap : null)}
+      data-side-panel="right"
+      style={panelStyle(panelWidthValue, isDocked ? panelMax : null)}
       role={isDocked ? "region" : "dialog"}
       aria-modal="false"
       aria-label={t("サイドパネル")}
@@ -140,7 +176,11 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
       }
     >
       {resizeHandle}
-      {tabbed && (
+      {/* The browser pane owns its whole chrome (tab strip + omnibox), like
+          Chrome. A second app-level tab bar above it would push the page down
+          and duplicate the switching affordance. Other panels keep the
+          segmented header. */}
+      {tabbed && rightPanel !== "browser" && (
         <div className="flex h-titlebar shrink-0 items-center gap-1.5 border-b border-line bg-bg/85 px-3 backdrop-blur-md">
           {/* Named differently from the drawer's own `サイドパネル` label:
               two nested controls with the identical accessible name read as
@@ -183,7 +223,7 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
                 value="browser"
                 label={t("ブラウザ")}
                 icon={<Globe size={13} aria-hidden="true" />}
-                selected={rightPanel === "browser"}
+                selected={false}
                 onSelect={() => openBrowserPanel("user")}
               >
                 {t("ブラウザ")}
@@ -220,11 +260,7 @@ export function RightPanel({ cap = null }: { cap?: number | null }) {
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() =>
-              rightPanel === "browser"
-                ? dismissBrowserPanel()
-                : setRightPanel("none")
-            }
+            onClick={() => setRightPanel("none")}
             title={t("閉じる")}
             aria-label={t("閉じる")}
           >

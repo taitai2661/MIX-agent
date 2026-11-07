@@ -40,10 +40,10 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 | **導入の手軽さ** | ⭐⭐⭐ **極めて簡単**（Docker 不要）<br>Releases からインストーラーをダウンロードして起動 | ⭐⭐ **標準**（Docker 環境が必要）<br>`git clone` 後に `docker compose up -d` で起動 |
 | **ユーザーインターフェース** | OS ネイティブウィンドウ、差分プレビュー、システムトレイ | Web ブラウザ（レスポンシブ UI） |
 | **技術スタック** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
-| **プロセス構成** | 単一バイナリ + tokio in-proc（+ 子プロセス Chromium） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
+| **プロセス構成** | 単一バイナリ + tokio in-proc（ブラウザは Tauri 子 WebView） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
 | **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + AES-GCM 暗号化ファイル（macOS は `.master_seed`、Windows は Credential Manager） | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
 | **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
-| **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
+| **ブラウザ操作** | アプリ内のネイティブ子 WebView を共有操作 | execution-runner コンテナ内の Playwright |
 | **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等）。任意で macOS `sandbox-exec` による書き込み制限 | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
 
 ---

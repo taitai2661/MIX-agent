@@ -2,8 +2,8 @@
 """Cross-edition browser contract check.
 
 The canonical vocabulary lives in ``packages/tool_contracts/browser.json``.
-Desktop embeds it at compile time and exposes a single ``browser`` tool; Docker
-maps seven ``browser_*`` tools onto the same actions. Without this gate, adding
+Desktop embeds it at compile time and exposes a single ``browser`` tool through
+the native WebView host; Docker maps ``browser_*`` tools onto the same actions. Without this gate, adding
 an action to one edition is invisible to the other and the two UIs drift.
 
 This script fails when:
