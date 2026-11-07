@@ -2,6 +2,7 @@
 //! are the only at-rest protection, so a regression that leaves a
 //! world-readable `mix-agent.db` behind must fail loudly here, not in review.
 
+#[cfg(unix)]
 use mixd_storage::Storage;
 
 #[cfg(unix)]

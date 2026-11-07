@@ -116,6 +116,9 @@ impl SpotlightService {
 
     /// Start the background worker. Safe to call more than once; only the
     /// first call wins.
+    // Non-macOS builds return from the guard below, so the macOS worker body
+    // is intentionally unreachable there.
+    #[allow(unreachable_code)]
     pub fn start(self: &Arc<Self>) {
         #[cfg(not(target_os = "macos"))]
         {
