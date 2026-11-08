@@ -10,17 +10,17 @@
   "architectures": [
     "amd64"
   ],
-  "update_at": "2026-11-04",
+  "update_at": "2026-11-08",
   "title": "MIX-agent",
-  "release_note": "Feature release: unofficial ChatGPT/Codex subscription support, language-server diagnostics, Agent Skills resources, launch at login, Git-backed run rollback, conversation search and paging, and UI performance work.",
+  "release_note": "Maintenance release: conversation and memory API cleanup, provider discovery split, sidebar thread grouping, auto-routing groundwork, and bounded conversation paging.",
   "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
   "id": "io.github.taitai2661.mix-agent",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "categories": [
     "ai"
   ],
   "min_memory": 0,
   "min_image_size": {
-    "amd64": 1356727653
+    "amd64": 1356725135
   }
 }
