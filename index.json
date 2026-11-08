@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated_at": "2026-11-08T09:46:50Z",
+  "updated_at": "2026-11-08T10:12:58Z",
   "app_count": 1,
   "base_url": "https://cdn.jsdelivr.net/gh/taitai2661/MIX-agent@gh-pages",
   "apps": [
@@ -21,7 +21,7 @@
       "thumbnail": "",
       "compose_url": "/apps/io.github.taitai2661.mix-agent/docker-compose.yml",
       "meta_url": "/apps/io.github.taitai2661.mix-agent/meta.json",
-      "content_hash": "8fc25788",
+      "content_hash": "76ae25fc",
       "version": "0.5.7"
     }
   ]
