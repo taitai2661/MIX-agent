@@ -24,7 +24,7 @@ use mixd_providers::{
     ProviderRequest, StreamBox, StreamEvent, Usage,
 };
 use mixd_storage::SecretStore;
-use mixd_tools::{EgressPolicy, ToolRegistry};
+use mixd_tools::{EgressPolicy, ToolContext, ToolRegistry};
 use uuid::Uuid;
 
 /// A provider that replays a fixed script of turns, one per call.
@@ -1989,6 +1989,27 @@ async fn the_formatter_runs_after_a_mutation() {
     let harness = Harness::new([script(), script()].concat()).await;
     allow_tool(&harness, "files").await;
     let _drain = spawn_event_drain(&harness.engine);
+    // Warm the persistent ConPTY shell directly: the formatter dispatch
+    // goes through it with the default timeout, and the first spawn on a
+    // cold Windows runner can exceed it. This consumes no provider turns,
+    // so the measured scripts below stay aligned.
+    {
+        let ctx = ToolContext {
+            run_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            root_path: Some(harness.workspace.to_string_lossy().to_string()),
+            additional_paths: Vec::new(),
+            approval_token: None,
+        };
+        let registry = harness.engine.tools.read().await;
+        let _ = registry
+            .dispatch(
+                ctx,
+                "terminal",
+                serde_json::json!({"command": "echo warmup"}),
+            )
+            .await;
+    }
     for _ in 0..2 {
         let mut request = harness.request().await;
         request.format_command = Some("touch formatted.marker".to_string());
@@ -2098,6 +2119,27 @@ async fn an_edit_to_a_file_changed_after_the_read_is_refused() {
     allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
     std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
+    // Warm the persistent ConPTY shell directly: the `echo` dispatch goes
+    // through it with the default timeout, and the first spawn on a cold
+    // Windows runner can exceed it. This consumes no provider turns, so
+    // the measured scripts below stay aligned.
+    {
+        let ctx = ToolContext {
+            run_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            root_path: Some(harness.workspace.to_string_lossy().to_string()),
+            additional_paths: Vec::new(),
+            approval_token: None,
+        };
+        let registry = harness.engine.tools.read().await;
+        let _ = registry
+            .dispatch(
+                ctx,
+                "terminal",
+                serde_json::json!({"command": "echo warmup"}),
+            )
+            .await;
+    }
 
     for _ in 0..2 {
         let outcome = harness
@@ -2105,11 +2147,12 @@ async fn an_edit_to_a_file_changed_after_the_read_is_refused() {
             .execute(harness.request().await)
             .await
             .expect("run");
-        let edit = outcome
-            .tool_calls
-            .iter()
-            .find(|call| call.name == "edit")
-            .expect("edit call");
+        let Some(edit) = outcome.tool_calls.iter().find(|call| call.name == "edit") else {
+            // Cold ConPTY spawn can time out the terminal turn and abort the
+            // run before the edit turn; retry against the now-warm shell.
+            std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
+            continue;
+        };
         let error = edit.error.as_deref().unwrap_or_default();
         if error.contains("changed on disk") {
             let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
