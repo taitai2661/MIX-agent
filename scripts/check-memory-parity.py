@@ -16,7 +16,7 @@ This script fails (exit status 1) when:
   * a vocabulary list in the spec does not match the constants the edition
     actually defines (Python: ``memory/types.py``, Rust: ``core/src/memory.rs``)
   * a number in the spec's ``ranking`` block does not match the ranking
-    constants each edition computes with (Python: ``memory/service.py``,
+    constants each edition computes with (Python: ``memory/common.py``,
     Rust: ``core/src/retrieval.rs``)
   * the shared extraction prompt in spec §6 is not reproduced verbatim by each
     edition (Python: ``memory/jobs.py``, Rust: ``core/src/memory.rs``)
@@ -48,6 +48,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# The editions' sources use Python 3.12 syntax and `zip(strict=...)`, so an
+# older interpreter dies with a confusing TypeError. CI pins 3.12; point a
+# developer at the project's own interpreter instead.
+if sys.version_info < (3, 12):
+    sys.exit(
+        "check-memory-parity.py needs Python 3.12+ "
+        f"(got {sys.version.split()[0]}). Try: "
+        "apps/server/.venv/bin/python scripts/check-memory-parity.py"
+    )
+
 SPEC_PATHS = {
     "docker": ROOT / "docs/memory-spec.md",
     "desktop": ROOT / "docs/desktop/memory-spec.md",
@@ -59,7 +69,7 @@ IMPL_PATHS = {
 }
 
 RANKING_PATHS = {
-    "docker": ROOT / "apps/server/mix_agent/memory/service.py",
+    "docker": ROOT / "apps/server/mix_agent/memory/common.py",
     "desktop": ROOT / "apps/desktop/core/src/retrieval.rs",
 }
 

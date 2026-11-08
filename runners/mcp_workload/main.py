@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -13,6 +14,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 app = FastAPI(docs_url=None, redoc_url=None)
+LOGGER = logging.getLogger(__name__)
 ROOT = Path("/data/.packages")
 LOCK = asyncio.Lock()
 SESSION = None
@@ -76,8 +78,8 @@ async def _session(credentials: dict, arguments: list[str]):
     if STACK is not None:
         try:
             await STACK.aclose()
-        except BaseException:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-            pass
+        except BaseException:  # noqa: BLE001 - closing a stale stack is best effort
+            LOGGER.debug("closing previous MCP stack failed", exc_info=True)
         SESSION = None
         STACK = None
     executable = await _install()

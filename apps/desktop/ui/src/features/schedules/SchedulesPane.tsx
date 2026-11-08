@@ -248,7 +248,7 @@ export function SchedulesPane() {
           >
             <option value="chat">{t("チャット")}</option>
             <option value="thinking">{t("思考")}</option>
-            <option value="agent">{t("エージェント")}</option>
+            <option value="agent">{t("自動実行")}</option>
           </Select>
           <Select
             aria-label={t("モデル")}
@@ -322,7 +322,7 @@ export function SchedulesPane() {
                   <span className="me-1 rounded bg-inset px-1 py-0.5 font-mono">
                     {t(
                       j.mode === "agent"
-                        ? "エージェント"
+                        ? "自動実行"
                         : j.mode === "thinking"
                           ? "思考"
                           : "チャット",

@@ -31,6 +31,9 @@ tracing-appender = "0.2.3"
 # Same resolution Tauri's `PathResolver::app_data_dir` uses, needed before the
 # `AppHandle` exists (tracing has to be initialised before the Builder runs).
 dirs.workspace = true
+# Native menu / tray labels follow the UI language; with no explicit setting
+# they follow the OS locale.
+sys-locale = "0.3"
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
@@ -49,8 +52,11 @@ reqwest.workspace = true
 ignore = "0.4.30"
 # GUI-only local runtimes (Jan, GPT4All) are opened through the OS handler.
 open = "5"
+# Stable content hash for the Spotlight index queue. The browser and MCP
+# crates already pin this version.
+sha2 = "0.10"
 
-tauri = { version = "2.1", features = ["macos-private-api", "tray-icon"] }
+tauri = { version = "2.1", features = ["macos-private-api", "tray-icon", "unstable"] }
 tauri-plugin-dialog = "2.0"
 # Desktop notifications are delivered from Rust (`src/push.rs`) and from the
 # UI's shell-events hook, so this plugin stays registered and granted.
@@ -58,13 +64,46 @@ tauri-plugin-notification = "2.0"
 tauri-plugin-os = "2.0"
 tauri-plugin-window-state = "2.0"
 tauri-plugin-deep-link = "2.0"
+# Quick-input from anywhere. Registered from Rust only; the WebView is not
+# granted the plugin's IPC surface.
+tauri-plugin-global-shortcut = "2.0"
 tauri-plugin-single-instance = { version = "2.0", features = ["deep-link"] }
 tauri-plugin-cli = "2.0"
 # In-app updates. The plugin is driven from `commands::update` only; the
 # WebView never calls its IPC surface (no `updater:*` capability grant). It
 # needs Rust 1.90+, which the pinned 1.91 toolchain already satisfies.
 tauri-plugin-updater = "2"
+# Compare a staged update version against the running bundle when deciding
+# whether the cache is stale (e.g. after Windows applies an update and exits
+# before the old process can clean the download).
+semver = "1"
 
 [target.'cfg(unix)'.dependencies]
 # SIGTERM for a runtime child process on Unix; Windows uses `start_kill`.
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Core Spotlight indexing (macOS only). `objc2-core-spotlight` is a pure-Rust
+# binding; it avoids a Swift build step and keeps the macOS 12 deployment
+# target. `objc2-uniform-type-identifiers` is only needed for `UTType.text`.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSBundle",
+    "NSUserActivity",
+    "NSArray",
+    "NSDictionary",
+    "NSString",
+    "NSError",
+    "NSDate",
+    "NSURL",
+    "NSData",
+    "NSGeometry",
+] }
+objc2-web-kit = { version = "0.3", features = [
+    "WKWebView",
+    "WKSnapshotConfiguration",
+] }
+objc2-core-spotlight = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
+objc2-uniform-type-identifiers = "0.3"
+block2 = "0.6"

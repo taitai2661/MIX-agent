@@ -4,7 +4,21 @@ import { Button } from "@/components/button";
 import { Empty, ErrorBox, Title } from "@/components/shared";
 import { Skeleton } from "@/components/loading";
 import { ConfirmModal } from "@/components/modal";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  CONVERSATION_PAGE_SIZE,
+  nextConversationOffset,
+} from "@/lib/conversations";
+import {
+  HISTORY_GROUPS,
+  historyGroup,
+  historyTime,
+  type HistoryGroup,
+} from "@/lib/format";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Archive,
   Download,
@@ -14,7 +28,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 type FolderRow = Row & { data: { name: string } };
@@ -24,6 +38,7 @@ type ConversationRow = Row & {
     folder_id?: string | null;
     project_id?: string | null;
     pinned?: boolean;
+    last_message_at?: string | null;
   };
 };
 const states: Record<string, [string, string]> = {
@@ -67,11 +82,24 @@ export function Conversations() {
     queryKey: ["/projects"],
     queryFn: () => api("/projects"),
   });
-  const conversations = useQuery<ConversationRow[]>({
+  const conversations = useInfiniteQuery({
     queryKey: ["/conversations", current, searchQ],
-    queryFn: () =>
-      api(`/conversations?state=${current}&q=${encodeURIComponent(searchQ)}`),
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      api<ConversationRow[]>(
+        `/conversations?state=${current}&q=${encodeURIComponent(searchQ)}&limit=${CONVERSATION_PAGE_SIZE}&offset=${pageParam}`,
+        "GET",
+        undefined,
+        undefined,
+        { signal },
+      ),
+    getNextPageParam: (lastPage, _pages, lastPageParam) =>
+      nextConversationOffset(lastPage.length, lastPageParam),
   });
+  const conversationRows = useMemo(
+    () => conversations.data?.pages.flatMap((page) => page) ?? [],
+    [conversations.data],
+  );
   const refresh = () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: ["/conversations"] }),
@@ -101,6 +129,20 @@ export function Conversations() {
       },
     });
   };
+  const grouped = useMemo(() => {
+    const groups: Record<HistoryGroup, ConversationRow[]> = {
+      today: [],
+      yesterday: [],
+      week: [],
+      older: [],
+    };
+    for (const row of conversationRows) {
+      groups[historyGroup(row.data.last_message_at || row.created_at)].push(
+        row,
+      );
+    }
+    return groups;
+  }, [conversationRows]);
   const download = async (id: string, title: string) => {
     try {
       setError(null);
@@ -159,12 +201,13 @@ export function Conversations() {
                 <Folder size={13} />
                 {f.data.name}
                 <button
-                  aria-label={`${f.data.name}フォルダを削除`}
+                  aria-label={t("{name}フォルダを削除", { name: f.data.name })}
                   onClick={() =>
                     setPending({
                       title: t("フォルダを削除"),
-                      message:
+                      message: t(
                         "フォルダを削除しますか？ 会話は未分類に戻ります。",
+                      ),
                       confirmLabel: t("削除"),
                       run: async () => {
                         await api(`/conversation-folders/${f.id}`, "DELETE");
@@ -224,132 +267,193 @@ export function Conversations() {
         </div>
       ) : (
         <div className="conversation-list">
-          {conversations.data?.map((row) => (
-            <article key={row.id} className="conversation-row">
-              <div>
-                <Link to={`/chat/${row.id}`}>
-                  <b>{row.data.title}</b>
-                </Link>
-                <small>
-                  {row.data.pinned ? t("ピン留め · ") : ""}
-                  {folders.data?.find((f) => f.id === row.data.folder_id)?.data
-                    .name || t("未分類")}
-                </small>
-              </div>
-              <div className="row-actions">
-                {current === "active" && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}を${row.data.pinned ? t("ピン留め解除") : t("ピン留め")}`}
-                      onClick={() =>
-                        change(row.id, { pinned: !row.data.pinned })
-                      }
-                    >
-                      <Pin size={16} />
-                    </button>
-                    <select
-                      aria-label={`${row.data.title}のフォルダ`}
-                      value={row.data.folder_id || ""}
-                      onChange={(e) =>
-                        change(row.id, { folder_id: e.target.value || null })
-                      }
-                    >
-                      <option value="">{t("未分類")}</option>
-                      {folders.data?.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.data.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      aria-label={`${row.data.title}のプロジェクト`}
-                      value={row.data.project_id || ""}
-                      onChange={(e) =>
-                        change(row.id, { project_id: e.target.value || null })
-                      }
-                    >
-                      <option value="">{t("プロジェクトなし")}</option>
-                      {projects.data?.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.data.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}をアーカイブ`}
-                      onClick={() => change(row.id, { archived: true })}
-                    >
-                      <Archive size={16} />
-                    </button>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}を書き出し`}
-                      onClick={() => download(row.id, row.data.title)}
-                    >
-                      <Download size={16} />
-                    </button>
-                  </>
-                )}
-                {current === "archived" && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}をアーカイブから戻す`}
-                      onClick={() => change(row.id, { archived: false })}
-                    >
-                      <RotateCcw size={16} />
-                    </button>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}を書き出し`}
-                      onClick={() => download(row.id, row.data.title)}
-                    >
-                      <Download size={16} />
-                    </button>
-                  </>
-                )}
-                {current === "trash" && (
-                  <>
-                    <button
-                      className="icon"
-                      aria-label={`${row.data.title}を復元`}
-                      onClick={async () => {
-                        try {
-                          setError(null);
-                          await api(`/conversations/${row.id}/restore`, "POST");
-                          await refresh();
-                        } catch (cause) {
-                          setError(cause);
-                        }
-                      }}
-                    >
-                      <RotateCcw size={16} />
-                    </button>
-                    <button
-                      className="icon danger"
-                      aria-label={`${row.data.title}を完全削除`}
-                      onClick={() => remove(row.id, true)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </>
-                )}
-                {current !== "trash" && (
-                  <button
-                    className="icon danger"
-                    aria-label={`${row.data.title}をごみ箱へ移動`}
-                    onClick={() => remove(row.id)}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
-          {!conversations.isError && !error && !conversations.data?.length && (
+          {HISTORY_GROUPS.map((group) => {
+            const rows = grouped[group];
+            if (!rows.length) return null;
+            const label = {
+              today: t("今日"),
+              yesterday: t("昨日"),
+              week: t("過去7日"),
+              older: t("それ以前"),
+            }[group];
+            return (
+              <Fragment key={group}>
+                <h3 className="conversation-group-label">{label}</h3>
+                {rows.map((row) => (
+                  <article key={row.id} className="conversation-row">
+                    <div>
+                      <Link to={`/chat/${row.id}`}>
+                        <b>{row.data.title}</b>
+                      </Link>
+                      <small>
+                        {row.data.pinned ? t("ピン留め · ") : ""}
+                        {folders.data?.find((f) => f.id === row.data.folder_id)
+                          ?.data.name || t("未分類")}
+                        {row.data.last_message_at
+                          ? ` · ${historyTime(row.data.last_message_at)}`
+                          : ""}
+                      </small>
+                    </div>
+                    <div className="row-actions">
+                      {current === "active" && (
+                        <>
+                          <button
+                            className="icon"
+                            aria-label={t(
+                              row.data.pinned
+                                ? "{title}のピン留めを解除"
+                                : "{title}をピン留め",
+                              { title: row.data.title },
+                            )}
+                            onClick={() =>
+                              change(row.id, { pinned: !row.data.pinned })
+                            }
+                          >
+                            <Pin size={16} />
+                          </button>
+                          <select
+                            aria-label={t("{title}のフォルダ", {
+                              title: row.data.title,
+                            })}
+                            value={row.data.folder_id || ""}
+                            onChange={(e) =>
+                              change(row.id, {
+                                folder_id: e.target.value || null,
+                              })
+                            }
+                          >
+                            <option value="">{t("未分類")}</option>
+                            {folders.data?.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.data.name}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label={t("{title}のプロジェクト", {
+                              title: row.data.title,
+                            })}
+                            value={row.data.project_id || ""}
+                            onChange={(e) =>
+                              change(row.id, {
+                                project_id: e.target.value || null,
+                              })
+                            }
+                          >
+                            <option value="">{t("プロジェクトなし")}</option>
+                            {projects.data?.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.data.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}をアーカイブ", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => change(row.id, { archived: true })}
+                          >
+                            <Archive size={16} />
+                          </button>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}を書き出し", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => download(row.id, row.data.title)}
+                          >
+                            <Download size={16} />
+                          </button>
+                        </>
+                      )}
+                      {current === "archived" && (
+                        <>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}をアーカイブから戻す", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => change(row.id, { archived: false })}
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}を書き出し", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => download(row.id, row.data.title)}
+                          >
+                            <Download size={16} />
+                          </button>
+                        </>
+                      )}
+                      {current === "trash" && (
+                        <>
+                          <button
+                            className="icon"
+                            aria-label={t("{title}を復元", {
+                              title: row.data.title,
+                            })}
+                            onClick={async () => {
+                              try {
+                                setError(null);
+                                await api(
+                                  `/conversations/${row.id}/restore`,
+                                  "POST",
+                                );
+                                await refresh();
+                              } catch (cause) {
+                                setError(cause);
+                              }
+                            }}
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                          <button
+                            className="icon danger"
+                            aria-label={t("{title}を完全削除", {
+                              title: row.data.title,
+                            })}
+                            onClick={() => remove(row.id, true)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </>
+                      )}
+                      {current !== "trash" && (
+                        <button
+                          className="icon danger"
+                          aria-label={t("{title}をごみ箱へ移動", {
+                            title: row.data.title,
+                          })}
+                          onClick={() => remove(row.id)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </Fragment>
+            );
+          })}
+          {!conversations.isError && !error && !conversationRows.length && (
             <Empty>{t("該当する会話はありません。")}</Empty>
+          )}
+          {conversations.hasNextPage && (
+            <div className="conversation-list-more">
+              <Button
+                variant="outline"
+                disabled={conversations.isFetchingNextPage}
+                onClick={() => void conversations.fetchNextPage()}
+              >
+                {conversations.isFetchingNextPage
+                  ? t("読み込み中…")
+                  : t("以前の会話を読み込む")}
+              </Button>
+            </div>
           )}
         </div>
       )}

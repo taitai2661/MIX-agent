@@ -9,17 +9,37 @@ out/
 .coverage
 .data/
 *.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.log
+*.pem
+*.crt
+*.p12
+*.pfx
 .env
+.env.local
+.env.*.local
 test-results/
 playwright-report/
 .DS_Store
+Thumbs.db
 *.tsbuildinfo
+.mypy_cache/
 .codex/
 .ruff_cache/
 
 # Local agent / tool state (never committed)
 .freebuff/
 .opencode/
+
+# IDE / editor (root; apps/desktop/.gitignore covers desktop subtree)
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 # Cargo / Rust
 **/target/

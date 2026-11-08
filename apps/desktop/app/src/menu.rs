@@ -32,35 +32,72 @@ fn item<R: Runtime>(
     }
 }
 
-pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let new_chat = item(app, EVT_NEW_CHAT, "New Chat", Some("CmdOrCtrl+N"))?;
-    let settings = item(app, EVT_OPEN_SETTINGS, "Settings…", Some("CmdOrCtrl+,"))?;
+pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<()> {
+    let ja = language == "ja";
+    let new_chat = item(
+        app,
+        EVT_NEW_CHAT,
+        if ja { "新規チャット" } else { "New Chat" },
+        Some("CmdOrCtrl+N"),
+    )?;
+    let settings = item(
+        app,
+        EVT_OPEN_SETTINGS,
+        if ja { "設定…" } else { "Settings…" },
+        Some("CmdOrCtrl+,"),
+    )?;
     // Avoid chords owned by the WebView: ⌘B toggles the sidebar and ⇧⌘D
     // switches surfaces. The menu used to win those, making the shortcut sheet
     // lie and sometimes running an action twice.
-    let backup = item(app, EVT_BACKUP, "Create Backup…", Some("CmdOrCtrl+Shift+S"))?;
-    let diagnostics = item(app, EVT_DIAGNOSTICS, "Diagnostics", Some("CmdOrCtrl+Alt+D"))?;
-    let quit = PredefinedMenuItem::quit(app, Some("Quit MIX-agent"))?;
+    let backup = item(
+        app,
+        EVT_BACKUP,
+        if ja {
+            "バックアップを作成…"
+        } else {
+            "Create Backup…"
+        },
+        Some("CmdOrCtrl+Shift+S"),
+    )?;
+    let diagnostics = item(
+        app,
+        EVT_DIAGNOSTICS,
+        if ja { "診断" } else { "Diagnostics" },
+        Some("CmdOrCtrl+Alt+D"),
+    )?;
+    let quit = PredefinedMenuItem::quit(
+        app,
+        Some(if ja {
+            "MIX-agent を終了"
+        } else {
+            "Quit MIX-agent"
+        }),
+    )?;
     let sep = || PredefinedMenuItem::separator(app);
+
+    let file_label = if ja { "ファイル" } else { "File" };
+    let edit_label = if ja { "編集" } else { "Edit" };
+    let view_label = if ja { "表示" } else { "View" };
+    let help_label = if ja { "ヘルプ" } else { "Help" };
 
     #[cfg(target_os = "macos")]
     let file = Submenu::with_items(
         app,
-        "File",
+        file_label,
         true,
         &[&new_chat, &sep()?, &backup, &sep()?, &quit],
     )?;
     #[cfg(not(target_os = "macos"))]
     let file = Submenu::with_items(
         app,
-        "File",
+        file_label,
         true,
         &[&new_chat, &settings, &sep()?, &backup, &sep()?, &quit],
     )?;
 
     let edit = Submenu::with_items(
         app,
-        "Edit",
+        edit_label,
         true,
         &[
             &PredefinedMenuItem::undo(app, None)?,
@@ -75,7 +112,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     let view = Submenu::with_items(
         app,
-        "View",
+        view_label,
         true,
         &[
             &PredefinedMenuItem::fullscreen(app, None)?,
@@ -87,7 +124,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         ],
     )?;
 
-    let help = Submenu::with_items(app, "Help", true, &[&diagnostics])?;
+    let help = Submenu::with_items(app, help_label, true, &[&diagnostics])?;
 
     // Settings lives in the app menu on macOS and in File elsewhere, so it is
     // reachable on Windows and Linux too.

@@ -35,6 +35,15 @@ test("send renders streamed assistant text and finishes on done", async ({ page 
         },
       });
     }
+    if (path === "/conversations/c1" && request.method() === "GET") {
+      return route.fulfill({
+        json: {
+          id: "c1",
+          data: { title: "テスト会話", pinned: false },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      });
+    }
     if (path === "/conversations/c1/messages" && request.method() === "POST") {
       return route.fulfill({ json: { run_id: "r1" } });
     }

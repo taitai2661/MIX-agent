@@ -42,6 +42,21 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
+    "v0.5.7": {
+        "update_at": "2026-11-08",
+        "notes": {
+            "en_US": (
+                "Maintenance release: conversation and memory API cleanup, "
+                "provider discovery split, sidebar thread grouping, "
+                "auto-routing groundwork, and bounded conversation paging."
+            ),
+            "ja_JP": (
+                "保守リリース。会話・記憶APIの整理、プロバイダー探索の分割、"
+                "サイドバーのスレッド整理、自動ルーティングの土台、"
+                "会話一覧の件数上限対応など。"
+            ),
+        },
+    },
     "v0.5.6": {
         "update_at": "2026-11-04",
         "notes": {

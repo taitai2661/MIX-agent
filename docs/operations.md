@@ -87,6 +87,20 @@ Filesystemの接続設定は `/packages/node_modules/.bin/mcp-server-filesystem`
 
 全RunとバックグラウンドProcessを停止し、設定画面で12文字以上のパスフレーズを入力してダウンロードします。バックアップはAES-GCM + scrypt。DB、暗号鍵、添付、workspace、MCP共有領域を含みます。
 
+これとは別に、`docker compose up` は **Alembic migration の直前に PostgreSQL の論理バックアップ**を `db-backups` volume へ自動取得します（`db-backup` サービス）。保持するのは最新10世代です。初回起動時は空のDBをダンプするだけで、既存データには触れません。マイグレーションが失敗した場合は `migrate` が停止するため、アプリは起動しません。その場合は `db-backups` の直前のダンプから復元してください。
+
+```sh
+# 失敗した migration のあと、アプリと migration を止めて復元する
+docker compose stop app migrate
+docker compose run --rm --no-deps db-backup sh -c \
+  'export PGPASSWORD="$(cat /db-secret/password)"; \
+   ls -1t /backups/mix-*.dump | head -1; \
+   pg_restore --clean --if-exists -h db -U mix -d mix "$(ls -1t /backups/mix-*.dump | head -1)"'
+docker compose up -d
+```
+
+ダンプは `pg_dump -Fc`（custom形式）です。`db-backups` volume は暗号化されていないため、ホストのディスク暗号化やアクセス制御で保護してください。設定画面の暗号化バックアップとは用途が異なります（前者は更新前の復旧、後者は環境移行・完全バックアップ）。
+
 初期版の上限は暗号化前256MB、Runner領域ごと64MB・1万ファイル。symlink・特殊ファイルは非対応です。パッケージキャッシュ・Browser Cookieはバックアップしません。新しい環境への復元後、必要なMCPパッケージを再導入してください。
 
 復元には管理者ログインが必要です。空の環境では一時的な管理者を作成してから復元します。復元後はバックアップに含まれる管理者で再ログインします。

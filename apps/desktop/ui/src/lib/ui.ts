@@ -6,6 +6,8 @@ import {
   type Accent,
 } from "./accent";
 import { getLanguage, setLanguage, type Language } from "./i18n";
+import { canFullView } from "./panelTabs";
+import { recordUxEvent } from "./uxEvents";
 import { storedTheme, storeTheme, type Theme } from "./theme";
 import {
   getBoolean,
@@ -25,7 +27,7 @@ export type View = "chat" | "agents" | "projects" | "schedules" | "settings";
 export type Surface = "chat" | "desktop-agent";
 
 /** Run mode understood by the Rust Run Engine (see `core/src/mode.rs`). */
-export type RunMode = "chat" | "thinking" | "agent";
+export type RunMode = "chat" | "thinking" | "agent" | "plan";
 
 /** Canonical union for every run mode the engine understands.
  *
@@ -41,21 +43,22 @@ export type ThreadFilter = "all" | Surface;
 /** Modes a surface allows the user to pick from in the Composer. */
 export const SURFACE_MODES: Record<Surface, RunMode[]> = {
   chat: ["chat", "thinking"],
-  "desktop-agent": ["agent"],
+  // `plan` is the engine's read-only mode: it may read and search, refuses
+  // every mutation, and proposes the change with `user_plan`. It lives on the
+  // agent surface because it needs a workspace to investigate.
+  "desktop-agent": ["agent", "plan"],
 };
 
 /** Tabs inside the Settings pane (see features/settings/SettingsPane.tsx). */
 export type SettingsTab =
   | "appearance"
   | "general"
-  | "network"
   | "updates"
   | "backup"
-  | "chatgpt"
+  | "spotlight"
   | "providers"
   | "models"
   | "tools"
-  | "approvals"
   | "mcp"
   | "memory"
   | "knowledge"
@@ -111,6 +114,11 @@ interface UiState {
   newThreadDraft: boolean;
   /** Open a blank thread. The conversation row is created on first send. */
   startNewThread: () => void;
+  /** Per-surface draft flags. Switching workspaces must not drop a blank
+   *  "new thread" on the other side — the composer draft is saved separately,
+   *  but `newThreadDraft` decides whether that draft is shown at all. */
+  chatNewThreadDraft: boolean;
+  agentNewThreadDraft: boolean;
   chatConversationId: string | null;
   setChatConversationId: (id: string | null) => void;
   agentConversationId: string | null;
@@ -123,8 +131,14 @@ interface UiState {
   setRunId: (id: string | null) => void;
   modelId: string;
   setModelId: (model: string) => void;
+  /** Active run mode. Kept in step with the per-surface memory below. */
   mode: RunMode;
   setMode: (mode: RunMode) => void;
+  /** Last mode picked on each surface. Switching workspaces restores this
+   *  instead of snapping to the surface default: a user who was planning on
+   *  the coding surface should still be planning when they come back. */
+  chatMode: RunMode;
+  agentMode: RunMode;
   /** Top-level UI surface (chat vs. agent). Persisted to localStorage. */
   surface: Surface;
   setSurface: (surface: Surface) => void;
@@ -144,10 +158,23 @@ interface UiState {
   sidePanelMode: SidePanelMode;
   setSidePanelMode: (mode: SidePanelMode) => void;
   toggleSidePanelMode: () => void;
-  /** Open the browser pane and remember whether the agent or the user did it. */
-  openBrowserPanel: (by: BrowserOpenedBy) => void;
+  /** Open the browser pane and remember whether the agent or the user did it.
+   *
+   * `options.ratio` is the agent's presentation hint: a 0.2–0.85 share of the
+   * shell width. A user-opened pane keeps the remembered split; an agent-opened
+   * pane defaults to 50% so a first browser run is readable. */
+  openBrowserPanel: (
+    by: BrowserOpenedBy,
+    options?: { ratio?: number | null },
+  ) => void;
   /** Close the browser pane and remember the run it was dismissed in. */
   dismissBrowserPanel: () => void;
+  /**
+   * Close whichever panel is open. The browser goes through
+   * `dismissBrowserPanel` so an outside click or Escape records the dismissal
+   * exactly like the panel's own close button does.
+   */
+  closeRightPanel: () => void;
   browserOpenedBy: BrowserOpenedBy | null;
   /** Run whose browser auto-open the user dismissed (null = none). */
   browserDismissedRunId: string | null;
@@ -176,6 +203,13 @@ interface UiState {
   rightPanelWidth: number;
   setRightPanelWidth: (width: number) => void;
   toggleRightPanelWidth: () => void;
+  /** Share of the shell width used by the browser pane (0.2–0.85).
+   *
+   * `null` means "use `rightPanelWidth`". The agent sets this when it asks for
+   * a specific split; a user drag writes the ratio back so the split survives
+   * window resizes. Non-browser panels keep using pixels. */
+  rightPanelRatio: number | null;
+  setRightPanelRatio: (ratio: number | null) => void;
   locale: Language;
   setLocale: (locale: Language) => void;
   theme: Theme;
@@ -194,6 +228,10 @@ interface UiState {
   setReduceMotion: (value: boolean) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /** Global approval inbox. Session-only, like the palette: it is opened to
+   *  answer a blocked run, not a panel the user expects to persist. */
+  approvalsOpen: boolean;
+  setApprovalsOpen: (open: boolean) => void;
   /** The keyboard-shortcut cheat sheet. Session-only (not persisted): it is a
    *  reference the user opens on demand, not a remembered panel. */
   shortcutsOpen: boolean;
@@ -221,9 +259,12 @@ const SURFACE_KEY = "mix-agent-surface";
 const THREAD_FILTER_KEY = "mix-agent-thread-filter";
 const SEND_SHORTCUT_KEY = "mix-agent-send-shortcut";
 const RIGHT_PANEL_WIDTH_KEY = "mix-agent-right-panel-width";
+const RIGHT_PANEL_RATIO_KEY = "mix-agent-right-panel-ratio";
 const RIGHT_PANEL_DOCKED_KEY = "mix-agent-right-panel-docked";
 const CHAT_CONVERSATION_KEY = "mix-agent-chat-conversation-id";
 const AGENT_CONVERSATION_KEY = "mix-agent-agent-conversation-id";
+const CHAT_MODE_KEY = "mix-agent-chat-mode";
+const AGENT_MODE_KEY = "mix-agent-agent-mode";
 const ZOOM_KEY = "mix-agent-zoom";
 const CODE_WRAP_KEY = "mix-agent-code-wrap";
 const REDUCE_MOTION_KEY = "mix-agent-reduce-motion";
@@ -233,6 +274,11 @@ export const MAX_ZOOM = 1.5;
 
 export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
 export const WIDE_RIGHT_PANEL_WIDTH = 560;
+export const MIN_RIGHT_PANEL_WIDTH = 320;
+export const MAX_RIGHT_PANEL_WIDTH = 1600;
+export const DEFAULT_BROWSER_PANEL_RATIO = 0.5;
+export const MIN_BROWSER_PANEL_RATIO = 0.2;
+export const MAX_BROWSER_PANEL_RATIO = 0.85;
 
 const SURFACES: Surface[] = ["chat", "desktop-agent"];
 const THREAD_FILTERS: ThreadFilter[] = ["all", "chat", "desktop-agent"];
@@ -291,14 +337,12 @@ function readSidePanelMode(): SidePanelMode {
 const SETTING_TABS: SettingsTab[] = [
   "appearance",
   "general",
-  "network",
   "updates",
   "backup",
-  "chatgpt",
+  "spotlight",
   "providers",
   "models",
   "tools",
-  "approvals",
   "mcp",
   "memory",
   "knowledge",
@@ -343,7 +387,12 @@ function readZoom(): number {
   return Number.isFinite(stored) && stored > 0 ? clampZoom(stored) : 1;
 }
 
-/** Push the display preferences onto the document root. */
+/** Push the display preferences onto the document root.
+ *
+ * `zoom` is a Chromium/WebKit proprietary property but Tauri only ever runs
+ * on those engines (WKWebView / WebView2 / WebKitGTK), so it is the cheapest
+ * layout-zoom path. Firefox ignores it, so we also set a standard
+ * `font-size` fallback on the root: `rem`-based layouts still scale. */
 export function applyDisplayPrefs(prefs: {
   zoom: number;
   codeWrap: boolean;
@@ -351,7 +400,12 @@ export function applyDisplayPrefs(prefs: {
 }): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.style.zoom = String(clampZoom(prefs.zoom));
+  const zoom = clampZoom(prefs.zoom);
+  // `zoom` in `CSSStyleDeclaration` is non-standard: lib.dom omits it, so go
+  // through `setProperty` to stay type-safe.
+  (root.style as CSSStyleDeclaration).setProperty("zoom", String(zoom));
+  // Standard fallback for engines without `zoom` (e.g. Firefox dev preview).
+  root.style.fontSize = `${16 * zoom}px`;
   root.dataset.codeWrap = prefs.codeWrap ? "wrap" : "scroll";
   root.dataset.reduceMotion = prefs.reduceMotion ? "true" : "false";
 }
@@ -368,14 +422,47 @@ function readRightPanelWidth(): number {
 function readPanelWidthValue(stored: string | null): number {
   if (stored) {
     const val = Number(stored);
-    if (!Number.isNaN(val) && val >= 320 && val <= 900) return val;
+    if (
+      !Number.isNaN(val) &&
+      val >= MIN_RIGHT_PANEL_WIDTH &&
+      val <= MAX_RIGHT_PANEL_WIDTH
+    ) {
+      return val;
+    }
   }
   return DEFAULT_RIGHT_PANEL_WIDTH;
+}
+
+/** Clamp a split ratio into the range the panel can render. */
+export function clampBrowserPanelRatio(value: number): number {
+  return Math.min(
+    MAX_BROWSER_PANEL_RATIO,
+    Math.max(MIN_BROWSER_PANEL_RATIO, value),
+  );
 }
 
 /** Codex remembers the side-panel width per workspace; so do we. */
 function workspaceWidthKey(workspaceId: string): string {
   return `${RIGHT_PANEL_WIDTH_KEY}:${workspaceId}`;
+}
+
+/** The split ratio is remembered per workspace as well. */
+function workspaceRatioKey(workspaceId: string): string {
+  return `${RIGHT_PANEL_RATIO_KEY}:${workspaceId}`;
+}
+
+function readRightPanelRatioValue(stored: string | null): number | null {
+  if (!stored) return null;
+  const value = Number(stored);
+  if (!Number.isFinite(value)) return null;
+  if (value < MIN_BROWSER_PANEL_RATIO || value > MAX_BROWSER_PANEL_RATIO) {
+    return null;
+  }
+  return value;
+}
+
+function readRightPanelRatio(): number | null {
+  return readRightPanelRatioValue(getString(RIGHT_PANEL_RATIO_KEY));
 }
 
 /**
@@ -386,16 +473,28 @@ export function defaultModeForSurface(surface: Surface): RunMode {
   return SURFACE_MODES[surface][0];
 }
 
+/** Read the last mode used on a surface, falling back to its default. Stored
+ *  values are validated against `SURFACE_MODES` so a mode removed in a later
+ *  build can never leak across the workspace split. */
+function readModeForSurface(surface: Surface): RunMode {
+  const key = surface === "chat" ? CHAT_MODE_KEY : AGENT_MODE_KEY;
+  const stored = getString(key);
+  if (stored && SURFACE_MODES[surface].includes(stored as RunMode)) {
+    return stored as RunMode;
+  }
+  return defaultModeForSurface(surface);
+}
+
 /**
  * Which surface a conversation belongs to, derived from its run mode.
  *
  * `ConversationSummary` carries a `mode`, not a surface, so the sidebar's
  * thread filter has to map one back to the other. It is the inverse of
- * `SURFACE_MODES`: `agent` runs live on the desktop-agent surface, everything
- * else (`chat`, `thinking`) is the chat surface.
+ * `SURFACE_MODES`: `agent` and `plan` runs live on the desktop-agent surface,
+ * everything else (`chat`, `thinking`) is the chat surface.
  */
 export function surfaceForMode(mode: Mode | (string & {})): Surface {
-  return mode === "agent" ? "desktop-agent" : "chat";
+  return mode === "agent" || mode === "plan" ? "desktop-agent" : "chat";
 }
 
 const initialSurface = readSurface();
@@ -403,18 +502,33 @@ const initialChatConv = readStoredConversation(CHAT_CONVERSATION_KEY);
 const initialAgentConv = readStoredConversation(AGENT_CONVERSATION_KEY);
 const initialConv =
   initialSurface === "desktop-agent" ? initialAgentConv : initialChatConv;
+const initialChatMode = readModeForSurface("chat");
+const initialAgentMode = readModeForSurface("desktop-agent");
+const initialMode =
+  initialSurface === "desktop-agent" ? initialAgentMode : initialChatMode;
+const initialRightPanel = readRightPanel();
+// A persisted "full" may belong to a panel that the current surface cannot
+// show (e.g. the browser restored on the chat surface). Clamp it on boot so
+// the first render does not hide the chat behind a full-view panel.
+const initialSidePanelMode: SidePanelMode =
+  readSidePanelMode() === "full" &&
+  !canFullView(initialRightPanel, initialSurface === "desktop-agent")
+    ? "split"
+    : readSidePanelMode();
 
 export const useUi = create<UiState>((set, get) => ({
   view: "chat",
   setView: (view) => set({ view }),
   settingsTab: readSettingsTab(),
   setSettingsTab: (settingsTab) => {
+    recordUxEvent("settings_opened", { tab: settingsTab });
     setString(SETTINGS_TAB_KEY, settingsTab);
     set({ settingsTab });
   },
   openSettings: (tab) =>
     set((state) => {
       const settingsTab = tab ?? state.settingsTab;
+      recordUxEvent("settings_opened", { tab: settingsTab });
       // Persist the target tab: without this a reload always reopened the
       // default tab even when the user was deep in another section.
       setString(SETTINGS_TAB_KEY, settingsTab);
@@ -440,6 +554,7 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: id,
           agentConversationId: id,
+          agentNewThreadDraft: false,
           newThreadDraft: false,
           ...cleared,
         };
@@ -449,12 +564,15 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: id,
           chatConversationId: id,
+          chatNewThreadDraft: false,
           newThreadDraft: false,
           ...cleared,
         };
       }
     }),
   newThreadDraft: false,
+  chatNewThreadDraft: false,
+  agentNewThreadDraft: false,
   startNewThread: () =>
     set((state) => {
       const cleared = {
@@ -467,6 +585,7 @@ export const useUi = create<UiState>((set, get) => ({
         return {
           conversationId: null,
           agentConversationId: null,
+          agentNewThreadDraft: true,
           newThreadDraft: true,
           ...cleared,
         };
@@ -475,6 +594,7 @@ export const useUi = create<UiState>((set, get) => ({
       return {
         conversationId: null,
         chatConversationId: null,
+        chatNewThreadDraft: true,
         newThreadDraft: true,
         ...cleared,
       };
@@ -484,6 +604,7 @@ export const useUi = create<UiState>((set, get) => ({
     else removeKey(CHAT_CONVERSATION_KEY);
     set((state) => ({
       chatConversationId: id,
+      chatNewThreadDraft: false,
       newThreadDraft: false,
       conversationId: state.surface === "chat" ? id : state.conversationId,
     }));
@@ -493,6 +614,7 @@ export const useUi = create<UiState>((set, get) => ({
     else removeKey(AGENT_CONVERSATION_KEY);
     set((state) => ({
       agentConversationId: id,
+      agentNewThreadDraft: false,
       newThreadDraft: false,
       conversationId:
         state.surface === "desktop-agent" ? id : state.conversationId,
@@ -502,50 +624,80 @@ export const useUi = create<UiState>((set, get) => ({
   setWorkspaceId: (workspaceId) =>
     set(() => {
       if (!workspaceId) return { workspaceId };
-      const stored = getString(workspaceWidthKey(workspaceId));
-      if (stored === null) return { workspaceId };
+      const storedWidth = getString(workspaceWidthKey(workspaceId));
+      const storedRatio = readRightPanelRatioValue(
+        getString(workspaceRatioKey(workspaceId)),
+      );
+      if (storedWidth === null && storedRatio === null) return { workspaceId };
       return {
         workspaceId,
-        rightPanelWidth: readPanelWidthValue(stored),
+        rightPanelWidth:
+          storedWidth === null
+            ? get().rightPanelWidth
+            : readPanelWidthValue(storedWidth),
+        rightPanelRatio: storedRatio,
       };
     }),
   runId: null,
   setRunId: (id) => set({ runId: id }),
   modelId: "",
   setModelId: (model) => set({ modelId: model }),
-  mode: "chat",
+  mode: initialMode,
+  chatMode: initialChatMode,
+  agentMode: initialAgentMode,
   setMode: (mode) => {
     // Refuse modes that no active surface supports and snap to the surface
     // default instead. This keeps `mode` always within `SURFACE_MODES[surface]`
     // so the Composer never offers an unsupported choice.
-    set((state) => {
-      if (SURFACE_MODES[state.surface].includes(mode)) return { mode };
-      return { mode: SURFACE_MODES[state.surface][0] };
-    });
+    const surface = get().surface;
+    if (!SURFACE_MODES[surface].includes(mode)) {
+      set({ mode: defaultModeForSurface(surface) });
+      return;
+    }
+    // Remember the pick per surface so switching workspaces is not a reset.
+    setString(surface === "chat" ? CHAT_MODE_KEY : AGENT_MODE_KEY, mode);
+    set(
+      surface === "chat" ? { mode, chatMode: mode } : { mode, agentMode: mode },
+    );
   },
   surface: initialSurface,
   setSurface: (surface) => {
     setString(SURFACE_KEY, surface);
+    // Full view is a transient expansion of the current surface; carrying it
+    // across a surface switch could hide the new surface's chat behind a
+    // panel that merely survived the transition.
+    setString(SIDE_PANEL_MODE_KEY, "split");
     set((state) => {
-      // Snap `mode` into the new surface's allowed set so legacy state from
-      // a different surface can never leak across (e.g. `agent` on the chat
-      // surface, which has no tool budget).
-      const nextMode = SURFACE_MODES[surface].includes(state.mode)
-        ? state.mode
-        : SURFACE_MODES[surface][0];
+      // Restore the mode last used on the target surface. Persisted state from
+      // an older build (or a mode removed in an upgrade) may still be invalid,
+      // so validate before applying and fall back to the surface default.
+      const remembered =
+        surface === "desktop-agent" ? state.agentMode : state.chatMode;
+      const nextMode = SURFACE_MODES[surface].includes(remembered)
+        ? remembered
+        : defaultModeForSurface(surface);
       const targetConvId =
         surface === "desktop-agent"
           ? state.agentConversationId
           : state.chatConversationId;
+      const draft =
+        surface === "desktop-agent"
+          ? state.agentNewThreadDraft
+          : state.chatNewThreadDraft;
       return {
         surface,
         mode: nextMode,
-        conversationId: targetConvId,
-        newThreadDraft: false,
+        // Heal a stale remembered value so the next switch validates cleanly.
+        ...(surface === "chat"
+          ? { chatMode: nextMode }
+          : { agentMode: nextMode }),
+        conversationId: draft ? null : targetConvId,
+        newThreadDraft: draft,
         view: "chat",
         activityRunId: null,
         diffTarget: null,
         filePreviewPath: null,
+        sidePanelMode: "split",
       };
     });
   },
@@ -574,16 +726,20 @@ export const useUi = create<UiState>((set, get) => ({
     else setString(ACTIVE_PROJECT_KEY, activeProjectId);
     set({ activeProjectId });
   },
-  rightPanel: readRightPanel(),
+  rightPanel: initialRightPanel,
   setRightPanel: (rightPanel) => {
+    // Full view only makes sense while a pane that supports it is visible:
+    // closing the panel or opening an agent-only target (diff/file) returns
+    // to the split layout instead of leaving a hidden mode behind.
+    const keepFull = canFullView(rightPanel, get().surface === "desktop-agent");
     setString(RIGHT_PANEL_KEY, rightPanel);
+    if (!keepFull) setString(SIDE_PANEL_MODE_KEY, "split");
     set((state) => ({
       rightPanel,
-      // Full view only makes sense while a pane is actually visible.
-      sidePanelMode: rightPanel === "none" ? "split" : state.sidePanelMode,
+      sidePanelMode: keepFull ? state.sidePanelMode : "split",
     }));
   },
-  sidePanelMode: readSidePanelMode(),
+  sidePanelMode: initialSidePanelMode,
   setSidePanelMode: (sidePanelMode) => {
     setString(SIDE_PANEL_MODE_KEY, sidePanelMode);
     set({ sidePanelMode });
@@ -596,12 +752,28 @@ export const useUi = create<UiState>((set, get) => ({
     }),
   browserOpenedBy: null,
   browserDismissedRunId: null,
-  openBrowserPanel: (browserOpenedBy) => {
+  openBrowserPanel: (browserOpenedBy, options = {}) => {
     setString(RIGHT_PANEL_KEY, "browser");
+    // Resolve the requested ratio before `set` so the same render that opens
+    // the pane already has the right width. An agent-open without a hint gets
+    // the Codex-like 50% default; a user-open keeps the remembered split.
+    let rightPanelRatio = get().rightPanelRatio;
+    const requested = options.ratio;
+    if (typeof requested === "number" && Number.isFinite(requested)) {
+      rightPanelRatio = clampBrowserPanelRatio(requested);
+      setString(RIGHT_PANEL_RATIO_KEY, String(rightPanelRatio));
+      const workspaceId = get().workspaceId;
+      if (workspaceId) {
+        setString(workspaceRatioKey(workspaceId), String(rightPanelRatio));
+      }
+    } else if (browserOpenedBy === "agent" && rightPanelRatio === null) {
+      rightPanelRatio = DEFAULT_BROWSER_PANEL_RATIO;
+    }
     set((state) => ({
       rightPanel: "browser",
       browserOpenedBy,
       browserDismissedRunId: null,
+      rightPanelRatio,
       // Full view is a transient expansion of an already-open pane. Opening
       // from closed (especially an agent auto-open) starts in split view so
       // the chat does not disappear.
@@ -611,13 +783,20 @@ export const useUi = create<UiState>((set, get) => ({
   },
   dismissBrowserPanel: () => {
     setString(RIGHT_PANEL_KEY, "none");
+    setString(SIDE_PANEL_MODE_KEY, "split");
     set((state) => ({
       rightPanel: "none",
+      sidePanelMode: "split",
       // A manual close is respected for the rest of this run. The next run has
       // a different id and may auto-open again; "manual" means no run was
       // active, so a later run is free to auto-open.
       browserDismissedRunId: state.runId ?? "manual",
     }));
+  },
+  closeRightPanel: () => {
+    const state = get();
+    if (state.rightPanel === "browser") state.dismissBrowserPanel();
+    else state.setRightPanel("none");
   },
   browserAutoOpen: readBoolean(BROWSER_AUTO_OPEN_KEY, true),
   setBrowserAutoOpen: (browserAutoOpen) => {
@@ -627,10 +806,15 @@ export const useUi = create<UiState>((set, get) => ({
   activityRunId: null,
   setActivityRunId: (activityRunId) => set({ activityRunId }),
   diffTarget: null,
-  openDiff: (diffTarget) => set({ diffTarget, rightPanel: "diff" }),
+  openDiff: (diffTarget) => {
+    setString(SIDE_PANEL_MODE_KEY, "split");
+    set({ diffTarget, rightPanel: "diff", sidePanelMode: "split" });
+  },
   filePreviewPath: null,
-  openFilePreview: (filePreviewPath) =>
-    set({ filePreviewPath, rightPanel: "file" }),
+  openFilePreview: (filePreviewPath) => {
+    setString(SIDE_PANEL_MODE_KEY, "split");
+    set({ filePreviewPath, rightPanel: "file", sidePanelMode: "split" });
+  },
   gitDiffPath: null,
   setGitDiffPath: (gitDiffPath) => set({ gitDiffPath }),
   sendShortcut: readSendShortcut(),
@@ -657,6 +841,24 @@ export const useUi = create<UiState>((set, get) => ({
       setString(workspaceWidthKey(workspaceId), String(rightPanelWidth));
     }
     set({ rightPanelWidth });
+  },
+  rightPanelRatio: readRightPanelRatio(),
+  setRightPanelRatio: (rightPanelRatio) => {
+    if (rightPanelRatio === null) {
+      removeKey(RIGHT_PANEL_RATIO_KEY);
+    } else {
+      const ratio = clampBrowserPanelRatio(rightPanelRatio);
+      setString(RIGHT_PANEL_RATIO_KEY, String(ratio));
+      const workspaceId = get().workspaceId;
+      if (workspaceId) {
+        setString(workspaceRatioKey(workspaceId), String(ratio));
+      }
+      set({ rightPanelRatio: ratio });
+      return;
+    }
+    const workspaceId = get().workspaceId;
+    if (workspaceId) removeKey(workspaceRatioKey(workspaceId));
+    set({ rightPanelRatio: null });
   },
   toggleRightPanelWidth: () => {
     const state = get();
@@ -701,7 +903,12 @@ export const useUi = create<UiState>((set, get) => ({
     applyDisplayPrefs({ ...get(), reduceMotion });
   },
   paletteOpen: false,
-  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  setPaletteOpen: (paletteOpen) => {
+    if (paletteOpen) recordUxEvent("search_opened", { location: "palette" });
+    set({ paletteOpen });
+  },
+  approvalsOpen: false,
+  setApprovalsOpen: (approvalsOpen) => set({ approvalsOpen }),
   shortcutsOpen: false,
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   onboardingForcedOpen: false,
@@ -724,6 +931,7 @@ const SYNCED_KEYS: ReadonlySet<string> = new Set([
   THREAD_FILTER_KEY,
   SEND_SHORTCUT_KEY,
   RIGHT_PANEL_WIDTH_KEY,
+  RIGHT_PANEL_RATIO_KEY,
   RIGHT_PANEL_DOCKED_KEY,
   CHAT_CONVERSATION_KEY,
   AGENT_CONVERSATION_KEY,
@@ -784,6 +992,11 @@ if (typeof window !== "undefined") {
       case RIGHT_PANEL_WIDTH_KEY: {
         const next = readRightPanelWidth();
         if (next !== state.rightPanelWidth) state.setRightPanelWidth(next);
+        break;
+      }
+      case RIGHT_PANEL_RATIO_KEY: {
+        const next = readRightPanelRatio();
+        if (next !== state.rightPanelRatio) state.setRightPanelRatio(next);
         break;
       }
       case RIGHT_PANEL_DOCKED_KEY: {

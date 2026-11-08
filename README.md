@@ -40,10 +40,10 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 | **導入の手軽さ** | ⭐⭐⭐ **極めて簡単**（Docker 不要）<br>Releases からインストーラーをダウンロードして起動 | ⭐⭐ **標準**（Docker 環境が必要）<br>`git clone` 後に `docker compose up -d` で起動 |
 | **ユーザーインターフェース** | OS ネイティブウィンドウ、差分プレビュー、システムトレイ | Web ブラウザ（レスポンシブ UI） |
 | **技術スタック** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
-| **プロセス構成** | 単一バイナリ + tokio in-proc（+ 子プロセス Chromium） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
-| **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + **OS Keychain** | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
+| **プロセス構成** | 単一バイナリ + tokio in-proc（ブラウザは Tauri 子 WebView） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
+| **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + AES-GCM 暗号化ファイル（macOS は `.master_seed`、Windows は Credential Manager） | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
 | **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
-| **ブラウザ操作** | 初回インストールする Chromium / システムブラウザを直接自動操作 | execution-runner コンテナ内の Playwright |
+| **ブラウザ操作** | アプリ内のネイティブ子 WebView を共有操作 | execution-runner コンテナ内の Playwright |
 | **セキュリティ・境界** | OS ユーザー権限。**操作単位の承認ルール**（パス/コマンド等）。任意で macOS `sandbox-exec` による書き込み制限 | コンテナによるプロセス・ネットワーク隔離（egress-proxy） |
 
 ---
@@ -75,7 +75,7 @@ Docker や複雑なサーバー設定なしで、OpenCode のようにローカ�
   - *ターミナル / Git*: [Git for Windows](https://gitforwindows.org/)（Git Bash）を推奨します。未導入の場合、ターミナルは PowerShell にフォールバックしますが、POSIX コマンド（`ls` / `grep` など）や Git 連携の一部は使えません。
 - **Linux (x64)**:
   - v0.5.2から`AppImage`と`deb`を配布します。
-  - AppImageはアプリ内更新（設定 ▸ アップデート）に対応します。debはパッケージ管理下のため、GitHub Releasesから手動で更新してください。
+  - AppImageはアプリ内更新（設定 ▸ アップデート）に対応します。新しい版は起動時に自動でダウンロードされ、アプリを終了したときに適用されます（再起動は手動）。debはパッケージ管理下のため、GitHub Releasesから手動で更新してください。
 
 ダウンロード後は、Release に添付された `SHA256SUMS` とファイルのチェックサムを照合してください。
 
@@ -173,7 +173,7 @@ docker compose up -d --build
 
 ### Desktop 版のセキュリティモデル
 - **OS 権限**: ログイン中のローカルユーザーの権限でネイティブ動作します。
-- **秘密情報**: API Key や認証情報は AES-256-GCM で暗号化してローカルに保存し、マスター鍵は OS 標準の安全なストレージ（macOS Keychain / Windows Credential Manager / Linux Secret Service）に保管します。
+- **秘密情報**: API Key や認証情報は AES-256-GCM で暗号化してローカルに保存します。マスター seed は Windows では Credential Manager、macOS / Linux では所有者のみ読める 0600 の `.master_seed` に保管します（macOS の ad-hoc 署名ビルドで Keychain の許可ダイアログが出続けるのを避けるため。`MIX_SECRET_BACKEND=keychain-seed` で Keychain 方式に切り替え可能）。
 - **権限ゲート**: ファイル書き込み、コマンド実行、ブラウザ操作などは既定で確認ダイアログ（`Ask`）が表示され、許可したパスやコマンドのみが実行されます。
 
 ### Docker 版のセキュリティモデル

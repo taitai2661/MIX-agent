@@ -1,35 +1,23 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
   ChevronDown,
   Clock3,
-  Download,
   Folder,
   Languages,
   Monitor,
   Moon,
-  MoreHorizontal,
-  Pencil,
-  Pin,
-  PinOff,
   Plus,
   Search,
   Settings2,
   Sun,
-  Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
-import { cn } from "@/lib/cn";
-import { t } from "@/lib/i18n";
-import {
-  absoluteTime,
-  relativeTime,
-  threadGroup,
-  type ThreadGroup,
-} from "@/lib/format";
+import { t, tf } from "@/lib/i18n";
+import { threadGroup } from "@/lib/format";
 import { useNow } from "@/lib/clock";
 import { loadPinnedThreadIds, togglePinnedThreadId } from "@/lib/pinnedThreads";
 import { useUi, surfaceForMode, type View } from "@/lib/ui";
@@ -37,12 +25,11 @@ import type { ConversationSummary } from "@/lib/types";
 import {
   CONVERSATIONS_QUERY_KEY,
   useConversationPages,
-  usePendingApprovals,
+  useConversationSearch,
   useProjects,
 } from "@/lib/queries";
-import { useApplySettings } from "@/lib/settings";
+import { useApplySettings, useSettingsForm } from "@/lib/settings";
 import { useRunEvents } from "@/lib/runStore";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -53,48 +40,46 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/ui/dialog";
-import { Input, SearchField } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/input";
 import { NavRow, SectionLabel } from "@/components/layout";
-import { SearchEmptyState } from "@/components/common";
-import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
-import { Spinner } from "@/components/ui/spinner";
+import { ErrorBox } from "@/components/shared";
 import { useNewThread } from "./useShellEvents";
 import { panelStyle } from "./usePanelCap";
+import { ResizableHandle } from "./ResizableHandle";
+import { usePanelWidth } from "./usePanelWidth";
+import { ThreadList } from "./ThreadList";
+import type { ExtendedThreadGroup } from "./threadGroups";
 
-const NAV_ITEMS: { id: View; label: string; icon: React.ReactNode }[] = [
-  { id: "projects", label: "プロジェクト", icon: <Folder size={15} /> },
+/**
+ * Secondary destinations, grouped by what they configure rather than by how
+ * the backend stores them. Projects are a workspace; saved agent profiles and
+ * their schedules are their own concept. Keeping the old single group made the
+ * list read as four equal-level features.
+ */
+const NAV_GROUPS: {
+  title: string;
+  items: { id: View; label: string; icon: React.ReactNode }[];
+}[] = [
   {
-    // Not "エージェント": that word is the workspace and the run mode. This
-    // page is the list of saved agent profiles.
-    id: "agents",
-    label: "エージェントプロファイル",
-    icon: <Bot size={15} />,
+    title: "ワークスペース",
+    items: [
+      { id: "projects", label: "プロジェクト", icon: <Folder size={15} /> },
+    ],
   },
-  { id: "schedules", label: "スケジュール", icon: <Clock3 size={15} /> },
+  {
+    title: "エージェント",
+    items: [
+      {
+        // Not just "エージェント": that word is the workspace and the run mode.
+        // This page is the list of saved agent profiles.
+        id: "agents",
+        label: "エージェント設定",
+        icon: <Bot size={15} />,
+      },
+      { id: "schedules", label: "スケジュール", icon: <Clock3 size={15} /> },
+    ],
+  },
 ];
-
-type ExtendedThreadGroup = "pinned" | ThreadGroup;
-const GROUP_ORDER: ExtendedThreadGroup[] = [
-  "pinned",
-  "today",
-  "yesterday",
-  "week",
-  "older",
-];
-const GROUP_LABEL: Record<ExtendedThreadGroup, string> = {
-  pinned: "ピン留め済み",
-  today: "今日",
-  yesterday: "昨日",
-  week: "過去7日",
-  older: "それより前",
-};
-
-/** Run modes, shown as words rather than the wire values. */
-const MODE_LABEL: Record<string, string> = {
-  chat: "チャット",
-  thinking: "思考",
-  agent: "エージェント",
-};
 
 const THEME_ICON = {
   light: Sun,
@@ -113,11 +98,12 @@ const LANGUAGES = [
   { value: "en", label: "English" },
 ] as const;
 
-/** Fixed Codex-like width. The sidebar used to be resizable (210–440px) with a
- * drag handle, but every drag pixel reflowed the centre column and flipped the
- * composer's container-query toolbar mid-drag — the classic "unstable" feel.
- * A fixed width keeps the transcript and composer geometry constant. */
+/** Codex-like default width. The user can drag the right edge to resize
+ * (210–440px); the width is remembered across launches. */
 const SIDEBAR_WIDTH = 264;
+const SIDEBAR_MIN_WIDTH = 210;
+const SIDEBAR_MAX_WIDTH = 440;
+const SIDEBAR_WIDTH_KEY = "mix-agent-sidebar-width";
 
 export function Sidebar({ cap = null }: { cap?: number | null }) {
   const view = useUi((s) => s.view);
@@ -130,11 +116,23 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const setTheme = useUi((s) => s.setTheme);
   const sidebarOpen = useUi((s) => s.sidebarOpen);
   const surface = useUi((s) => s.surface);
+  const setSurface = useUi((s) => s.setSurface);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const applySettings = useApplySettings();
+  const { dirty: settingsDirty } = useSettingsForm();
   const queryClient = useQueryClient();
   const { confirm, dialog } = useConfirm();
   const now = useNow();
+  const {
+    width: sidebarWidth,
+    setWidth: setSidebarWidth,
+    commitWidth: commitSidebarWidth,
+  } = usePanelWidth(
+    SIDEBAR_WIDTH_KEY,
+    SIDEBAR_WIDTH,
+    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_MAX_WIDTH,
+  );
   const [search, setSearch] = useState("");
   // Defer the filter so typing stays at 60fps with hundreds of threads.
   const deferredSearch = useDeferredValue(search);
@@ -150,10 +148,10 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     const next = togglePinnedThreadId(id);
     setPinnedIds(next);
   };
-  /** Ref for arrow-key travel over the thread titles (see below). */
-  const threadListRef = useRef<HTMLDivElement | null>(null);
 
   const isAgent = surface === "desktop-agent";
+  const otherSurface = isAgent ? "chat" : "desktop-agent";
+  const otherSurfaceLabel = isAgent ? t("チャット") : t("コーディング");
   const projects = useProjects();
   const activeProject =
     projects.data?.find((p) => p.id === activeProjectId) ?? null;
@@ -162,7 +160,11 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     () => conversations.data?.pages.flatMap((page) => page.items) ?? [],
     [conversations.data],
   );
-  const approvals = usePendingApprovals();
+  // The sidebar used to filter only the pages already fetched, which read as
+  // "history lost" once a thread fell past the first page. Search now asks the
+  // server over the whole history; the local rows still render immediately so
+  // typing never waits on the round trip.
+  const serverSearch = useConversationSearch(deferredSearch);
   const newThread = useNewThread();
   // A run keeps streaming after the user opens another thread. Without this
   // marker the work simply vanished from the UI: the transcript stopped
@@ -242,11 +244,19 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
 
   const threads = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
-    const list = conversationRows.filter((c) => {
+    // Loaded rows first (they carry the preview the server search omits), then
+    // server hits so a thread beyond the first page still appears.
+    const source = q
+      ? [...conversationRows, ...(serverSearch.data ?? [])]
+      : conversationRows;
+    const seen = new Set<string>();
+    const list = source.filter((c) => {
       // Natural separation by active surface:
       if (surfaceForMode(c.mode) !== surface) {
         return false;
       }
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
       return (
         !q ||
         c.title.toLowerCase().includes(q) ||
@@ -267,18 +277,21 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
       }
     }
     return groups;
-  }, [conversationRows, deferredSearch, pinnedSet, surface]);
+  }, [conversationRows, deferredSearch, pinnedSet, serverSearch.data, surface]);
 
-  const pendingCount = approvals.data?.length ?? 0;
   const hasThreads = conversationRows.some(
     (c) => surfaceForMode(c.mode) === surface,
   );
+  const searching = deferredSearch.trim().length > 0;
   const {
     hasNextPage: hasMoreThreads,
     isFetchingNextPage,
     isPending: conversationsPending,
     fetchNextPage,
   } = conversations;
+  // While searching, the server may know about threads that the first page
+  // does not, so render the list branch even when no local row matches yet.
+  const showThreadList = hasThreads || hasMoreThreads || searching;
   const loadMore = () => {
     if (hasMoreThreads && !isFetchingNextPage) {
       void fetchNextPage();
@@ -315,46 +328,6 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     setView("chat");
   };
 
-  /**
-   * Arrow-key travel between thread titles.
-   *
-   * Each title is already a real `<button>` (so Tab and Enter work), but a long
-   * history is dozens of tab stops. Once focus is on a title, Up/Down move to
-   * the neighbouring thread and Home/End jump to the ends of the visible list.
-   * The guard on `[data-thread-open]` keeps the keys working as caret movement
-   * while the rename field has focus.
-   */
-  const onThreadListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (
-      event.key !== "ArrowDown" &&
-      event.key !== "ArrowUp" &&
-      event.key !== "Home" &&
-      event.key !== "End"
-    ) {
-      return;
-    }
-    const target = event.target as HTMLElement;
-    if (!target.matches("[data-thread-open]")) return;
-    const buttons = Array.from(
-      threadListRef.current?.querySelectorAll<HTMLButtonElement>(
-        "[data-thread-open]",
-      ) ?? [],
-    );
-    const index = buttons.indexOf(target as HTMLButtonElement);
-    if (index === -1) return;
-    event.preventDefault();
-    const last = buttons.length - 1;
-    const next =
-      event.key === "ArrowDown"
-        ? Math.min(index + 1, last)
-        : event.key === "ArrowUp"
-          ? Math.max(index - 1, 0)
-          : event.key === "Home"
-            ? 0
-            : last;
-    buttons[next]?.focus();
-  };
-
   // Codex-like: instant show/hide with no width animation. The old
   // negative-margin transition animated the centre column's width for 150ms
   // on every toggle, and the panel-cap observer re-measured mid-animation so
@@ -364,407 +337,230 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   }
 
   return (
-    <aside
-      aria-label={t("サイドバー")}
-      data-side-panel=""
-      // Fixed width; `cap` only clamps it on very narrow windows.
-      style={panelStyle(SIDEBAR_WIDTH, cap)}
-      className="flex shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar"
-    >
-      {/* Primary action + search, pinned so they are always reachable. */}
-      <div className="flex shrink-0 flex-col gap-2 p-3 pb-1.5">
-        {isAgent && (
-          <div className="flex items-center justify-between rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-xs shadow-xs">
-            <div className="flex min-w-0 items-center gap-2">
-              <Folder size={14} className="shrink-0 text-brand" />
-              <span
-                className="truncate font-medium text-fg"
-                title={
-                  activeProject?.rootPath ?? activeProject?.name ?? undefined
-                }
-              >
-                {activeProject?.name ?? t("プロジェクト未選択")}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setView("projects")}
-              className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
-              title={t("プロジェクトを変更")}
-            >
-              {t("変更")}
-            </Button>
-          </div>
-        )}
-        <Button
-          variant="primary"
-          size="lg"
-          className="h-10 w-full justify-start gap-2"
-          onClick={() => newThread()}
-        >
-          {isAgent ? <Bot size={15} /> : <Plus size={15} />}
-          {isAgent ? t("新規タスク") : t("新規チャット")}
-        </Button>
-        <SearchField
-          icon={<Search size={13} />}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={
-            isAgent
-              ? t("タスクのタイトル・プレビューを検索")
-              : t("チャットのタイトル・プレビューを検索")
-          }
-          aria-label={
-            isAgent
-              ? t("タスクのタイトル・プレビューを検索")
-              : t("チャットのタイトル・プレビューを検索")
-          }
-          {...(search
-            ? { onClear: () => setSearch(""), clearLabel: t("クリア") }
-            : {})}
-        />
-        {(exportError || rename.isError || remove.isError) && (
-          <ErrorBox error={exportError ?? rename.error ?? remove.error} />
-        )}
-      </div>
-
-      {/* Thread history — the main content of the sidebar. */}
-      {/* Key delegation: titles are native buttons (Tab/Enter free); arrows
-          move between them from one handler instead of N. */}
-      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-      <div
-        ref={threadListRef}
-        onKeyDown={onThreadListKeyDown}
-        onScroll={(event) => {
-          const el = event.currentTarget;
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
-            loadMore();
-          }
-        }}
-        className="stable-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 pt-1.5"
+    <>
+      <aside
+        aria-label={t("サイドバー")}
+        data-side-panel="sidebar"
+        // The remembered width; `cap` only clamps it on very narrow windows.
+        style={panelStyle(sidebarWidth, cap)}
+        className="flex shrink-0 flex-col overflow-hidden border-r border-line bg-sidebar"
       >
-        {hasThreads || hasMoreThreads ? (
-          <>
-            {GROUP_ORDER.map((group) => {
-              const items = threads.get(group);
-              if (!items?.length) return null;
-              return (
-                <section key={group}>
-                  <SectionLabel
-                    trailing={
-                      <span className="font-mono font-normal text-2xs text-faint">
-                        {items.length}
-                      </span>
-                    }
-                  >
-                    {t(GROUP_LABEL[group])}
-                  </SectionLabel>
-                  <ul className="flex flex-col gap-0.5">
-                    {items.map((c) => (
-                      // Off-screen rows skip layout/paint. The intrinsic size
-                      // keeps the scrollbar honest until a row is measured.
-                      <li
-                        key={c.id}
-                        className="[content-visibility:auto] [contain-intrinsic-size:auto_64px]"
-                      >
-                        {/* A real `<button>`, not a `div role="button"`. The row
-                            also holds rename / export / delete buttons, so the
-                            title stretches over the row with a pseudo-element. */}
-                        <div
-                          className={cn(
-                            "group relative flex flex-col gap-1 rounded-lg py-2 pe-9 ps-2.5",
-                            "transition-colors duration-100 hover:bg-hover",
-                            conversationId === c.id &&
-                              "bg-brand-soft ring-1 ring-brand/20 ring-inset",
-                          )}
-                        >
-                          {renaming === c.id ? (
-                            <Input
-                              className="h-7 px-2 text-sm"
-                              value={renameDraft}
-                              // Mounted only while renaming: focus must enter
-                              // the field or keyboard users are stranded.
-                              // eslint-disable-next-line jsx-a11y/no-autofocus
-                              autoFocus
-                              onChange={(e) => setRenameDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                e.stopPropagation();
-                                if (e.key === "Enter" && renameDraft.trim()) {
-                                  // Commit through blur so Enter + blur cannot
-                                  // fire the rename twice.
-                                  e.currentTarget.blur();
-                                }
-                                if (e.key === "Escape") setRenaming(null);
-                              }}
-                              onBlur={() => {
-                                commitRename(c.id, c.title);
-                              }}
-                            />
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                data-thread-open
-                                onClick={() => openThread(c)}
-                                aria-current={
-                                  conversationId === c.id ? "true" : undefined
-                                }
-                                className="flex min-w-0 items-center gap-1.5 text-start after:absolute after:inset-0 after:z-0 after:content-['']"
-                              >
-                                {c.project_id && (
-                                  <span
-                                    className="size-1.5 shrink-0 rounded-full bg-brand"
-                                    aria-hidden="true"
-                                    title={t("プロジェクト紐付けあり")}
-                                  />
-                                )}
-                                {runningConversationIds.has(c.id) && (
-                                  <span
-                                    role="img"
-                                    aria-label={t("実行中")}
-                                    title={t("実行中")}
-                                    className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
-                                  />
-                                )}
-                                <span
-                                  className="truncate text-sm font-medium text-fg"
-                                  title={c.title}
-                                >
-                                  {c.title}
-                                </span>
-                                {pinnedSet.has(c.id) && (
-                                  <Pin
-                                    size={12}
-                                    className="shrink-0 text-brand fill-brand/30"
-                                    aria-hidden="true"
-                                  />
-                                )}
-                              </button>
-                              {c.preview && (
-                                <span className="pointer-events-none truncate text-xs text-muted">
-                                  {c.preview}
-                                </span>
-                              )}
-                              <span className="pointer-events-none flex items-center gap-1 text-xs text-faint">
-                                <time
-                                  dateTime={c.updated_at}
-                                  title={absoluteTime(c.updated_at)}
-                                >
-                                  {relativeTime(c.updated_at, new Date(now))}
-                                </time>
-                                <span className="text-line">·</span>
-                                <span>{t(MODE_LABEL[c.mode] ?? c.mode)}</span>
-                                {c.message_count > 0 && (
-                                  <>
-                                    <span className="text-line">·</span>
-                                    <span className="font-mono">
-                                      {c.message_count}
-                                    </span>
-                                  </>
-                                )}
-                              </span>
-
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    title={t("スレッド操作")}
-                                    aria-label={t("スレッド操作")}
-                                    className={cn(
-                                      "absolute end-1 top-1.5 z-10 bg-sidebar/90 shadow-xs backdrop-blur-sm",
-                                      "opacity-0 transition-opacity duration-100",
-                                      "group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-                                      conversationId === c.id && "opacity-100",
-                                    )}
-                                  >
-                                    <MoreHorizontal size={14} />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                  align="end"
-                                  className="min-w-44"
-                                >
-                                  <DropdownMenuItem
-                                    onSelect={() => togglePin(c.id)}
-                                  >
-                                    {pinnedSet.has(c.id) ? (
-                                      <PinOff
-                                        size={13}
-                                        className="text-muted"
-                                      />
-                                    ) : (
-                                      <Pin size={13} className="text-muted" />
-                                    )}
-                                    <span className="flex-1">
-                                      {pinnedSet.has(c.id)
-                                        ? t("ピン留めを解除")
-                                        : t("ピン留め")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() => {
-                                      setRenaming(c.id);
-                                      setRenameDraft(c.title);
-                                    }}
-                                  >
-                                    <Pencil size={13} className="text-muted" />
-                                    <span className="flex-1">
-                                      {t("名前を変更")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() => void exportThread(c)}
-                                  >
-                                    <Download
-                                      size={13}
-                                      className="text-muted"
-                                    />
-                                    <span className="flex-1">
-                                      {t("エクスポート")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    disabled={remove.isPending}
-                                    onSelect={() => void removeThread(c)}
-                                    className="text-danger focus:bg-danger-soft focus:text-danger"
-                                  >
-                                    <Trash2 size={13} />
-                                    <span className="flex-1">
-                                      {remove.isPending
-                                        ? t("削除中…")
-                                        : t("削除")}
-                                    </span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              );
-            })}
-            {filteredThreadCount === 0 && !hasMoreThreads && (
-              <SearchEmptyState
-                compact
-                title={
-                  isAgent
-                    ? t("一致するタスクがありません")
-                    : t("一致するチャットがありません")
-                }
-                onClear={() => setSearch("")}
-              />
-            )}
-            {hasMoreThreads && (
-              <div className="flex justify-center pt-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={loadMore}
-                  disabled={isFetchingNextPage}
-                  className="text-muted"
+        {/* Primary action + search, pinned so they are always reachable. */}
+        <div className="flex shrink-0 flex-col gap-2 p-3 pb-1.5">
+          {isAgent && (
+            <div className="flex items-center justify-between rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-xs shadow-xs">
+              <div className="flex min-w-0 items-center gap-2">
+                <Folder size={14} className="shrink-0 text-brand" />
+                <span
+                  className="truncate font-medium text-fg"
+                  title={
+                    activeProject?.rootPath ?? activeProject?.name ?? undefined
+                  }
                 >
-                  {isFetchingNextPage ? (
-                    <Spinner size={11} label={t("読み込み中…")} />
-                  ) : (
-                    t("以前のスレッドを読み込む")
-                  )}
-                </Button>
+                  {activeProject?.name ?? t("プロジェクト未選択")}
+                </span>
               </div>
-            )}
-          </>
-        ) : conversations.isError ? (
-          <ErrorBox error={conversations.error || t("エラー")} />
-        ) : conversations.isPending ? (
-          <ListSkeleton rows={3} label={t("読み込み中…")} />
-        ) : (
-          <EmptyState
-            compact
-            title={
-              isAgent ? t("タスクがありません") : t("チャット履歴がありません")
-            }
-            sub={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setView("projects")}
+                className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
+                title={t("プロジェクトを変更")}
+              >
+                {t("変更")}
+              </Button>
+            </div>
+          )}
+          <Button
+            variant="primary"
+            size="lg"
+            className="h-10 w-full justify-start gap-2"
+            onClick={() => newThread()}
+          >
+            {isAgent ? <Bot size={15} /> : <Plus size={15} />}
+            {isAgent ? t("新規タスク") : t("新規チャット")}
+          </Button>
+          <SearchField
+            icon={<Search size={13} />}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={
               isAgent
-                ? t("新しいタスクを始めましょう")
-                : t("新しい会話を始めましょう")
+                ? t("コーディングの履歴を検索")
+                : t("チャットの履歴を検索")
             }
+            aria-label={
+              isAgent
+                ? t("コーディングの履歴を検索（全履歴は ⌘K）")
+                : t("チャットの履歴を検索（全履歴は ⌘K）")
+            }
+            {...(search
+              ? { onClear: () => setSearch(""), clearLabel: t("クリア") }
+              : {})}
           />
-        )}
-      </div>
+          {/* The two workspaces keep separate histories, but the sidebar used
+              to give no sign that the other one existed: switching made the
+              list look empty. Name the current scope and offer the other side. */}
+          <div className="flex items-center justify-between gap-2 px-1 text-2xs text-faint">
+            <span className="truncate">
+              {isAgent ? t("コーディングの履歴") : t("チャットの履歴")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSurface(otherSurface)}
+              className="shrink-0 rounded px-1 py-0.5 text-brand transition-colors hover:bg-brand-soft hover:text-brand"
+              title={tf("{label}の履歴を見る", { label: otherSurfaceLabel })}
+            >
+              {otherSurfaceLabel} →
+            </button>
+          </div>
+          {(exportError || rename.isError || remove.isError) && (
+            <ErrorBox error={exportError ?? rename.error ?? remove.error} />
+          )}
+        </div>
 
-      {/* Secondary destinations, below the history so threads stay primary. */}
-      <nav className="flex shrink-0 flex-col gap-0.5 border-t border-line p-3 pt-2.5">
-        {/* Shown on both workspaces. They were agent-only, yet ⌘K opened them
+        <ThreadList
+          groups={threads}
+          selectedId={conversationId}
+          pinned={pinnedSet}
+          running={runningConversationIds}
+          renamingId={renaming}
+          renameDraft={renameDraft}
+          onRenameDraftChange={setRenameDraft}
+          onCancelRename={() => setRenaming(null)}
+          onStartRename={(thread) => {
+            setRenaming(thread.id);
+            setRenameDraft(thread.title);
+          }}
+          onCommitRename={commitRename}
+          onOpen={openThread}
+          onTogglePin={togglePin}
+          onExport={(thread) => void exportThread(thread)}
+          onRemove={(thread) => void removeThread(thread)}
+          removePending={remove.isPending}
+          now={now}
+          isAgent={isAgent}
+          searching={searching}
+          serverSearchPending={serverSearch.isPending}
+          filteredCount={filteredThreadCount}
+          showThreadList={showThreadList}
+          hasMore={hasMoreThreads}
+          loadingMore={isFetchingNextPage}
+          onLoadMore={loadMore}
+          onClearSearch={() => setSearch("")}
+          conversationsError={
+            conversations.isError ? conversations.error : null
+          }
+          conversationsPending={conversations.isPending}
+          otherSurfaceLabel={otherSurfaceLabel}
+          onSwitchSurface={() => setSurface(otherSurface)}
+        />
+        {/* Secondary destinations, below the history so threads stay primary. */}
+        <nav className="flex shrink-0 flex-col gap-2 border-t border-line p-3 pt-2.5">
+          {/* Shown on both workspaces. They were agent-only, yet ⌘K opened them
             from Chat too — where the sidebar then hid their only navigation and
             the page had no way back. */}
-        <SectionLabel>{t("ワークスペース")}</SectionLabel>
-        {NAV_ITEMS.map((item) => (
-          <NavRow
-            key={item.id}
-            icon={item.icon}
-            selected={view === item.id}
-            onClick={() => setView(item.id)}
-          >
-            {t(item.label)}
-          </NavRow>
-        ))}
-        <NavRow
-          icon={<Settings2 size={15} />}
-          selected={view === "settings"}
-          onClick={() => setView("settings")}
-          trailing={
-            pendingCount > 0 ? (
-              <Badge tone="warning" size="sm">
-                {pendingCount}
-              </Badge>
-            ) : undefined
-          }
-        >
-          {t("設定")}
-        </NavRow>
-      </nav>
-
-      <div className="flex shrink-0 items-center gap-1 border-t border-line px-2.5 py-2">
-        <span className="truncate px-1 text-xs font-semibold text-faint">
-          MIX-agent
-        </span>
-        <span className="flex-1" />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="gap-1 px-2"
-              title={t("表示設定")}
-              aria-label={t("表示設定")}
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title} className="flex flex-col gap-0.5">
+              <SectionLabel>{t(group.title)}</SectionLabel>
+              {group.items.map((item) => (
+                <NavRow
+                  key={item.id}
+                  icon={item.icon}
+                  selected={view === item.id}
+                  onClick={() => setView(item.id)}
+                >
+                  {t(item.label)}
+                </NavRow>
+              ))}
+            </div>
+          ))}
+          {/* Settings is app-wide, not part of either workspace group. */}
+          <div className="border-t border-line pt-1.5">
+            <NavRow
+              icon={<Settings2 size={15} />}
+              selected={view === "settings"}
+              onClick={() => setView("settings")}
+              trailing={
+                settingsDirty ? (
+                  <span
+                    role="status"
+                    aria-label={t("未保存の変更")}
+                    title={t("未保存の変更")}
+                    className="size-1.5 rounded-full bg-warning"
+                  />
+                ) : undefined
+              }
             >
-              <ThemeIcon size={12} aria-hidden="true" />
-              <span className="font-mono text-2xs">
-                {locale === "ja" ? "JA" : "EN"}
-              </span>
-              <ChevronDown size={10} aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-48">
-            <DropdownMenuLabel>{t("テーマ")}</DropdownMenuLabel>
-            {THEMES.map(({ value, label }) => {
-              const Icon = THEME_ICON[value];
-              return (
+              {t("設定")}
+            </NavRow>
+          </div>
+        </nav>
+
+        <div className="flex shrink-0 items-center gap-1 border-t border-line px-2.5 py-2">
+          <span className="truncate px-1 text-xs font-semibold text-faint">
+            MIX-agent
+          </span>
+          <span className="flex-1" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1 px-2"
+                title={t("表示設定")}
+                aria-label={t("表示設定")}
+              >
+                <ThemeIcon size={12} aria-hidden="true" />
+                <span className="font-mono text-2xs">
+                  {locale === "ja" ? "JA" : "EN"}
+                </span>
+                <ChevronDown size={10} aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48">
+              <DropdownMenuLabel>{t("テーマ")}</DropdownMenuLabel>
+              {THEMES.map(({ value, label }) => {
+                const Icon = THEME_ICON[value];
+                return (
+                  <DropdownMenuItem
+                    key={value}
+                    onSelect={() => {
+                      setTheme(value);
+                      void applySettings({ theme: value });
+                    }}
+                  >
+                    <Icon size={13} className="text-muted" aria-hidden="true" />
+                    <span className="flex-1">{t(label)}</span>
+                    {theme === value && (
+                      <Check
+                        size={13}
+                        className="text-brand"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>{t("言語")}</DropdownMenuLabel>
+              {LANGUAGES.map(({ value, label }) => (
                 <DropdownMenuItem
                   key={value}
                   onSelect={() => {
-                    setTheme(value);
-                    void applySettings({ theme: value });
+                    setLocale(value);
+                    // Persisted immediately: a local-only switch was overwritten
+                    // by the stored setting on the next launch.
+                    void applySettings({ language: value });
                   }}
                 >
-                  <Icon size={13} className="text-muted" aria-hidden="true" />
-                  <span className="flex-1">{t(label)}</span>
-                  {theme === value && (
+                  <Languages
+                    size={13}
+                    className="text-muted"
+                    aria-hidden="true"
+                  />
+                  <span className="flex-1">{label}</span>
+                  {locale === value && (
                     <Check
                       size={13}
                       className="text-brand"
@@ -772,35 +568,20 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                     />
                   )}
                 </DropdownMenuItem>
-              );
-            })}
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>{t("言語")}</DropdownMenuLabel>
-            {LANGUAGES.map(({ value, label }) => (
-              <DropdownMenuItem
-                key={value}
-                onSelect={() => {
-                  setLocale(value);
-                  // Persisted immediately: a local-only switch was overwritten
-                  // by the stored setting on the next launch.
-                  void applySettings({ language: value });
-                }}
-              >
-                <Languages
-                  size={13}
-                  className="text-muted"
-                  aria-hidden="true"
-                />
-                <span className="flex-1">{label}</span>
-                {locale === value && (
-                  <Check size={13} className="text-brand" aria-hidden="true" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {dialog}
-    </aside>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {dialog}
+      </aside>
+      <ResizableHandle
+        value={sidebarWidth}
+        min={SIDEBAR_MIN_WIDTH}
+        max={SIDEBAR_MAX_WIDTH}
+        label={t("サイドバーの幅を変更")}
+        onChange={setSidebarWidth}
+        onCommit={commitSidebarWidth}
+      />
+    </>
   );
 }

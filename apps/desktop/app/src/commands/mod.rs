@@ -29,6 +29,7 @@ pub mod runs;
 pub mod schedules;
 pub mod settings;
 pub mod skills;
+pub mod spotlight;
 pub mod tools;
 pub mod update;
 pub mod workspace;

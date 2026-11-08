@@ -25,6 +25,8 @@ import {
 } from "./ChatComposerContext";
 import { Composer, type DraftAttachment } from "./Composer";
 import { localRuntimeForModel } from "@/lib/localRuntime";
+import { recordUxEvent } from "@/lib/uxEvents";
+import { RunStatusBar } from "./RunStatusBar";
 import { Transcript } from "./Transcript";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { ErrorBox } from "@/components/shared";
@@ -64,7 +66,7 @@ function ChatPaneBody() {
   const clearLive = useRunEvents((s) => s.clearRun);
 
   const conversations = useLatestConversation(
-    surface === "desktop-agent" ? ["agent"] : ["chat", "thinking"],
+    surface === "desktop-agent" ? ["agent", "plan"] : ["chat", "thinking"],
   );
   const stats = useConversationStats();
   const models = useModels();
@@ -82,6 +84,10 @@ function ChatPaneBody() {
   // `activeConversationId` would then fall back to the newest *existing*
   // thread and deliver the message into the wrong conversation.
   const retryNeedsNewConversation = useRef(false);
+  // Counters must not be inflated by effect re-runs (StrictMode, cache
+  // invalidations while a run settles) or by a re-render on every token.
+  const recordedCompletions = useRef(new Set<string>());
+  const recordedApprovals = useRef(new Set<string>());
 
   const activeModelId = modelId || "auto";
   // A new chat stays blank until its first send, even though the surface has
@@ -90,6 +96,11 @@ function ChatPaneBody() {
   const activeConversationId = newThreadDraft
     ? null
     : (conversationId ?? conversations.data?.id ?? null);
+  // A blank thread has no conversation id yet, so it needs a synthetic slot.
+  // It must be surface-scoped: both workspaces can hold a blank draft at the
+  // same time, and the old shared "none" slot made text typed in one surface
+  // appear in the other after switching.
+  const draftKey = activeConversationId ?? `new:${surface}`;
   // Key the history off the conversation the pane actually renders, not the
   // persisted id. On launch `conversationId` is still null for a beat while a
   // thread is being adopted — querying the id made that thread's history look
@@ -144,6 +155,16 @@ function ChatPaneBody() {
       : null,
   );
   const liveConversationId = liveRunId ? activeConversationId : null;
+  // The persisted row carries the authoritative start time. Using it means the
+  // status bar shows the real elapsed time after reopening a running thread,
+  // instead of restarting from 0:00 when this component remounts.
+  const liveRunStartedAt = useMemo(
+    () =>
+      liveRunId
+        ? (runs.data?.find((run) => run.id === liveRunId)?.started_at ?? null)
+        : null,
+    [liveRunId, runs.data],
+  );
 
   useEffect(() => {
     // `auto` is the default pick and is valid without any model in the list.
@@ -326,7 +347,14 @@ function ChatPaneBody() {
         throw err;
       }
     },
-    onSuccess: ({ runId, conversationId, created, purged }) => {
+    onSuccess: ({ runId, conversationId, created, purged }, variables) => {
+      recordUxEvent("message_sent", {
+        surface,
+        mode,
+        temporary: variables.temporaryMode,
+        tools: variables.allowTools,
+        created,
+      });
       retryNeedsNewConversation.current = false;
       if (created) setConversationId(conversationId);
       if (purged) setTemporaryNewId(conversationId);
@@ -335,6 +363,9 @@ function ChatPaneBody() {
         queryKey: ["messages", conversationId],
       });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
+    },
+    onError: () => {
+      recordUxEvent("error_shown", { surface, phase: "send" });
     },
   });
 
@@ -393,6 +424,10 @@ function ChatPaneBody() {
   const status = liveStatus;
   useEffect(() => {
     if (!liveRunId || !status || !isTerminal(status)) return;
+    if (!recordedCompletions.current.has(liveRunId)) {
+      recordedCompletions.current.add(liveRunId);
+      recordUxEvent("run_completed", { surface, status });
+    }
     const target = liveConversationId ?? activeConversationId;
     void queryClient.invalidateQueries({ queryKey: ["messages", target] });
     void queryClient.invalidateQueries({ queryKey: ["runs", target] });
@@ -407,7 +442,20 @@ function ChatPaneBody() {
     activeConversationId,
     queryClient,
     clearLive,
+    surface,
   ]);
+
+  // Approval visibility is a journey in the UX baseline: how often does a run
+  // block, and in which surface? Count once per approval id.
+  useEffect(() => {
+    const id = liveApproval?.approvalId;
+    if (!id || recordedApprovals.current.has(id)) return;
+    recordedApprovals.current.add(id);
+    recordUxEvent("approval_shown", {
+      surface,
+      tool: liveApproval.name,
+    });
+  }, [liveApproval, surface]);
 
   // A temporary run in a brand-new thread deletes that thread. Wait until the
   // refreshed list no longer carries it before letting go, so the clear cannot
@@ -587,6 +635,7 @@ function ChatPaneBody() {
           // scrolled-up offset, so the newly opened thread appeared halfway
           // down its history with auto-follow switched off.
           key={activeConversationId ?? "new"}
+          conversationId={activeConversationId}
           messages={visibleMessages}
           runs={runById}
           models={models.data ?? EMPTY_MODELS}
@@ -608,6 +657,10 @@ function ChatPaneBody() {
           onLoadOlder={() => void loadOlder()}
         />
       </PaneErrorBoundary>
+      <RunStatusBar
+        conversationId={liveConversationId}
+        startedAt={liveRunStartedAt}
+      />
       {(sendMessage.isError ||
         editMessage.isError ||
         projectError ||
@@ -659,7 +712,7 @@ function ChatPaneBody() {
             onSend={onSend}
             onStop={onStop}
             onSteer={onSteer}
-            draftKey={activeConversationId ?? "none"}
+            draftKey={draftKey}
           />
         </PaneErrorBoundary>
       </div>

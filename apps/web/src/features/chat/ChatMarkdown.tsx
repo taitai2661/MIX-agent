@@ -1,6 +1,10 @@
+import { useRef, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+
+import { t } from "@/app/i18n";
+import { CopyButton } from "@/components/copy-button";
 
 /** Shared markdown renderer: GFM + soft line breaks, links open in a new tab.
  * Relative links and anchors stay usable; only URLs with a dangerous scheme
@@ -24,6 +28,22 @@ function isSafeHref(href: unknown): href is string {
   return scheme === null || SAFE_SCHEMES.has(scheme[1].toLowerCase());
 }
 
+/** Fenced code blocks get their own copy affordance; the whole message also
+ * has a copy action, but copying a single snippet is the common case. */
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  return (
+    <div className="code-block">
+      <CopyButton
+        value={() => ref.current?.innerText ?? ""}
+        label={t("コードをコピー")}
+        className="code-copy"
+      />
+      <pre ref={ref}>{children}</pre>
+    </div>
+  );
+}
+
 export function ChatMarkdown({ children }: { children: string }) {
   return (
     <Markdown
@@ -37,6 +57,9 @@ export function ChatMarkdown({ children }: { children: string }) {
           ) : (
             <span>{linkChildren}</span>
           ),
+        pre: ({ children: codeChildren }) => (
+          <CodeBlock>{codeChildren}</CodeBlock>
+        ),
       }}
     >
       {children}

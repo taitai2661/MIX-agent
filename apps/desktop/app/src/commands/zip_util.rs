@@ -303,7 +303,7 @@ fn read_entries(bytes: &[u8]) -> Result<Vec<ZipEntry>, String> {
 }
 
 /// Write a zip archive with stored (uncompressed) entries.
-fn write_zip(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
+pub(crate) fn write_zip(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String> {
     let mut out: Vec<u8> = Vec::new();
     let mut central: Vec<u8> = Vec::new();
     let mut count: u16 = 0;

@@ -35,6 +35,9 @@ impl RunEngine {
         )
         .await;
 
+        let started = Instant::now();
+        let mut ttft: Option<Duration> = None;
+
         // A connection-level failure (bad key, DNS, refused socket) used to
         // escape through `?` before any terminal event was emitted, so the row
         // stayed `running` and the UI spun forever. It is reported exactly like
@@ -43,6 +46,7 @@ impl RunEngine {
             Ok(stream) => stream,
             Err(err) => {
                 tracing::error!(%run_id, provider = provider.id(), %err, "provider stream failed to open");
+                let kind = ProviderErrorKind::from_error(err.as_ref());
                 return Ok(TurnResult {
                     text: String::new(),
                     reasoning: String::new(),
@@ -51,6 +55,15 @@ impl RunEngine {
                     usage: None,
                     finish_reason: None,
                     error: Some(err.to_string()),
+                    perf: TurnPerformance {
+                        model_id: request.model_id.clone(),
+                        provider_id: request.provider_id.clone(),
+                        ttft_ms: None,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                        input_tokens: None,
+                        output_tokens: None,
+                        failure_kind: Some(kind),
+                    },
                 });
             }
         };
@@ -82,16 +95,25 @@ impl RunEngine {
             };
             match ev {
                 StreamEvent::TextDelta(delta) => {
+                    if ttft.is_none() {
+                        ttft = Some(started.elapsed());
+                    }
                     text.push_str(&delta);
                     self.emit(run_id, "text", serde_json::json!({ "delta": delta }))
                         .await;
                 }
                 StreamEvent::ReasoningDelta(delta) => {
+                    if ttft.is_none() {
+                        ttft = Some(started.elapsed());
+                    }
                     reasoning.push_str(&delta);
                     self.emit(run_id, "reasoning", serde_json::json!({ "delta": delta }))
                         .await;
                 }
                 StreamEvent::ToolCallStart { id, name } => {
+                    if ttft.is_none() {
+                        ttft = Some(started.elapsed());
+                    }
                     pending.entry(id.clone()).or_insert((name, String::new()));
                     if !order.contains(&id) {
                         order.push(id.clone());
@@ -186,6 +208,8 @@ impl RunEngine {
             text = cleaned;
         }
 
+        let input_tokens = usage.as_ref().map(|u| u.input_tokens);
+        let output_tokens = usage.as_ref().map(|u| u.output_tokens);
         Ok(TurnResult {
             text,
             reasoning,
@@ -193,9 +217,38 @@ impl RunEngine {
             native_items,
             usage,
             finish_reason,
+            perf: TurnPerformance {
+                model_id: request.model_id.clone(),
+                provider_id: request.provider_id.clone(),
+                ttft_ms: ttft.map(|d| d.as_millis() as u64),
+                duration_ms: started.elapsed().as_millis() as u64,
+                input_tokens,
+                output_tokens,
+                failure_kind: error.as_deref().map(ProviderErrorKind::from_message),
+            },
             error,
         })
     }
+}
+
+/// One provider turn's measured performance.
+///
+/// Kept on the `TurnResult` and carried into `RunOutcome` so the app layer can
+/// persist it after the Run (the engine never blocks a streamed turn on a
+/// statistics write). `failure_kind` is the normalized provider taxonomy, not
+/// a free-form message.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TurnPerformance {
+    pub model_id: String,
+    pub provider_id: String,
+    /// Time to the first text / reasoning / tool-call signal, including the
+    /// connection and queueing time. `None` when the turn failed before any
+    /// content arrived.
+    pub ttft_ms: Option<u64>,
+    pub duration_ms: u64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub failure_kind: Option<ProviderErrorKind>,
 }
 
 pub(super) struct TurnResult {
@@ -206,5 +259,6 @@ pub(super) struct TurnResult {
     pub(super) native_items: Vec<serde_json::Value>,
     pub(super) usage: Option<Usage>,
     pub(super) finish_reason: Option<String>,
+    pub(super) perf: TurnPerformance,
     pub(super) error: Option<String>,
 }

@@ -5,6 +5,7 @@ as ``routes_auth`` depend on them without importing the 4,000-line module and
 recreating a cycle.
 """
 
+import logging
 import re
 from typing import TypeVar
 
@@ -14,6 +15,8 @@ from sqlalchemy import delete, select
 from mix_agent.auth.security import authenticate
 from mix_agent.db.models import Audit, LoginEvent, Session
 from mix_agent.db.session import get_db
+
+LOGGER = logging.getLogger("mix_agent.api")
 
 T = TypeVar("T")
 

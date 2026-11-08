@@ -1,7 +1,22 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, fireEvent, renderHook } from "@testing-library/react";
 import { useUi } from "@/lib/ui";
-import { useAppShortcuts } from "./useShellEvents";
+import { browserSplitRatio, useAppShortcuts } from "./useShellEvents";
+
+describe("browserSplitRatio", () => {
+  it("reads the tool hint and clamps it to the supported range", () => {
+    expect(browserSplitRatio({ split_ratio: 0.65 })).toBe(0.65);
+    expect(browserSplitRatio({ split_ratio: "0.4" })).toBe(0.4);
+    expect(browserSplitRatio({ split_ratio: 2 })).toBe(0.8);
+    expect(browserSplitRatio({ split_ratio: 0 })).toBe(0.2);
+  });
+
+  it("treats an absent or invalid hint as no hint", () => {
+    expect(browserSplitRatio({ action: "navigate" })).toBeNull();
+    expect(browserSplitRatio({ split_ratio: "wide" })).toBeNull();
+    expect(browserSplitRatio(null)).toBeNull();
+  });
+});
 
 describe("global Escape handling", () => {
   afterEach(() => {

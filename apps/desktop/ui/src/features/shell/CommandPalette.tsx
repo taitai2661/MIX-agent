@@ -1,4 +1,11 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
@@ -16,7 +23,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { chord } from "@/lib/platform";
+import { chord, isMacPlatform } from "@/lib/platform";
 import {
   MODELS_QUERY_KEY,
   useConversationSearch,
@@ -77,7 +84,7 @@ function fuzzyMatch(haystack: string, needle: string): boolean {
 // did different things. "エージェント" is reserved for the run mode / workspace;
 // the management page is a profile list.
 const VIEW_LABELS: Partial<Record<View, string>> = {
-  agents: "エージェントプロファイル",
+  agents: "エージェント設定",
   projects: "プロジェクト",
   schedules: "スケジュール",
   settings: "設定",
@@ -87,14 +94,12 @@ const VIEW_LABELS: Partial<Record<View, string>> = {
 const SETTINGS_TARGETS: { tab: SettingsTab; label: string }[] = [
   { tab: "appearance", label: "外観" },
   { tab: "general", label: "一般" },
-  { tab: "network", label: "ネットワーク" },
   { tab: "updates", label: "アップデート" },
   { tab: "backup", label: "バックアップ" },
-  { tab: "chatgpt", label: "ChatGPT" },
+  { tab: "spotlight", label: "Spotlight" },
   { tab: "providers", label: "プロバイダー" },
   { tab: "models", label: "モデル" },
   { tab: "tools", label: "ツール" },
-  { tab: "approvals", label: "承認" },
   { tab: "mcp", label: "MCP" },
   { tab: "memory", label: "メモリ" },
   { tab: "knowledge", label: "ナレッジ" },
@@ -160,16 +165,16 @@ export function CommandPalette() {
         run: () => setView(id),
       }),
     );
-    const settingsTabs: PaletteItem[] = SETTINGS_TARGETS.map(
-      ({ tab, label }) => ({
-        id: `settings:${tab}`,
-        label: t(label),
-        hint: t("設定"),
-        icon: <Settings2 size={15} />,
-        kind: "settings",
-        run: () => openSettings(tab),
-      }),
-    );
+    const settingsTabs: PaletteItem[] = SETTINGS_TARGETS.filter(
+      ({ tab }) => tab !== "spotlight" || isMacPlatform(),
+    ).map(({ tab, label }) => ({
+      id: `settings:${tab}`,
+      label: t(label),
+      hint: t("設定"),
+      icon: <Settings2 size={15} />,
+      kind: "settings",
+      run: () => openSettings(tab),
+    }));
     // The palette is the advertised search surface: a query is resolved by
     // SQLite over every title, while an empty query shows the newest page.
     const threadRows = deferredQuery.trim()
@@ -180,10 +185,12 @@ export function CommandPalette() {
       label: c.title,
       hint: t(
         c.mode === "agent"
-          ? "エージェント"
-          : c.mode === "thinking"
-            ? "思考"
-            : "チャット",
+          ? "自動実行"
+          : c.mode === "plan"
+            ? "計画"
+            : c.mode === "thinking"
+              ? "思考"
+              : "チャット",
       ),
       icon: <MessageSquare size={15} />,
       kind: "thread",
@@ -429,8 +436,8 @@ export function CommandPalette() {
             aria-controls="palette-listbox"
             aria-activedescendant={filtered.length > 0 ? activeId : undefined}
             aria-autocomplete="list"
-            aria-label={t("コマンド・スレッドを検索…")}
-            placeholder={t("コマンド・スレッドを検索…")}
+            aria-label={t("スレッド・メッセージ・コマンドを検索…")}
+            placeholder={t("スレッド・メッセージ・コマンドを検索…")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKey}
@@ -445,50 +452,70 @@ export function CommandPalette() {
           aria-label={t("コマンドパレット")}
           className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1.5"
         >
+          {query.trim().length > 0 && query.trim().length < 3 && (
+            <p className="px-2 py-1 text-2xs text-faint" role="note">
+              {t(
+                "本文検索は3文字以上です。タイトルとコマンドを検索しています。",
+              )}
+            </p>
+          )}
           {pending ? (
             <ListboxSkeleton />
           ) : (
             <>
-              {filtered.map((item, i) => (
-                <ListRow
-                  role="option"
-                  id={`palette-option-${i}`}
-                  aria-selected={i === selected}
-                  key={item.id}
-                  selected={i === selected}
-                  onMouseEnter={() => setSelected(i)}
-                  onFocus={() => setSelected(i)}
-                  onClick={() => {
-                    item.run();
-                    setOpen(false);
-                  }}
-                >
-                  <span className="shrink-0 text-faint" aria-hidden="true">
-                    {item.icon}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    {item.label}
-                  </span>
-                  {item.keys ? (
-                    <Kbd className="ms-auto shrink-0">{item.keys}</Kbd>
-                  ) : item.hint ? (
-                    <span className="ms-auto shrink-0 text-xs text-faint">
-                      {item.hint}
-                    </span>
-                  ) : (
-                    <span className="ms-auto shrink-0 text-2xs text-faint">
-                      {t(KIND_LABEL[item.kind])}
-                    </span>
-                  )}
-                  {i === selected && (
-                    <CornerDownLeft
-                      size={12}
-                      className="shrink-0 text-faint"
-                      aria-hidden="true"
-                    />
-                  )}
-                </ListRow>
-              ))}
+              {filtered.map((item, i) => {
+                const showGroup =
+                  i === 0 || filtered[i - 1]?.kind !== item.kind;
+                return (
+                  <Fragment key={item.id}>
+                    {showGroup && (
+                      <div
+                        role="presentation"
+                        className="px-2 pt-2 pb-0.5 text-2xs font-semibold tracking-[0.08em] text-faint uppercase"
+                      >
+                        {t(KIND_LABEL[item.kind])}
+                      </div>
+                    )}
+                    <ListRow
+                      role="option"
+                      id={`palette-option-${i}`}
+                      aria-selected={i === selected}
+                      selected={i === selected}
+                      onMouseEnter={() => setSelected(i)}
+                      onFocus={() => setSelected(i)}
+                      onClick={() => {
+                        item.run();
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="shrink-0 text-faint" aria-hidden="true">
+                        {item.icon}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {item.label}
+                      </span>
+                      {item.keys ? (
+                        <Kbd className="ms-auto shrink-0">{item.keys}</Kbd>
+                      ) : item.hint ? (
+                        <span className="ms-auto shrink-0 text-xs text-faint">
+                          {item.hint}
+                        </span>
+                      ) : (
+                        <span className="ms-auto shrink-0 text-2xs text-faint">
+                          {t(KIND_LABEL[item.kind])}
+                        </span>
+                      )}
+                      {i === selected && (
+                        <CornerDownLeft
+                          size={12}
+                          className="shrink-0 text-faint"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </ListRow>
+                  </Fragment>
+                );
+              })}
               {filtered.length === 0 && (
                 <EmptyState
                   compact

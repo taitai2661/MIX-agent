@@ -19,14 +19,10 @@ export const en: Record<string, string> = {
   "新規チャット": "New chat",
   "新規タスク": "New task",
   "チャット履歴がありません": "No chat history yet",
-  "タスクがありません": "No tasks yet",
   "一致するチャットがありません": "No chats match your search",
-  "一致するタスクがありません": "No tasks match your search",
   "新しい会話を始めましょう": "Start a new conversation",
-  "新しいタスクを始めましょう": "Start a new task",
   "プロジェクト未選択": "No project selected",
   "プロジェクトを変更": "Change project",
-  "タスク": "Task",
   "ピン留め済み": "Pinned",
   "ピン留めを解除": "Unpin",
   "今日": "Today",
@@ -72,6 +68,8 @@ export const en: Record<string, string> = {
   // Chat composer
   "MIX-agent に話しかける…": "Message MIX-agent…",
   "深く考えてほしいことを入力…": "Ask for a deep, careful answer…",
+  "計画したいタスクを入力…（読み取り専用）":
+    "Describe what to plan… (read-only)",
   "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)":
     "Instruct the agent… (terminal execution & file edits allowed)",
   "プロジェクトを選択": "Select a project",
@@ -113,6 +111,11 @@ export const en: Record<string, string> = {
   "思考プロセスをコピー": "Copy reasoning",
   "思考中…": "Thinking…",
   "実行中…": "Running…",
+  "考え中…": "Thinking…",
+  "応答を生成中…": "Writing response…",
+  "待機中…": "Queued…",
+  "{tool} を実行中…": "Running {tool}…",
+  "このRunの経過時間": "Time elapsed for this run",
   "件のツール": "tools",
   "ステップ": "steps",
   "差分": "Diff",
@@ -159,9 +162,6 @@ export const en: Record<string, string> = {
 
   // Usage
   "使用状況": "Usage",
-  "使用状況を表示": "Show usage",
-  "使用状況を閉じる": "Close usage",
-  "使用": "Usage",
   "このスレッドにはまだ使用状況がありません": "No usage in this thread yet",
   "メッセージを送ると、トークン数と推定コストが表示されます。":
     "Send a message to see token counts and estimated cost.",
@@ -174,6 +174,48 @@ export const en: Record<string, string> = {
   "キャッシュ読取": "Cache read",
   "キャッシュ書込": "Cache write",
   "推定コスト": "Estimated cost",
+  "合計トークン": "Total tokens",
+  "キャッシュヒット率": "Cache hit rate",
+  "{n} Run": "{n} runs",
+  "モデル詳細": "Model details",
+  "コンテキストウィンドウ": "Context window",
+  "ファミリー": "Family",
+  "パラメータ数": "Parameters",
+  "量子化": "Quantization",
+  "サイズ": "Size",
+  "非対応": "No",
+  "Runの詳細": "Run details",
+  "ステップ数": "Steps",
+  "ツール呼び出し": "Tool calls",
+  "失敗したツール呼び出し": "Failed tool calls",
+  "トークン上限": "Token limit",
+  "所要時間": "Duration",
+  "開始": "Started",
+  "Run ID": "Run ID",
+  "待機中": "Queued",
+  "予算延長待ち": "Awaiting budget",
+  "中断済み": "Interrupted",
+  "Run履歴": "Run history",
+  "{n} ステップ": "{n} steps",
+  "{n} ツール": "{n} tools",
+  "残り": "Remaining",
+  "残りトークン": "Tokens left",
+  "時間上限": "Time limit",
+  "予算延長": "Budget extensions",
+  "平均コスト": "Average cost",
+  "速度": "Speed",
+  "平均出力速度": "Average output speed",
+  "平均合計速度": "Average total speed",
+  "1ステップあたり": "Per step",
+  "1ツール呼び出しあたり": "Per tool call",
+  "コスト/分": "Cost / min",
+  "ツール実行や待ち時間を含む、Run全体の平均です。":
+    "Averages across the whole run, including tool calls and waits.",
+  "種別": "Kind",
+  "接続先": "Endpoint",
+  "対象": "Eligible",
+  "対象外": "Not eligible",
+  "Auto候補": "Auto candidate",
 
   // Tool activity
   "このRunのアクティビティ": "Run activity",
@@ -279,7 +321,6 @@ export const en: Record<string, string> = {
 
   // Settings pane tabs / groups
   "アプリ": "App",
-  "構成": "Configuration",
   "外観": "Appearance",
   "一般": "General",
   "メッセージ送信キー": "Message send key",
@@ -291,6 +332,9 @@ export const en: Record<string, string> = {
     "Send with {shortcut}+Enter (Enter for newline)",
   "標準幅に戻す": "Reset panel width",
   "パネル幅を拡大": "Expand panel width",
+  "サイドバーの幅を変更": "Resize sidebar",
+  "ファイルツリーの幅を変更": "Resize file tree",
+  "サイドパネルの幅を変更": "Resize side panel",
   "ネットワーク": "Network",
   "アップデート": "Updates",
   "アプリのアップデート": "App updates",
@@ -300,15 +344,21 @@ export const en: Record<string, string> = {
   "更新を確認": "Check for updates",
   "ダウンロード中…": "Downloading…",
   "ダウンロード中… {percent}%": "Downloading… {percent}%",
+  "署名を検証しています…": "Verifying the signature…",
+  "更新をダウンロード中…": "Downloading the update…",
   "再起動": "Restart",
-  "v{version} をインストールしました。再起動すると適用されます。":
-    "Installed v{version}. Restart to apply it.",
+  "v{version} をダウンロードしました。次回 MIX-agent を終了（Quit）すると適用されます。":
+    "Downloaded v{version}. It will be applied the next time you quit MIX-agent.",
+  "v{version} を適用待ち": "v{version} waiting to be applied",
   "v{version} が利用可能です": "v{version} is available",
-  "ダウンロードしてインストール": "Download and install",
+  "ダウンロード": "Download",
   "最新バージョンです。": "You are up to date.",
   "起動時に更新を確認": "Check for updates on launch",
-  "起動時にGitHub Releasesのマニフェストを確認します。ダウンロードとインストールは署名を検証した上で、確認ダイアログから実行します。":
-    "Checks the GitHub Releases manifest on launch. Downloads and installs only after the signature is verified and you confirm.",
+  "起動時にGitHub Releasesのマニフェストを確認します。":
+    "Checks the GitHub Releases manifest on launch.",
+  "更新を自動でダウンロード": "Download updates automatically",
+  "起動時に新しいバージョンを見つけたら自動でダウンロードします。適用はメニュー／トレイの Quit で終了したときに行われ、再起動は手動です。":
+    "Downloads a newer version automatically when the launch check finds one. It is applied when you quit from the menu or tray; restarting is manual.",
   "Linuxのdebパッケージはアプリ内更新の対象外です。debで導入した場合はGitHub Releasesから手動で更新してください（AppImageは自動更新できます）。":
     "The Linux .deb package cannot update in-app; if you installed the .deb, update manually from GitHub Releases (AppImage builds update in-app).",
   "このビルドはアプリ内更新に対応していません。GitHub Releasesから手動で更新してください。":
@@ -322,13 +372,14 @@ export const en: Record<string, string> = {
   "設定セクションを選択": "Select a settings section",
 
   // Workspaces (top-level switcher)
-  "作成、学習、探索": "Create, learn, explore",
+  "作成、学習、探索。プロジェクトなしで使えます。":
+    "Create, learn and explore. Works without a project.",
   "ワークスペースを切り替え": "Switch workspace",
+  "コード": "Code",
 
   // Keys referenced from files owned elsewhere (App.tsx, LocalDiscoveryCard,
   // ProvidersPane, McpPane, …) — registered here so English never falls back
   // to the Japanese original.
-  "アクティビティを表示": "Show activity",
   "サイドパネルを閉じる": "Close side panel",
   "プロバイダーが未設定です": "No providers configured",
   "接続に失敗しました": "Connection failed",
@@ -347,6 +398,7 @@ export const en: Record<string, string> = {
   "素早い質疑応答": "Quick replies",
   "深く考えて回答": "Answer with deeper reasoning",
   "ツールで自律的に作業": "Work autonomously with tools",
+  "読み取り専用で計画を提示": "Propose a plan without editing",
 
   // Knowledge pane
   "ファイル名 (例: architecture.md)": "Filename (e.g. architecture.md)",
@@ -438,28 +490,15 @@ export const en: Record<string, string> = {
   "承認待ち": "Approval required",
   "実行はバックグラウンドで継続しています。トレイから再表示できます。":
     "The run continues in the background. Reopen it from the tray.",
-  "プレビューを読み込めません": "Could not load the preview",
-  "スクリーンショットを保存": "Save screenshot",
-  "ブラウザのスクリーンショット": "Browser screenshot",
-  "ライブ画面": "Live view",
-  "画面を更新": "Refresh frame",
-  "ライブ表示": "Start live view",
-  "ブラウザのライブ画面": "Live browser view",
-  "ブラウザのライブ画面をクリックして操作":
-    "Click the live browser view to act",
   "ブラウザ画面": "Browser view",
-  "Releases を開く": "Open Releases",
   "ブラウザ画面を開く": "Open the browser view",
-  "画面を取得しています…": "Capturing frame…",
-  "画面をクリックするとその位置を操作します。入力欄をクリックしてから下の欄に入力してください。":
-    "Click the frame to act at that point. Click an input first, then type below.",
-  "ブラウザへの入力": "Browser input",
-  "フォーカス中の欄に入力": "Type into the focused field",
-  "入力する": "Type",
-  "ライブ表示を開始すると、ブラウザ画面をここで確認できます。":
-    "Start live view to watch and control the browser from here.",
   "ブラウザを表示": "Show browser",
-  "ブラウザを閉じる": "Close browser",
+  "ブラウザメニュー": "Browser menu",
+  "50%に戻す": "Reset to 50%",
+  "ブラウザセッション": "Browser session",
+  "全タブを閉じる": "Close all tabs",
+  "Cookie・localStorage・キャッシュが消えます。開いているタブも閉じます。":
+    "Cookies, localStorage and cache will be cleared. Open tabs will close too.",
   "進む": "Forward",
   "アドレスバー": "Address bar",
   "URL または localhost:3000": "URL or localhost:3000",
@@ -471,23 +510,10 @@ export const en: Record<string, string> = {
   "フル表示": "Full view",
   "スプリット表示に戻す": "Back to split view",
   "ブラウザ設定を開く": "Open browser settings",
-  "ライブ表示を開始": "Start live view",
-  "ライブ表示を停止": "Stop live view",
   "スレッドを開始するとブラウザを使えます。":
     "Start a thread to use the browser.",
-  "インストール中…": "Installing…",
-  "Chromium をインストール": "Install Chromium",
   "新しいタブ": "New tab",
   "タブを閉じる": "Close tab",
-  "スナップショットの ref（例: r12）": "Snapshot ref (e.g. r12)",
-  "スナップショットの ref（任意・selectorより優先）":
-    "Snapshot ref (optional; takes precedence over selector)",
-  "入力前にフィールドを空にする": "Clear the field before typing",
-  "送信するキー": "Key to press",
-  "選択する値": "Value to select",
-  "option の value": "option value",
-  "チェックする": "Checked",
-  "本文に含まれるまで待機…": "Wait until the body contains…",
   "承認待ちが{count}件あります": "{count} approval(s) waiting",
   "詳細を確認": "Check details",
   "承認待ちのアクションはありません": "No actions are waiting for approval",
@@ -549,33 +575,10 @@ export const en: Record<string, string> = {
 
   // Browser pane (English-canonical keys live alongside Japanese ones here;
   // both spellings stay registered while call sites migrate)
-  "Chromiumが見つかりません。上の「インストール」から導入するか、システムのChromiumを用意してください。":
-    "No Chromium binary resolved. Use Install above, or prepare a system Chromium.",
-  "Chromium": "Chromium",
-  "インストール済み": "Installed",
-  "インストール中": "Installing",
-  "インストール": "Install",
-  "更新する": "Update",
-  "更新あり": "Update available",
-  "インストールに失敗しました": "The installation failed",
-  "Chromiumを削除しますか？": "Remove Chromium?",
-  "管理対象のChromiumだけを削除します。システムのブラウザは残ります。":
-    "Only the managed Chromium is removed. A system browser stays available.",
-  "Chrome for Testingをアプリ管理下にインストールしています。更新は次回のアプリ更新時に確認できます。":
-    "Chrome for Testing is installed under the app's management. Updates are offered with the next app update.",
-  "ブラウザ機能を使うにはChromiumをインストールしてください。約200MBをダウンロードします。":
-    "Install Chromium to use the browser features. This downloads about 200 MB.",
-  "preparing": "Preparing…",
   "downloading": "Downloading…",
   "verifying": "Verifying…",
-  "extracting": "Extracting…",
-  "launching": "Launching…",
   "done": "Ready",
-  "バージョン不明": "Version unknown",
-  "installed": "Managed",
-  "bundled": "Bundled",
   "system": "System",
-  "override": "Override",
   "none": "None",
 
   // Health indicator
@@ -608,7 +611,6 @@ export const en: Record<string, string> = {
 
   // Settings: quick prompts, network, updates, mode select
   "ブラウザのローカルアクセス": "Browser local access",
-  "ローカルアクセス許可": "Local access allowed",
   "ローカル開発サーバーへのアクセスを許可": "Allow access to local dev servers",
   "localhost や社内 LAN の開発サーバーをブラウザ Tool で開けるようにします。クラウドメタデータ（169.254.169.254）は許可しても遮断されます。":
     "Lets the browser tool open localhost or LAN development servers. Cloud metadata (169.254.169.254) stays blocked even when this is on.",
@@ -620,6 +622,16 @@ export const en: Record<string, string> = {
   "サイドバー": "Sidebar",
   "サイドパネル": "Side panel",
   "パネル切り替え": "Switch panel",
+  "表示パネル": "View panels",
+  "基本": "Basics",
+  "モデルと接続": "Models & connections",
+  "データと検索": "Data & search",
+  "詳細・診断": "Advanced & diagnostics",
+  "UX イベント（この端末のみ）": "UX events (this device only)",
+  "計測をクリア": "Clear metrics",
+  "画面操作の回数をこの端末にだけ記録します。プロンプトやファイルの内容は保存しません。":
+    "Records how often screens are used, on this device only. Prompts and file contents are never stored.",
+  "まだ記録はありません": "No events recorded yet",
   "表": "Table",
   "メインコンテンツへ移動": "Skip to main content",
   "絞り込みをクリア": "Clear filters",
@@ -635,9 +647,6 @@ export const en: Record<string, string> = {
   "ファイルを選択": "Choose a file",
   "参照": "Browse",
   "URL": "URL",
-  "待機条件": "Wait condition",
-  "JavaScript 式": "JavaScript expression",
-  "実行する JavaScript": "JavaScript to run",
   "バックアップを検証し、再起動時に復元":
     "Verify a backup and reload it on restart",
   "復元": "Restore",
@@ -682,6 +691,42 @@ export const en: Record<string, string> = {
   "フォルダの中のファイルを読み書き": "Reads and writes files inside a folder",
   "ブラウザ操作": "Browser control",
   "実際にブラウザを操作して検証": "Drives a real browser to verify results",
+
+  // Renewed first-run wizard (2026-11). The rail is a vertical map beside the
+  // task surface, so it also carries the step's intent.
+  "初回セットアップ": "First-run setup",
+  "デスクトップ": "Desktop",
+  "モデルを接続": "Connect a model",
+  "このアプリの頭脳になるモデルを選びます。ローカルでもクラウドでもかまいません。":
+    "Choose the model that powers this app — local or cloud.",
+  "頭脳をつなぐ": "Connect the brain",
+  "LM Studio や Ollama、またはクラウド API。あなたの環境に合うモデルを選べます。":
+    "LM Studio, Ollama, or a cloud API — choose what fits your environment.",
+  "作業フォルダを選ぶ": "Choose a working folder",
+  "エージェントがファイルを読み書きする場所を決めます。あとから変更できます。":
+    "Decide where the agent may read and write files. You can change this later.",
+  "作業場所を決める": "Choose the workspace",
+  "指定したフォルダの中だけが、エージェントの作業範囲になります。":
+    "The agent's workspace is limited to the folder you choose.",
+  "設定を確認して、最初のスレッドを開きましょう。":
+    "Review your setup and open your first thread.",
+  "さあ、始めましょう": "Let's get started",
+  "設定はいつでも変更できます。まずは気軽に話しかけてみてください。":
+    "You can change any of this later. Start by saying hello.",
+  "ローカルで動く AI ワークスペース": "A local AI workspace",
+  "会話もファイルも、あなたの端末の中に。プライバシーを保ったまま、日常の作業を任せられます。":
+    "Conversations and files stay on your device. Keep your privacy while delegating everyday work.",
+  "ローカルに保存": "Stored locally",
+  "会話・ファイル・設定はこの端末の中に保存されます。":
+    "Conversations, files, and settings are stored on this device.",
+  "現在": "Current",
+  "ステップ {n} / {total}": "Step {n} of {total}",
+  "3 つのステップで、すぐに使い始められます。":
+    "Three quick steps and you're ready to go.",
+  "ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。":
+    "Reading or writing files and running shell commands asks for confirmation every time.",
+  "選択したフォルダ": "Selected folder",
+  "フォルダが選ばれていません": "No folder selected",
 
   "モデル提供元の種類": "Kind of model provider",
   "この PC で動かす": "Runs on this PC",
@@ -779,8 +824,6 @@ export const en: Record<string, string> = {
   "接続してモデル一覧を取得": "Connect and fetch models",
 
   "フォルダを選択してください": "Choose a folder first",
-  "MIX-agent がファイルを読む・書く場所です。プロジェクトを作ると、そのフォルダの中だけが対象になります。":
-    "This is where MIX-agent reads and writes files. Creating a project limits it to the contents of that folder.",
   "既存のフォルダを選んでください（新しいフォルダは作成されません）":
     "Pick a folder that already exists — this wizard does not create one.",
   "このプロジェクトを使う": "Use this project",
@@ -788,8 +831,6 @@ export const en: Record<string, string> = {
   "あとから設定する": "Decide later",
 
   "準備ができました": "You're all set",
-  "チャットを始められます。ファイルの読み書きやシェル実行は、実行のたびに確認が出ます。":
-    "You can start chatting. Reading or writing files, and running shell commands, always ask first.",
   "件": "models",
   "未設定（チャットはプロジェクトなしで始まります）":
     "Not set (chats will start without a project)",
@@ -866,14 +907,7 @@ export const en: Record<string, string> = {
     "Binary files cannot be previewed.",
 
   // Browser
-  "プロファイルをリセットしますか？": "Reset this profile?",
-  "Cookie・localStorage・キャッシュが消えます。":
-    "Its cookies, localStorage and cache are cleared.",
   "リセット": "Reset",
-  "実行": "Run",
-  "開くURL": "URL to open",
-
-  // Local runtime scan
   "検出中…": "Scanning…",
   "ランタイム": "Runtime",
   "オンライン": "Online",
@@ -896,6 +930,20 @@ export const en: Record<string, string> = {
   "外部で起動したランタイムは停止しません。バックグラウンドで維持したい場合はオフにしてください。":
     "Runtimes you started yourself are never stopped. Turn this off to keep app-started runtimes alive in the background.",
   "Auto でローカルモデルを優先": "Prefer local models in Auto",
+  "Auto ルーティング": "Auto routing",
+  "Auto がモデルを選ぶときの基準です。速度は実測 TTFT と tokens/s が貯まってから効きます。":
+    "How Auto chooses a model. Speed takes effect once measured TTFT and tokens/s have accumulated.",
+  "優先度": "Priority",
+  "バランス（推奨）": "Balanced (recommended)",
+  "速度を優先": "Prefer speed",
+  "品質を優先": "Prefer quality",
+  "コストを優先": "Prefer cost",
+  "フォールバック": "Fallback",
+  "最初の応答前に失敗した場合、別の Auto 候補で再試行します。応答が始まった後は再試行しません。":
+    "Retry on another Auto candidate when a provider fails before the first response. Once output has started, it does not retry.",
+  "なし": "None",
+  "1回（推奨）": "Once (recommended)",
+  "2回": "Twice",
   "能力・コンテキスト条件を満たすローカルモデルにスコア上の小さなボーナスを与えます。":
     "Give local models that already meet capability and context requirements a small score bonus.",
   "Ollama の keep_alive": "Ollama keep_alive",
@@ -1058,26 +1106,6 @@ export const en: Record<string, string> = {
   "復元する": "restore",
   "検証する": "verify",
   "ピン留め": "Pin",
-  "バックエンド": "Backend",
-  "状態を更新": "Refresh status",
-  "ヘッドレス": "headless",
-  "プロファイル": "profiles",
-  "成果物": "artifacts",
-  "ワークスペースのプロファイル": "Workspace profile",
-  "新規プロファイル": "new profile",
-  "(未作成)": "(not provisioned)",
-  "操作": "Action",
-  "まだ操作がありません。": "No actions yet.",
-  "出力": "output",
-  "既知のプロファイル": "Known profiles",
-  "準備完了": "ready",
-  "空": "empty",
-  "各ワークスペースは独自のCookie・localStorage・キャッシュを持ち、エージェントのワークスペースと一致します。":
-    "Each workspace keeps its own cookies, localStorage and cache, matching the agent's workspace.",
-  "CSSセレクター（例: #search、body）": "CSS selector, e.g. #search or body",
-  "入力する文字": "text to type",
-  "URLに含まれるまで待機…": "wait until URL contains…",
-  "縦スクロール量": "scroll dy",
   "コンテキスト": "Context",
   "推論": "Reasoning",
   "ストレージ": "Storage",
@@ -1117,7 +1145,6 @@ export const en: Record<string, string> = {
   "ファイルをメンション (@)": "Mention file (@)",
   "一致するファイルがありません": "No matching files",
   "クイックコマンド": "Quick commands",
-  "クイックコマンド (/)": "Quick commands (/)",
   "テストを実行しエラーを自己修復": "Run tests and self-repair errors",
   "バグや問題点を特定して修正": "Identify and fix bugs or issues",
   "変更差分をレビューして改善点を指摘": "Review diff and suggest improvements",
@@ -1199,15 +1226,9 @@ export const en: Record<string, string> = {
   "現在のデータはバックアップの内容に置き換わります。この操作は元に戻せません。":
     "Current data will be replaced by the backup. This cannot be undone.",
   "再起動して適用": "Restart and apply",
-  "v{version} をインストールしますか？": "Install v{version}?",
-  "ダウンロードとインストールを開始します。インストール後はアプリの再起動が必要です。作業中の実行は完了してからにしてください。":
-    "The download and installation will start. The app must restart afterwards, so wait for any running task to finish first.",
 
   // Naming: agent profile vs. agent workspace / run mode
-  "エージェントプロファイル": "Agent profiles",
   "変更を確認": "Review changes",
-  "変更を確認 ({count})": "Review changes ({count})",
-  "変更を確認 ({count}件)": "Review changes ({count})",
   "{count}件失敗": "{count} failed",
   "設定を検索": "Search settings",
   "一致する設定がありません": "No matching settings",
@@ -1229,11 +1250,37 @@ export const en: Record<string, string> = {
 
   // Workspace / mode naming
   "コーディング": "Coding",
-  "ファイル編集とターミナルを使うワークスペース":
+  "チャットの履歴": "Chat history",
+  "コーディングの履歴": "Coding history",
+  "チャットの履歴を検索": "Search chat history",
+  "コーディングの履歴を検索": "Search coding history",
+  "チャットの履歴を検索（全履歴は ⌘K）":
+    "Search chat history (⌘K searches everything)",
+  "コーディングの履歴を検索（全履歴は ⌘K）":
+    "Search coding history (⌘K searches everything)",
+  "一致するコーディングがありません": "No matching coding threads",
+  "コーディング履歴がありません": "No coding history yet",
+  "新しいコーディングを始めましょう": "Start a new coding thread",
+  "{label}の履歴を見る": "View {label} history",
+  "ファイル編集とターミナルを使うワークスペース。":
     "A workspace for file edits and terminal work",
-  "コマンド・スレッドを検索…": "Search commands and threads…",
-  "タスクのタイトル・プレビューを検索": "Search task titles and previews",
-  "チャットのタイトル・プレビューを検索": "Search chat titles and previews",
+  "スレッド・メッセージ・コマンドを検索…":
+    "Search threads, messages and commands…",
+  "本文検索は3文字以上です。タイトルとコマンドを検索しています。":
+    "Message search needs 3+ characters; searching titles and commands.",
+  "変更は自動保存されます": "Changes save automatically",
+  "設定を保存": "Save settings",
+  "設定の変更が保存されていません": "Settings changes are not saved",
+  "変更は保持されますが、保存するまで反映されません。終了する前に設定画面で保存してください。":
+    "Your edits are kept, but they are not applied until you save. Save in Settings before quitting.",
+  "移動する": "Leave",
+  "設定に戻る": "Back to settings",
+  "スレッド内を検索": "Find in thread",
+  "前の一致": "Previous match",
+  "次の一致": "Next match",
+  "エージェント設定": "Agent settings",
+  "自動実行": "Auto-run",
+  "パネルの表示設定": "Panel display options",
 
   // Sidebar thread actions
   "スレッド操作": "Thread actions",
@@ -1327,6 +1374,39 @@ export const en: Record<string, string> = {
     "Closing the window keeps the app in the tray so schedules and running tasks continue. Use Quit in the tray menu to exit completely.",
   "アプリを終了している間はスケジュールが実行されません。":
     "Schedules do not run while the app is closed.",
+  "{count} 件の実行が中断されています": "{count} run(s) were interrupted",
+  "無題のスレッド": "Untitled thread",
+  "ステップ {step}": "Step {step}",
+  "再開中…": "Resuming…",
+  "ほか {count} 件": "{count} more",
+  "チェックポイントから再開": "Resume from checkpoint",
+  "再開できるチェックポイントがありません":
+    "No checkpoint is available to resume from",
+  "プロジェクトを選ばない場合、アプリ専用の一時領域で実行されます。":
+    "Without a project, the run uses an app-private scratch workspace.",
+  "実行を停止": "Stop the run",
+  "{count} 件実行中": "{count} running",
+  "チャットに戻る": "Back to chat",
+  "コスト管理": "Cost control",
+  "月次予算 (USD)": "Monthly budget (USD)",
+  "無制限": "Unlimited",
+  "今月の推定使用額: ${amount}": "Estimated spend this month: ${amount}",
+  "この額に達するとクラウドモデルの新しい実行を開始しません（0 または空欄で無効）。ローカルモデルは対象外です。":
+    "Once reached, new cloud-model runs are not started (0 or empty disables the cap). Local models are exempt.",
+  "フォルダを開く": "Open folder",
+  "ターミナルで開く": "Open in Terminal",
+  "診断バンドルを保存": "Save diagnostics bundle",
+  "サポート用バンドル": "Support bundle",
+  "再起動して更新": "Restart and update",
+  "再起動しています…": "Restarting…",
+  "実行中のタスクがあります": "A task is still running",
+  "{count} 件の実行が進行中です。終了すると実行は中断され、次回起動時にチェックポイントから再開できます。":
+    "{count} run(s) are still in progress. Quitting interrupts them; they can be resumed from a checkpoint on the next launch.",
+  "実行を停止して終了": "Stop the runs and quit",
+  "終了しています…": "Quitting…",
+  "承認待ちの保持時間（分）": "Approval prompt lifetime (minutes)",
+  "エージェントが承認を待つ時間です。この時間を過ぎると自動的に拒否されます。離席することが多い場合は長めにしてください（1〜10080分）。":
+    "How long the agent waits for an approval before the request is denied automatically. Increase it if you often step away (1–10080 minutes).",
   "ログイン時に起動を有効にする": "Enable launch at login",
   "bubblewrap (bwrap) を使い、ワークスペースとビルドキャッシュ以外への書き込みを拒否します。次に起動するシェルから適用されます。":
     "Uses bubblewrap (bwrap) to deny writes outside the workspace and build caches. Applies to shells started afterwards.",
@@ -1341,4 +1421,41 @@ export const en: Record<string, string> = {
   "このRunの変更をGitのスナップショットまで戻します。edit / files に加え、ターミナルが作成・変更したファイルも対象です。Run終了後に手で加えた変更も失われます。":
     "Restores this Run to its Git snapshot, covering files the terminal created or changed as well as edit / files. Manual changes made after the Run finished are lost too.",
   "{count} 件の変更を確認": "Review {count} changed file(s)",
+  "Spotlight": "Spotlight",
+  "macOS Spotlight": "macOS Spotlight",
+  "Spotlightに索引を提供": "Publish to Spotlight",
+  "会話・プロジェクト・ナレッジのタイトルをmacOSのSpotlight検索結果に表示します。":
+    "Show conversation, project, and knowledge titles in macOS Spotlight results.",
+  "本文も索引に含める": "Index body text too",
+  "会話とナレッジの本文も検索対象にします。ツール出力・添付ファイル・認証情報は含まれません。":
+    "Include conversation and knowledge body text in search. Tool output, attachments, and credentials are excluded.",
+  "索引はこのMacのローカルにのみ保存されます。アプリを削除しても索引が残る場合があります。":
+    "The index is stored locally on this Mac. It may remain after the app is uninstalled.",
+  "この環境ではSpotlight索引を利用できません":
+    "Spotlight indexing is unavailable in this environment",
+  "索引の操作に失敗しました。しばらくしてから再試行してください。":
+    "The index operation failed. Try again in a moment.",
+  "索引の再構築はバックグラウンドで実行されます。":
+    "Rebuilding runs in the background.",
+  "今すぐ再構築": "Rebuild now",
+  "索引から削除": "Remove from index",
+  "Spotlightの索引を削除しますか？": "Remove the Spotlight index?",
+  "MIX-agentが登録した索引をこのMacのSpotlightから削除します。設定を有効にしたままにすると、次回の変更時に再登録されます。":
+    "Removes MIX-agent's entries from Spotlight on this Mac. If the setting stays enabled, they are added again on the next change.",
+  "索引の状態": "Index status",
+  "索引済み": "Indexed",
+  "未処理": "Pending",
+  "最終同期": "Last sync",
+  "未実行": "Never",
+  "本文索引": "Body indexing",
+  "このブラウザの閲覧データを削除しますか？":
+    "Clear this browser's browsing data?",
+  "内蔵ブラウザ": "Built-in browser",
+  "ページはアプリ内のネイティブ WebView で表示されます。エージェントと同じ画面を共有し、スクロール・入力・IME はそのまま動きます。":
+    "The page is rendered in a native WebView inside the app. You and the agent share the same page, with native scrolling, typing and IME.",
+  "Cookie とログインはこのアプリ専用のブラウザデータに保存されます。通常の Chrome とは共有されません。":
+    "Cookies and sign-ins are stored in this app's own browser data and are not shared with your regular Chrome.",
+  "閲覧データを削除": "Clear browsing data",
+  "スレッドを開始すると使えます。": "Start a thread to use it.",
+  "ネイティブブラウザを読み込んでいます…": "Loading the native browser…",
 };

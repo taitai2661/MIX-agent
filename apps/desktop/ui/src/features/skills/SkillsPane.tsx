@@ -292,7 +292,7 @@ export function SkillsPane() {
               s.compatibility ||
               s.allowed_tools.length > 0 ||
               Object.keys(s.metadata).length > 0) && (
-              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-faint">
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-2xs text-faint">
                 {s.license && <span>license: {s.license}</span>}
                 {s.compatibility && (
                   <span>compatibility: {s.compatibility}</span>

@@ -55,5 +55,5 @@ pnpm --filter mix-agent-desktop-workspace tauri:build
 ## 検証
 
 - CI の `Latest.json` 生成ステップが 4 プラットフォーム分の URL と `.sig` を検証します（`scripts/build-latest-json.mjs`）。
-- Release 後、旧バージョンから「設定 ▸ アップデート」で検出 → ダウンロード → 再起動を各 OS 実機で確認します。
+- Release 後、旧バージョンから起動時チェック → 自動ダウンロード → Quit で適用 → 再起動後にバージョンが上がっていることを各 OS 実機で確認します。
 - Linux の `.deb` はアプリ内更新の対象外です。AppImage のみ自動更新できます。

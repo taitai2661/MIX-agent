@@ -22,7 +22,12 @@ function resetStore() {
   useUi.setState({
     surface: "chat",
     mode: "chat",
+    chatMode: "chat",
+    agentMode: "agent",
     threadFilter: "all",
+    newThreadDraft: false,
+    chatNewThreadDraft: false,
+    agentNewThreadDraft: false,
     paletteOpen: false,
     shortcutsOpen: false,
     zoom: 1,
@@ -35,6 +40,7 @@ function resetStore() {
     browserAutoOpen: true,
     workspaceId: null,
     rightPanelWidth: 380,
+    rightPanelRatio: null,
   });
 }
 
@@ -52,7 +58,10 @@ describe("useUi surface state", () => {
 
   it("SURFACE_MODES matches the documented split", () => {
     expect(SURFACE_MODES.chat).toEqual<RunMode[]>(["chat", "thinking"]);
-    expect(SURFACE_MODES["desktop-agent"]).toEqual<RunMode[]>(["agent"]);
+    expect(SURFACE_MODES["desktop-agent"]).toEqual<RunMode[]>([
+      "agent",
+      "plan",
+    ]);
   });
 
   it("defaultModeForSurface returns the first allowed mode", () => {
@@ -73,11 +82,83 @@ describe("useUi surface state", () => {
     expect(useUi.getState().mode).toBe("chat");
   });
 
-  it("setSurface preserves a mode the target surface already allows", () => {
-    useUi.setState({ mode: "thinking" });
+  it("setSurface restores a mode the target surface already allows", () => {
+    // Selecting a mode through `setMode` records it for the surface; switching
+    // back (even to the same surface) must keep it rather than resetting.
+    useUi.setState({ surface: "chat", mode: "chat", chatMode: "chat" });
+    useUi.getState().setMode("thinking");
     useUi.getState().setSurface("chat");
     expect(useUi.getState().surface).toBe("chat");
     expect(useUi.getState().mode).toBe("thinking");
+  });
+
+  it("remembers the last mode per surface across switches", () => {
+    useUi.getState().setSurface("desktop-agent");
+    useUi.getState().setMode("plan");
+    expect(useUi.getState().mode).toBe("plan");
+
+    useUi.getState().setSurface("chat");
+    // The chat surface keeps its own default rather than inheriting "plan".
+    expect(useUi.getState().mode).toBe("chat");
+
+    useUi.getState().setMode("thinking");
+    useUi.getState().setSurface("desktop-agent");
+    expect(useUi.getState().mode).toBe("plan");
+
+    useUi.getState().setSurface("chat");
+    expect(useUi.getState().mode).toBe("thinking");
+    expect(localStorage.getItem("mix-agent-chat-mode")).toBe("thinking");
+    expect(localStorage.getItem("mix-agent-agent-mode")).toBe("plan");
+  });
+
+  it("validates a remembered mode against the target surface", () => {
+    // A stale value from an older build (or a future mode) must not leak
+    // "plan" into the chat surface, which has no read-only workspace mode.
+    useUi.setState({
+      surface: "desktop-agent",
+      mode: "agent",
+      chatMode: "plan" as RunMode,
+    });
+    useUi.getState().setSurface("chat");
+    expect(useUi.getState().mode).toBe("chat");
+  });
+
+  it("keeps a blank draft on each surface across switches", () => {
+    useUi.getState().startNewThread();
+    expect(useUi.getState().newThreadDraft).toBe(true);
+    expect(useUi.getState().chatNewThreadDraft).toBe(true);
+
+    useUi.getState().setSurface("desktop-agent");
+    expect(useUi.getState().newThreadDraft).toBe(false);
+
+    useUi.getState().startNewThread();
+    expect(useUi.getState().agentNewThreadDraft).toBe(true);
+
+    useUi.getState().setSurface("chat");
+    expect(useUi.getState().newThreadDraft).toBe(true);
+    expect(useUi.getState().conversationId).toBeNull();
+
+    useUi.getState().setSurface("desktop-agent");
+    expect(useUi.getState().newThreadDraft).toBe(true);
+    expect(useUi.getState().conversationId).toBeNull();
+  });
+
+  it("clears only the active surface's draft when a thread is selected", () => {
+    useUi.getState().startNewThread();
+    useUi.getState().setSurface("desktop-agent");
+    useUi.getState().startNewThread();
+
+    useUi.getState().setChatConversationId("chat-1");
+    expect(useUi.getState().chatNewThreadDraft).toBe(false);
+    expect(useUi.getState().agentNewThreadDraft).toBe(true);
+
+    useUi.getState().setSurface("chat");
+    expect(useUi.getState().newThreadDraft).toBe(false);
+    expect(useUi.getState().conversationId).toBe("chat-1");
+
+    useUi.getState().setSurface("desktop-agent");
+    expect(useUi.getState().newThreadDraft).toBe(true);
+    expect(useUi.getState().conversationId).toBeNull();
   });
 
   it("setMode refuses modes the active surface does not allow", () => {
@@ -96,6 +177,18 @@ describe("useUi surface state", () => {
     useUi.setState({ surface: "desktop-agent", mode: "agent" });
     useUi.getState().setMode("agent");
     expect(useUi.getState().mode).toBe("agent");
+  });
+
+  it("setMode accepts plan on the desktop-agent surface", () => {
+    useUi.setState({ surface: "desktop-agent", mode: "agent" });
+    useUi.getState().setMode("plan");
+    expect(useUi.getState().mode).toBe("plan");
+  });
+
+  it("setMode refuses plan on the chat surface", () => {
+    useUi.setState({ surface: "chat", mode: "chat" });
+    useUi.getState().setMode("plan");
+    expect(useUi.getState().mode).toBe("chat");
   });
 
   it("setThreadFilter persists to localStorage", () => {
@@ -168,6 +261,28 @@ describe("useUi surface state", () => {
     expect(useUi.getState().sidePanelMode).toBe("split");
   });
 
+  it("defaults an agent-open browser to a 50% split and honours a hint", () => {
+    useUi.setState({ rightPanelRatio: null });
+    useUi.getState().openBrowserPanel("agent");
+    expect(useUi.getState().rightPanelRatio).toBe(0.5);
+
+    useUi.setState({ rightPanelRatio: null, rightPanel: "none" });
+    useUi.getState().openBrowserPanel("agent", { ratio: 0.7 });
+    expect(useUi.getState().rightPanelRatio).toBe(0.7);
+    expect(localStorage.getItem("mix-agent-right-panel-ratio")).toBe("0.7");
+
+    // Out-of-range hints clamp instead of producing an unusable pane.
+    useUi.getState().setRightPanelRatio(2);
+    expect(useUi.getState().rightPanelRatio).toBe(0.85);
+    useUi.getState().setRightPanelRatio(0.01);
+    expect(useUi.getState().rightPanelRatio).toBe(0.2);
+
+    // A user-opened pane keeps the remembered split.
+    useUi.getState().setRightPanelRatio(0.6);
+    useUi.getState().openBrowserPanel("user");
+    expect(useUi.getState().rightPanelRatio).toBe(0.6);
+  });
+
   it("respects a manual close for the rest of the active run", () => {
     // Start through the real run store, which is what sets `ui.runId` in the
     // app; a test that only called `setRunId` hid the missing writer.
@@ -191,6 +306,54 @@ describe("useUi surface state", () => {
     expect(localStorage.getItem("mix-agent-side-panel-mode")).toBe("full");
     useUi.getState().setSidePanelMode("split");
     expect(localStorage.getItem("mix-agent-side-panel-mode")).toBe("split");
+  });
+
+  it("closes any panel through one path and records browser dismissals", () => {
+    useUi.getState().setRightPanel("usage");
+    useUi.getState().closeRightPanel();
+    expect(useUi.getState().rightPanel).toBe("none");
+
+    useUi.setState({ conversationId: "conv-2" });
+    useRunEvents.getState().startRun("run-2", "conv-2");
+    useUi.getState().openBrowserPanel("agent");
+    useUi.setState({ sidePanelMode: "full" });
+    useUi.getState().closeRightPanel();
+
+    expect(useUi.getState().rightPanel).toBe("none");
+    expect(useUi.getState().browserDismissedRunId).toBe("run-2");
+    // Closing the full-view browser also returns the shell to the split.
+    expect(useUi.getState().sidePanelMode).toBe("split");
+    useRunEvents.getState().clear();
+  });
+
+  it("leaves full view when the next panel cannot expand", () => {
+    useUi.setState({
+      surface: "desktop-agent",
+      rightPanel: "activity",
+      sidePanelMode: "full",
+    });
+    useUi.getState().setRightPanel("diff");
+    expect(useUi.getState().sidePanelMode).toBe("split");
+
+    useUi.setState({ rightPanel: "browser", sidePanelMode: "full" });
+    useUi.getState().openDiff({ path: "a.ts", content: "", label: "a.ts" });
+    expect(useUi.getState().sidePanelMode).toBe("split");
+
+    useUi.setState({ rightPanel: "activity", sidePanelMode: "full" });
+    useUi.getState().openFilePreview("a.ts");
+    expect(useUi.getState().sidePanelMode).toBe("split");
+  });
+
+  it("resets full view when switching surfaces", () => {
+    useUi.setState({
+      surface: "desktop-agent",
+      rightPanel: "usage",
+      sidePanelMode: "full",
+    });
+
+    useUi.getState().setSurface("chat");
+
+    expect(useUi.getState().sidePanelMode).toBe("split");
   });
 
   it("persists the auto-open preference", () => {

@@ -340,6 +340,8 @@ export interface SettingsView {
   /** Refuse shell commands that write outside the workspace. */
   sandbox_terminal: boolean;
   sandbox_terminal_network: boolean;
+  approval_ttl_minutes: number;
+  monthly_budget_usd: number | null;
   /**
    * Reserved for the future SQLCipher migration; always `false` today.
    * The database is plain SQLite, so the UI must not present this as an
@@ -349,6 +351,9 @@ export interface SettingsView {
   onboarding_completed: boolean | null;
   /** Check GitHub Releases for a newer build once per launch. Ships enabled. */
   auto_check_updates: boolean;
+  /** Download a found update in the background. It is installed on the next
+   *  normal quit; the app never restarts itself. Ships enabled. */
+  auto_download_updates: boolean;
   /** Sweep loopback for local runtimes after launch. Ships enabled. */
   local_scan_on_start: boolean;
   /** Stop only app-started runtime processes on exit. Ships enabled. */
@@ -364,6 +369,36 @@ export interface SettingsView {
   local_context_window: number | null;
   /** Give locally hosted models a bonus in Auto routing. Ships disabled. */
   local_prefer: boolean;
+  /** Auto model routing priority. Ships `balanced`. */
+  auto_priority: "balanced" | "speed" | "quality" | "cost";
+  /** Pre-content Auto fallbacks after a retryable provider failure (0–2). */
+  auto_fallback_attempts: 0 | 1 | 2;
+  /**
+   * Publish conversation/project/knowledge metadata to the macOS Spotlight
+   * index. Ships **off**: a system-wide search surface is an explicit opt-in.
+   */
+  spotlight_enabled: boolean;
+  /** Also send conversation/knowledge body text to Spotlight. Ships off. */
+  spotlight_index_body: boolean;
+}
+
+/** macOS Spotlight index status shown in Settings. */
+export interface SpotlightStatus {
+  supported: boolean;
+  reason: string | null;
+  enabled: boolean;
+  body_indexed: boolean;
+  indexed_count: number;
+  pending_count: number;
+  last_sync: string | null;
+  last_error: string | null;
+}
+
+/** A result click from Spotlight, delivered as `spotlight://open`. */
+export interface SpotlightTarget {
+  kind: "conversation" | "project" | "knowledge";
+  id: string;
+  mode?: string | null;
 }
 
 /** An update announced by the release manifest (`latest.json`). */
@@ -383,8 +418,9 @@ export interface UpdateProgress {
   downloaded: number;
   /** `null` when the server sends no `Content-Length`. */
   total: number | null;
-  /** `"installing"` once the payload has been verified and is being written. */
-  stage?: "downloading" | "installing";
+  /** `"verifying"` once the last chunk has arrived and the signature is being
+   *  checked; `"ready"` is delivered as a separate `update://ready` event. */
+  stage?: "downloading" | "verifying" | "ready";
 }
 
 export interface ToolView {
@@ -584,6 +620,18 @@ export interface PendingApprovalView {
   conversation_mode: string | null;
 }
 
+/** The Run's step / tool-call / wall-clock budget, as persisted on its row. */
+export interface RunBudget {
+  stepLimit?: number;
+  toolCallLimit?: number;
+  wallClockMinutes?: number;
+  /** Token ceiling, or `0` for unlimited. */
+  tokenLimit?: number;
+  tokensUsed?: number;
+  grantsUsed?: number;
+  maxGrants?: number;
+}
+
 export interface RunView {
   id: string;
   conversation_id: string;
@@ -596,12 +644,35 @@ export interface RunView {
   started_at: string;
   updated_at: string;
   summary: string;
-  budget: unknown;
+  budget: RunBudget | null;
   /** Cumulative token/spend summary, absent on Runs older than this field. */
   usage?: RunUsage | null;
   error: string | null;
   /** The persisted event log exceeds the replay window (newest events kept). */
   replay_truncated?: boolean;
+}
+
+/** A Run the previous session left mid-flight (crash, force-quit or quit guard). */
+export interface InterruptedRunView {
+  run_id: string;
+  conversation_id: string;
+  title: string;
+  mode: string;
+  updated_at: string;
+  step_count: number;
+  checkpoint_id: string | null;
+  checkpoint_step: number | null;
+}
+
+/** A Run that is currently queued, running or waiting for approval. */
+export interface ActiveRunView {
+  run_id: string;
+  conversation_id: string;
+  title: string;
+  mode: string;
+  status: string;
+  updated_at: string;
+  step_count: number;
 }
 
 /** Token/cost summary carried by `usage` events and persisted on a Run row. */
@@ -618,69 +689,12 @@ export interface RunUsage {
   estimated_cost_usd: number | null;
 }
 
-/** A snapshot frame. Page metadata (URL, title, history) comes from the much
- *  cheaper `info` call, so a 2 s poll does not also pay three extra CDP
- *  round-trips just to draw the toolbar. */
-export interface BrowserFrameView {
-  data: string;
-  width: number;
-  height: number;
-}
-
-/** One CDP screencast frame pushed by the backend (`browser://frame`). */
-export interface BrowserScreencastFrame {
-  workspace_id: string;
-  data: string;
-  width: number;
-  height: number;
-}
-
-/** One Chromium page in the browser tab strip. */
+/** One native WebView tab in the browser tab strip. */
 export interface BrowserTabView {
   id: string;
   url: string | null;
   title: string | null;
   active: boolean;
-}
-
-export type BrowserInstallStatus =
-  | "not_installed"
-  | "downloading"
-  | "verifying"
-  | "extracting"
-  | "ready"
-  | "failed"
-  | "cancelled";
-
-export interface BrowserInstallState {
-  status: BrowserInstallStatus;
-  progress: number | null;
-  stage: string | null;
-  failure: string | null;
-  failure_code: string | null;
-  bytes_done: number | null;
-  bytes_total: number | null;
-  version: string | null;
-}
-
-export interface BrowserStatus {
-  backend: string;
-  source: "installed" | "bundled" | "system" | "override" | "none";
-  executable: string | null;
-  installed_version: string | null;
-  pinned_version: string;
-  update_available: boolean;
-  install: BrowserInstallState;
-  profiles: number;
-  artifacts: number;
-  allow_local: boolean;
-}
-
-export interface BrowserProfileView {
-  workspace_id: string;
-  display_name: string;
-  directory: string;
-  provisioned: boolean;
 }
 
 export interface BrowserInvokeOutput {

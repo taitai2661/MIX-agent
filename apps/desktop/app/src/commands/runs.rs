@@ -111,6 +111,120 @@ pub async fn list_runs(
     Ok(state.engine.list_runs(conversation_id).await)
 }
 
+/// A Run left mid-flight by a crash, force-quit or the quit guard.
+///
+/// Its status is `interrupted`; `checkpoint_id` is the newest snapshot the
+/// user can resume from. The startup banner uses this instead of making the
+/// user find the right thread and open Activity first.
+#[derive(Debug, Clone, Serialize)]
+pub struct InterruptedRunView {
+    pub run_id: String,
+    pub conversation_id: String,
+    pub title: String,
+    pub mode: String,
+    pub updated_at: String,
+    pub step_count: u32,
+    pub checkpoint_id: Option<String>,
+    pub checkpoint_step: Option<u32>,
+}
+
+#[tauri::command]
+pub async fn list_interrupted_runs(
+    state: State<'_, AppState>,
+) -> Result<Vec<InterruptedRunView>, String> {
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        Option<i64>,
+    );
+    let rows: Vec<Row> = sqlx::query_as::<_, Row>(
+        "SELECT r.id, r.conversation_id, \
+                COALESCE(json_extract(c.data, '$.title'), ''), \
+                COALESCE(json_extract(r.data, '$.mode'), 'chat'), \
+                COALESCE(json_extract(r.data, '$.updatedAt'), r.created_at), \
+                COALESCE(json_extract(r.data, '$.stepCount'), 0), \
+                (SELECT cp.id FROM run_checkpoints cp WHERE cp.run_id = r.id \
+                  ORDER BY cp.step DESC, cp.created_at DESC LIMIT 1), \
+                (SELECT cp.step FROM run_checkpoints cp WHERE cp.run_id = r.id \
+                  ORDER BY cp.step DESC, cp.created_at DESC LIMIT 1) \
+           FROM runs r JOIN conversations c ON c.id = r.conversation_id \
+          WHERE r.status = 'interrupted' \
+          ORDER BY COALESCE(json_extract(r.data, '$.updatedAt'), r.created_at) DESC \
+          LIMIT 20",
+    )
+    .fetch_all(state.storage.pool())
+    .await
+    .map_err(crate::error::cmd_err)?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(run_id, conversation_id, title, mode, updated_at, step, cp, cp_step)| {
+                InterruptedRunView {
+                    run_id,
+                    conversation_id,
+                    title,
+                    mode,
+                    updated_at,
+                    step_count: step.max(0) as u32,
+                    checkpoint_id: cp,
+                    checkpoint_step: cp_step.map(|v| v.max(0) as u32),
+                }
+            },
+        )
+        .collect())
+}
+
+/// A Run currently queued, running or waiting for an answer.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveRunView {
+    pub run_id: String,
+    pub conversation_id: String,
+    pub title: String,
+    pub mode: String,
+    pub status: String,
+    pub updated_at: String,
+    pub step_count: u32,
+}
+
+#[tauri::command]
+pub async fn list_active_runs(state: State<'_, AppState>) -> Result<Vec<ActiveRunView>, String> {
+    type Row = (String, String, String, String, String, String, i64);
+    let rows: Vec<Row> = sqlx::query_as::<_, Row>(
+        "SELECT r.id, r.conversation_id, \
+                COALESCE(json_extract(c.data, '$.title'), ''), \
+                COALESCE(json_extract(r.data, '$.mode'), 'chat'), \
+                r.status, \
+                COALESCE(json_extract(r.data, '$.updatedAt'), r.created_at), \
+                COALESCE(json_extract(r.data, '$.stepCount'), 0) \
+           FROM runs r JOIN conversations c ON c.id = r.conversation_id \
+          WHERE r.status IN ('queued','running','waiting_approval','budget_extension_pending') \
+          ORDER BY COALESCE(json_extract(r.data, '$.updatedAt'), r.created_at) DESC \
+          LIMIT 20",
+    )
+    .fetch_all(state.storage.pool())
+    .await
+    .map_err(crate::error::cmd_err)?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(run_id, conversation_id, title, mode, status, updated_at, step)| ActiveRunView {
+                run_id,
+                conversation_id,
+                title,
+                mode,
+                status,
+                updated_at,
+                step_count: step.max(0) as u32,
+            },
+        )
+        .collect())
+}
+
 /// One persisted `run_events` row in the same shape the live `run_event`
 /// Tauri event carries, so the transcript reducer can consume both.
 #[derive(Debug, Clone, Serialize)]
@@ -215,6 +329,43 @@ pub async fn cancel_run(state: State<'_, AppState>, id: String) -> Result<(), St
     Ok(())
 }
 
+/// Stop every live Run and quit.
+///
+/// Called only after the WebView confirmed that losing the in-flight work is
+/// intentional. The rows are moved to `interrupted` *before* the process exits
+/// so the next launch can offer a checkpoint resume instead of showing a Run
+/// that is still "running" forever.
+#[tauri::command]
+pub async fn quit_app(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let run_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM runs WHERE status IN \
+         ('queued','running','waiting_approval','budget_extension_pending')",
+    )
+    .fetch_all(state.storage.pool())
+    .await
+    .unwrap_or_default();
+    for raw in &run_ids {
+        if let Ok(id) = Uuid::parse_str(raw) {
+            state.engine.cancel(id).await;
+        }
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = sqlx::query(
+        "UPDATE runs SET status = 'interrupted', \
+         data = json_set(data, '$.status', 'interrupted', '$.updatedAt', ?1) \
+         WHERE status IN ('queued','running','waiting_approval','budget_extension_pending')",
+    )
+    .bind(&now)
+    .execute(state.storage.pool())
+    .await;
+    let _ = sqlx::query("UPDATE approvals SET status = 'expired' WHERE status = 'pending'")
+        .execute(state.storage.pool())
+        .await;
+    crate::allow_exit();
+    app.exit(0);
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct ResumeInput {
     pub id: String,
@@ -314,9 +465,29 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
 
     // Re-apply the project context so a resumed run keeps its folder scope and
     // instructions even if the original request predates the project feature.
-    let project =
+    let mut project =
         crate::commands::projects::load_project_runtime(state.storage.pool(), &conversation_id)
             .await?;
+    // A project deleted between the interruption and the resume must not send
+    // the Run back to the process CWD (`/` when launched from the Dock). Reuse
+    // the same scratch folder the original turn was given.
+    if project.root_path.is_none() {
+        let scratch = crate::commands::conversations::projectless_scratch_root(
+            state.inner(),
+            &conversation_id,
+        )?;
+        project.system = Some(match project.system.take() {
+            Some(mut existing) => {
+                existing.push_str("\n\n");
+                existing.push_str(&crate::commands::conversations::projectless_workspace_note(
+                    &scratch,
+                ));
+                existing
+            }
+            None => crate::commands::conversations::projectless_workspace_note(&scratch),
+        });
+        project.root_path = Some(scratch);
+    }
 
     // A resumed Run that never had a baseline (it predates the feature, or the
     // original workspace was not a Git repo) gets one now, so the part that
@@ -375,6 +546,7 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         history: Vec::new(),
         user_message: String::new(),
         resume_from: Some(snapshot),
+        auto_fallbacks: Vec::new(),
     };
 
     // Keep the `data` blob in sync with the status column (the UI and

@@ -26,6 +26,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { useConfirm } from "@/components/confirm";
 import { CardSkeleton } from "@/components/loading";
 import { trapFocus, useModalDialog } from "@/components/modal";
 import { Empty, ErrorBox, Field, Title, useRows } from "@/components/shared";
@@ -94,6 +95,7 @@ function InstallDialog({
 }
 
 export function MCP() {
+  const confirm = useConfirm();
   const rows = useRows("/mcp/connections"),
     qc = useQueryClient();
   const [open, setOpen] = useState(false),
@@ -774,17 +776,24 @@ export function MCP() {
               <Button
                 variant="destructive"
                 onClick={async () => {
-                  const complete = window.confirm(
-                    "専用データvolumeも完全削除しますか？\nキャンセルするとデータを保持して接続だけ削除します。",
-                  );
+                  const remove = await confirm({
+                    title: t("MCP接続を削除"),
+                    message: t("このMCP接続を削除しますか？"),
+                    confirmLabel: t("削除"),
+                    tone: "danger",
+                  });
+                  if (!remove) return;
                   const volume = r.data.runtime?.volume || "";
-                  if (
-                    complete &&
-                    !window.confirm(
-                      "完全削除すると復旧できません。続行しますか？\n" + volume,
-                    )
-                  )
-                    return;
+                  const complete = await confirm({
+                    title: t("データvolumeも削除しますか？"),
+                    message: t(
+                      "「データも削除」を選ぶと復旧できません。「接続だけ削除」を選ぶとデータを保持します。{volume}",
+                      { volume: volume ? `\n${volume}` : "" },
+                    ),
+                    confirmLabel: t("データも削除"),
+                    cancelLabel: t("接続だけ削除"),
+                    tone: "danger",
+                  });
                   try {
                     await api(
                       "/mcp/connections/" + r.id + "/uninstall",

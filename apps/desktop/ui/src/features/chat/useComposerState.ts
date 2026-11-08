@@ -222,27 +222,34 @@ export function useComposerState({
     }
   }, []);
 
-  const onSelectSlashCommand = useCallback((command: SlashCommand) => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const pos = el.selectionStart;
-    const textBefore = el.value.slice(0, pos);
-    const textAfter = el.value.slice(pos);
-    const match = textBefore.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
-    if (!match) return;
+  const onSelectSlashCommand = useCallback(
+    (command: SlashCommand) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      // Commands that name a run mode switch the composer first, so "present a
+      // plan" runs with the engine's read-only rules instead of only inserting
+      // a prompt that the agent is free to ignore.
+      if (command.mode) setMode(command.mode);
+      const pos = el.selectionStart;
+      const textBefore = el.value.slice(0, pos);
+      const textAfter = el.value.slice(pos);
+      const match = textBefore.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+      if (!match) return;
 
-    const replaceStart = pos - match[1].length - 1;
-    const newText =
-      el.value.slice(0, replaceStart) + command.prompt + textAfter;
-    setDraft(newText);
-    setSlashQuery(null);
+      const replaceStart = pos - match[1].length - 1;
+      const newText =
+        el.value.slice(0, replaceStart) + command.prompt + textAfter;
+      setDraft(newText);
+      setSlashQuery(null);
 
-    requestAnimationFrame(() => {
-      el.focus();
-      const nextPos = replaceStart + command.prompt.length;
-      el.setSelectionRange(nextPos, nextPos);
-    });
-  }, []);
+      requestAnimationFrame(() => {
+        el.focus();
+        const nextPos = replaceStart + command.prompt.length;
+        el.setSelectionRange(nextPos, nextPos);
+      });
+    },
+    [setMode],
+  );
 
   const onInsertMention = () => {
     const el = textareaRef.current;

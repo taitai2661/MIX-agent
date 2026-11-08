@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import re
 import time
 from urllib.parse import urlencode, urlsplit
@@ -20,6 +21,8 @@ from mix_agent.memory import tools as memory_tools
 from mix_agent.memory.service import RESULT_LIMIT_DEFAULT
 from mix_agent.skills import service as skills
 from mix_agent.tools.network import fetch_public, fetch_public_bytes, request_public
+
+LOGGER = logging.getLogger(__name__)
 
 DDGS_TIMELIMIT = {"day": "d", "week": "w", "month": "m", "year": "y"}
 BRAVE_FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
@@ -833,8 +836,8 @@ async def execute(db, run, tool, args):
         settings_row = db.get(Settings, "settings")
         if settings_row and isinstance(settings_row.data.get("tool_output_inline_limit"), int):
             inline_limit = max(1000, min(100000, settings_row.data["tool_output_inline_limit"]))
-    except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-        pass
+    except Exception:  # noqa: BLE001 - a bad setting falls back to the default
+        LOGGER.debug("could not read tool_output_inline_limit; using default", exc_info=True)
     if len(raw) > inline_limit:
         artifact = save_artifact(
             db, run.owner_id, raw.encode(), "tool-result.json", "application/json", kind="context-tool-output"

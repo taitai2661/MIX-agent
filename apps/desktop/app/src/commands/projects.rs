@@ -1,3 +1,4 @@
+use crate::spotlight::payload::SpotlightKind;
 use crate::AppState;
 use mixd_core::instructions::{load_project_instructions, project_root_marker, DEFAULT_MAX_BYTES};
 use mixd_storage::records::ProjectData;
@@ -279,6 +280,7 @@ pub async fn create_project(
         .execute(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
+    state.spotlight.schedule(SpotlightKind::Project, &id).await;
     Ok(to_view(id, data))
 }
 
@@ -300,6 +302,104 @@ pub struct ProjectUpdate {
     pub format_command: Option<String>,
 }
 
+/// Resolve a project's folder and confirm the process is allowed to touch it.
+async fn project_root(state: &AppState, id: &str) -> Result<std::path::PathBuf, String> {
+    let root: Option<String> =
+        sqlx::query_scalar("SELECT json_extract(data, '$.rootPath') FROM projects WHERE id = ?")
+            .bind(id)
+            .fetch_optional(state.storage.pool())
+            .await
+            .map_err(crate::error::cmd_err)?
+            .flatten();
+    let root = root.ok_or_else(|| "project not found or has no folder".to_string())?;
+    let path = std::path::PathBuf::from(root);
+    if !path.is_dir() {
+        return Err(format!("フォルダが見つかりません: {}", path.display()));
+    }
+    Ok(path)
+}
+
+/// Reveal a project's folder in the OS file manager.
+#[tauri::command]
+pub async fn open_project_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let root = project_root(state.inner(), &id).await?;
+    crate::commands::access::ensure_access(&app, &state, &root, "参照").await?;
+    open::that_detached(&root).map_err(|err| format!("フォルダを開けません: {err}"))
+}
+
+/// Open the user's terminal at the project root.
+///
+/// The in-app agent already has a persistent PTY; this is the "I want to type
+/// the command myself" escape hatch and costs no extra shell process until
+/// the user asks for it.
+#[tauri::command]
+// Each platform block returns from the function; only one is compiled, so the
+// `return` is necessary for the cfg layout even though clippy sees the macOS
+// arm as a tail expression.
+#[allow(clippy::needless_return)]
+pub async fn open_project_terminal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let root = project_root(state.inner(), &id).await?;
+    crate::commands::access::ensure_access(&app, &state, &root, "参照").await?;
+
+    #[cfg(target_os = "macos")]
+    {
+        return std::process::Command::new("open")
+            .arg("-a")
+            .arg("Terminal")
+            .arg(&root)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| format!("ターミナルを開けません: {err}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg("cmd")
+            .arg("/K")
+            .arg(format!("cd /d \"{}\"", root.display()))
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| format!("ターミナルを開けません: {err}"));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // No single terminal is guaranteed on Linux. Try the distro's
+        // alternatives entry and a few common emulators, and surface the last
+        // error instead of silently doing nothing.
+        let candidates = [
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "konsole",
+            "alacritty",
+            "xterm",
+        ];
+        let mut last_error = None;
+        for name in candidates {
+            match std::process::Command::new(name).current_dir(&root).spawn() {
+                Ok(_) => return Ok(()),
+                Err(err) => last_error = Some(err),
+            }
+        }
+        return Err(format!(
+            "ターミナルを開けません: {}",
+            last_error
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "no terminal emulator found".to_string())
+        ));
+    }
+}
+
 #[tauri::command]
 pub async fn update_project(
     app: AppHandle,
@@ -311,6 +411,7 @@ pub async fn update_project(
     let mut data = load_data(pool, &id)
         .await?
         .ok_or_else(|| "プロジェクトが見つかりません".to_string())?;
+    let previous_name = data.name.clone();
     if let Some(name) = input.name {
         data.name = name;
     }
@@ -352,6 +453,24 @@ pub async fn update_project(
     if root_changed {
         state.engine.invalidate_catalogues().await;
     }
+    state.spotlight.schedule(SpotlightKind::Project, &id).await;
+    if data.name != previous_name {
+        // Conversation items carry the project name as a keyword, so a rename
+        // has to refresh them too.
+        let linked: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM conversations WHERE json_extract(data, '$.projectId') = ?",
+        )
+        .bind(&id)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+        for (conversation_id,) in linked {
+            state
+                .spotlight
+                .schedule(SpotlightKind::Conversation, &conversation_id)
+                .await;
+        }
+    }
     Ok(to_view(id, data))
 }
 
@@ -375,6 +494,14 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
             "the project has a run in state `{status}`; stop it before deleting"
         ));
     }
+    // Conversations keep their project name in the Spotlight keywords, so
+    // remember which ones are about to be unlinked.
+    let affected: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM conversations WHERE json_extract(data, '$.projectId') = ?")
+            .bind(&id)
+            .fetch_all(pool)
+            .await
+            .map_err(crate::error::cmd_err)?;
     // Unlink conversations so their chats survive the project (Docker edition parity).
     sqlx::query(
         "UPDATE conversations SET data = json_set(data, '$.projectId', NULL) \
@@ -393,6 +520,16 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
         return Err(format!("project not found: {id}"));
     }
     state.engine.invalidate_catalogues().await;
+    state
+        .spotlight
+        .schedule_deleted(SpotlightKind::Project, &id)
+        .await;
+    for (conversation_id,) in affected {
+        state
+            .spotlight
+            .schedule(SpotlightKind::Conversation, &conversation_id)
+            .await;
+    }
     Ok(())
 }
 

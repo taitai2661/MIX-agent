@@ -27,7 +27,10 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
-    sourcemap: false,
+    sourcemap: "hidden",
+    // `hidden` writes .map files for crash symbolication without adding a
+    // `sourceMappingURL` comment, so production stays clean while beta
+    // backtraces remain actionable. `false` blinded prod debugging entirely.
     // Budget: the desktop WebView loads from disk, but the chat path still
     // owns the startup experience — keep the initial chunk small and push
     // everything else into named async chunks (see the `lazy` panes in
@@ -68,12 +71,14 @@ export default defineConfig({
       reporter: ["text", "lcov"],
       // Floor, not ceiling: new code should arrive tested, and a dip below
       // the line fails CI so drift is caught at the PR, not in review.
-      // Ratchet: measured values, so a change cannot quietly drop coverage.
+      // Ratchet: re-baselined 2026-11-08 against the full run
+      // (measured 52.47 / 55.21 / 77.97 for lines / functions / branches),
+      // kept just below the measurement so unrelated suites do not flake.
       thresholds: {
-        lines: 48,
-        functions: 49,
-        branches: 77,
-        statements: 48,
+        lines: 52,
+        functions: 53.5,
+        branches: 77.5,
+        statements: 52,
       },
     },
   },

@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { PENDING_APPROVALS_POLL_MS } from "@/lib/settings";
 import { useUi } from "@/lib/ui";
-import type { ProjectView } from "@/lib/types";
+import type { ProjectView, SpotlightStatus } from "@/lib/types";
 
 /** How long a project list is considered fresh.
  *
@@ -36,6 +36,7 @@ export const PROVIDER_PRESETS_QUERY_KEY = ["provider_presets"] as const;
 export const MODELS_QUERY_KEY = ["models"] as const;
 export const LOCAL_RUNTIMES_QUERY_KEY = ["local_runtimes"] as const;
 export const LOCAL_JOBS_QUERY_KEY = ["local_jobs"] as const;
+export const SPOTLIGHT_STATUS_QUERY_KEY = ["spotlight_status"] as const;
 
 export const gitStatusKey = (root: string, allUntracked = false) =>
   ["git_status", root, allUntracked] as const;
@@ -244,5 +245,16 @@ export function useGitStatus(root: string | null, allUntracked = false) {
     queryFn: () => api.gitStatus(root!, allUntracked),
     enabled: !!root,
     refetchInterval: visiblePoll(GIT_STATUS_POLL_MS),
+  });
+}
+
+/** Spotlight queue status for Settings. Short interval while the tab is open;
+ *  indexing runs in the background and the counts change without a mutation. */
+export function useSpotlightStatus(enabled = true) {
+  return useQuery<SpotlightStatus>({
+    queryKey: SPOTLIGHT_STATUS_QUERY_KEY,
+    queryFn: api.spotlightStatus,
+    enabled,
+    refetchInterval: visiblePoll(5_000),
   });
 }

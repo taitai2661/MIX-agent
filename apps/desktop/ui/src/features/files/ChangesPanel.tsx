@@ -212,7 +212,7 @@ export function ChangesPanel({
   embedded = false,
 }: { embedded?: boolean } = {}) {
   const root = useActiveRoot();
-  const setRightPanel = useUi((s) => s.setRightPanel);
+  const closeRightPanel = useUi((s) => s.closeRightPanel);
   const gitDiffPath = useUi((s) => s.gitDiffPath);
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
   const [scope, setScope] = useState<Scope>("unstaged");
@@ -230,7 +230,7 @@ export function ChangesPanel({
 
   // Closing a preview/panel closes it. Swapping to Activity made the X look
   // like it had opened something else, and left the panel occupying width.
-  const close = () => setRightPanel("none");
+  const close = closeRightPanel;
 
   if (!root) {
     return (
@@ -370,7 +370,7 @@ export function ChangesPanel({
 export function FilePreviewPanel() {
   const root = useActiveRoot();
   const path = useUi((s) => s.filePreviewPath);
-  const setRightPanel = useUi((s) => s.setRightPanel);
+  const closeRightPanel = useUi((s) => s.closeRightPanel);
 
   const file = useQuery({
     queryKey: ["workspace_file", root, path],
@@ -381,7 +381,7 @@ export function FilePreviewPanel() {
 
   // Closing a preview/panel closes it. Swapping to Activity made the X look
   // like it had opened something else, and left the panel occupying width.
-  const close = () => setRightPanel("none");
+  const close = closeRightPanel;
   const header = (
     <PanelHeader
       icon={<FileText size={14} />}

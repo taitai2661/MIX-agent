@@ -8,9 +8,9 @@ import { PROJECTS_QUERY_KEY, useProjects } from "@/lib/queries";
 import { useUi } from "@/lib/ui";
 import { Field, Row } from "@/components/layout";
 import { ErrorBox } from "@/components/shared";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 
 /**
@@ -67,36 +67,52 @@ export function StepFolder({
   const existing = projects.data?.[0] ?? null;
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="m-0 text-xs text-muted">
-        {t(
-          "MIX-agent がファイルを読む・書く場所です。プロジェクトを作ると、そのフォルダの中だけが対象になります。",
-        )}
-      </p>
-
+    <div className="flex flex-col gap-5">
       {existing ? (
-        <Row>
-          <Folder size={12} className="text-muted" />
-          <span className="text-xs text-fg">{existing.name}</span>
-          <code className="min-w-0 truncate font-mono text-xs text-faint">
-            {existing.rootPath}
-          </code>
-        </Row>
+        <div className="flex items-center gap-3 rounded-xl border border-line bg-inset/50 p-3.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
+            <Folder size={16} aria-hidden="true" />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-medium text-fg">
+                {existing.name}
+              </span>
+              <Badge tone="success" size="sm">
+                {t("使用中")}
+              </Badge>
+            </span>
+            <code className="block truncate font-mono text-xs text-faint">
+              {existing.rootPath}
+            </code>
+          </div>
+        </div>
       ) : (
-        <>
-          {/* Not wrapped in `Field`: its `<label>` would swallow the picker
-              button's accessible name. */}
-          <div className="flex flex-col gap-1.5">
-            <Label>{t("フォルダ")}</Label>
-            <Row>
-              <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-line-strong/70 bg-inset/30 px-5 py-7 text-center">
+            <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
+              <Folder size={20} aria-hidden="true" />
+            </span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm font-medium text-fg">
+                {root ? t("選択したフォルダ") : t("フォルダが選ばれていません")}
+              </span>
+              <code
+                className="max-w-full truncate font-mono text-xs text-muted"
+                title={root ?? undefined}
+              >
                 {root ?? t("未設定")}
               </code>
-              <Button size="sm" onClick={() => void pickFolder()}>
-                <Folder size={12} /> {t("フォルダを選択")}
-              </Button>
-            </Row>
-            <span className="text-xs text-faint">
+            </div>
+            <Button
+              size="sm"
+              variant={root ? "default" : "primary"}
+              onClick={() => void pickFolder()}
+            >
+              <Folder size={12} aria-hidden="true" />
+              {t("フォルダを選択")}
+            </Button>
+            <span className="max-w-sm text-xs leading-5 text-faint">
               {t(
                 "既存のフォルダを選んでください（新しいフォルダは作成されません）",
               )}
@@ -116,7 +132,7 @@ export function StepFolder({
               }}
             />
           </Field>
-        </>
+        </div>
       )}
 
       {error && <ErrorBox error={error} />}

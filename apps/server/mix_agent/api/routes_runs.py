@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from mix_agent import config
 from mix_agent.api.common import (
+    LOGGER,
     audit,
     context,
     own,
@@ -190,12 +191,12 @@ async def cancel(key: str, ctx=Depends(context)):
         for kind in ("execution", "mcp"):
             try:
                 await runner_request(kind, "/cancel", {"run_id": key}, timeout=5)
-            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-                pass
+            except Exception:  # noqa: BLE001 - the runner may already be gone
+                LOGGER.debug("runner %s cancel failed for run %s", kind, key, exc_info=True)
         try:
             await runner_request("browser", "/browser-close", {"run_id": key}, timeout=5)
-        except Exception:  # noqa: BLE001, S110 - the browser may already be closed
-            pass
+        except Exception:  # noqa: BLE001 - the browser may already be closed
+            LOGGER.debug("browser close failed for run %s", key, exc_info=True)
     return {"ok": True}
 
 
@@ -337,8 +338,8 @@ async def browser_return(key: str, ctx=Depends(context)):
                 await asyncio.wait_for(asyncio.shield(pending), timeout=2)
             except (TimeoutError, asyncio.CancelledError):
                 pending.add_done_callback(lambda _: launch(key))
-            except Exception:  # noqa: BLE001, S110 - the pending run may already have finished
-                pass
+            except Exception:  # noqa: BLE001 - the pending run may already have finished
+                LOGGER.debug("pending run %s finished before resume", key, exc_info=True)
         launch(key)
     else:
         run.data = data

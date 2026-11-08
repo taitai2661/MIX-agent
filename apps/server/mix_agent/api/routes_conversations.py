@@ -7,6 +7,7 @@ from sqlalchemy import case, func, or_, select
 
 from mix_agent import todos as conversation_todos
 from mix_agent.api.common import (
+    LOGGER,
     audit,
     context,
     own,
@@ -81,7 +82,7 @@ def list_conversations(
     folder_id: str | None = None,
     project_id: str | None = None,
     q: str = "",
-    limit: int | None = Query(default=None, ge=1, le=500),
+    limit: int = Query(default=500, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     ctx=Depends(context),
 ):
@@ -89,8 +90,10 @@ def list_conversations(
 
     The old implementation loaded every conversation (and, when searching,
     every message for every conversation) into Python.  Filtering and paging
-    now happen in PostgreSQL; ``limit`` is optional for compatibility with the
-    existing sidebar, which still asks for the full active list.
+    now happen in PostgreSQL.  ``limit`` used to default to ``None``, so a
+    long-lived installation returned every active thread on every sidebar
+    load.  It is now bounded by default; clients that need a page pass
+    ``limit``/``offset`` explicitly.
     """
     db, s = ctx
     if project_id:
@@ -132,8 +135,7 @@ def list_conversations(
     statement = statement.order_by(pinned.desc(), last_activity.desc(), Conversation.id.desc())
     if offset:
         statement = statement.offset(offset)
-    if limit is not None:
-        statement = statement.limit(limit)
+    statement = statement.limit(limit)
     return [public(row) for row in db.scalars(statement)]
 
 
@@ -215,8 +217,8 @@ async def delete_conversation(key: str, permanent: bool = False, ctx=Depends(con
     for stopped_id in stopped_runs:
         try:
             await runner_request("browser", "/browser-close", {"run_id": stopped_id}, timeout=5)
-        except Exception:  # noqa: BLE001, S110 - the browser may already be closed
-            pass
+        except Exception:  # noqa: BLE001 - the browser may already be closed
+            LOGGER.debug("browser close failed for stopped run %s", stopped_id, exc_info=True)
     return {"ok": True}
 
 

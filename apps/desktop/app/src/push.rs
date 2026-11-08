@@ -81,6 +81,21 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
                     "MIX-agent — approval needed",
                     &format!("Allow the agent to run `{tool}`?"),
                 );
+                let pending = handle
+                    .state::<crate::AppState>()
+                    .engine
+                    .pending_approval_count()
+                    .await;
+                crate::tray::update_status(&handle, pending);
+                continue;
+            }
+            if event.kind == "tool_approval_resolved" {
+                let pending = handle
+                    .state::<crate::AppState>()
+                    .engine
+                    .pending_approval_count()
+                    .await;
+                crate::tray::update_status(&handle, pending);
                 continue;
             }
             if event.kind != EVT_STATUS {

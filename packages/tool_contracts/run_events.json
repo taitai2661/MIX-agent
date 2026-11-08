@@ -25,6 +25,7 @@
     "plan": "Docker emits `plan` when the update_plan tool runs; Desktop's checklist uses todo_list instead."
   },
   "desktop_only": {
+    "auto_fallback": "Desktop retries a retryable provider failure on the next Auto-qualified model before any content is emitted. Docker's live Auto reroute is reported as model_rerouted instead.",
     "destructive_tool_called": "Desktop records the warning shown before a destructive tool. Docker asks for approval instead of emitting a separate event.",
     "error": "Desktop surfaces provider/engine failures as a dedicated event; Docker ends the Run with status=failed and a status event.",
     "format_applied": "Desktop records the post-edit formatter result. Docker's formatting runs as an ordinary tool call and is folded into tool_result.",

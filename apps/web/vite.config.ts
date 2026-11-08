@@ -1,9 +1,20 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+const pkg = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+) as { version?: string };
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    // Keep the visible build version in lockstep with the package manifest
+    // instead of a hand-edited literal in the sidebar.
+    __APP_VERSION__: JSON.stringify(pkg.version ?? "0.0.0"),
+  },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     rollupOptions: {
@@ -35,12 +46,13 @@ export default defineConfig({
       // Ratchet: keep each metric at the measured value so new code must be
       // tested instead of relying on the large untested legacy surface.
       thresholds: {
-        // Raised after the Chat/Composer split added interaction tests:
-        // measured 41.2 / 60.36 / 79.9, kept slightly below to avoid flakes.
-        lines: 40.5,
-        functions: 60,
+        // Re-baselined 2026-11-08 against the full run:
+        // measured 71.03 / 62.72 / 80.25 (lines / functions / branches).
+        // Kept just below the measurement so unrelated suites do not flake.
+        lines: 70,
+        functions: 62,
         branches: 79.5,
-        statements: 40.5,
+        statements: 70,
         // The API error envelope and its translations are a contract with the
         // server; a global 33% floor says nothing about them. Keep these high
         // so a new status code or message cannot land untested.

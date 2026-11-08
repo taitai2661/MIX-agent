@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessagesSquare, ShieldCheck, ShieldX } from "lucide-react";
+import { Activity, MessagesSquare, ShieldCheck, ShieldX } from "lucide-react";
 import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
@@ -7,6 +7,7 @@ import {
   PENDING_APPROVALS_QUERY_KEY,
   usePendingApprovals,
 } from "@/lib/queries";
+import { recordUxEvent } from "@/lib/uxEvents";
 import { surfaceForMode, useUi } from "@/lib/ui";
 import { Card, Row, Section } from "@/components/layout";
 import {
@@ -25,7 +26,12 @@ import {
   useApprovalRemaining,
 } from "@/features/chat/ApprovalCountdown";
 
-export function ApprovalsPane() {
+export function ApprovalsPane({
+  location = "settings",
+}: {
+  /** Where the inbox is rendered, for the local UX counter only. */
+  location?: "settings" | "drawer";
+}) {
   const pending = usePendingApprovals();
 
   const items = pending.data ?? [];
@@ -42,17 +48,28 @@ export function ApprovalsPane() {
           sub={t("チャット内でもインラインで承認できます。")}
         />
       ) : (
-        items.map((p) => <ApprovalRow key={p.approval_id} approval={p} />)
+        items.map((p) => (
+          <ApprovalRow key={p.approval_id} approval={p} location={location} />
+        ))
       )}
     </Section>
   );
 }
 
-function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
+function ApprovalRow({
+  approval,
+  location,
+}: {
+  approval: PendingApprovalView;
+  location: "settings" | "drawer";
+}) {
   const queryClient = useQueryClient();
   const setConversationId = useUi((s) => s.setConversationId);
   const setView = useUi((s) => s.setView);
   const setSurface = useUi((s) => s.setSurface);
+  const setActivityRunId = useUi((s) => s.setActivityRunId);
+  const setRightPanel = useUi((s) => s.setRightPanel);
+  const setApprovalsOpen = useUi((s) => s.setApprovalsOpen);
   const remaining = useApprovalRemaining(approval.expires_at);
   const expired = remaining === 0;
 
@@ -63,11 +80,35 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
       remember: boolean;
       rememberSession?: boolean;
     }) => api.decideApproval(input),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: PENDING_APPROVALS_QUERY_KEY }),
+    onSuccess: (_result, input) => {
+      recordUxEvent("approval_decided", {
+        location,
+        grant: input.grant,
+        remember: input.remember,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: PENDING_APPROVALS_QUERY_KEY,
+      });
+    },
   });
 
   const disabled = decide.isPending || expired;
+
+  // Navigating from the inbox has to land on the conversation *and* close the
+  // drawer, otherwise the drawer keeps covering the pane the click just opened.
+  // The activity target is optional: deciding an approval often needs the
+  // tool history behind it, not just the diff in the card.
+  const openThread = (withActivity: boolean) => {
+    if (!approval.conversation_id) return;
+    setSurface(surfaceForMode(approval.conversation_mode ?? "chat"));
+    setConversationId(approval.conversation_id);
+    setView("chat");
+    if (withActivity) {
+      setActivityRunId(approval.run_id);
+      setRightPanel("activity");
+    }
+    setApprovalsOpen(false);
+  };
 
   return (
     <Card className="border-warning">
@@ -97,20 +138,28 @@ function ApprovalRow({ approval }: { approval: PendingApprovalView }) {
           {tf("Run {id}", { id: approval.run_id.slice(0, 8) })}
         </span>
         {approval.conversation_id && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-5 px-1.5 text-2xs text-brand"
-            onClick={() => {
-              // Switching the workspace first: the chat pane rejects a thread
-              // from the other surface and silently selects a different one.
-              setSurface(surfaceForMode(approval.conversation_mode ?? "chat"));
-              setConversationId(approval.conversation_id);
-              setView("chat");
-            }}
-          >
-            {t("スレッドを開く")}
-          </Button>
+          <>
+            {/* Switching the workspace first: the chat pane rejects a thread
+                from the other surface and silently selects a different one. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 text-2xs text-brand"
+              onClick={() => openThread(false)}
+            >
+              <MessagesSquare size={11} aria-hidden="true" />
+              {t("スレッドを開く")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 text-2xs text-brand"
+              onClick={() => openThread(true)}
+            >
+              <Activity size={11} aria-hidden="true" />
+              {t("アクティビティ")}
+            </Button>
+          </>
         )}
       </div>
 

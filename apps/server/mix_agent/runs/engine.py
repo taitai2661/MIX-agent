@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -54,6 +55,8 @@ from mix_agent.runs.engine_tools import (
     complete_tool_call,
     execute_prepared_calls,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 TASKS = {}
 
@@ -561,9 +564,9 @@ async def drive(run_id):
                                     or []
                                 )
                                 apply_plan(db, run.owner_id, plan, run_id=run.id)
-                    except Exception:  # noqa: BLE001, S110 - synchronous memory writes must never block completion
+                    except Exception:  # noqa: BLE001 - memory writes must never block completion
                         # begin_nested() rolls back only the memory SAVEPOINT.
-                        pass
+                        LOGGER.debug("memory observation write failed for run %s", run.id, exc_info=True)
                     from mix_agent.memory.jobs import enqueue as enqueue_memory
 
                     enqueue_memory(
@@ -586,8 +589,8 @@ async def drive(run_id):
         for kind in ("execution", "mcp"):
             try:
                 await runner_request(kind, "/cancel", {"run_id": run_id}, timeout=5)
-            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-                pass
+            except Exception:  # noqa: BLE001 - the runner may already be gone
+                LOGGER.debug("runner %s cancel failed for run %s", kind, run_id, exc_info=True)
     except Exception as exc:  # noqa: BLE001 - intentionally classified; never leak raw details
         epoch = _current_launch_epoch()
         with SessionLocal() as db:
@@ -607,8 +610,8 @@ async def drive(run_id):
                 should_close = ended is None or ended.status in TERMINAL
             if should_close:
                 await runner_request("browser", "/browser-close", {"run_id": run_id}, timeout=5)
-        except Exception:  # noqa: BLE001, S110 - the browser may already be closed
-            pass
+        except Exception:  # noqa: BLE001 - the browser may already be closed
+            LOGGER.debug("browser close failed", exc_info=True)
 
 
 def _scheduler_maintenance(launch) -> float:
@@ -671,8 +674,8 @@ async def scheduler():
     for interrupted_id in interrupted_browser_runs:
         try:
             await runner_request("browser", "/browser-close", {"run_id": interrupted_id}, timeout=5)
-        except Exception:  # noqa: BLE001, S110 - the browser may already be closed
-            pass
+        except Exception:  # noqa: BLE001 - the browser may already be closed
+            LOGGER.debug("browser close failed", exc_info=True)
     from mix_agent.wakeups import scheduler as wakeup
 
     seen = wakeup.revision

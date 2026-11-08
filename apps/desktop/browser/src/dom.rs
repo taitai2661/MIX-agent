@@ -1,7 +1,7 @@
 //! DOM snapshot helper.
 //!
 //! The Desktop build keeps DOM extraction inside the page's own JavaScript
-//! context (see `run_js` in the Chromium backend) so no separate HTML parser is
+//! context (the native WebView bridge) so no separate HTML parser is
 //! needed. This module provides the selector-escaping helper the JS snippets
 //! share.
 

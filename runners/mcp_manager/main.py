@@ -6,6 +6,7 @@ import asyncio
 import base64
 import itertools
 import json
+import logging
 import os
 import re
 import secrets
@@ -18,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 app = FastAPI(docs_url=None, redoc_url=None)
+LOGGER = logging.getLogger(__name__)
 LABEL = "io.mix-agent.mcp"
 NAME_RE = re.compile(r"^[a-f0-9-]{1,36}$")
 DOMAIN_RE = re.compile(
@@ -80,8 +82,8 @@ class DockerAPI:
             message = "Docker operation failed"
             try:
                 message = response.json().get("message", message)
-            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-                pass
+            except Exception:  # noqa: BLE001 - keep the generic Docker error message
+                LOGGER.debug("Docker error response was not JSON", exc_info=True)
             raise RuntimeError(message)
         if not response.content:
             return {}
@@ -388,8 +390,8 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
             try:
                 await self.action(resource_id, "uninstall", False)
-            except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-                pass
+            except Exception:  # noqa: BLE001 - rollback continues even if uninstall fails
+                LOGGER.debug("uninstall during rollback failed for %s", resource_id, exc_info=True)
             await self.copy_volume(backup, volume, clear=True)
             await self.install(resource_id, old_manifest, capability)
             raise RuntimeError("MCP update failed; previous version was restored")
@@ -598,7 +600,7 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
         request_id = next(RPC_IDS)
         request_params = dict(params)
         request_params["_meta"] = {
-            "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.6"},
+            "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.7"},
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         }
         await websocket.send(

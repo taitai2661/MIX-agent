@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useConfirm } from "@/components/confirm";
 import { ErrorBox, Field, Title, useRows } from "@/components/shared";
 
 export type PermissionValue = "allow" | "ask" | "deny";
@@ -141,6 +142,7 @@ function matchesQuery(tool: Tool, query: string) {
 }
 
 export function Tools() {
+  const confirm = useConfirm();
   const tools = useQuery<Tool[]>({
       queryKey: ["/tools"],
       queryFn: () => api("/tools"),
@@ -244,12 +246,15 @@ export function Tools() {
     const targets = filtered.map((item) => item.tool);
     if (!targets.length) return;
     const label = permissionInfo[permission].label;
-    if (
-      !window.confirm(
-        `「${label}」を表示中の ${targets.length} 件のToolに一括適用しますか？`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: t("権限を一括変更"),
+      message: t("「{label}」を表示中の {count} 件のToolに一括適用しますか？", {
+        label,
+        count: targets.length,
+      }),
+      confirmLabel: t("適用"),
+    });
+    if (!ok) return;
     setBulkSaving(true);
     try {
       for (const tool of targets) {

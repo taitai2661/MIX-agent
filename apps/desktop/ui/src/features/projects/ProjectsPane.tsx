@@ -7,6 +7,7 @@ import {
   FolderOpen,
   MessageSquare,
   Plus,
+  Terminal,
   Trash2,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -63,6 +64,7 @@ export function ProjectsPane() {
   const [verifyDraft, setVerifyDraft] = useState<string | null>(null);
   const [formatDraft, setFormatDraft] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
   const conversations = useConversationsForProject(selectedId);
 
   const list = projects.data ?? [];
@@ -74,6 +76,18 @@ export function ProjectsPane() {
   useEffect(() => {
     if (projects.data) pruneStaleActiveProject(projects.data.map((p) => p.id));
   }, [projects.data]);
+
+  // A Spotlight result (or any caller that sets the active project) should
+  // land on that project's detail, not just the list. `selectedId` stays the
+  // local "what is open" state; activating is a separate user action.
+  useEffect(() => {
+    if (
+      activeProjectId &&
+      projects.data?.some((project) => project.id === activeProjectId)
+    ) {
+      setSelectedId(activeProjectId);
+    }
+  }, [activeProjectId, projects.data]);
   const linked = selected ? (conversations.data?.items ?? []) : [];
 
   // Keep the command drafts in step with the saved project. Keyed on the saved
@@ -234,6 +248,37 @@ export function ProjectsPane() {
             />{" "}
             AGENTS.md / CLAUDE.md {t("を検出すると自動で読み込みます")}
           </p>
+          <Row className="gap-2 pt-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                setOpenError(null);
+                try {
+                  await api.openProjectFolder(selected.id);
+                } catch (err) {
+                  setOpenError(errorMessage(err));
+                }
+              }}
+            >
+              <FolderOpen size={12} /> {t("フォルダを開く")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                setOpenError(null);
+                try {
+                  await api.openProjectTerminal(selected.id);
+                } catch (err) {
+                  setOpenError(errorMessage(err));
+                }
+              }}
+            >
+              <Terminal size={12} /> {t("ターミナルで開く")}
+            </Button>
+          </Row>
+          {openError && <ErrorBox error={openError} />}
         </Card>
 
         <Card title={t("検証と整形")}>

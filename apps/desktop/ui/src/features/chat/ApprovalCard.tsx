@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t } from "@/lib/i18n";
 import type { RunTimeline } from "@/lib/runEvents";
+import { recordUxEvent } from "@/lib/uxEvents";
 import { Button } from "@/components/ui/button";
 import { ErrorBadge } from "@/components/shared";
 import { ApprovalDiffView } from "./ApprovalDiffView";
@@ -43,6 +44,12 @@ export const ApprovalCard = memo(function ApprovalCard({
     setError(null);
     try {
       await api.decideApproval({ id, grant, remember, rememberSession });
+      recordUxEvent("approval_decided", {
+        location: "card",
+        grant,
+        remember,
+        remember_session: rememberSession,
+      });
     } catch (err) {
       // Without this a failed approval re-enabled the card silently while the
       // run stayed blocked waiting for an answer that would never arrive.

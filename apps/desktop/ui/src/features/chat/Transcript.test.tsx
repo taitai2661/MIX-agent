@@ -1,13 +1,13 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setLanguage } from "@/lib/i18n";
 import type { MessageView } from "@/lib/types";
 import { Transcript } from "./Transcript";
 
-function userMessage(content: string): MessageView {
+function userMessage(content: string, id = "m-1"): MessageView {
   return {
-    id: "m-1",
+    id,
     role: "user",
     content,
     reasoning: null,
@@ -282,5 +282,35 @@ describe("Transcript user-message editing", () => {
       screen.getByRole("button", { name: "以前のメッセージを読み込む" }),
     );
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Transcript in-thread find", () => {
+  it("opens with Mod+F, counts matches, and moves to the next one", async () => {
+    const user = userEvent.setup();
+    render(
+      <Transcript
+        messages={[
+          userMessage("alpha one", "m-1"),
+          userMessage("beta alpha two", "m-2"),
+        ]}
+        runs={new Map()}
+        liveRunId={null}
+        liveConversationId={null}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    const input = screen.getByRole("textbox", { name: "スレッド内を検索" });
+    await user.type(input, "alpha");
+
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "次の一致" }));
+    expect(screen.getByText("2/2")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(
+      screen.queryByRole("textbox", { name: "スレッド内を検索" }),
+    ).toBeNull();
   });
 });

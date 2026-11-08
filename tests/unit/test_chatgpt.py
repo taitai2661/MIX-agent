@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from mix_agent.providers import chatgpt
+from mix_agent.providers import adapters, chatgpt
 from mix_agent.providers import chatgpt_config
 from mix_agent.providers.adapters import Adapter, ProviderConfigurationError
 
@@ -135,6 +135,10 @@ class _Response:
     @property
     def is_success(self):
         return 200 <= self.status_code < 300
+
+    def raise_for_status(self):
+        if not self.is_success:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
     def json(self):
         return self._payload
@@ -506,6 +510,56 @@ def test_chatgpt_preset_never_reports_an_embedding_model():
         "oauth-secret",
     )
     assert adapter.embedding_model() is None
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_model_discovery_sends_a_codex_client_version(monkeypatch):
+    calls = []
+
+    class CatalogClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers=None):
+            calls.append((url, headers))
+            return _Response(
+                200,
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-5.6-sol",
+                            "display_name": "GPT-5.6-Sol",
+                            "context_window": 272000,
+                        }
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda **kwargs: CatalogClient())
+    adapter = Adapter(
+        {
+            "id": "provider-1",
+            "kind": "openai",
+            "preset_id": "chatgpt",
+            "base_url": chatgpt_config.CHATGPT_BASE_URL,
+            "extra_config": {},
+        },
+        chatgpt.ChatGptCredentials(
+            access_token="token",
+            refresh_token="refresh",
+            account_id="acct_123",
+        ).to_json(),
+    )
+
+    models = await adapter.list_models()
+
+    assert calls[0][0].endswith(f"/models?client_version={chatgpt_config.CODEX_CLIENT_VERSION}")
+    assert calls[0][1]["chatgpt-account-id"] == "acct_123"
+    assert models[0]["model_id"] == "gpt-5.6-sol"
+    assert models[0]["name"] == "GPT-5.6-Sol"
 
 
 @pytest.mark.asyncio

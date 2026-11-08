@@ -128,7 +128,7 @@
 `ranking` の 9 つの数値は**実装側の定数と一致していなければならない**（
 `scripts/check-memory-parity.py` が両エディションで検査する）。
 
-- Docker 版: `memory/service.py` の `LEXICAL_WEIGHT_*` / `VECTOR_WEIGHT_*` /
+- Docker 版: `memory/common.py` の `LEXICAL_WEIGHT_*` / `VECTOR_WEIGHT_*` /
   `RECENCY_WEIGHT_*` / `MIN_SCORE` / `RESULT_LIMIT_*` / `ITEM_CHAR_LIMIT`
 - Desktop 版: `core/src/retrieval.rs` の同名定数
   （`item_char_limit` のみ `MEMORY_ITEM_CHAR_LIMIT`。Knowledge 用の

@@ -35,6 +35,16 @@ SERVER = ROOT / "apps" / "server" / "mix_agent"
 CODES_FILE = SERVER / "api" / "error_codes.py"
 EN_FILE = ROOT / "apps" / "web" / "src" / "app" / "errorCodes.ts"
 
+# The server uses Python 3.12 syntax, so `ast.parse` on an older interpreter
+# dies with "invalid syntax" and no hint about the real cause. CI pins 3.12;
+# point a developer at the project's own interpreter instead.
+if sys.version_info < (3, 12):
+    sys.exit(
+        "check-error-i18n.py needs Python 3.12+ to parse the server "
+        f"(got {sys.version.split()[0]}). Try: "
+        "apps/server/.venv/bin/python scripts/check-error-i18n.py"
+    )
+
 
 def literals() -> tuple[set[str], set[str]]:
     """Return (message literals, explicit ``APIError`` code literals)."""

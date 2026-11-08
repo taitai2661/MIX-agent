@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
+  Archive,
   Copy,
   Download,
   FileText,
@@ -10,6 +11,11 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import {
+  clearUxEvents,
+  readUxEvents,
+  type UxEventSummary,
+} from "@/lib/uxEvents";
 import { Card, Row, Section } from "@/components/layout";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +48,9 @@ export function DiagnosticsPane() {
   const [copied, setCopied] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [uxEvents, setUxEvents] = useState<UxEventSummary[]>(() =>
+    readUxEvents(),
+  );
   const diagnostics = useQuery({
     queryKey: ["diagnostics"],
     queryFn: api.diagnostics,
@@ -90,6 +99,23 @@ export function DiagnosticsPane() {
     }
   };
 
+  /** One attachment for a support request: report + log tail + README. */
+  const handleDownloadBundle = async () => {
+    setActionError(null);
+    try {
+      const path = await api.pickSaveFile({
+        title: t("診断バンドルを保存"),
+        defaultName: `mix-agent-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (!path) return;
+      const data = await api.diagnosticsBundle();
+      await api.saveBase64File(path, data);
+    } catch (err) {
+      setActionError(err);
+    }
+  };
+
   return (
     <Section>
       {diagnostics.isPending ? (
@@ -126,6 +152,14 @@ export function DiagnosticsPane() {
               >
                 <Download size={13} className="mr-1" />
                 {t("書き出し")}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void handleDownloadBundle()}
+              >
+                <Archive size={13} className="mr-1" />
+                {t("サポート用バンドル")}
               </Button>
             </div>
           </div>
@@ -189,6 +223,54 @@ export function DiagnosticsPane() {
             </Row>
           </Card>
 
+          <Card
+            title={t("UX イベント（この端末のみ）")}
+            icon={<Activity size={13} />}
+            action={
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  clearUxEvents();
+                  setUxEvents([]);
+                }}
+                disabled={uxEvents.length === 0}
+              >
+                {t("計測をクリア")}
+              </Button>
+            }
+          >
+            <p className="m-0 text-xs text-muted">
+              {t(
+                "画面操作の回数をこの端末にだけ記録します。プロンプトやファイルの内容は保存しません。",
+              )}
+            </p>
+            {uxEvents.length === 0 ? (
+              <p className="m-0 text-xs text-faint">
+                {t("まだ記録はありません")}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {uxEvents.map((event) => (
+                  <Row key={event.name} align="between" className="gap-2">
+                    <code className="min-w-0 truncate font-mono text-xs text-fg">
+                      {event.name}
+                    </code>
+                    <span className="shrink-0 font-mono text-xs text-faint">
+                      {event.count}
+                    </span>
+                    <span
+                      className="shrink-0 text-2xs text-faint"
+                      title={event.last_at}
+                    >
+                      {new Date(event.last_at).toLocaleString()}
+                    </span>
+                  </Row>
+                ))}
+              </div>
+            )}
+          </Card>
+
           {showLogs && (
             <Card title={t("最近の実行ログ")} icon={<FileText size={13} />}>
               {recentLogs.isPending ? (
@@ -198,7 +280,7 @@ export function DiagnosticsPane() {
               ) : recentLogs.isError ? (
                 <ErrorAlert error={recentLogs.error} />
               ) : (
-                <pre className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded bg-inset p-2 font-mono text-[11px] text-muted">
+                <pre className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded bg-inset p-2 font-mono text-2xs text-muted">
                   {recentLogs.data || t("ログはありません")}
                 </pre>
               )}

@@ -280,8 +280,12 @@ describe("chat component interactions", () => {
       onRate,
     });
     const assistantContainer = mount(<ChatMessage {...assistant} />);
-    const feedbackButtons = assistantContainer.querySelectorAll(
-      ".message-auto button",
+    // Copy/regenerate share the action row; the feedback buttons are the
+    // remaining two controls.
+    const feedbackButtons = Array.from(
+      assistantContainer.querySelectorAll<HTMLButtonElement>(
+        ".message-auto button:not(.message-action)",
+      ),
     );
     expect(feedbackButtons).toHaveLength(2);
     click(feedbackButtons[0]);

@@ -1,8 +1,34 @@
+import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { create } from "zustand";
 import { api } from "@/lib/api";
 import type { SettingsView } from "@/lib/types";
 
 export const SETTINGS_QUERY_KEY = ["settings"] as const;
+
+/**
+ * The last persisted settings row, serialised.
+ *
+ * The Settings form edits the React Query cache directly. Keeping the baseline
+ * outside the pane is what makes "unsaved" survive a trip to another view:
+ * component-local state used to reset on remount and re-baseline the draft as
+ * if it had been saved. A module store also lets the sidebar and the
+ * beforeunload guard see the same answer as the Settings pane.
+ */
+interface SettingsBaselineState {
+  baseline: string | null;
+  setBaseline: (value: string | null) => void;
+}
+
+const useSettingsBaseline = create<SettingsBaselineState>((set) => ({
+  baseline: null,
+  setBaseline: (baseline) => set({ baseline }),
+}));
+
+/** Test seam: start a fresh install with no baseline. */
+export function resetSettingsBaseline(): void {
+  useSettingsBaseline.setState({ baseline: null });
+}
 
 /** How often pending tool approvals are polled. One value for every query
  * with this key — different intervals fought over the same cache entry. */
@@ -39,12 +65,19 @@ export const DEFAULT_SETTINGS: SettingsView = {
   format_command: null,
   sandbox_terminal: false,
   sandbox_terminal_network: false,
+  // Backend default: one day, so an approval prompt survives a trip away from
+  // the desk. The executor clamps anything outside 1 minute–7 days.
+  approval_ttl_minutes: 24 * 60,
+  monthly_budget_usd: null,
   // SQLCipher is not wired yet; the only honest value is `false`.
   database_encryption: false,
   onboarding_completed: null,
   // The backend defaults this to `true` too: auto-check is one manifest
   // request and the payload is signature-verified before installation.
   auto_check_updates: true,
+  // Downloading is safe to start in the background; applying still waits for
+  // the user to quit the app normally.
+  auto_download_updates: true,
   local_scan_on_start: true,
   local_stop_on_exit: true,
   // Spawning `ollama serve` for a user who manages it as a service was a
@@ -53,6 +86,15 @@ export const DEFAULT_SETTINGS: SettingsView = {
   local_keep_alive: null,
   local_context_window: null,
   local_prefer: false,
+  // The measured-speed signal is only trusted after successful turns; a user
+  // who wants the fastest answer opts into `speed` explicitly.
+  auto_priority: "balanced",
+  // One pre-content retry recovers most transient provider failures without
+  // turning a Run into an unbounded model hunt.
+  auto_fallback_attempts: 1,
+  // System-wide search is opt-in; the backend defaults are `false` too.
+  spotlight_enabled: false,
+  spotlight_index_body: false,
 };
 
 /** Shared access to the settings draft: one query, one cache entry, and a
@@ -71,6 +113,16 @@ export function useSettingsForm() {
   });
   const loaded = query.data !== undefined;
   const data = query.data ?? DEFAULT_SETTINGS;
+  const baseline = useSettingsBaseline((state) => state.baseline);
+  const setBaseline = useSettingsBaseline((state) => state.setBaseline);
+  // Baseline once per app run, when the first read lands. Later mounts must
+  // not re-baseline: that is exactly what hid unsaved edits after leaving the
+  // Settings view.
+  useEffect(() => {
+    if (!loaded || baseline !== null) return;
+    setBaseline(JSON.stringify(query.data));
+  }, [baseline, loaded, query.data, setBaseline]);
+  const dirty = baseline !== null && JSON.stringify(data) !== baseline;
   const patch = (next: Partial<SettingsView>) => {
     if (!loaded) return;
     queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, {
@@ -80,7 +132,34 @@ export function useSettingsForm() {
   };
   // Settled, not loaded: a failed `get_settings` leaves `loaded` false forever,
   // and a caller gating on it would hang rather than fall back to defaults.
-  return { data, loaded, settled: !query.isPending, patch, query };
+  return {
+    data,
+    loaded,
+    settled: !query.isPending,
+    dirty,
+    setBaseline,
+    patch,
+    query,
+  };
+}
+
+/**
+ * Warn on window close while the Settings draft differs from what is saved.
+ * Lives at the app root so the guard survives a trip to another view (the
+ * pane-local guard used to unmount with the Settings pane).
+ */
+export function useSettingsDirtyGuard(): boolean {
+  const { dirty } = useSettingsForm();
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  return dirty;
 }
 
 /** Persist a change immediately instead of waiting for the header Save button.
@@ -96,6 +175,7 @@ let settingsWriteQueue: Promise<void> = Promise.resolve();
 
 export function useApplySettings() {
   const queryClient = useQueryClient();
+  const setBaseline = useSettingsBaseline((state) => state.setBaseline);
   const apply = async (patch: Partial<SettingsView>): Promise<void> => {
     try {
       const cached = queryClient.getQueryData<SettingsView>(SETTINGS_QUERY_KEY);
@@ -116,12 +196,15 @@ export function useApplySettings() {
       const saved: SettingsView = { ...persisted, ...patch };
       const next: SettingsView = { ...(cached ?? persisted), ...patch };
       queryClient.setQueryData<SettingsView>(SETTINGS_QUERY_KEY, next);
-      await api.updateSettings(saved);
-      // The Settings pane snapshots the form to decide between "保存しました"
-      // and "未保存の変更". Report the row that was actually written, not the
-      // draft, so unrelated unsaved edits stay flagged as unsaved.
+      const written = await api.updateSettings(saved);
+      // Report the row that was actually written, not the draft, so unrelated
+      // unsaved edits stay flagged as unsaved.
+      const persistedRow = written ?? saved;
+      setBaseline(JSON.stringify(persistedRow));
       window.dispatchEvent(
-        new CustomEvent<SettingsView>("mix:settings-saved", { detail: saved }),
+        new CustomEvent<SettingsView>("mix:settings-saved", {
+          detail: persistedRow,
+        }),
       );
     } catch (err) {
       // The optimistic value must not survive a failed write: drop it and let

@@ -11,9 +11,26 @@ use tauri::{AppHandle, Manager, Runtime};
 pub const EVT_SHOW: &str = "tray://show";
 pub const EVT_QUIT: &str = "tray://quit";
 
-pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, EVT_SHOW, "Open MIX-agent", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, EVT_QUIT, "Quit", true, None::<&str>)?;
+pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<()> {
+    let ja = language == "ja";
+    let show = MenuItem::with_id(
+        app,
+        EVT_SHOW,
+        if ja {
+            "MIX-agent を開く"
+        } else {
+            "Open MIX-agent"
+        },
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(
+        app,
+        EVT_QUIT,
+        if ja { "終了" } else { "Quit" },
+        true,
+        None::<&str>,
+    )?;
     let menu = Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main")
@@ -29,7 +46,9 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                     let _ = window.set_focus();
                 }
             }
-            EVT_QUIT => app.exit(0),
+            // Route through the same guard as Cmd+Q: a live Run must be
+            // confirmed before the tray tears the process down.
+            EVT_QUIT => crate::request_quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -52,4 +71,30 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     }
     builder.build(app)?;
     Ok(())
+}
+
+/// Surface the pending-approval count where the user already looks.
+///
+/// The notification only fires once; without a persistent badge an approval
+/// requested while the window was hidden was easy to forget. macOS gets the
+/// menu-bar number, every platform gets a tooltip.
+pub fn update_status<R: Runtime>(app: &AppHandle<R>, pending: usize) {
+    let Some(tray) = app.tray_by_id("main") else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let title = if pending > 0 {
+            Some(pending.to_string())
+        } else {
+            None
+        };
+        let _ = tray.set_title(title);
+    }
+    let tooltip = if pending > 0 {
+        format!("MIX-agent Desktop — 承認待ち {pending} 件")
+    } else {
+        "MIX-agent Desktop".to_string()
+    };
+    let _ = tray.set_tooltip(Some(tooltip));
 }

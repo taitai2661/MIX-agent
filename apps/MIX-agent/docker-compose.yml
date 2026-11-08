@@ -2,7 +2,7 @@
 name: mix-agent
 services:
   init:
-    image: ghcr.io/taitai2661/mix-agent-init:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-init:v0.5.7
     entrypoint:
     - python
     - /bootstrap.py
@@ -88,7 +88,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    image: ghcr.io/taitai2661/mix-agent-app:v0.5.6
+      db-backup:
+        condition: service_completed_successfully
+    image: ghcr.io/taitai2661/mix-agent-app:v0.5.7
   app:
     restart: unless-stopped
     read_only: true
@@ -152,7 +154,7 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-app:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-app:v0.5.7
   execution-runner:
     restart: unless-stopped
     read_only: true
@@ -177,7 +179,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-execution:v0.5.7
   browser-runner:
     restart: unless-stopped
     read_only: true
@@ -201,7 +203,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-browser-runner:v0.5.7
   browser-provisioner:
     restart: unless-stopped
     read_only: true
@@ -224,7 +226,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-browser-provisioner:v0.5.7
   mcp-runner:
     restart: unless-stopped
     read_only: true
@@ -250,7 +252,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-mcp:v0.5.7
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     restart: unless-stopped
@@ -291,13 +293,13 @@ services:
     pids_limit: 128
     logging: *id003
     tmpfs: *id004
-    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.7
     user: 1000:1000
     environment:
       TOKEN_FILE: /tokens/manager.token
       POLICY_FILE: /policy/mcp-policy.json
       DOCKER_HOST: http://docker-socket-proxy:2375
-      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.6
+      MCP_RUNTIME_IMAGE: ghcr.io/taitai2661/mix-agent-mcp-runtime:v0.5.7
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
     - manager-token:/tokens:ro
@@ -352,7 +354,7 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.6
+    image: ghcr.io/taitai2661/mix-agent-egress:v0.5.7
     container_name: mix-agent-egress-proxy-1
 networks:
   database:
@@ -364,6 +366,7 @@ networks:
   internet: {}
 volumes:
   postgres: null
+  db-backups: null
   keys: null
   db-secret: null
   execution-token: null
@@ -405,9 +408,9 @@ x-casaos:
   category: AI
   architectures:
   - amd64
-  version: 0.5.6
-  update_at: '2026-11-04'
+  version: 0.5.7
+  update_at: '2026-11-08'
   release_notes:
-    en_US: 'Feature release: unofficial ChatGPT/Codex subscription support, language-server diagnostics, Agent Skills
-      resources, launch at login, Git-backed run rollback, conversation search and paging, and UI performance work.'
-    ja_JP: 機能リリース。ChatGPT/Codex使用枠の非公式連携、言語サーバー診断、Agent Skillsの同梱ファイル対応、ログイン時起動、Git連携のRun取り消し、会話検索とページング、UIの高速化を追加。
+    en_US: 'Maintenance release: conversation and memory API cleanup, provider discovery split, sidebar thread grouping,
+      auto-routing groundwork, and bounded conversation paging.'
+    ja_JP: 保守リリース。会話・記憶APIの整理、プロバイダー探索の分割、サイドバーのスレッド整理、自動ルーティングの土台、会話一覧の件数上限対応など。

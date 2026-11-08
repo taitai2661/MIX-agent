@@ -17,10 +17,10 @@ MIX-agent/
 │   │   ├── core/        Run Engine / state / events / context
 │   │   ├── providers/   OpenAI / Anthropic / Gemini / OpenAI-Compatible / Ollama / LM Studio
 │   │   ├── tools/       Tool Registry + executor
-│   │   ├── browser/     Browser Operator + chromiumoxide backend
+│   │   ├── browser/     Browser tool contract (backend-neutral)
 │   │   ├── mcp/         MCP client host
-│   │   ├── storage/     SQLite + Keychain
-│   │   ├── scripts/     pin-chromium.mjs
+│   │   ├── storage/     SQLite + Secret store
+│   │   ├── scripts/     UI / release helper scripts
 │   │   └── ui/          React 19 + Vite + Tailwind (Desktop独自UI)
 │   ├── server/                 # Docker 版バックエンド (FastAPI + Python)
 │   └── web/                    # Docker 版フロントエンド (React 19 + Vite)
@@ -58,17 +58,17 @@ MIX-agent/
 │  mixd-core (Run Engine, events, context)                     │
 │  mixd-providers (Provider adapters)                          │
 │  mixd-tools (Tool Registry, executor)                        │
-│  mixd-browser (Browser Operator, chromiumoxide backend)      │
+│  mixd-browser (Browser tool contract)                         │
 │  mixd-mcp (rmcp host, OAuth PKCE)                            │
 │  mixd-storage (sqlx+SQLite WAL, keyring-rs)                  │
 │                                                              │
-│  └─ 子プロセスとして実 Chromium を起動（Browser Operator）    │
+│  └─ ネイティブ子 WebView（WKWebView / WebView2 / WebKitGTK）  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 DB は同一プロセスの tokio runtime 上で in-proc に開かれます（Docker 版の
-PostgreSQL コンテナに相当する分離はありません）。ただし Browser Operator は
-実 Chromium を**子プロセスとして**起動するため、単一の OS プロセスではありません。
+PostgreSQL コンテナに相当する分離はありません）。ブラウザは Tauri ウィンドウ内の
+ネイティブ子 WebView なので、Chromium のような別プロセスは起動しません。
 
 WebView からは `fs` / `shell` / `http` プラグインの権限を `app/capabilities/default.toml`
 で一切付与していません（明示的な deny ではなく不許可）。すべての操作が
@@ -153,7 +153,43 @@ UI 側の解釈は `ui/src/lib/runEvents.ts` の `applyRunEvent()` が持ちま�
   話せるランタイムである」の意味です。そうしないと、まっさらな Ollama を
   起動 → 最初のモデルを pull する導線が成立しません。
 
-## Browser Operator
+## Auto model routing（Desktop）
+
+Auto は `models.data.auto` が真のモデルだけを候補にし、ターンごとに 1 件を
+選びます。選択はローカル・決定論的で、プロバイダへ問い合わせません。
+
+- **足切り**: 既知の非チャットモデル、Context Window、Vision、Tool Calling。
+  `contextWindow` が `0`（discovery が不明）のモデルは、要求が 32,768
+  トークンを超えるターンでは除外します（不明を無制限として扱わない）。
+- **スコア**: profile 別フィードバック（半減期 60 日 + UCB 探索）、静的な品質
+  事前分布、実測 TTFT / tokens/s（成功ターンの EWMA を候補中央値と比較）、
+  コスト、会話の連続性、ローカル優先、信頼性ペナルティ。
+- **信頼性**: `rate_limit` / `provider_5xx` / `timeout` / `transport` は
+  モデル単位でクールダウン。`auth` はプロバイダ単位で 30 分。
+  `context_overflow` はそのリクエストだけの除外で、モデル評価を下げません。
+- **優先度**: 設定 `auto_priority`（`balanced` 既定 / `speed` / `quality` /
+  `cost`）。速度は実測値が貯まってから効き、未測定モデルは加点も減点も
+  しません。
+- **決定性**: 完全同点は `request_key` と候補 index の FNV-1a で決めます。
+  標準ライブラリの `DefaultHasher` はバージョン間で安定しないため使いません。
+- **計測**: `auto_model_stats` に成功回数・失敗回数・EWMA を保存します。
+  Run 終了後にターン単位で書き、`profile` 別と `'*'` 集計の両方を持ちます。
+  失敗ターンの速度は学習しません。
+- **学習**: `message_feedback` は profile 別に読み、180 日・半減期 60 日で
+  重み付けします。失敗は `auto_reliability_events` に正規化した分類
+  （`ProviderErrorKind::as_str()`）で記録します。
+- **フォールバック**: Run 開始前に最大 2 件の代替候補を解決します
+  （設定 `auto_fallback_attempts`、既定 1）。エンジンは最初のテキスト・
+  推論・ツール呼び出しより前の `rate_limit` / `provider_5xx` / `transport` /
+  `auth` / `context_overflow` だけを別モデルで再試行します。部分出力後の
+  失敗は重複を避けるため再試行しません。月次予算が尽きている場合は
+  ローカルからクラウドへは切り替えません。実際の切り替えは
+  `runs.data.autoFallbacks` と `RunOutcome.auto_fallbacks` に残ります。
+- **未実装**: 選択理由の UI 表示、暗黙フィードバック、プロバイダ呼び出し前の
+  共有回路遮断器、ローカルランタイムの起動待ち。計画は
+  [`auto-routing-plan.md`](auto-routing-plan.md)。
+
+## Browser Operator（Desktop: ネイティブ子 WebView）
 
 ```
 Agent (mixd-core::runs::engine)
@@ -161,83 +197,71 @@ Agent (mixd-core::runs::engine)
    ▼ call_tool("browser", ...)
 Browser Tool (mixd-tools)
    │
-   ▼ trait BrowserTool
-Browser Tool Interface (mixd-browser::interface)
+   ▼ trait BrowserHost (mixd-browser::interface)
+Native WebView Host (app/src/webview_browser)
    │
-   ▼
-Browser Operator (mixd-browser::operator)   ← Workspace Profile 保持
-   │  navigate / snapshot+ref / click / type / press /
-   │  hover / select / check / scroll / dom / extract /
-   │  screenshot / evaluate / wait_for / tabs / history /
-   │  click_at / type_active
-   ▼
-   Backend: enum BrowserBackend  ← 差し替え可能
-          Chromium          = 管理対象の Chromium を起動
-          SystemChromium    = システム Chromium にフォールバック
-          Disabled          = 実行ファイルが見つからない
-   │
-   ▼
-   Managed Chromium (<app-data>/chromium) or system Chromium
+   ├─ タブごとの Tauri 子 WebView（WKWebView / WebView2 / WebKitGTK）
+   ├─ eval_with_callback による DOM 操作・snapshot・screenshot
+   └─ ワークスペースごとのブラウザデータ
 ```
 
-`mixd-core` は `chromiumoxide` に依存しません。backend の差し替えだけで
-Browser 実装の差し替えが可能で、`BrowserBackend` は 3 状態
-（`Chromium` / `SystemChromium` / `Disabled`）を持ちます。
+Desktop 版は Chromium を起動しません。メインウィンドウに Tauri の
+`WebviewBuilder` / `Window::add_child`（`tauri` の `unstable` 機能）で
+子 WebView を追加し、ページ本体は OS の WebView が描画します。React は
+タブ列・オムニボックス・パネルの矩形だけを所有し、ページの入力はすべて
+ネイティブです。screencast / JPEG / 座標クリック / 手動入力バーはありません。
 
-Chromium は **常に new headless** で起動します。以前は release だけ
-`with_head()` で可視ウィンドウを出していましたが、アプリ内のサイドパネルと
-二重表示になり、余分なコンポジタも残るため廃止しました。表示は
-チャット右側のブラウザパネル（スプリット / フルビュー）だけです。
+- **タブ**: 1タブ = 1子 WebView。`tabs` / `new_tab` / `switch_tab` /
+  `close_tab` は子 WebView の生成・表示切替・破棄に対応します。
+- **入力**: スクロール、IME、ホバー、コピー＆ペースト、ファイル選択は
+  OS WebView のネイティブ動作です。エージェントの `click` / `type` は
+  `eval_with_callback` で DOM イベントを発火します。
+- **パネル**: React の `BrowserSurface` が空の矩形を描き、
+  `browser_surface_bounds` で Rust に論理座標を送ります。Rust は子 WebView を
+  その矩形に移動・リサイズします。メニューや確認ダイアログの表示中は
+  子 WebView を一時的に隠します。
+- **セキュリティ**: `capabilities/default.toml` は `windows = ["main"]` ではなく
+  `webviews = ["main"]` でスコープします。`windows` 指定だと同じウィンドウの
+  子 WebView がメイン画面の IPC 権限を継承し、外部ページから Tauri コマンドを
+  呼べてしまうためです。子 WebView には capability を与えません。
+- **ナビゲーション**: `http` / `https` / `about:blank` のみ。`on_navigation` と
+  コマンド側の両方で literal private IP を拒否し、DNS 解決を含むゲートを
+  `BrowserHost::invoke` の navigate / new_tab / wait_for(url) で通します。
+- **サブリソース**: CDP の `Fetch` 傍受は使えないため、初期化スクリプトで
+  `fetch` / XHR / WebSocket / EventSource / sendBeacon をラップし、private /
+  loopback / metadata を遮断します。画像・CSS・iframe・Worker など、
+  JS を経由しないサブリソースはこのラッパーの対象外です。完全な
+  リクエスト単位の強制が必要な場合は、ローカル HTTP CONNECT プロキシを
+  子 WebView の `proxy_url` に設定する追加実装が必要です。
+- **権限**: `on_permission_request` でカメラ・マイク・位置情報などを既定拒否。
+  `on_new_window` はポップアップを拒否します。
+- **スクリーンショット**: macOS は `WKWebView.takeSnapshot` で PNG を取得し、
+  `<app-data>/artifacts/<workspace>/` に保存します。`full_page` は現時点では
+  表示範囲のキャプチャです。Windows / Linux のネイティブキャプチャは
+  プラットフォームアダプタの追加が必要です。
+- **データ**: Cookie / localStorage はアプリ専用の WebView データに保存されます。
+  Windows / Linux は `data_directory` でワークスペース単位に分離し、
+  macOS は WKWebView の共有データストアを使います（macOS 14+ で
+  data store identifier を使う拡張が可能）。`browser_clear_data` で
+  閲覧データを削除できます。
+- **復元**: タブ URL をワークスペース単位で `localStorage` に保存し、
+  バックエンドに意味のあるページが無いときだけ自動復元します。
+- **ショートカット**: `⌘⇧B` / `Ctrl+Shift+B` 表示切替、`⌘L` アドレスバー、
+  `⌘T` 新規タブ、`⌘R` 再読み込み。子 WebView がフォーカス中の場合の
+  キー転送は今後の改善点です。
+- **自動表示**: `browserAutoOpen`（既定 ON）。エージェントの `browser`
+  ツール開始時にパネルを開きます。
 
-サイドパネルは Codex 風の構成です。
-
-- 上部ツールバー: 戻る / 進む / 再読み込み・停止 / アドレスバー /
-  セキュリティ表示 / システムブラウザで開く
-- ブラウザタブ: 既存の `tabs` / `new_tab` / `switch_tab` / `close_tab` を UI 化
-- ライブ画面: CDP screencast（`Page.startScreencast`）を Tauri イベント
-  `browser://frame` で受信し、失敗時は 2 秒ポーリングへフォールバック
-- `⌘⇧B`（macOS）/ `Ctrl+Shift+B`（Windows / Linux）で表示/非表示、
-  `⌘L` / `Ctrl+L` アドレスバー、`⌘T` / `Ctrl+T` 新規タブ、
-  `⌘R` / `Ctrl+R` 再読み込み
-- エージェントの `browser` ツール開始時に自動表示（`browserAutoOpen`、既定 ON）。
-  エージェント起因のオープンはフォーカスを奪いません。
-
-Chromium のメモリ対策として、同時に開くワークスペースは 2 個まで（LRU で
-退避）、5 分間ブラウザ呼び出しとライブ取得が無ければプロセスを閉じます。
-パネルを開いている間は 60 秒ごとの軽量 keepalive が LRU を更新するため、
-ライブ表示を一時停止していても閉じられません。プロファイルはディスクに残るため、
-次回オープン時に Cookie / ログインは復元されます。上限は
-`MIX_BROWSER_MAX_OPEN`（既定 2）と `MIX_BROWSER_IDLE_SECS`（既定 900 秒、
-30 秒未満は無視）で調整できます。
-
-アクション語彙は `packages/tool_contracts/browser.json` が正です。Desktop は
-`browser` 1 ツール、Docker は `browser_*` 15 ツールをこの語彙へマップし、
-未対応アクションは `unsupported` として明示します。`scripts/check-browser-parity.py`
-が CI で両版のズレを検出します。
+`mixd-browser` はアクション語彙・上限・URL ゲートだけを持つ契約クレートで、
+ブラウザエンジンには依存しません。Desktop は `browser` 1 ツール、Docker は
+Playwright の `browser_*` 15 ツールを同じ
+`packages/tool_contracts/browser.json` にマップします。
+`scripts/check-browser-parity.py` が両版のズレを検出します。
 
 `browser_allow_local`（既定 OFF）を ON にした場合だけ loopback / RFC1918 /
 ULA へ到達できます。169.254.0.0/16（cloud metadata）と link-local は ON でも
-拒否します。IPv4-mapped IPv6（`[::ffff:169.254.169.254]`）も同じ v4 判定に
-落として拒否します。許可リストが設定されている場合、この opt-in は
-loopback / private 宛先だけを免除し、公開ホストには引き続き許可リストが必要です。
-`update_settings` は許可リスト変更時に `refresh_registry` を呼ぶため、再起動なしで
-エージェントと手動パネルの両方へ反映されます。
-
-ナビゲーション時の事前チェックに加えて、各ページターゲットには CDP の
-`Fetch` リクエスト傍受を常時インストールします（`ensure_egress_guard`）。
-ページ内の `fetch()` やサブリソース、DNS 再解決後のリダイレクトも含めて
-ホスト名を解決し、非 opt-in 時の private / loopback、常時 link-local・
-cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURLs`
-で metadata リテラルも二重に塞ぎます。これにより `evaluate` の文字列フィルタを
-迂回されてもネットワーク層で止まります（DNS 解決と実際の接続の間の TOCTOU は
-残るため、OS sandbox の代替ではありません）。
-
-ナビゲーションは `http` / `https` と `about:blank` だけを許可します。
-`file:` / `data:` / `javascript:` / `chrome:` は `navigate` と `new_tab` の両方で
-拒否し、`new_tab` を抜け道にしないよう Registry 側でも同じゲートを通します。
-`click_at` と `type_active` は手動操作用として契約に `manual_only` で登録し、
-モデルへ渡す `browser` tool の enum からは除外しています。CDP のリクエスト単位の
-強制はまだ未実装で、ページ内 JS 自体は引き続き自由にネットワークへ出られます。
+拒否します。許可リストが設定されている場合、この opt-in は loopback /
+private 宛先だけを免除し、公開ホストには引き続き許可リストが必要です。
 
 ## ChatGPT（Codex 使用枠）— 非公式・自己責任
 
@@ -274,9 +298,43 @@ cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURL
 - 推論リクエストは `Accept: text/event-stream` を明示し、一時的な 5xx / 接続断 /
   クォータ未達の 429 はバックオフ付きで再試行する。
 
+## macOS Spotlight 索引
+
+macOS の **Core Spotlight**（`CSSearchableIndex`）へ、会話・プロジェクト・
+ナレッジを登録する。実装は `app/src/spotlight/` に閉じ、他プラットフォームでは
+no-op になる。
+
+- **対象**: `conversation:<id>` / `project:<id>` / `knowledge:<docId>`。
+  content type は `public.text`。タイトル、短い説明、キーワード、更新日時を
+  登録し、本文索引を有効にした場合だけ本文も `textContent` に入れる。
+- **既定**: `spotlight_enabled = false`、`spotlight_index_body = false`。
+  システム全体の検索結果に出るため opt-in。無効化すると
+  `deleteAllSearchableItems` でこのアプリの索引を削除する。
+- **キュー**: `spotlight_items`（`item_id` / `domain` / `source_id` /
+  `content_hash` / `state`）と `spotlight_meta`。起動 5 秒後に差分
+  reconcile し、変更系コマンドと Run の終了時は 2 秒デバウンスで
+  バッチ索引する。失敗は `last_error` に残し、次の pass で再試行する。
+- **クリック**: tao の `NSApplicationDelegate` は browsing-web 以外の
+  `NSUserActivity` を `false` で落とすため、
+  `application:continueUserActivity:restorationHandler:` と
+  `application:willContinueUserActivityWithType:` の IMP を差し替える。
+  `CSSearchableItemActivityIdentifier` を `conversation:` などの接頭辞で
+  解釈し、`spotlight://open` を UI へ emit する。コールドスタート用に
+  最後の target を pending スロットへ残し、UI は
+  `spotlight_take_pending` で drain する。
+- **開発時の制約**: `tauri dev` の非バンドル実行には
+  `CFBundleIdentifier` がなく、Core Spotlight に登録できない。設定画面は
+  「この環境では利用できません」と表示する。動作確認は `tauri build` で
+  生成した `.app` を `/Applications` に置いて行う。手動スモークは
+  `cargo build -p mix-agent-desktop --example spotlight_smoke` で作った
+  バイナリを最小 `.app` に包んで実行する。
+- **設定**: macOS のみ「設定 ▸ Spotlight」タブ。有効化 / 本文索引 /
+  索引済み・未処理件数 / 最終同期 / 最終エラー / 再構築 / 索引から削除。
+- **設計経緯**: [`spotlight-plan.md`](spotlight-plan.md)。
+
 ## セキュリティ
 
-- **Secret store**: macOS / Windows では **マスター seed を OS Keychain**（`keyring-rs`）に置き、AES-256-GCM の暗号文は `secrets.enc.json`（0600）に残します。これによりデータディレクトリだけを読んでも資格情報は復号できません。既存のファイル seed は「コピー → 読み戻し確認 → 削除」で自動移行します。`MIX_SECRET_BACKEND=file|keychain` で従来のファイル方式 / 全 Keychain 方式を強制できます。Linux は Secret Service が常にあるとは限らないため既定でファイル方式です。
+- **Secret store**: AES-256-GCM の暗号文は `secrets.enc.json`（0600）に保存します。macOS は **マスター seed をデータディレクトリ内の `.master_seed`（0600）** に置きます。Desktop 版は ad-hoc 署名で配布しており、ログイン Keychain は再ビルドごとに別アプリと認識してパスワードダイアログを出すため、通常起動では Keychain を読みません。旧版で Keychain に seed がある場合は初回だけ読み取り、`.master_seed` へコピーして以後はアクセスしません（旧ファイル seed は `.master_seed_backup` として残し、復号のフォールバックに使います）。Windows は従来どおり **Credential Manager にマスター seed** を置きます（同一ユーザーではプロンプトが出ないため）。Linux は Secret Service が常にあるとは限らないためファイル方式です。`MIX_SECRET_BACKEND=file|keychain|keychain-seed` で明示的に切り替えられます。
 - **DB 暗号化設定 (Codex 互換)**: 標準は **OFF（平文 SQLite）** で動作し、所有者のみ読み書き可（0600）のアクセス権で保護されます（Codex parity）。設定（GeneralSettings）から保存時の暗号化を **ON / OFF** 切り替え可能で、ON に設定された場合は OS Keychain にマスター暗号化鍵（`db.master`）が生成・保管されます。診断画面（Diagnostics）でも暗号化状態が確認できます。
 - **Egress allowlist + private IP deny**: `tools::network` が reqwest 実行前に検査。allowlist が空なら公開ホストのみ許可し、private IP は常に拒否します。保存済みルールは `*.example.com` のようなワイルドカードに対応します。
 - **WebView CSP**: `app/tauri.conf.json` の `app.security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
@@ -293,110 +351,7 @@ cloud metadata を `BlockedByClient` で拒否します。`Network.setBlockedURL
   - **macOS**: `sandbox-exec` でワークスペース + 一時ディレクトリ + ビルドキャッシュ以外への書き込みを拒否。`sandbox_terminal_network` で `(deny network*)` も付与。
   - **Linux**: `bubblewrap`（なければ `firejail`）でルートを読み取り専用にし、ワークスペースとビルドキャッシュだけを書き込み可能にします。ネットワーク遮断は `--unshare-net`。
   - **Windows**: `Job Object` でシェルと子プロセスを束ね、プロセス数上限・アプリ終了時の一括停止を強制します。portable-pty がプロセス作成属性を公開しないため、**ファイルシステムの書き込み隔離は未対応**です（UI にも明記）。
-  - 利用できない環境（Linux で bwrap/firejail 未導入など）では設定を保存できず、理由を表示します。`browser` も外部 Chromium を操作できるため、敵対的なコードを安全に実行する用途には使わないでください。
-
-## Managed Chromium（初回インストール方式）
-
-同梱をやめた理由・代替案の比較・移行方針は
-[`chromium-on-demand-plan.md`](chromium-on-demand-plan.md) に記録している。ここでは現行の仕様だけを扱う。
-
-Desktop 版は Chromium をアプリバンドルに含めない。ブラウザ機能を初めて使う
-ときに、アプリ内のインストーラーが Chrome for Testing を
-`<app-data>/chromium/` へダウンロードする。配布物（DMG / NSIS / MSI /
-AppImage / deb）にはブラウザ本体が入らない。macOS arm64 のローカルビルドでは
-`.app` が 35.58 MiB（アップデータ用 `.app.tar.gz` は 12.72 MiB）になった。
-
-### インストール先と解決順
-
-```
-<app-data>/
-├── browser/                     # ワークスペースプロファイル
-├── artifacts/                   # スクリーンショット
-├── chromium/                    # 管理対象 Chromium
-│   ├── chrome-mac/…             # macOS（CfT の .app を保持）
-│   ├── chrome-win/…             # Windows
-│   ├── chrome-linux/…           # Linux
-│   └── chromium-version.json
-└── chromium-install-state.json  # 失敗・キャンセル状態（進捗は保存しない）
-```
-
-探索は `mixd_browser::profile` が行い、`BrowserOperator::resolve()` は次の順で
-最初に見つかったものを使う。
-
-1. `MIX_CHROMIUM_HOME`（開発・検証用の明示パス）
-2. `<app-data>/chromium`（管理対象）
-3. 旧バンドルの `resources/chromium`（移行期間の互換）
-4. システムの Chromium / Chrome / Edge
-5. 無ければ `disabled`
-
-`BrowserStatus.source` が `installed` / `bundled` / `system` / `override` /
-`none` を返すので、UI は管理対象だけに更新・削除を出す。
-
-### バージョン固定と取得
-
-`browser/src/chromium-manifest.json` に、サポートする CfT プラットフォーム
-（`mac-arm64` / `mac-x64` / `win64` / `linux64`）の URL・SHA-256・サイズを
-固定する。マニフェストは `scripts/pin-chromium.mjs` で生成し、アプリの
-バイナリに埋め込む。実行時に CfT の latest を解決して無検証で入れることは
-しない。
-
-```bash
-pnpm chromium:pin                                  # 最新 Stable を固定
-node scripts/pin-chromium.mjs --version 156.0.8078.73
-```
-
-インストーラー（`browser/src/installer.rs`）は次を行う。
-
-1. 空き容量を確認（zip + 展開後 + 余裕）
-2. HTTPS でストリーム受信し、`storage.googleapis.com` 以外へのリダイレクトを拒否
-3. SHA-256 とサイズを検証
-4. `chromium.staging-*` へ zip を展開（パストラバーサル・危険な symlink を拒否）
-5. `chrome-mac-arm64` などを `chrome-mac` へ正規化（`.app` 内の名前は変えない）
-6. `--version` を 30 秒以内に実行して起動可能性を確認
-7. 旧 `chromium` を退避してから staging を rename し、最後に旧ツリーを削除
-
-失敗時は既存のインストールを残す。アプリ終了で中断した staging / download は
-次回起動時に掃除する。UI は `browser_install` / `browser_install_cancel` /
-`browser_uninstall` / `browser_status` を使い、進捗は
-`browser://install` イベントと 1 秒ポーリングの両方で受ける。
-
-### 署名と供給網
-
-Chrome for Testing の `.app` は ad-hoc / linker-signed で、上流の zip でも
-`codesign --verify --deep --strict` は成功しない。そのため署名検証を必須には
-せず、**アプリに埋め込んだ SHA-256** を供給網のアンカーにする。展開後は
-`--version` の起動確認だけを行う。旧 `fetch-chromium.mjs` のように `.app` 内の
-実行ファイル名を `Chromium` にリネームすると Mach-O 署名が壊れるため、CfT の
-名前（`Google Chrome for Testing.app`）をそのまま保持する。
-
-### ライブ表示と成果物
-
-- ライブ表示は CDP screencast（JPEG quality 60、everyNthFrame 2）を基本にし、
-  失敗時は 2 秒ごとの非永続 JPEG フレーム取得へフォールバックする。ウィンドウが
-  非表示の間は停止する。エージェント操作と同じ workspace ロックは `try_lock`
-  で取り、操作中はフレームを諦めて前回の画像を残す（スクリーンショット待ちで
-  クリックを遅らせない）。
-- ライブフレームは CSS ビューポートの 0.5 倍でキャプチャする。パネル表示幅は
-  380–560px なので十分な解像度を保ちつつ、JPEG エンコード・IPC・WebView の
-  デコードを約 1/4 に抑える。返す `width` / `height` は CSS サイズで、クリック
-  座標変換は解像度に依存しない。成果物の PNG はフル解像度のまま。
-- `browser_frame` は現在 URL・タイトル・戻る/進む可否も返し、ツールバーが
-  追加のキャプチャ無しで状態を更新できる。
-- ライブ画面のクリックは `object-contain` の letterbox を考慮し、描画矩形の
-  中央・拡大率からページ座標へ変換する。描画矩形の外側はクリックしない。
-- スクリーンショットのインデックスは 500 件で上限。退避したエントリの PNG は
-  実ファイルごと削除し、起動時には実体の無いインデックス行を落とす。
-
-### 移行と開発
-
-- 既存の同梱版からアップデートした場合、初回にブラウザの再ダウンロードが必要。
-  UI は未インストール状態を表示し、システムブラウザがあればそれをフォールバックに使う。
-- `pnpm tauri dev` はリソースを持たないため、システム Chromium か
-  `MIX_CHROMIUM_HOME=/path/to/chromium` を使う。
-- オフライン環境では `<app-data>/chromium` へ手動で展開するか、システム
-  Chromium を使う。手順はリリースノートに記載する。
-- リリース CI はもう Chromium を取得・同梱しない。macOS の署名検査はアプリ本体
-  だけで行い、ブラウザの CPU アーキテクチャはマニフェストと起動確認で担保する。
+  - 利用できない環境（Linux で bwrap/firejail 未導入など）では設定を保存できず、理由を表示します。`browser` も外部サイトを操作できるため、敵対的なコードを安全に実行する用途には使わないでください。
 
 **Desktop版のmacOSアプリはApple Developer IDコード署名・公証を行いません。** ただし `tauri.conf.json` の `bundle.macOS.signingIdentity` に `-` を設定し、ad-hoc署名は必ず付与します。Apple Siliconでは署名のないアプリバンドルを起動できず、ダウンロードしたDMGからコピーしただけで「壊れているため開けません」と表示されるためです。ad-hoc署名でも公証チケットはないため、初回起動時にGatekeeperの「このまま開く」確認が必要です。Windowsインストーラーは未署名です。
 ビルドにApple証明書・AppleアカウントSecrets・Windows署名証明書を渡さず、macOS GatekeeperとWindows SmartScreenの警告や起動制限の可能性をRelease notesに明記します。リリースワークフローはmacOSバンドルに対して `codesign --verify --deep --strict` とCPUアーキテクチャ検査を実行します。
@@ -413,7 +368,7 @@ Tauri updater plugin を有効にし、`bundle.createUpdaterArtifacts = true` �
 
 署名秘密鍵は GitHub Actions の Repository Secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` にのみ置きます。公開鍵は `tauri.conf.json` の `plugins.updater.pubkey` に埋め込みます。秘密鍵を失うと既存インストールへ更新を配信できなくなるため、リポジトリ外にオフラインバックアップを保管してください。
 
-アプリ内の更新は Rust の `commands::update`（`app_version` / `check_for_update` / `install_update`）を経由します。WebView には `updater:*` 権限を渡しません。起動時チェックは設定 `auto_check_updates`（既定 `true`）で制御し、「設定 ▸ アップデート」から手動確認・ダウンロード・インストール・再起動ができます。更新の適用前にプラグインが公開鍵で署名を検証し、不一致のペイロードはインストールしません。
+アプリ内の更新は Rust の `commands::update`（`app_version` / `check_for_update` / `download_update` / `pending_update`）を経由します。WebView には `updater:*` 権限を渡しません。起動時チェックは設定 `auto_check_updates`（既定 `true`）、自動ダウンロードは `auto_download_updates`（既定 `true`）で制御します。ダウンロードしたペイロードは `<app-data>/updates` に署名検証済みで保存し、ユーザーがアプリを通常終了したときにインストールします。再起動は自動では行わず、次回起動が新バージョンになります。Linux の deb はアプリ内更新の対象外です。
 
 macOS は引き続き Developer ID 署名・公証なし（ad-hoc 署名のみ）、Windows インストーラーは未署名です。これはアップデータ署名とは独立で、Gatekeeper / SmartScreen の警告は残ります。配布物の `SHA256SUMS` も従来どおり添付します。
 
@@ -427,8 +382,8 @@ macOS は引き続き Developer ID 署名・公証なし（ad-hoc 署名のみ�
   （稼働中の WAL DB をファイルコピーすると破れたページを取り込むため不可）。
 - `tar` → zlib → AES-256-GCM。鍵は Argon2id でパスワードから導出。
 - コンテナヘッダは `MIXBAK\x01\x00` + salt(16) + nonce(12) + ciphertext。
-- **API key は含めない**。OS Keychain にあり、バックアップに書くと復号鍵が
-  ディスクへ平文で出るため。復元後に再入力が必要。
+- **API key は含めない**。秘密ストア（`.master_seed` / OS 安全ストレージ）に
+  あり、バックアップに書くと復号鍵がディスクへ平文で出るため。復元後に再入力が必要。
 - Restore は復号を検証したうえで `mix-agent.restored.db` に**ステージング**
   する。実行中プロセスは SQLite プールを開いているため、その場でファイルを
   差し替えると破損する危険がある。`Storage::open` が起動時に
@@ -585,7 +540,7 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
   `document.visibilityState` が `hidden` の間は止めます。`git status` は
   ツリー向けに `-unormal`、Changes ペイン向けに `-uall` を使い分け、branch 名は
   30 秒キャッシュします。
-- **常駐リソース**。Chromium のアイドル終了は 5 分。LSP は 10 分アイドルで
+- **常駐リソース**。ブラウザは Tauri 子 WebView なので別プロセスのアイドル終了は不要。LSP は 10 分アイドルで
   次のツール呼び出し時に破棄し、5 分ごとの housekeeping でも解放します。
   ログは 14 日分、`run_events` は完了済み Run の 180 日超を起動後に削除します
   （`messages` は削除しません）。`PRAGMA optimize` と passive checkpoint を
@@ -689,7 +644,8 @@ Desktop 側も `apps/desktop/LICENSE` と `apps/desktop/Cargo.toml` の `license
 - [`coding-agent-plan.md`](coding-agent-plan.md) — コーディングエージェント化の経緯と残計画
 - [`coding-eval.md`](coding-eval.md) — コーディングエージェントの評価ハーネス
 - [`local-runtime-plan.md`](local-runtime-plan.md) — ローカル LLM 連携の設計記録
-- [`chromium-on-demand-plan.md`](chromium-on-demand-plan.md) — Chromium 初回インストール方式の設計記録
+- [`webview-browser-plan.md`](webview-browser-plan.md) — ネイティブ子 WebView 方式の設計と移行記録
+- [`chromium-on-demand-plan.md`](chromium-on-demand-plan.md) — 旧 Chromium 初回インストール方式（廃止）
 - [`performance-plan.md`](performance-plan.md) — 起動・描画・常駐リソースの軽量化計画
 - [`agent-speed-plan.md`](agent-speed-plan.md) — エージェント 1 ターンの高速化計画
 - [`../verification.md`](../verification.md) — 実機・Provider の検証記録

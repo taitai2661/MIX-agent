@@ -360,6 +360,7 @@ impl Harness {
             history: Vec::new(),
             user_message: task.prompt.to_string(),
             resume_from: None,
+            auto_fallbacks: Vec::new(),
         }
     }
 }

@@ -123,11 +123,15 @@ export function SettingsOverview() {
         </div>
         <div>
           <span>{t("接続状態")}</span>
-          <b>{providers.data?.length ? t("準備完了") : t("Providerを追加")}</b>
+          <Link to="/settings/providers" className="settings-summary-link">
+            {providers.data?.length ? t("準備完了") : t("Providerを追加")}
+          </Link>
         </div>
         <div>
           <span>{t("テーマ")}</span>
-          <b>{t("表示設定で変更")}</b>
+          <Link to="/settings/general" className="settings-summary-link">
+            {t("一般で変更")}
+          </Link>
         </div>
       </section>
       {groups.map((group) => (

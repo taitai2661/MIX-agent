@@ -19,6 +19,13 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Context assumed for a model whose window discovery could not report.
+///
+/// This is a safety ceiling, not a guess at the model's capability: a turn
+/// larger than this is refused for an unknown model instead of being sent and
+/// failing at the provider with a context-length error.
+pub const UNKNOWN_CONTEXT_SAFE_TOKENS: u64 = 32_768;
+
 /// One model that may serve an Auto turn.
 #[derive(Debug, Clone)]
 pub struct AutoCandidate {
@@ -385,29 +392,38 @@ fn request_cost_usd(model_name: &str, input_tokens: u64, output_tokens: u64) -> 
     Some(input * price.input_per_million + output * price.output_per_million)
 }
 
-/// Deterministic per-request tiebreak: seeded Beta draw favouring stronger
-/// feedback, with a hash fallback for full determinism.
+/// Deterministic per-request tiebreak. The hash is folded with the feedback
+/// evidence so stronger evidence wins ties, and FNV-1a is used instead of
+/// `DefaultHasher` because the latter is explicitly allowed to change between
+/// Rust releases — a persisted retry key must resolve the same way after an
+/// app update.
 fn tiebreak(request_key: &str, entries: &[(usize, f64, f64, f64, f64)]) -> usize {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
     // entries: (index, up, down, prior_up, prior_down)
     let mut best: Option<(usize, u64)> = None;
     for (index, up, down, prior_up, prior_down) in entries {
-        let mut h = DefaultHasher::new();
-        request_key.hash(&mut h);
-        index.hash(&mut h);
-        // Fold the feedback into the hash so stronger evidence wins ties
-        // deterministically without any RNG dependency.
-        ((up * 1000.0) as u64).hash(&mut h);
-        ((down * 1000.0) as u64).hash(&mut h);
-        ((prior_up * 1000.0) as u64).hash(&mut h);
-        ((prior_down * 1000.0) as u64).hash(&mut h);
-        let v = h.finish();
+        let seed = format!(
+            "{request_key}\u{1f}{index}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            (up * 1000.0).round() as u64,
+            (down * 1000.0).round() as u64,
+            (prior_up * 1000.0).round() as u64,
+            (prior_down * 1000.0).round() as u64,
+        );
+        let v = fnv1a64(seed.as_bytes());
         if best.map(|(_, b)| v > b).unwrap_or(true) {
             best = Some((*index, v));
         }
     }
     best.map(|(i, _)| i).unwrap_or(0)
+}
+
+/// FNV-1a (64-bit), fixed for the lifetime of the product.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 /// Select the best model for one turn, or return a user-facing reason.
@@ -439,6 +455,13 @@ pub fn select_auto_model(
             *excluded.entry("context").or_default() += 1;
             continue;
         }
+        // `0` means discovery could not report a window, not "unlimited".
+        // Treat it as unknown and refuse a turn larger than a conservative
+        // ceiling; otherwise an unknown model could be asked for 100K tokens.
+        if c.context_window == 0 && opts.required_tokens > UNKNOWN_CONTEXT_SAFE_TOKENS {
+            *excluded.entry("context_unknown").or_default() += 1;
+            continue;
+        }
         if opts.has_image && !c.vision {
             *excluded.entry("vision").or_default() += 1;
             continue;
@@ -457,6 +480,7 @@ pub fn select_auto_model(
             .map(|k| match *k {
                 "chat" => "通常チャット",
                 "context" => "Context Window",
+                "context_unknown" => "Context Window（不明）",
                 "vision" => "Vision",
                 "tools" => "Tool Calling",
                 _ => "条件",
@@ -776,5 +800,53 @@ mod tests {
         let (first, _) = select_auto_model(&candidates, &HashMap::new(), &o, &[]).expect("select");
         let (second, _) = select_auto_model(&candidates, &HashMap::new(), &o, &[]).expect("select");
         assert_eq!(first.id, second.id);
+    }
+
+    #[test]
+    fn tiebreak_hash_is_pinned_across_rust_versions() {
+        // FNV-1a is fixed by this test, not by the standard library. If a
+        // refactor changes the seed format, persisted retry keys would resolve
+        // differently after an upgrade.
+        assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
+    }
+
+    #[test]
+    fn speed_priority_prefers_measured_fast_model() {
+        let candidates = vec![
+            candidate("slow", "p1", "some-unknown-model-alpha"),
+            candidate("fast", "p2", "some-unknown-model-beta"),
+        ];
+        let mut signals = HashMap::new();
+        signals.insert(
+            "slow".to_string(),
+            CandidateSignals {
+                speed_score: -0.16,
+                ..Default::default()
+            },
+        );
+        signals.insert(
+            "fast".to_string(),
+            CandidateSignals {
+                speed_score: 0.16,
+                ..Default::default()
+            },
+        );
+        let mut o = opts("hello");
+        o.priority = AutoPriority::Speed;
+        let (selected, _) = select_auto_model(&candidates, &signals, &o, &[]).expect("select");
+        assert_eq!(selected.id, "fast");
+    }
+
+    #[test]
+    fn unknown_context_is_not_treated_as_unlimited() {
+        let candidates = vec![AutoCandidate {
+            context_window: 0,
+            ..candidate("unknown", "p1", "some-unknown-model")
+        }];
+        let mut o = opts("hello");
+        o.required_tokens = UNKNOWN_CONTEXT_SAFE_TOKENS + 1;
+        let err = select_auto_model(&candidates, &HashMap::new(), &o, &[]).unwrap_err();
+        assert!(err.contains("不明"), "got: {err}");
     }
 }

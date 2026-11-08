@@ -93,6 +93,12 @@ impl RunEngine {
                 totals,
                 finish_reason,
                 steps,
+                // A cancelled Run is intentionally neutral for Auto: speed and
+                // availability were not measured to completion, and treating
+                // "the user pressed Stop" as a provider failure would poison
+                // the router.
+                turn_performances: Vec::new(),
+                auto_fallbacks: Vec::new(),
             },
         )
         .await

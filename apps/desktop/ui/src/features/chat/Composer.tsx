@@ -2,11 +2,9 @@ import { memo } from "react";
 import { EyeOff, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { chord } from "@/lib/platform";
 import { useUi } from "@/lib/ui";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Kbd } from "@/components/layout";
 import { ErrorBox } from "@/components/shared";
 import {
   ComposerAttachments,
@@ -86,15 +84,26 @@ export const Composer = memo(function Composer(props: ComposerProps) {
   const canSteer = busy && !!onSteer && state.draft.trim().length > 0;
 
   const placeholder =
-    mode === "agent"
-      ? t("エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)")
-      : mode === "thinking"
-        ? t("深く考えてほしいことを入力…")
-        : t("MIX-agent に話しかける…");
+    mode === "plan"
+      ? t("計画したいタスクを入力…（読み取り専用）")
+      : mode === "agent"
+        ? t("エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)")
+        : mode === "thinking"
+          ? t("深く考えてほしいことを入力…")
+          : t("MIX-agent に話しかける…");
 
   return (
     <div className="border-t border-line bg-bg px-4 pb-4 pt-3">
-      <div className="mx-auto flex w-full max-w-content flex-col gap-2">
+      <div className="relative mx-auto flex w-full max-w-content flex-col gap-2">
+        {state.slashQuery !== null && state.mentionQuery === null && (
+          <SlashCommandPopover
+            query={state.slashQuery}
+            onSelect={state.onSelectSlashCommand}
+            selectedIndex={state.slashIndex}
+            setSelectedIndex={state.setSlashIndex}
+            allowedModes={allowedModes}
+          />
+        )}
         <div
           onDragOver={(e) => {
             if ([...(e.dataTransfer?.types ?? [])].includes("Files")) {
@@ -139,14 +148,6 @@ export const Composer = memo(function Composer(props: ComposerProps) {
                 onClose={() => state.setMentionQuery(null)}
                 selectedIndex={state.mentionIndex}
                 setSelectedIndex={state.setMentionIndex}
-              />
-            )}
-            {state.slashQuery !== null && state.mentionQuery === null && (
-              <SlashCommandPopover
-                query={state.slashQuery}
-                onSelect={state.onSelectSlashCommand}
-                selectedIndex={state.slashIndex}
-                setSelectedIndex={state.setSlashIndex}
               />
             )}
             <textarea
@@ -241,29 +242,6 @@ export const Composer = memo(function Composer(props: ComposerProps) {
           id="composer-hints"
           className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint"
         >
-          {sendShortcut === "modifier" ? (
-            <span
-              className="hidden items-center gap-1 sm:inline-flex"
-              aria-hidden="true"
-            >
-              <Kbd>{chord("Mod", "Enter")}</Kbd>
-              <span>{t("送信")}</span>
-              <span className="mx-1 text-line">·</span>
-              <Kbd>Enter</Kbd>
-              <span>{t("改行")}</span>
-            </span>
-          ) : (
-            <span
-              className="hidden items-center gap-1 sm:inline-flex"
-              aria-hidden="true"
-            >
-              <Kbd>Enter</Kbd>
-              <span>{t("送信")}</span>
-              <span className="mx-1 text-line">·</span>
-              <Kbd>{chord("Shift", "Enter")}</Kbd>
-              <span>{t("改行")}</span>
-            </span>
-          )}
           <span className="min-w-0 flex-1" />
           {state.temporaryMode && (
             <Badge tone="warning">

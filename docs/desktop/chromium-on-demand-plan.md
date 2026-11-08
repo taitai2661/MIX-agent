@@ -1,3 +1,5 @@
+> **廃止（2026-11-06）**: Desktop は Tauri の子 WebView 方式へ移行したため、この計画の Chromium ダウンロード / 管理は削除された。Docker 版の Playwright Chromium は別系統として継続する。
+
 # Desktop版 Chromium の初回インストール方式（設計記録）
 
 > 状態: 実装済み（2026-10-28）。

@@ -81,13 +81,13 @@ export function AgentsPane() {
 
   return (
     <Page
-      title={t("エージェントプロファイル")}
+      title={t("エージェント設定")}
       sub={t(
         "ツールを絞った専用エージェントを定義します。エージェントモードの実行から呼び出されます。",
       )}
     >
       <Card
-        title={`${t("エージェントプロファイル")} — ${editingId ? t("編集") : t("作成")}`}
+        title={`${t("エージェント設定")} — ${editingId ? t("編集") : t("作成")}`}
         icon={<Bot size={13} />}
       >
         <Field label={t("名前")}>
@@ -171,7 +171,7 @@ export function AgentsPane() {
       ) : list.length === 0 ? (
         <EmptyState
           icon={<Bot size={22} />}
-          title={t("エージェントプロファイル")}
+          title={t("エージェント設定")}
           sub={t("まだ登録されていません。")}
         />
       ) : (

@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.6"
+version = "0.5.7"
 edition = "2021"
 rust-version = "1.91"
 authors = ["MIX-agent contributors"]
@@ -75,9 +75,10 @@ lto = "thin"
 # for a smaller binary. The updater payload is compressed, so the real cost of
 # `3` is measured in the release checklist rather than assumed here.
 opt-level = 3
-# Beta builds keep unwinding + no symbol stripping so crash reports from the
-# field still carry a backtrace. `panic = "abort"` / `strip = "symbols"` would
-# shrink the binary but blind beta diagnostics; re-enable both for the final
-# release build only.
+# Beta builds keep unwinding so crash reports still carry a backtrace.
+# `strip = "symbols"` removes debuginfo (binary size) but keeps the symbol
+# table, so `RUST_BACKTRACE=1` output stays readable. `strip = "none"` was the
+# old setting; it preserved full debuginfo at the cost of a much larger
+# updater payload with no extra diagnostic value over symbols.
 panic = "unwind"
-strip = "none"
+strip = "symbols"

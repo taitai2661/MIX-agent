@@ -1,14 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  ActiveRunView,
   AgentView,
   AttachmentPayload,
-  BrowserFrameView,
   BrowserInvokeOutput,
-  BrowserScreencastFrame,
-  BrowserInstallState,
-  BrowserProfileView,
-  BrowserStatus,
   CheckpointView,
   ChatGptDeviceStart,
   ChatGptDeviceStatus,
@@ -27,6 +23,7 @@ import type {
   GitDiffView,
   GitStatusView,
   HealthReport,
+  InterruptedRunView,
   KnowledgeDocView,
   KnowledgeSearchHit,
   LocalJobView,
@@ -53,6 +50,8 @@ import type {
   ScheduleJobView,
   SendMessageOutput,
   SettingsView,
+  SpotlightStatus,
+  SpotlightTarget,
   SkillResourceView,
   SkillView,
   ToolView,
@@ -248,6 +247,9 @@ export const api = {
   getRun: (id: string) => invoke<RunView>("get_run", { id }),
   listRuns: (conversationId: string) =>
     invoke<RunView[]>("list_runs", { conversationId }),
+  listInterruptedRuns: () =>
+    invoke<InterruptedRunView[]>("list_interrupted_runs"),
+  listActiveRuns: () => invoke<ActiveRunView[]>("list_active_runs"),
   listRunEvents: (runId: string) =>
     invoke<RunEventView[]>("list_run_events", { runId }),
   listCheckpoints: (id: string) =>
@@ -304,17 +306,6 @@ export const api = {
   handleMcpOauthCallback: (url: string) =>
     invoke<void>("handle_oauth_callback", { url }),
 
-  browserStatus: () => invoke<BrowserStatus>("browser_status"),
-  browserInstall: (force = false) =>
-    invoke<BrowserInstallState>("browser_install", { force }),
-  browserInstallCancel: () =>
-    invoke<BrowserInstallState>("browser_install_cancel"),
-  /** Progress/completion events from the background installer. */
-  browserInstallEvent: (handler: (state: BrowserInstallState) => void) =>
-    listen<BrowserInstallState>("browser://install", (event) =>
-      handler(event.payload),
-    ),
-  browserUninstall: () => invoke<void>("browser_uninstall"),
   browserInvoke: (input: {
     workspace_id: string | null;
     action: string;
@@ -336,24 +327,27 @@ export const api = {
     limit?: number | null;
     tab_id?: string | null;
   }) => invoke<BrowserInvokeOutput>("browser_invoke", { input }),
-  browserProfiles: () => invoke<BrowserProfileView[]>("browser_profiles"),
-  browserResetProfile: (workspaceId: string) =>
-    invoke<void>("browser_reset_profile", { workspaceId }),
   browserArtifact: (id: string) => invoke<string>("browser_artifact", { id }),
-  browserFrame: (workspaceId: string, fullPage = false) =>
-    invoke<BrowserFrameView | null>("browser_frame", { workspaceId, fullPage }),
   browserStop: (workspaceId: string) =>
     invoke<void>("browser_stop", { workspaceId }),
-  /** Keep an open panel's workspace out of the idle LRU (no Chromium launch). */
-  browserKeepalive: (workspaceId: string) =>
-    invoke<void>("browser_keepalive", { workspaceId }),
-  browserScreencastStart: (workspaceId: string) =>
-    invoke<void>("browser_screencast_start", { workspaceId }),
-  browserScreencastStop: (workspaceId: string) =>
-    invoke<void>("browser_screencast_stop", { workspaceId }),
-  /** CDP screencast frames (falls back to `browserFrame` polling). */
-  browserFrameEvent: (handler: (frame: BrowserScreencastFrame) => void) =>
-    listen<BrowserScreencastFrame>("browser://frame", (event) =>
+  browserSurfaceBounds: (
+    workspaceId: string,
+    bounds: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      visible: boolean;
+    },
+  ) =>
+    invoke<void>("browser_surface_bounds", {
+      input: { workspace_id: workspaceId, ...bounds },
+    }),
+  browserClearData: (workspaceId: string) =>
+    invoke<void>("browser_clear_data", { workspaceId }),
+  /** Native WebView state changed (page load, title, tab switch). */
+  browserStateEvent: (handler: (event: { workspace_id: string }) => void) =>
+    listen<{ workspace_id: string }>("browser://state", (event) =>
       handler(event.payload),
     ),
 
@@ -447,6 +441,10 @@ export const api = {
     },
   ) => invoke<ProjectView>("update_project", { id, input }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
+  openProjectFolder: (id: string) =>
+    invoke<void>("open_project_folder", { id }),
+  openProjectTerminal: (id: string) =>
+    invoke<void>("open_project_terminal", { id }),
 
   listDir: (rootPath: string, path: string) =>
     invoke<DirEntryView[]>("list_dir", { rootPath, path }),
@@ -510,8 +508,15 @@ export const api = {
   relaunchApp: () => invoke<void>("relaunch_app"),
 
   getSettings: () => invoke<SettingsView>("get_settings"),
+  getMonthlySpend: () => invoke<number>("get_monthly_spend"),
   updateSettings: (input: SettingsView) =>
     invoke<SettingsView>("update_settings", { input }),
+
+  spotlightStatus: () => invoke<SpotlightStatus>("spotlight_status"),
+  spotlightRebuild: () => invoke<void>("spotlight_rebuild"),
+  spotlightClear: () => invoke<void>("spotlight_clear"),
+  spotlightTakePending: () =>
+    invoke<SpotlightTarget | null>("spotlight_take_pending"),
 
   listAgents: () => invoke<AgentView[]>("list_agents"),
   createAgent: (input: {
@@ -535,6 +540,7 @@ export const api = {
   getRecentLogs: (lines?: number) =>
     invoke<string>("get_recent_logs", { lines: lines ?? null }),
   exportDiagnostics: () => invoke<DiagnosticsExport>("export_diagnostics"),
+  diagnosticsBundle: () => invoke<string>("diagnostics_bundle"),
 
   previewFileDiff: (
     path: string,
@@ -587,11 +593,17 @@ export const api = {
     invoke<number>("save_base64_file", { path, dataBase64 }),
 
   // In-app updates. `checkForUpdate` resolves `null` when the running build is
-  // already the newest; `installUpdate` re-checks, downloads, verifies the
-  // signature and installs (then the caller relaunches).
+  // already the newest; `downloadUpdate` verifies and stages the payload, and
+  // `pendingUpdate` restores that staged state after a restart. The staged
+  // update is applied on the next normal quit; there is no install command the
+  // WebView can call to restart the app.
   appVersion: () => invoke<string>("app_version"),
+  /** Stop live Runs and quit. Only call after the user confirmed. */
+  quitApp: () => invoke<void>("quit_app"),
   checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
-  installUpdate: () => invoke<UpdateInfo>("install_update"),
+  downloadUpdate: () => invoke<UpdateInfo>("download_update"),
+  pendingUpdate: () => invoke<UpdateInfo | null>("pending_update"),
+  installUpdateNow: () => invoke<void>("install_update_now"),
 };
 
 export interface RunEventPayload {

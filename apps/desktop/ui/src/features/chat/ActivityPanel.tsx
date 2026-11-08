@@ -276,7 +276,7 @@ export function ActivityPanel({
   const liveRunId = liveEntry?.runId ?? null;
   const liveTimeline = liveEntry?.timeline ?? null;
   const activityRunId = useUi((s) => s.activityRunId);
-  const setRightPanel = useUi((s) => s.setRightPanel);
+  const closeRightPanel = useUi((s) => s.closeRightPanel);
   const setActivityRunId = useUi((s) => s.setActivityRunId);
 
   const runId = activityRunId ?? liveRunId;
@@ -368,7 +368,7 @@ export function ActivityPanel({
           trailing={runId ? <Badge size="sm">{shortId(runId)}</Badge> : null}
           onClose={() => {
             setActivityRunId(null);
-            setRightPanel("none");
+            closeRightPanel();
           }}
         />
       )}

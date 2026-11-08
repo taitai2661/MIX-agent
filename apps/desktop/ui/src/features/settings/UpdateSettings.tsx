@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { listen } from "@tauri-apps/api/event";
-import { Download, RefreshCw, RotateCw } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
@@ -9,39 +7,43 @@ import { Card, Section } from "@/components/layout";
 import { ToggleRow } from "@/components/common";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { useConfirm } from "@/components/ui/dialog";
 import { useSettingsForm } from "@/lib/settings";
 import {
   isLinuxPlatform,
   isMacPlatform,
   isWindowsPlatform,
 } from "@/lib/platform";
-import { UPDATE_QUERY_KEY, useUpdateCheck } from "@/lib/updates";
-import type { UpdateProgress } from "@/lib/types";
+import {
+  clearUpdateError,
+  downloadPendingUpdate,
+  useUpdateCheck,
+  useUpdateStore,
+} from "@/lib/updates";
 
 const RELEASES_URL = "https://github.com/taitai2661/MIX-agent/releases";
 
 /**
  * In-app update flow.
  *
- * The Rust side owns check/download/install (`commands::update`); this pane
- * only renders state and streams `update://progress`. On Windows the installer
- * exits the process by itself; on macOS/Linux the user is offered a restart so
- * the freshly installed build is the one that runs.
+ * The Rust side owns check/download and installs the staged payload when the
+ * app quits (`commands::update`); this pane only renders state and starts the
+ * manual download. There is deliberately no "restart now" button: the update
+ * applies on the next normal launch.
  */
 export function UpdateSettings() {
   const { data, patch, loaded } = useSettingsForm();
-  const queryClient = useQueryClient();
   const [version, setVersion] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
   // Shares `UPDATE_QUERY_KEY` with the header badge, so opening this pane does
-  // not fire a second request and an install clears both views at once.
+  // not fire a second request.
   const checkQuery = useUpdateCheck(loaded && data.auto_check_updates);
   const update = checkQuery.data ?? null;
-  const { confirm, dialog } = useConfirm();
-  const [installing, setInstalling] = useState(false);
-  const [installed, setInstalled] = useState<string | null>(null);
-  const [progress, setProgress] = useState<UpdateProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const phase = useUpdateStore((state) => state.phase);
+  const pending = useUpdateStore((state) => state.pending);
+  const progress = useUpdateStore((state) => state.progress);
+  const downloadError = useUpdateStore((state) => state.error);
+  const installing = phase === "downloading";
 
   useEffect(() => {
     api
@@ -50,100 +52,29 @@ export function UpdateSettings() {
       .catch(() => setVersion(null));
   }, []);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    listen<UpdateProgress>("update://progress", (event) => {
-      setProgress(event.payload);
-    })
-      .then((fn) => {
-        // The effect may have been torn down before `listen` resolved.
-        if (cancelled) fn();
-        else unlisten = fn;
-      })
-      .catch(() => {
-        // Older builds without the command simply never emit progress.
-      });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  const requestInstall = async () => {
-    // The button sits one click away from an alert and used to start an
-    // installer immediately, even though the hint beside it promised a
-    // confirmation dialog. Installing quits/restarts the app on Windows.
-    const ok = await confirm({
-      title: tf("v{version} をインストールしますか？", {
-        version: update?.version ?? "",
-      }),
-      description: t(
-        "ダウンロードとインストールを開始します。インストール後はアプリの再起動が必要です。作業中の実行は完了してからにしてください。",
-      ),
-      confirmLabel: t("ダウンロードしてインストール"),
-    });
-    if (ok) void install();
-  };
-
-  const install = async () => {
-    setInstalling(true);
-    setError(null);
-    setProgress(null);
-    setInstalled(null);
-    try {
-      const info = await api.installUpdate();
-      setInstalled(info.version);
-      queryClient.setQueryData(UPDATE_QUERY_KEY, null);
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setInstalling(false);
+  const verifying = progress?.stage === "verifying";
+  let percent: number | null = null;
+  if (progress) {
+    if (verifying) percent = 100;
+    else if (progress.total && progress.total > 0) {
+      percent = Math.min(
+        100,
+        Math.round((progress.downloaded / progress.total) * 100),
+      );
     }
-  };
-
-  const relaunch = async () => {
-    setError(null);
-    try {
-      await api.relaunchApp();
-    } catch (e) {
-      // `relaunch_app` can fail (for example when the OS refuses to start a
-      // new instance). Swallowing it made the 再起動 button look dead.
-      setError(errorMessage(e));
-    }
-  };
-
-  // A new check is a fresh answer: do not keep the previous download error or
-  // progress bar next to it. An install in flight owns the progress area, so a
-  // background re-check must not reset it.
-  useEffect(() => {
-    if (installing || !checkQuery.isFetching) return;
-    setError(null);
-    setProgress(null);
-  }, [checkQuery.isFetching, installing]);
-
-  // After installing v0.5.5 the pane stays open until the user restarts. If a
-  // later check finds v0.5.6, the old "v0.5.5 をインストールしました" banner must
-  // not keep hiding the newer install button.
-  useEffect(() => {
-    const version = update?.version;
-    if (!version) return;
-    setInstalled((current) => (current === version ? current : null));
-  }, [update?.version]);
-
-  const installingPhase = progress?.stage === "installing";
-  const percent = installingPhase
-    ? 100
-    : progress && progress.total && progress.total > 0
-      ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
-      : null;
+  }
   // `check_for_update` already reports the running version. Use it when the
   // separate `app_version` call failed (or is still in flight) instead of
   // telling the user the version is unknown.
-  const displayVersion = version ?? update?.current_version ?? null;
+  const displayVersion =
+    version ?? update?.current_version ?? pending?.current_version ?? null;
   const queryError = checkQuery.isError ? errorMessage(checkQuery.error) : null;
   const upToDate =
-    checkQuery.isFetched && !checkQuery.isError && checkQuery.data === null;
+    checkQuery.isFetched &&
+    !checkQuery.isError &&
+    checkQuery.data === null &&
+    !pending &&
+    !installing;
 
   return (
     <Section>
@@ -158,7 +89,10 @@ export function UpdateSettings() {
             <Button
               size="sm"
               disabled={checkQuery.isFetching || installing}
-              onClick={() => void checkQuery.refetch()}
+              onClick={() => {
+                clearUpdateError();
+                void checkQuery.refetch();
+              }}
             >
               <RefreshCw
                 size={12}
@@ -168,8 +102,10 @@ export function UpdateSettings() {
             </Button>
           </div>
 
-          {error && <Alert tone="danger">{error}</Alert>}
-          {!error && queryError && <Alert tone="danger">{queryError}</Alert>}
+          {downloadError && <Alert tone="danger">{downloadError}</Alert>}
+          {!downloadError && queryError && (
+            <Alert tone="danger">{queryError}</Alert>
+          )}
 
           {installing && (
             <div className="flex flex-col gap-1.5">
@@ -186,8 +122,8 @@ export function UpdateSettings() {
                 />
               </div>
               <p className="m-0 text-xs text-muted">
-                {installingPhase
-                  ? t("インストール中…")
+                {verifying
+                  ? t("署名を検証しています…")
                   : percent === null
                     ? t("ダウンロード中…")
                     : tf("ダウンロード中… {percent}%", { percent })}
@@ -195,23 +131,49 @@ export function UpdateSettings() {
             </div>
           )}
 
-          {installed && !installing && (
-            <Alert
-              tone="success"
-              action={
-                <Button size="sm" onClick={() => void relaunch()}>
-                  <RotateCw size={12} /> {t("再起動")}
-                </Button>
-              }
-            >
-              {tf(
-                "v{version} をインストールしました。再起動すると適用されます。",
-                { version: installed },
-              )}
+          {pending && !installing && (
+            <Alert tone="info">
+              <div className="flex flex-col gap-1">
+                <span className="font-medium">
+                  {tf(
+                    "v{version} をダウンロードしました。次回 MIX-agent を終了（Quit）すると適用されます。",
+                    { version: pending.version },
+                  )}
+                </span>
+                {pending.date && (
+                  <span className="text-xs text-muted">{pending.date}</span>
+                )}
+                {pending.notes && (
+                  <span className="whitespace-pre-wrap text-xs">
+                    {pending.notes}
+                  </span>
+                )}
+                <div className="mt-1">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={restarting}
+                    onClick={async () => {
+                      setRestarting(true);
+                      setRestartError(null);
+                      try {
+                        await api.installUpdateNow();
+                      } catch (err) {
+                        setRestartError(errorMessage(err));
+                        setRestarting(false);
+                      }
+                    }}
+                  >
+                    <RefreshCw size={12} />
+                    {restarting ? t("再起動しています…") : t("再起動して更新")}
+                  </Button>
+                </div>
+                {restartError && <Alert tone="danger">{restartError}</Alert>}
+              </div>
             </Alert>
           )}
 
-          {update && !installing && !installed && (
+          {update && !installing && !pending && (
             <Alert
               tone={update.installable ? "info" : "warning"}
               action={
@@ -219,10 +181,10 @@ export function UpdateSettings() {
                   <Button
                     size="sm"
                     variant="primary"
-                    disabled={checkQuery.isFetching || installing}
-                    onClick={() => void requestInstall()}
+                    disabled={checkQuery.isFetching}
+                    onClick={() => void downloadPendingUpdate()}
                   >
-                    <Download size={12} /> {t("ダウンロードしてインストール")}
+                    <Download size={12} /> {t("ダウンロード")}
                   </Button>
                 ) : undefined
               }
@@ -252,18 +214,28 @@ export function UpdateSettings() {
             </Alert>
           )}
 
-          {upToDate && !installed && !installing && !error && !queryError && (
+          {upToDate && (
             <Alert tone="success">{t("最新バージョンです。")}</Alert>
           )}
 
           <div className="border-t border-line pt-3">
             <ToggleRow
               label={t("起動時に更新を確認")}
-              hint={t(
-                "起動時にGitHub Releasesのマニフェストを確認します。ダウンロードとインストールは署名を検証した上で、確認ダイアログから実行します。",
-              )}
+              hint={t("起動時にGitHub Releasesのマニフェストを確認します。")}
               checked={data.auto_check_updates}
               onChange={(auto_check_updates) => patch({ auto_check_updates })}
+            />
+            <ToggleRow
+              className="mt-3"
+              label={t("更新を自動でダウンロード")}
+              hint={t(
+                "起動時に新しいバージョンを見つけたら自動でダウンロードします。適用はメニュー／トレイの Quit で終了したときに行われ、再起動は手動です。",
+              )}
+              checked={data.auto_download_updates}
+              disabled={!data.auto_check_updates}
+              onChange={(auto_download_updates) =>
+                patch({ auto_download_updates })
+              }
             />
           </div>
 
@@ -299,7 +271,6 @@ export function UpdateSettings() {
           )}
         </div>
       </Card>
-      {dialog}
     </Section>
   );
 }

@@ -26,6 +26,10 @@ pub struct DiagnosticsReport {
 
 #[tauri::command]
 pub async fn collect_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsReport, String> {
+    collect_diagnostics_for(state.inner()).await
+}
+
+pub async fn collect_diagnostics_for(state: &AppState) -> Result<DiagnosticsReport, String> {
     let pool = state.storage.pool();
     let data_dir = state.storage.data_dir().display().to_string();
     // These three used to be literal `true`, which made the pane report a
@@ -174,7 +178,11 @@ fn read_recent_logs(dir: &std::path::Path, limit: usize) -> String {
 
 #[tauri::command]
 pub async fn export_diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsExport, String> {
-    let report = collect_diagnostics(state).await?;
+    export_diagnostics_for(state.inner()).await
+}
+
+pub async fn export_diagnostics_for(state: &AppState) -> Result<DiagnosticsExport, String> {
+    let report = collect_diagnostics_for(state).await?;
     let recent_logs = get_recent_logs(Some(300)).await.unwrap_or_default();
     Ok(DiagnosticsExport {
         report,
@@ -183,4 +191,51 @@ pub async fn export_diagnostics(state: State<'_, AppState>) -> Result<Diagnostic
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         recent_logs,
     })
+}
+
+/// A single zip a support request can attach: the JSON report, the log tail,
+/// and a short note explaining what is (and is not) inside.
+///
+/// The JSON export already existed, but asking a user to find the log file and
+/// attach two downloads is friction at exactly the moment they are frustrated.
+/// Provider keys live in the OS secret store and are not included; the settings
+/// document is omitted entirely rather than relying on a redactor to catch a
+/// future field.
+#[tauri::command]
+pub async fn diagnostics_bundle(state: State<'_, AppState>) -> Result<String, String> {
+    use base64::Engine as _;
+
+    let exported = export_diagnostics_for(state.inner()).await?;
+    let report = serde_json::to_vec_pretty(&exported)
+        .map_err(|err| format!("could not serialise diagnostics: {err}"))?;
+    let readme = format!(
+        "MIX-agent Desktop diagnostics bundle\n\
+         Version: {}\nOS: {} ({})\n\n\
+         Contents:\n\
+         - diagnostics.json  machine-readable report and 300-line log tail\n\
+         - recent.log        the same log tail as a plain text file\n\
+         - schema.txt        SQLite schema version\n\n\
+         Secrets (provider API keys, OAuth tokens) are stored in the OS \
+         credential store and are deliberately absent. Settings are not \
+         included. Review recent.log before sharing if your workspace paths \
+         are sensitive.\n",
+        exported.app_version, exported.os, exported.arch
+    );
+    let logs = exported.recent_logs.clone().into_bytes();
+    let mut entries: Vec<(String, Vec<u8>)> = vec![
+        ("diagnostics.json".to_string(), report),
+        ("recent.log".to_string(), logs),
+        ("README.txt".to_string(), readme.into_bytes()),
+    ];
+    if let Ok(version) = sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+        .fetch_one(state.storage.pool())
+        .await
+    {
+        entries.push((
+            "schema.txt".to_string(),
+            format!("user_version={version}\n").into_bytes(),
+        ));
+    }
+    let bytes = crate::commands::zip_util::write_zip(&entries)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }

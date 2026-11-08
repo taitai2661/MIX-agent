@@ -22,6 +22,7 @@ from mix_agent.api.routes import router
 from mix_agent.api.routes_artifacts import router as artifacts_router
 from mix_agent.api.routes_auth import router as auth_router
 from mix_agent.api.routes_chatgpt import router as chatgpt_router
+from mix_agent.api.routes_conversation_detail import router as conversation_detail_router
 from mix_agent.api.routes_conversations import router as conversations_router
 from mix_agent.api.routes_mcp import router as mcp_router
 from mix_agent.api.routes_memories import router as memories_router
@@ -84,7 +85,7 @@ async def lifespan(app):
 # formatter when MIX_LOG_FORMAT=json is set.
 configure_logging()
 
-app = FastAPI(title="MIX agent", version="0.5.6", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.5.7", lifespan=lifespan)
 LOGGER = logging.getLogger("mix_agent.http")
 
 
@@ -432,6 +433,7 @@ app.include_router(schedules_router)
 # Conversations owns the explicit `/projects/{key}` route, so it must be
 # registered before the generic `/{collection}/{key}` router below.
 app.include_router(messages_router)
+app.include_router(conversation_detail_router)
 app.include_router(conversations_router)
 app.include_router(runs_router)
 app.include_router(skills_router)

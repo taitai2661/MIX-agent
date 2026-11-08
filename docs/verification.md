@@ -6,7 +6,71 @@
 未実施の項目を、単体テストやビルド成功で置き換えて「動作確認済み」と
 扱わないでください。
 
-現在の日付順（新しい順）: 2026-11-05 → 2026-11-03 → 2026-10-31 → 2026-10-29 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+現在の日付順（新しい順）: 2026-11-08 → 2026-11-06 → 2026-11-05 → 2026-11-05 → 2026-11-03 → 2026-10-31 → 2026-10-29 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-28 → 2026-10-27 → 2026-10-26 → 2026-10-26 → 2026-10-26 → 2026-10-25 → 2026-10-25 → 2026-10-01 → 2026-09-26 → 2026-09-23 → 2026-08-30 → 初期実装
+
+## [修正] 会話一覧のページングとバンドル予算ゲート（2026-11-08）
+
+- **バンドル予算ゲート**: `scripts/check-desktop-bundle.mjs` が `index-*.js` を
+  `find()` で選んでいたため、`@tauri-apps/plugin-os` の遅延チャンク
+  （`index-*.js`、811 B）を初期 chunk と誤認し、「initial 0.8 kB」と表示して
+  実際の初期 chunk（491,685 B）が予算を超えても通過していた。`dist/index.html`
+  の module script から entry を解決するよう修正した。entry を 30 KiB 水増し
+  すると exit 1、元に戻すと exit 0 になることを確認している。
+- **Web の会話一覧**: `GET /conversations` の既定上限（500）で打ち切られ、
+  Web には追加読み込みがなかった。サイドバー（`App.tsx` / `AppSidebar.tsx`）と
+  会話管理ページ（`Conversations.tsx`）を `useInfiniteQuery` の
+  `limit` / `offset` ページング（100 件/ページ）に変更し、「以前の会話を
+  読み込む」を追加した。`lib/conversations.ts` の next-offset 計算に単体テスト、
+  サイドバーのページ送りに E2E を追加した。
+- **Python 3.12 未満でのスクリプト実行**: `check-error-i18n.py` /
+  `check-memory-parity.py` の冒頭で `sys.version_info` を確認し、3.12 未満では
+  `apps/server/.venv/bin/python` を案内して終了するようにした（CI は 3.12）。
+- **検証**: Web の `pnpm typecheck` / `lint` / `format:check` / `test`
+  （37 files 212 tests）/ `test:coverage`（lines 71.16%）/ `build` /
+  `test:e2e`（4 tests）、デスクトップ UI の `pnpm exec vite build` と
+  `check-desktop-bundle.mjs`（initial 480.2 kB / total 1205.7 kB）、
+  `ruff check` / `ruff format --check`（scripts）、memory / error-i18n の
+  パリティ2本が成功。
+- **未実施**: Windows / Linux 実機、実 Provider、Tauri の実バンドル。
+
+## [実装] macOS Spotlight 索引連携（2026-11-06）
+
+- Core Spotlight への索引（会話 / プロジェクト / ナレッジ）、差分キュー
+  （`spotlight_items` / `spotlight_meta`、schema version 5）、設定タブ、
+  検索結果クリックの `NSUserActivity` 受信を実装した。設定は既定 OFF、
+  本文索引も既定 OFF。設計は [`desktop/spotlight-plan.md`](desktop/spotlight-plan.md)。
+- クリック受信は tao の `NSApplicationDelegate` の
+  `application:willContinueUserActivityWithType:` と
+  `application:continueUserActivity:restorationHandler:` の IMP を差し替え、
+  非 Spotlight の activity は元の実装へフォールバックする。
+- **実機確認（Core Spotlight 書き込み）**: `spotlight_smoke` example を
+  ad-hoc 署名した最小 `.app`（`CFBundleIdentifier` あり、App Sandbox なし）に
+  包んで実行し、`INDEX_OK` / `DELETE_OK` を確認した（macOS 27.2 / Apple Silicon）。
+  バンドル外の `tauri dev` 実行では `CFBundleIdentifier` がなく登録できないため、
+  設定画面は「この環境では利用できません」と表示する。
+- 検証: `cargo test -p mix-agent-desktop`（94 unit + integration）、
+  `cargo test -p mixd-storage`（29 unit + backup/fk/smoke）、
+  `cargo clippy -p mix-agent-desktop --all-targets -- -D warnings`、
+  `cargo fmt --all -- --check`、UI テスト全 49 ファイル 364 テスト、
+  `eslint` / `prettier`（変更した UI ファイル）。追加テストは identifier の
+  往復・不明接頭辞、タイトル切り詰め、本文の文字数上限、content hash の
+  安定性、domain と kind の対応を対象にした。
+- **未実施**: インストール版 `.app` の Spotlight UI に実際に表示されること、
+  検索結果クリックから NSUserActivity を受けて画面遷移する一連の GUI 確認。
+  macOS 12 / 14 / Intel 実機、大量履歴での性能確認。
+- **既知のブロッカー**: 変更時点の作業ツリーで `pnpm --filter mix-agent-desktop-ui
+  typecheck` / `lint` が `ChatGptPane.tsx` / `ChatGptPanel.tsx` の既存エラーで
+  失敗する（本変更のファイルではない）。UI のビルドを通すには別途その修正が必要。
+
+## [修正] macOS の Keychain 許可ダイアログ（2026-11-05）
+
+- **症状**: 起動時（および `cargo tauri dev` の再ビルド後）に「security がキーチェーン内の `io.github.taitai2661.mix-agent-desktop` に保存されている機密情報を使用しようとしています」という macOS のパスワードダイアログが繰り返し表示される。
+- **原因**: Desktop 版は `bundle.macOS.signingIdentity = "-"` の ad-hoc 署名で配布しており、再ビルドごとにコードハッシュが変わる。ログイン Keychain の ACL は作成時のアプリ署名を記憶するため、新しいバイナリは毎回「未許可のアプリ」と判定され、マスター seed の読み取り時に許可を求められる。従来は macOS の既定が `KeychainSeedBackend` で、起動のたびに Keychain の `_master_seed` を読んでいた。
+- **修正**: macOS の既定を `FileSeedBackend` に変更した。マスター seed はデータディレクトリの `.master_seed`（0600）に置き、通常起動では Keychain を一切読まない。旧版の Keychain seed がある場合だけ初回に一度読み取り、`.master_seed` へコピーして `.keychain_seed_migrated` を書き、以後はアクセスしない。既存の `.master_seed` が保存済みの暗号文をすべて復号できる場合は Keychain を読まないため、通常のアップグレードではダイアログが出ない。旧 seed と Keychain seed が混在している場合は、より多くのエントリを開ける Keychain seed を採用し、旧 seed を `.master_seed_backup` に残して `seed_candidates` のフォールバックで復号（読み取り時に新 seed で再暗号化）する。
+- **CLI**: `--doctor` の `secrets.backend` 表示を実装に合わせ、macOS の既定を `file`、Windows を `keychain-seed`、明示指定 `keychain-seed` も表示するようにした。`probe()` はファイルのみを検査し、診断で Keychain ダイアログを出さない。
+- **切替**: `MIX_SECRET_BACKEND=keychain-seed` で従来の Keychain-hybrid、`keychain` で全 Keychain、`file` で強制ファイル方式。
+- **検証**: `cargo fmt --all -- --check`、`cargo clippy -p mixd-storage -p mix-agent-desktop --all-targets -- -D warnings`、`cargo test -p mixd-storage`（29 unit + backup/fk/smoke 全成功）。追加テストは「新規インストールで Keychain を読まない」「旧 Keychain seed を一度だけ移行する」「有効なファイル seed では Keychain を読まない」「stale seed と Keychain seed が混在しても両方復号できる」を対象にした。
+- **未実施**: 実 macOS の Keychain ダイアログを目視する GUI 確認（CI はメモリ上の seed store で検証）。Windows 実機の Credential Manager 動作は従来どおり未確認。
 
 ## [実装] v0.5.6 Windows CI の ConPTY 既知制限（2026-11-05）
 

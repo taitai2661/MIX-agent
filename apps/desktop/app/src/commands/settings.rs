@@ -1,4 +1,5 @@
 use crate::AppState;
+use mixd_browser::BrowserHost as _;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -54,6 +55,18 @@ pub struct SettingsView {
     /// package installs and test suites need it. Only takes effect when
     /// `sandbox_terminal` is on and the platform is macOS.
     pub sandbox_terminal_network: bool,
+    /// How long a tool-approval prompt stays answerable, in minutes.
+    ///
+    /// The desktop app is routinely left in the background, so a short TTL
+    /// silently denied tools while the user was away. Defaults to a day;
+    /// `0`, negative and absurd values are clamped by the executor.
+    pub approval_ttl_minutes: u32,
+    /// Hard monthly cloud-spend cap in USD. `None`/`0` disables the cap.
+    ///
+    /// Local providers are exempt: their estimated cost is zero and blocking
+    /// them because a cloud budget ran out would make the app unusable
+    /// offline.
+    pub monthly_budget_usd: Option<f64>,
     /// Whether skills under the user's home (`~/.mix/skills`,
     /// `~/.claude/skills`, `~/.agents/skills`) are discovered and offered to
     /// the agent. Project skills are always discovered.
@@ -114,6 +127,14 @@ pub struct SettingsView {
     /// embedded public key, and the check is a single manifest request. The
     /// user can still turn it off (and check manually) in Settings → Updates.
     pub auto_check_updates: bool,
+    /// Download a newer build in the background once the launch check finds
+    /// one.
+    ///
+    /// Defaults to `true`, matching `auto_check_updates`. The payload is only
+    /// staged: it is installed when the user quits the app normally, so the
+    /// next launch runs the new build. This setting never makes the app quit
+    /// or restart by itself.
+    pub auto_download_updates: bool,
     /// Sweep loopback for local runtimes once after launch so the Providers
     /// pane and auto-start do not begin from an empty table.
     pub local_scan_on_start: bool,
@@ -140,6 +161,50 @@ pub struct SettingsView {
     pub local_context_window: Option<u32>,
     /// Give locally hosted models a modest bonus in Auto routing.
     pub local_prefer: bool,
+    /// Auto routing priority: `balanced`, `speed`, `quality`, or `cost`.
+    ///
+    /// Ships `balanced`: the measured-speed signal is only trusted after a
+    /// model has produced successful turns, and a user who wants the fastest
+    /// answer can opt into `speed` explicitly.
+    pub auto_priority: String,
+    /// How many pre-content Auto fallbacks may run after a retryable provider
+    /// failure. `0` disables fallback; the maximum is 2 so a broken provider
+    /// chain cannot turn one Run into an unbounded retry loop.
+    pub auto_fallback_attempts: u8,
+    /// Publish conversation/project/knowledge metadata to the macOS Spotlight
+    /// index. **Defaults off**: thread titles can contain customer or project
+    /// names, and a system-wide search surface is a privacy decision the user
+    /// should make explicitly.
+    pub spotlight_enabled: bool,
+    /// Also send conversation and knowledge body text to Spotlight. Separate
+    /// from [`Self::spotlight_enabled`] because body text can contain secrets;
+    /// credentials are redacted before indexing, but the metadata-only mode is
+    /// still the safer default.
+    pub spotlight_index_body: bool,
+}
+
+impl SettingsView {
+    /// `"ja"` or `"en"` for native chrome (menu bar, tray).
+    ///
+    /// The WebView picks its language from `navigator.languages`; Rust has no
+    /// such API, so an unset preference follows the OS locale and falls back
+    /// to English only when the locale does not start with `ja`.
+    pub fn ui_language(&self) -> &'static str {
+        match self.language.as_deref() {
+            Some("ja") => "ja",
+            Some("en") => "en",
+            _ => {
+                if sys_locale::get_locale()
+                    .map(|locale| locale.to_ascii_lowercase().starts_with("ja"))
+                    .unwrap_or(false)
+                {
+                    "ja"
+                } else {
+                    "en"
+                }
+            }
+        }
+    }
 }
 
 impl Default for SettingsView {
@@ -156,8 +221,13 @@ impl Default for SettingsView {
             project_doc_fallback_filenames: Vec::new(),
             verify_command: None,
             format_command: None,
+            // Opt-in: package installs and test suites commonly need writes
+            // outside the workspace, and switching this on changes how every
+            // shell behaves. The sandbox stays a deliberate user choice.
             sandbox_terminal: false,
             sandbox_terminal_network: false,
+            approval_ttl_minutes: 24 * 60,
+            monthly_budget_usd: None,
             // Personal skills apply across projects; explicit opt-out only.
             discover_user_skills: true,
             // Memory auto formation ships on (memory spec §6): only an
@@ -172,12 +242,18 @@ impl Default for SettingsView {
             database_encryption: false,
             onboarding_completed: None,
             auto_check_updates: true,
+            auto_download_updates: true,
             local_scan_on_start: true,
             local_stop_on_exit: true,
             local_auto_start: false,
             local_keep_alive: None,
             local_context_window: None,
             local_prefer: false,
+            auto_priority: "balanced".to_string(),
+            auto_fallback_attempts: 1,
+            // Opt-in: the OS index is visible outside the app.
+            spotlight_enabled: false,
+            spotlight_index_body: false,
         }
     }
 }
@@ -187,13 +263,56 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<SettingsView, St
     read_settings(state.storage.pool()).await
 }
 
+/// Estimated cloud spend in the current calendar month (UTC).
+///
+/// Runs store `usage.estimatedCostUsd`; models outside the price table store
+/// `null`, which contributes zero. The value is an estimate, so the cap is a
+/// guardrail against runaway loops, not a billing statement.
+pub async fn monthly_spend_usd(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<f64, String> {
+    sqlx::query_scalar::<_, f64>(
+        "SELECT COALESCE(SUM(CAST(json_extract(data, '$.usage.estimatedCostUsd') AS REAL)), 0.0) \
+           FROM runs WHERE created_at >= strftime('%Y-%m-01T00:00:00Z', 'now')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(crate::error::cmd_err)
+}
+
+#[tauri::command]
+pub async fn get_monthly_spend(state: State<'_, AppState>) -> Result<f64, String> {
+    monthly_spend_usd(state.storage.pool()).await
+}
+
 #[tauri::command]
 pub async fn update_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: SettingsView,
 ) -> Result<SettingsView, String> {
     validate_settings(&input)?;
+    let previous_language = read_settings(state.storage.pool())
+        .await
+        .map(|settings| settings.ui_language())
+        .unwrap_or("en");
     let view = write_settings(state.storage.pool(), input).await?;
+    // Rebuild native chrome when the display language changes. The WebView
+    // switches immediately; leaving the menu/tray English until the next
+    // launch was the visible half of the old bug.
+    if previous_language != view.ui_language() {
+        if let Err(err) = crate::menu::install(&app, view.ui_language()) {
+            tracing::warn!(%err, "could not rebuild the native menu after a language change");
+        }
+        let _ = app.remove_tray_by_id("main");
+        if let Err(err) = crate::tray::install(&app, view.ui_language()) {
+            tracing::warn!(%err, "could not rebuild the tray after a language change");
+        } else {
+            crate::tray::update_status(&app, state.engine.pending_approval_count().await);
+        }
+    }
+    // Turning Spotlight on/off (or changing body indexing) applies now, not at
+    // the next launch. The service reacts to the transition: enable -> rebuild,
+    // disable -> delete, body toggle -> rebuild.
+    state.spotlight.apply_settings(&view);
     // Apply the browser opt-in immediately; waiting for a relaunch would make
     // the setting look broken.
     state
@@ -218,6 +337,9 @@ pub async fn update_settings(
         .engine
         .set_terminal_sandbox_network(view.sandbox_terminal_network)
         .await;
+    state
+        .engine
+        .set_approval_ttl_secs(i64::from(view.approval_ttl_minutes) * 60);
     Ok(view)
 }
 
@@ -266,6 +388,14 @@ fn validate_settings(input: &SettingsView) -> Result<(), String> {
     }
     if input.sandbox_terminal_network && !input.sandbox_terminal {
         return Err("enable the terminal sandbox before denying its network".to_string());
+    }
+    if input.approval_ttl_minutes == 0 || input.approval_ttl_minutes > 7 * 24 * 60 {
+        return Err("approval_ttl_minutes must be between 1 and 10080".to_string());
+    }
+    if let Some(budget) = input.monthly_budget_usd {
+        if !budget.is_finite() || !(0.0..=1_000_000.0).contains(&budget) {
+            return Err("monthly_budget_usd must be between 0 and 1000000".to_string());
+        }
     }
     // At-rest encryption is staged but not wired (see `mixd_storage::db`):
     // SQLCipher is not applied to the connection, so accepting `true` here
@@ -347,6 +477,15 @@ fn validate_settings(input: &SettingsView) -> Result<(), String> {
         if !(512..=1_048_576).contains(&cap) {
             return Err("local_context_window must be between 512 and 1048576".to_string());
         }
+    }
+    if !matches!(
+        input.auto_priority.as_str(),
+        "balanced" | "speed" | "quality" | "cost"
+    ) {
+        return Err("auto_priority must be balanced, speed, quality or cost".to_string());
+    }
+    if input.auto_fallback_attempts > 2 {
+        return Err("auto_fallback_attempts must be between 0 and 2".to_string());
     }
     if let Some(keep_alive) = &input.local_keep_alive {
         if !valid_keep_alive(keep_alive) {
@@ -469,5 +608,8 @@ mod tests {
         assert!(!settings.local_auto_start);
         assert_eq!(settings.local_context_window, None);
         assert_eq!(DEFAULT_LOCAL_CONTEXT_WINDOW, 8192);
+        // A system-wide search surface is opt-in.
+        assert!(!settings.spotlight_enabled);
+        assert!(!settings.spotlight_index_body);
     }
 }

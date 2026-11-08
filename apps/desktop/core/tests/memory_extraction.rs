@@ -952,6 +952,7 @@ async fn run_request(
         history: Vec::new(),
         user_message: "remember this turn".to_string(),
         resume_from: None,
+        auto_fallbacks: Vec::new(),
     }
 }
 

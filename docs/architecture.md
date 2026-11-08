@@ -22,7 +22,7 @@ MIX-agent/
 
 | エディション | 技術スタック | アーキテクチャ | 目的・ユースケース |
 | :--- | :--- | :--- | :--- |
-| **Desktop 版** | Tauri 2 + Rust + React 19 | 単一バイナリ + tokio in-proc + SQLite + Keychain | **デスクトップ・コーディングエージェント（OpenCode のように動作）**<br>コード探索・差分編集・検証ループ、Docker 不要 |
+| **Desktop 版** | Tauri 2 + Rust + React 19 | 単一バイナリ + tokio in-proc + SQLite + OS 安全ストレージ | **デスクトップ・コーディングエージェント（OpenCode のように動作）**<br>コード探索・差分編集・検証ループ、Docker 不要 |
 | **Docker 版** | FastAPI + PostgreSQL + React 19 | マルチコンテナ（Compose）+ Runner 隔離 + Proxy | **自宅鯖でのチャット AI 自己ホスト**<br>LAN/VPN 共有、NAS(ZimaOS)、24時間常時稼働 |
 
 > Desktop 版の詳細な内部構造や Rust クレート設計については、[`docs/desktop/architecture.md`](desktop/architecture.md) を参照してください。
@@ -56,6 +56,7 @@ React (Web UI) ─► REST / SSE ─► FastAPI (apps/server)
 | `api/routes_settings.py` | 設定、Browser 管理、診断、Tool 権限 |
 | `api/routes_statistics.py` | 利用統計・使用量 |
 | `api/routes_conversations.py` | 会話一覧・状態・履歴・プロジェクト削除 |
+| `api/routes_conversation_detail.py` | 会話1件の点読み（ページ外のスレッドのタイトル解決） |
 | `api/routes_messages.py` | メッセージ送信/編集、フィードバック、モデル検証、履歴構築 |
 | `api/routes_runs.py` | Run 取得、SSE、キャンセル、承認、予算延長、Browser 操作 |
 | `api/routes_memories.py` | Memory の一覧・解決・関連・復元 |
@@ -107,7 +108,7 @@ Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ�
 | :--- | :--- | :--- |
 | **通信契約** | FastAPI REST API (`/runs/...`) + SSE | Tauri IPC (`#[tauri::command]`) + Window イベント (`run_event`) |
 | **ストレージ** | PostgreSQL + Alembic | SQLite (WAL モード) + sqlx マイグレーション |
-| **秘密情報** | DB 内 AES-GCM 暗号化 | **OS Keychain** (keyring-rs) |
+| **秘密情報** | DB 内 AES-GCM 暗号化 | AES-GCM 暗号化ファイル + OS 安全ストレージ（macOS は `.master_seed`、Windows は Credential Manager） |
 | **ブラウザ自動化** | コンテナ内 Playwright Chromium | 子プロセス実 Chromium (chromiumoxide) |
 | **ターミナル** | コンテナ内の一時的シェル | ホスト OS の **永続 PTY シェル** |
 | **マルチユーザー** | 管理者アカウント・セッション認証あり | 完全ローカル・単一ユーザー前提（認証不要） |

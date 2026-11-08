@@ -1,12 +1,14 @@
 import { t } from "@/app/i18n";
 import { binary } from "@/app/api";
 import { Button } from "@/components/button";
+import { useConfirm } from "@/components/confirm";
 import { Download } from "lucide-react";
 import { useState } from "react";
 
 import { ErrorBox, Field, Title } from "@/components/shared";
 
 export function Backups() {
+  const confirm = useConfirm();
   const [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState("");
@@ -61,14 +63,15 @@ export function Backups() {
         className="card"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (
-            !confirm(
-              t(
-                "現在のデータをバックアップ内容に置き換えます。現在のバックアップを確保しましたか？",
-              ),
-            )
-          )
-            return;
+          const ok = await confirm({
+            title: t("バックアップから復元"),
+            message: t(
+              "現在のデータをバックアップ内容に置き換えます。現在のバックアップを確保しましたか？",
+            ),
+            confirmLabel: t("復元"),
+            tone: "danger",
+          });
+          if (!ok) return;
           setBusy(true);
           setError(null);
           try {

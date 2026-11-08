@@ -8,8 +8,12 @@
 "$schema" = "../gen/schemas/desktop-schema.json"
 
 identifier = "default"
-description = "Default capability for the main MIX-agent Desktop window"
-windows = ["main"]
+description = "Default capability for the main MIX-agent Desktop WebView only"
+# Scope by webview, not window. A `windows = ["main"]` capability is inherited
+# by *every* webview in that window, including the untrusted browser child
+# WebView; that would expose the whole Tauri command surface to arbitrary web
+# pages. `webviews = ["main"]` keeps the grant on the React shell only.
+webviews = ["main"]
 
 permissions = [
   "core:default",

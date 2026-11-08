@@ -2,6 +2,7 @@
 //! permission-rule resolver, and the persistent approval storage.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use crate::approval::{ApprovalOutcome, PendingApproval};
@@ -17,11 +18,17 @@ use uuid::Uuid;
 /// How long an approval prompt stays answerable before the Run resumes and the
 /// Tool is treated as denied.
 ///
-/// Fifteen minutes, not five: a coding agent's prompt is often answered after
-/// the user reads the diff or steps away for coffee, and a five-minute window
-/// turned "I was thinking" into a denied Tool that the model then reported as a
-/// failure. The prompt still auto-denies, so an abandoned Run cannot hang.
-const APPROVAL_TTL_SECS: i64 = 900;
+/// Desktop runs are often left in the background while the user is in another
+/// app, so the old fifteen-minute deadline turned "I stepped away" into a
+/// silently denied Tool. The default is now a day and the value is configurable
+/// from Settings; the prompt still auto-denies, so an abandoned Run cannot hang
+/// forever.
+pub const DEFAULT_APPROVAL_TTL_SECS: i64 = 24 * 60 * 60;
+/// Never allow a zero/negative TTL: the engine would deny the prompt instantly.
+pub const MIN_APPROVAL_TTL_SECS: i64 = 60;
+/// A week is the practical ceiling; beyond that an abandoned prompt is
+/// indistinguishable from a leaked one.
+pub const MAX_APPROVAL_TTL_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// A paused Run's wake-up channel, kept together with the prompt's deadline.
 ///
@@ -44,6 +51,10 @@ pub struct ToolExecutor {
     /// "Allow for this session" rules. Deliberately in memory: a session grant
     /// must not survive a restart or leak into another workspace.
     session_rules: Arc<Mutex<Vec<PermissionRule>>>,
+    /// How long a new approval prompt stays answerable. Shared so a Settings
+    /// change applies to prompts created afterwards without rebuilding the
+    /// engine or the registry.
+    approval_ttl_secs: Arc<AtomicI64>,
 }
 
 /// The information [`ToolExecutor::resolve_permission`] needs to evaluate a
@@ -161,7 +172,27 @@ impl ToolExecutor {
             pending: Arc::new(Mutex::new(Vec::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
             session_rules: Arc::new(Mutex::new(Vec::new())),
+            approval_ttl_secs: Arc::new(AtomicI64::new(DEFAULT_APPROVAL_TTL_SECS)),
         }
+    }
+
+    /// Update the approval prompt lifetime. Values outside the supported range
+    /// are clamped rather than rejected: settings written by an older or
+    /// newer build must not make every prompt fail.
+    pub fn set_approval_ttl_secs(&self, secs: i64) {
+        self.approval_ttl_secs.store(
+            secs.clamp(MIN_APPROVAL_TTL_SECS, MAX_APPROVAL_TTL_SECS),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn approval_ttl_secs(&self) -> i64 {
+        self.approval_ttl_secs.load(Ordering::Relaxed)
+    }
+
+    /// Number of prompts still waiting for an answer. Used by the tray badge.
+    pub async fn pending_count(&self) -> usize {
+        self.pending.lock().await.len()
     }
 
     /// Resolve the effective permission for a Tool.
@@ -609,6 +640,7 @@ impl ToolExecutor {
         pattern_target: Option<String>,
     ) -> anyhow::Result<(oneshot::Receiver<ApprovalOutcome>, chrono::DateTime<Utc>)> {
         let now = Utc::now();
+        let ttl_secs = self.approval_ttl_secs();
         let approval = PendingApproval {
             approval_id: Uuid::new_v4().to_string(),
             run_id,
@@ -616,7 +648,7 @@ impl ToolExecutor {
             tool_name: tool_name.to_string(),
             arguments,
             created_at: now,
-            expires_at: now + chrono::Duration::seconds(APPROVAL_TTL_SECS),
+            expires_at: now + chrono::Duration::seconds(ttl_secs),
             remember: false,
         };
         self.record_approval(
@@ -646,7 +678,7 @@ impl ToolExecutor {
             approval = %approval.approval_id,
             run = %run_id,
             tool = %tool_name,
-            expires_in_secs = APPROVAL_TTL_SECS,
+            expires_in_secs = ttl_secs,
             "run is waiting for a tool approval"
         );
 

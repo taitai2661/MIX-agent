@@ -1,12 +1,14 @@
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api } from "@/lib/api";
 import {
   DEFAULT_SETTINGS,
   SETTINGS_QUERY_KEY,
+  resetSettingsBaseline,
   useApplySettings,
+  useSettingsForm,
 } from "./settings";
 import type { SettingsView } from "./types";
 
@@ -30,6 +32,7 @@ function wrapper(client: QueryClient) {
 describe("useApplySettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetSettingsBaseline();
     mockedApi.updateSettings.mockImplementation(async (input) => input);
   });
 
@@ -66,5 +69,32 @@ describe("useApplySettings", () => {
     ).toBeNull();
 
     window.removeEventListener("mix:settings-saved", saved);
+  });
+
+  it("keeps a draft dirty across an unmount/remount", async () => {
+    const persisted: SettingsView = { ...DEFAULT_SETTINGS };
+    mockedApi.getSettings.mockResolvedValue(persisted);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapperComponent = wrapper(client);
+
+    const first = renderHook(() => useSettingsForm(), {
+      wrapper: wrapperComponent,
+    });
+    await waitFor(() => expect(first.result.current.loaded).toBe(true));
+    act(() => first.result.current.patch({ verify_command: "draft" }));
+    await waitFor(() => expect(first.result.current.dirty).toBe(true));
+    first.unmount();
+
+    // A fresh observer is exactly what the Settings pane creates when the user
+    // comes back from another view: it must see the draft as unsaved, not
+    // re-baseline it as the saved row.
+    const second = renderHook(() => useSettingsForm(), {
+      wrapper: wrapperComponent,
+    });
+    await waitFor(() => expect(second.result.current.loaded).toBe(true));
+    expect(second.result.current.data.verify_command).toBe("draft");
+    expect(second.result.current.dirty).toBe(true);
   });
 });

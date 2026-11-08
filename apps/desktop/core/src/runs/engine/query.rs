@@ -226,6 +226,24 @@ impl RunEngine {
         registry.set_terminal_sandbox_network(enabled);
     }
 
+    /// Change how long new approval prompts stay answerable.
+    ///
+    /// Applies to prompts created after this call; one already waiting keeps
+    /// the deadline it was announced with, so the UI countdown and the
+    /// executor's `select!` timeout cannot disagree.
+    pub fn set_approval_ttl_secs(&self, secs: i64) {
+        self.executor.set_approval_ttl_secs(secs);
+    }
+
+    pub fn approval_ttl_secs(&self) -> i64 {
+        self.executor.approval_ttl_secs()
+    }
+
+    /// Prompts waiting for the user right now. Drives the tray badge.
+    pub async fn pending_approval_count(&self) -> usize {
+        self.executor.pending_count().await
+    }
+
     pub async fn cancel(&self, run_id: RunId) {
         let map = self.active.lock().await;
         if let Some(handle) = map.get(&run_id) {

@@ -37,6 +37,14 @@ pub const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 pub const DEVICE_VERIFICATION_URL: &str = "https://auth.openai.com/codex/device";
 pub const ORIGINATOR_ENV: &str = "MIX_CODEX_ORIGINATOR";
 
+/// Codex catalog protocol version sent as `client_version`.
+///
+/// The backend filters the model list by version. MIX-agent's own release
+/// number is lower than every current Codex build, so sending it returns an
+/// empty catalog. Keep this in sync with the Docker edition; the parity check
+/// enforces the shared value.
+pub const CODEX_CLIENT_VERSION: &str = "0.166.0";
+
 /// Whether a stored row is the unofficial ChatGPT integration.
 ///
 /// `preset` and `kind` are both user-supplied on the Desktop IPC surface, so
@@ -104,7 +112,7 @@ impl ChatGptProvider {
         let url = format!(
             "{}/models?client_version={}",
             self.base_url.trim_end_matches('/'),
-            env!("CARGO_PKG_VERSION")
+            CODEX_CLIENT_VERSION
         );
         let mut attempts = 0u8;
         let response = loop {

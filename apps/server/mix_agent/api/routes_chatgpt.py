@@ -147,7 +147,7 @@ async def chatgpt_device_status(login_id: str, ctx=Depends(context)):
 
 
 @router.post("/providers/chatgpt/device/{login_id}/cancel")
-async def chatgpt_device_cancel(login_id: str, ctx=Depends(context)):
+def chatgpt_device_cancel(login_id: str, ctx=Depends(context)):
     _, s = ctx
     if not chatgpt.cancel_device_login(login_id, s.owner_id):
         raise HTTPException(404, "ChatGPT のログイン情報が見つかりません。もう一度ログインしてください。")

@@ -136,6 +136,13 @@ export function ProjectMenu({
                   <Check size={13} className="text-brand" aria-hidden="true" />
                 )}
               </DropdownMenuItem>
+              {!projectId && (
+                <div className="px-2 pb-1.5 text-2xs text-faint">
+                  {t(
+                    "プロジェクトを選ばない場合、アプリ専用の一時領域で実行されます。",
+                  )}
+                </div>
+              )}
               <DropdownMenuSeparator />
               {pending ? (
                 <div className="flex items-center gap-1.5 px-2 py-1.5 text-xs text-muted">

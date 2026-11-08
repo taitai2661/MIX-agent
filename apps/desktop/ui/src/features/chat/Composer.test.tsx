@@ -223,7 +223,7 @@ describe("Composer", () => {
       />,
     );
     // The badge text appears but no trigger button is present.
-    expect(screen.getByText("エージェント")).toBeInTheDocument();
+    expect(screen.getByText("自動実行")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "モード" })).toBeNull();
   });
 
@@ -393,6 +393,37 @@ describe("Composer", () => {
       "draft-a",
     );
     unmount();
+  });
+
+  it("keeps a separate blank draft for each workspace", async () => {
+    const user = userEvent.setup();
+    const renderComposer = (draftKey: string) => (
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+        draftKey={draftKey}
+      />
+    );
+    const { rerender } = render(renderComposer("new:chat"));
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "chat draft");
+    expect(box).toHaveValue("chat draft");
+
+    // Both workspaces can hold a blank thread at once. The coding draft must
+    // not inherit the chat text (the old shared "none" slot did).
+    rerender(renderComposer("new:desktop-agent"));
+    expect(box).toHaveValue("");
+    await user.type(box, "agent draft");
+    expect(box).toHaveValue("agent draft");
+
+    rerender(renderComposer("new:chat"));
+    expect(box).toHaveValue("chat draft");
   });
 
   it("does not send when Enter is pressed right after IME composition", async () => {
@@ -619,5 +650,56 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
     expect((box as HTMLTextAreaElement).value).not.toBe("/");
     expect((box as HTMLTextAreaElement).value.length).toBeGreaterThan(1);
+  });
+
+  it("switches to plan mode when /plan is selected", async () => {
+    const setMode = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="agent"
+        setMode={setMode}
+        allowedModes={["agent", "plan"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText(
+      "エージェントにタスクを指示… (ターミナル実行・ファイル編集が可能)",
+    );
+    await user.type(box, "/plan");
+    await screen.findByRole("listbox", { name: "クイックコマンド" });
+    await user.keyboard("{Enter}");
+
+    expect(setMode).toHaveBeenCalledWith("plan");
+    expect((box as HTMLTextAreaElement).value).toContain("実装計画");
+    expect((box as HTMLTextAreaElement).value).not.toContain("/plan");
+  });
+
+  it("hides /plan where the surface does not allow plan mode", async () => {
+    const user = userEvent.setup();
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        allowedModes={["chat", "thinking"]}
+        models={models}
+        modelId="p:text"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText("MIX-agent に話しかける…");
+    await user.type(box, "/plan");
+
+    expect(
+      screen.queryByRole("option", { name: /\/plan/ }),
+    ).not.toBeInTheDocument();
   });
 });

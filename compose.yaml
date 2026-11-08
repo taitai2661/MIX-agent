@@ -68,6 +68,36 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+  db-backup:
+    image: postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4
+    # One-shot: a completed dump must not be restarted forever.
+    restart: "no"
+    # pg_dump only writes to /backups, so the root filesystem stays read-only.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      DB_PASSWORD_FILE: /db-secret/password
+    volumes: ["db-secret:/db-secret:ro", "db-backups:/backups"]
+    networks: [database]
+    depends_on:
+      db: {condition: service_healthy}
+    # A failed migration must be recoverable without asking the user whether
+    # they made a backup. Dumping before every upgrade also covers instances
+    # that were stopped for months and jump several releases at once.
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        export PGPASSWORD="$$(cat /db-secret/password)"
+        stamp="$$(date -u +%Y%m%dT%H%M%SZ)"
+        pg_dump -h db -U mix -d mix -Fc -f "/backups/mix-$$stamp.dump"
+        # Keep the ten newest dumps; a daily restart retains ~10 days.
+        ls -1t /backups/mix-*.dump | tail -n +11 | xargs -r rm -f
   migrate:
     <<: *restricted
     # One-shot: the inherited `unless-stopped` would restart a completed
@@ -81,6 +111,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     depends_on:
       db: {condition: service_healthy}
+      db-backup: {condition: service_completed_successfully}
   app:
     <<: *restricted
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: app}
@@ -371,6 +402,7 @@ networks:
 
 volumes:
   postgres:
+  db-backups:
   keys:
   db-secret:
   execution-token:

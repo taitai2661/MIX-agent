@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 use crate::mode::Mode;
@@ -27,6 +27,7 @@ use crate::runs::state::{RunId, RunStatus, RunUsage, RunView};
 use crate::runs::verification::{
     destructive_reason, exit_code_of, mutated_paths, VerificationLedger,
 };
+use mixd_providers::reliability::ProviderErrorKind;
 use mixd_providers::{
     AssistantToolCall, AssistantToolCallFn, BillingMode, Message, Provider, ProviderRequest,
     ReasoningControl, StreamEvent, ToolSpec, Usage,
@@ -42,6 +43,7 @@ mod execute;
 mod execute_budget;
 mod execute_tools;
 mod execute_turn;
+pub use execute_turn::TurnPerformance;
 mod finish;
 mod helpers;
 mod query;
@@ -464,6 +466,29 @@ pub struct RunRequest {
     pub history: Vec<HistoryMessage>,
     pub user_message: String,
     pub resume_from: Option<CheckpointSnapshot>,
+    /// Pre-resolved Auto fallbacks, in order. The app resolves these before
+    /// the Run starts (the engine has no model catalogue); the engine switches
+    /// only when a provider fails before emitting any content.
+    pub auto_fallbacks: Vec<AutoFallback>,
+}
+
+/// One candidate the engine may switch to after a pre-content provider failure.
+#[derive(Debug, Clone)]
+pub struct AutoFallback {
+    pub model_id: String,
+    pub provider_id: String,
+    pub context_window: u32,
+    pub keep_alive: Option<String>,
+}
+
+/// Audit record of a fallback that actually happened.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AutoFallbackAttempt {
+    pub from_model_id: String,
+    pub from_provider_id: String,
+    pub to_model_id: String,
+    pub to_provider_id: String,
+    pub failure_kind: ProviderErrorKind,
 }
 
 impl RunRequest {
@@ -519,6 +544,15 @@ pub struct RunOutcome {
     pub totals: RunUsage,
     pub finish_reason: Option<String>,
     pub steps: u32,
+    /// Per-turn measurements, in execution order. The app persists these after
+    /// the Run so an Auto failure is learned at the granularity it happened
+    /// (a Run can mix successful and failed turns).
+    #[serde(default)]
+    pub turn_performances: Vec<TurnPerformance>,
+    /// Auto fallbacks that actually served a retry. Empty for a fixed model
+    /// and for Auto runs that never needed one.
+    #[serde(default)]
+    pub auto_fallbacks: Vec<AutoFallbackAttempt>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -657,6 +691,7 @@ mod execute_tests {
             history: Vec::new(),
             user_message: "hi".to_string(),
             resume_from: None,
+            auto_fallbacks: Vec::new(),
         };
         let outcome = engine.execute(request).await.expect("execute");
         assert_eq!(outcome.status, RunStatus::Completed);

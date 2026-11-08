@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { t } from "@/app/i18n";
+import { Button } from "@/components/button";
 
 interface Props {
   children: ReactNode;
@@ -23,22 +24,35 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <main className="auth">
-          <h2>{t("エラーが発生しました")}</h2>
-          <p>
-            {t(
-              "予期しないエラーが発生しました。以下のボタンで再読み込みしてください。",
+        <div className="auth">
+          <section className="auth-card error-fallback" role="alert">
+            <h2>{t("エラーが発生しました")}</h2>
+            <p>
+              {t(
+                "予期しないエラーが発生しました。以下のボタンで再読み込みしてください。",
+              )}
+            </p>
+            <div className="form-actions">
+              <Button
+                onClick={() => this.setState({ hasError: false, error: null })}
+              >
+                {t("再試行")}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => window.location.reload()}
+              >
+                {t("再読み込み")}
+              </Button>
+            </div>
+            {this.state.error?.message && (
+              <details>
+                <summary>{t("エラーの詳細")}</summary>
+                <pre>{this.state.error.message}</pre>
+              </details>
             )}
-          </p>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-          >
-            {t("再試行")}
-          </button>
-          <button onClick={() => window.location.reload()}>
-            {t("再読み込み")}
-          </button>
-        </main>
+          </section>
+        </div>
       );
     }
     return this.props.children;

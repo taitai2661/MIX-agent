@@ -36,6 +36,15 @@ def test_folder_state_search_export_and_trash(signed):
     assert signed.get("/api/v1/conversations").json()[0]["data"].get("folder_id") is None
 
 
+def test_conversation_point_read_returns_one_row(signed):
+    conversation = signed.post("/api/v1/conversations", json={"title": "点読み"}).json()
+    row = signed.get(f"/api/v1/conversations/{conversation['id']}")
+    assert row.status_code == 200
+    assert row.json()["id"] == conversation["id"]
+    assert row.json()["data"]["title"] == "点読み"
+    assert signed.get("/api/v1/conversations/does-not-exist").status_code == 404
+
+
 def test_conversations_are_sorted_by_recent_activity_with_pinned_first(signed):
     old = signed.post("/api/v1/conversations", json={"title": "古い会話"}).json()
     recent = signed.post("/api/v1/conversations", json={"title": "新しい会話"}).json()

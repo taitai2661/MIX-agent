@@ -61,8 +61,8 @@ async def discover(resource_url: str) -> dict:
         match = re.search(r'resource_metadata="([^"\r\n]+)"', challenge)
         if match:
             resource_metadata_url = match.group(1)
-    except Exception:  # noqa: BLE001, S110 - intentionally classified; never leak raw details
-        pass
+    except Exception:  # noqa: BLE001 - probe failure falls back to the well-known URL
+        logger.debug("OAuth resource metadata probe failed; using well-known URL", exc_info=True)
     resource_metadata = await _json(
         resource_metadata_url or resource_origin + "/.well-known/oauth-protected-resource"
     )

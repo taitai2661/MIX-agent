@@ -15,7 +15,7 @@ use futures_util::StreamExt as _;
 use mixd_core::mode::Mode;
 use mixd_core::runs::checkpoint_store::CheckpointStore;
 use mixd_core::runs::engine::{
-    CheckpointSnapshot, HistoryMessage, RunEngine, RunRequest, RunToolCall,
+    AutoFallback, CheckpointSnapshot, HistoryMessage, RunEngine, RunRequest, RunToolCall,
 };
 use mixd_core::runs::mode_policy::AgentModePolicy;
 use mixd_core::runs::state::RunStatus;
@@ -298,6 +298,7 @@ impl Harness {
             history: Vec::new(),
             user_message: "do the thing".to_string(),
             resume_from: None,
+            auto_fallbacks: Vec::new(),
         }
     }
 }
@@ -358,6 +359,73 @@ async fn a_turn_without_tool_calls_ends_the_run() {
         1,
         "no extra turn after the answer"
     );
+}
+
+#[tokio::test]
+async fn a_retryable_failure_before_content_falls_back_to_the_next_model() {
+    let harness = Harness::new(vec![vec![StreamEvent::Error(
+        "503 Service Unavailable".to_string(),
+    )]])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let fallback = Arc::new(ScriptedProvider::new_with_billing(
+        vec![text_turn("fallback answer")],
+        mixd_providers::BillingMode::Metered,
+    ));
+    harness
+        .engine
+        .providers
+        .register("p2".to_string(), fallback.clone())
+        .await;
+    let mut request = harness.request().await;
+    request.auto_fallbacks = vec![AutoFallback {
+        model_id: "fallback-model".to_string(),
+        provider_id: "p2".to_string(),
+        context_window: 4096,
+        keep_alive: None,
+    }];
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.text, "fallback answer");
+    assert_eq!(outcome.auto_fallbacks.len(), 1);
+    assert_eq!(outcome.auto_fallbacks[0].from_provider_id, "p1");
+    assert_eq!(outcome.auto_fallbacks[0].to_provider_id, "p2");
+    assert_eq!(harness.provider.request_count(), 1);
+    assert_eq!(fallback.request_count(), 1);
+    // The failed pre-content attempt must not consume a step.
+    assert_eq!(outcome.steps, 1);
+}
+
+#[tokio::test]
+async fn a_failure_after_content_does_not_fall_back() {
+    let harness = Harness::new(vec![vec![
+        StreamEvent::TextDelta("partial".to_string()),
+        StreamEvent::Error("503 Service Unavailable".to_string()),
+    ]])
+    .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let fallback = Arc::new(ScriptedProvider::new_with_billing(
+        vec![text_turn("should not run")],
+        mixd_providers::BillingMode::Metered,
+    ));
+    harness
+        .engine
+        .providers
+        .register("p2".to_string(), fallback.clone())
+        .await;
+    let mut request = harness.request().await;
+    request.auto_fallbacks = vec![AutoFallback {
+        model_id: "fallback-model".to_string(),
+        provider_id: "p2".to_string(),
+        context_window: 4096,
+        keep_alive: None,
+    }];
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Failed);
+    assert!(outcome.auto_fallbacks.is_empty());
+    assert_eq!(fallback.request_count(), 0);
 }
 
 #[tokio::test]
@@ -594,6 +662,7 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         history: Vec::new(),
         user_message: "hello".to_string(),
         resume_from: None,
+        auto_fallbacks: Vec::new(),
     };
     request.tools = std::sync::Arc::new(engine.tool_specs().await);
     let outcome = engine.execute(request).await.expect("run");

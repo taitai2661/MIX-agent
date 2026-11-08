@@ -1933,6 +1933,9 @@ svg {
   display: flex;
   gap: 4px;
 }
+.message-auto.message-feedback-only {
+  justify-content: flex-end;
+}
 .message-auto button {
   display: grid;
   place-items: center;
@@ -1955,8 +1958,10 @@ svg {
   --soft: #f3f4f2;
   --hover: #e8ebe7;
   --text: #202622;
-  --muted: #667069;
-  --faint: #929b95;
+  --muted: #5b655f;
+  /* Tertiary text sits at 4.6:1 on --soft and 4.8:1 on --surface so 11–12px
+     labels stay readable; the previous #929b95 measured 2.7:1. */
+  --faint: #67716b;
   --line: #e0e4df;
   --accent: #167c5b;
   --accent-strong: #0e6248;
@@ -1970,7 +1975,7 @@ svg {
   --hover: #323934;
   --text: #edf2ee;
   --muted: #afb9b2;
-  --faint: #7c8880;
+  --faint: #8a958e;
   --line: #3b443e;
   --accent: #54c79a;
   --accent-strong: #72d8ad;
@@ -5500,6 +5505,22 @@ body {
   color: var(--muted);
   font-size: 11px;
 }
+.conversation-load-more {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: start;
+}
+.conversation-load-more:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.conversation-list-more {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0;
+}
 .folder-create,
 .conversation-search {
   display: flex;
@@ -7549,4 +7570,294 @@ body {
 }
 .provider-quota-error {
   color: #b91c1c;
+}
+
+/* ---------------------------------------------------------------------------
+   Readability + mobile sidebar fixes
+   ------------------------------------------------------------------------- */
+
+/* On a narrow drawer the three-button theme switch (154px) plus the close
+   button no longer fit beside the logo, which pushed the close button outside
+   the clipped sidebar. Theme selection remains in Settings ▸ 一般. */
+.sidebar-theme {
+  display: flex;
+  align-items: center;
+}
+@media (max-width: 760px) {
+  .sidebar-theme {
+    display: none;
+  }
+  .sidebar-brand {
+    overflow: hidden;
+  }
+}
+
+/* Readability floor for tertiary UI text. Keep these above 11px: the previous
+   9–11px labels were hard to read in CJK and failed the contrast check. */
+.local-badge,
+.local-badge .version {
+  font-size: 11px;
+}
+.sidebar-label,
+.settings-nav-label {
+  font-size: 12px;
+}
+.composer-foot,
+.send-hint,
+.welcome-note,
+.message-performance,
+.message-auto {
+  font-size: 12px;
+}
+@media (min-width: 761px) {
+  .history a,
+  .conversation-sidebar-link {
+    font-size: 13px;
+  }
+}
+
+/* Full-page fallback shown when a render throws. The previous version used
+   bare <h2>/<button> elements with no card, spacing or button styling. */
+.error-fallback {
+  text-align: start;
+}
+.error-fallback h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.error-fallback > p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.error-fallback .form-actions {
+  margin-top: 4px;
+}
+.error-fallback details {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.error-fallback summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.error-fallback pre {
+  margin: 10px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+   Message actions, code copy, and sidebar history controls
+   ------------------------------------------------------------------------- */
+
+.message-action {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft);
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.message-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.message-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.code-block {
+  position: relative;
+}
+.code-block pre {
+  margin: 0;
+}
+.code-block .code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0;
+  background: var(--surface);
+  box-shadow: 0 1px 4px #0002;
+  transition: opacity 0.12s ease;
+}
+.code-block:hover .code-copy,
+.code-block .code-copy:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .code-block .code-copy {
+    opacity: 1;
+  }
+}
+
+.chat-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+.chat-heading h1 {
+  flex: 1;
+}
+.chat-heading-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 236px;
+  height: 36px;
+  margin: 4px 0 8px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--faint);
+}
+.sidebar-search:focus-within {
+  border-color: var(--accent);
+}
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.sidebar-search input::placeholder {
+  color: var(--faint);
+}
+.sidebar-search .icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.sidebar-folders {
+  display: flex;
+  gap: 6px;
+  min-width: 236px;
+  padding: 0 2px 7px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.sidebar-folders button {
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sidebar-folders button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.conversation-sidebar-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.conversation-sidebar-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-sidebar-meta {
+  display: flex;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.sidebar-empty {
+  padding: 14px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+@media (max-width: 760px) {
+  .sidebar-search,
+  .sidebar-folders {
+    min-width: 0;
+  }
+}
+
+.settings-summary-link {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-nav-empty {
+  margin: 12px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.setup-provider-group {
+  display: grid;
+  gap: 8px;
+}
+.setup-provider-group .setup-provider-grid {
+  margin-bottom: 4px;
+}
+.setup-provider-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.setup-provider-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.conversation-group-label {
+  margin: 22px 2px 8px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.conversation-group-label:first-child {
+  margin-top: 4px;
+}
+.setup-provider-group {
+  grid-column: 1 / -1;
+}
+.welcome h1 {
+  text-wrap: balance;
 }

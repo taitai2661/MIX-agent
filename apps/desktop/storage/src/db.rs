@@ -16,12 +16,16 @@ const SEARCH_SCHEMA: &str = include_str!("migrations/0002_search.sql");
 /// Current schema version, tracked via `PRAGMA user_version`.
 /// Bump when adding a new `migrations/00NN_*.sql` step and extend
 /// `run_schema` with the corresponding branch.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Conversation pagination index (schema version 3).
 const CONVERSATION_PAGE_SCHEMA: &str = include_str!("migrations/0003_conversation_page.sql");
 /// Memory full-text index (schema version 4).
 const MEMORY_SEARCH_SCHEMA: &str = include_str!("migrations/0004_memory_search.sql");
+/// macOS Spotlight index queue and internal state (schema version 5).
+const SPOTLIGHT_SCHEMA: &str = include_str!("migrations/0005_spotlight.sql");
+/// Auto routing EWMA statistics and feedback indexes (schema version 6).
+const AUTO_STATS_SCHEMA: &str = include_str!("migrations/0006_auto_stats.sql");
 
 /// Virtual (generated) columns added by schema version 2.
 ///
@@ -302,6 +306,18 @@ impl Storage {
                     .await
                     .context("applying schema 0004_memory_search")?;
             }
+            // Every statement is `CREATE ... IF NOT EXISTS`, so replaying the
+            // step is safe even when only one of the two tables is missing.
+            sqlx::raw_sql(SPOTLIGHT_SCHEMA)
+                .execute(&mut *conn)
+                .await
+                .context("applying schema 0005_spotlight")?;
+            // Every statement is `CREATE ... IF NOT EXISTS`, so this step is
+            // safe to replay even when a foreign lineage skipped the version.
+            sqlx::raw_sql(AUTO_STATS_SCHEMA)
+                .execute(&mut *conn)
+                .await
+                .context("applying schema 0006_auto_stats")?;
             // Only ever raise the stamp. Lowering it would invite a build from
             // the lineage that wrote the higher number to replay its own
             // (non-idempotent) backfills on the next launch.
@@ -463,6 +479,14 @@ async fn schema_is_current(conn: &mut SqliteConnection) -> anyhow::Result<bool> 
         return Ok(false);
     }
     if !memory_search_is_current(conn).await? {
+        return Ok(false);
+    }
+    if !table_exists(conn, "spotlight_items").await?
+        || !table_exists(conn, "spotlight_meta").await?
+    {
+        return Ok(false);
+    }
+    if !table_exists(conn, "auto_model_stats").await? {
         return Ok(false);
     }
     let index: i64 = sqlx::query_scalar(
@@ -719,7 +743,7 @@ async fn prune_backups(data_dir: &Path) {
 /// Restrict a database file to owner-only access (Unix 0o600). Best-effort:
 /// failures only warn, since the database itself is already open at this
 /// point and a chmod failure must not abort startup.
-fn restrict_permissions(path: &Path) {
+pub(crate) fn restrict_permissions(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

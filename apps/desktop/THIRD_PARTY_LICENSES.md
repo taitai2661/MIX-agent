@@ -4,7 +4,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 1. Overview
 
-- **Rust Dependencies**: 742 crates
+- **Rust Dependencies**: 741 crates
 - **Python Dependencies**: 82 packages
 - **Node.js / Web Dependencies**: 48 packages
 
@@ -164,7 +164,7 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 5. Desktop Rust Crates (Summary)
 
-Total: 742 crates compiled into Desktop binaries.
+Total: 741 crates compiled into Desktop binaries.
 
 <details>
 <summary>Expand full crate list</summary>
@@ -204,7 +204,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `async-stream-impl` | `0.3.6` | Rust |
 | `async-task` | `4.7.1` | Rust |
 | `async-trait` | `0.1.92` | Rust |
-| `async-tungstenite` | `0.32.1` | Rust |
 | `atk` | `0.18.2` | Rust |
 | `atk-sys` | `0.18.2` | Rust |
 | `atoi` | `2.0.0` | Rust |
@@ -250,10 +249,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `cfg-expr` | `0.15.8` | Rust |
 | `cfg-if` | `1.0.5` | Rust |
 | `chacha20` | `0.10.2` | Rust |
-| `chromiumoxide` | `0.8.0` | Rust |
-| `chromiumoxide_cdp` | `0.8.0` | Rust |
-| `chromiumoxide_pdl` | `0.8.0` | Rust |
-| `chromiumoxide_types` | `0.8.0` | Rust |
 | `chrono` | `0.4.45` | Rust |
 | `cipher` | `0.4.4` | Rust |
 | `cipher` | `0.5.2` | Rust |
@@ -298,7 +293,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `darling` | `0.24.1` | Rust |
 | `darling_core` | `0.24.1` | Rust |
 | `darling_macro` | `0.24.1` | Rust |
-| `data-encoding` | `2.11.1` | Rust |
 | `dbus` | `0.9.12` | Rust |
 | `ddgs` | `0.1.0` | Rust |
 | `defmt` | `1.1.1` | Rust |
@@ -357,7 +351,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `foreign-types-macros` | `0.2.4` | Rust |
 | `foreign-types-shared` | `0.3.1` | Rust |
 | `form_urlencoded` | `1.2.2` | Rust |
-| `fs2` | `0.4.3` | Rust |
 | `futures` | `0.3.34` | Rust |
 | `futures-channel` | `0.3.34` | Rust |
 | `futures-core` | `0.3.34` | Rust |
@@ -368,7 +361,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `futures-macro` | `0.3.34` | Rust |
 | `futures-sink` | `0.3.34` | Rust |
 | `futures-task` | `0.3.34` | Rust |
-| `futures-timer` | `3.0.4` | Rust |
 | `futures-util` | `0.3.34` | Rust |
 | `gdk` | `0.18.2` | Rust |
 | `gdk-pixbuf` | `0.18.5` | Rust |
@@ -389,6 +381,7 @@ Total: 742 crates compiled into Desktop binaries.
 | `glib-macros` | `0.18.5` | Rust |
 | `glib-sys` | `0.18.1` | Rust |
 | `glob` | `0.3.4` | Rust |
+| `global-hotkey` | `0.8.0` | Rust |
 | `globset` | `0.4.20` | Rust |
 | `gobject-sys` | `0.18.0` | Rust |
 | `gtk` | `0.18.2` | Rust |
@@ -457,6 +450,7 @@ Total: 742 crates compiled into Desktop binaries.
 | `js-sys` | `0.3.106` | Rust |
 | `json-patch` | `4.2.0` | Rust |
 | `jsonptr` | `0.7.1` | Rust |
+| `keyboard-types` | `0.7.0` | Rust |
 | `keyboard-types` | `0.8.3` | Rust |
 | `keyring` | `3.6.3` | Rust |
 | `lazy_static` | `1.5.0` | Rust |
@@ -515,14 +509,19 @@ Total: 742 crates compiled into Desktop binaries.
 | `objc2-core-graphics` | `0.3.2` | Rust |
 | `objc2-core-image` | `0.3.2` | Rust |
 | `objc2-core-location` | `0.3.2` | Rust |
+| `objc2-core-spotlight` | `0.3.2` | Rust |
 | `objc2-core-text` | `0.3.2` | Rust |
+| `objc2-core-video` | `0.3.2` | Rust |
 | `objc2-encode` | `4.1.0` | Rust |
 | `objc2-exception-helper` | `0.1.1` | Rust |
 | `objc2-foundation` | `0.3.2` | Rust |
 | `objc2-io-surface` | `0.3.2` | Rust |
+| `objc2-javascript-core` | `0.3.2` | Rust |
 | `objc2-osa-kit` | `0.3.2` | Rust |
 | `objc2-quartz-core` | `0.3.2` | Rust |
+| `objc2-security` | `0.3.2` | Rust |
 | `objc2-ui-kit` | `0.3.2` | Rust |
+| `objc2-uniform-type-identifiers` | `0.3.2` | Rust |
 | `objc2-user-notifications` | `0.3.2` | Rust |
 | `objc2-web-kit` | `0.3.2` | Rust |
 | `once_cell` | `1.21.4` | Rust |
@@ -711,6 +710,7 @@ Total: 742 crates compiled into Desktop binaries.
 | `tauri-plugin-deep-link` | `2.5.0` | Rust |
 | `tauri-plugin-dialog` | `2.8.0` | Rust |
 | `tauri-plugin-fs` | `2.6.0` | Rust |
+| `tauri-plugin-global-shortcut` | `2.4.1` | Rust |
 | `tauri-plugin-notification` | `2.5.0` | Rust |
 | `tauri-plugin-os` | `2.4.0` | Rust |
 | `tauri-plugin-single-instance` | `2.5.0` | Rust |
@@ -762,7 +762,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `tray-icon` | `0.25.1` | Rust |
 | `try-lock` | `0.2.5` | Rust |
 | `ttf-parser` | `0.25.1` | Rust |
-| `tungstenite` | `0.28.0` | Rust |
 | `type1-encoding-parser` | `0.1.1` | Rust |
 | `typed-path` | `0.13.0` | Rust |
 | `typeid` | `1.0.3` | Rust |
@@ -778,7 +777,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `untrusted` | `0.9.0` | Rust |
 | `url` | `2.5.8` | Rust |
 | `urlpattern` | `0.6.0` | Rust |
-| `utf-8` | `0.7.6` | Rust |
 | `utf8_iter` | `1.0.4` | Rust |
 | `utf8parse` | `0.2.2` | Rust |
 | `uuid` | `1.26.1` | Rust |
@@ -812,7 +810,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `webview2-com-sys` | `0.39.1` | Rust |
 | `weezl` | `0.1.12` | Rust |
 | `weezl` | `0.2.1` | Rust |
-| `which` | `8.0.6` | Rust |
 | `whoami` | `1.6.1` | Rust |
 | `winapi` | `0.3.9` | Rust |
 | `winapi-i686-pc-windows-gnu` | `0.4.0` | Rust |
@@ -890,7 +887,10 @@ Total: 742 crates compiled into Desktop binaries.
 | `wry` | `0.57.0` | Rust |
 | `x11` | `2.21.0` | Rust |
 | `x11-dl` | `2.21.0` | Rust |
+| `x11rb` | `0.13.2` | Rust |
+| `x11rb-protocol` | `0.13.2` | Rust |
 | `xattr` | `1.6.1` | Rust |
+| `xkeysym` | `0.2.1` | Rust |
 | `yoke` | `0.8.3` | Rust |
 | `yoke-derive` | `0.8.3` | Rust |
 | `zbus` | `5.19.0` | Rust |
@@ -909,7 +909,6 @@ Total: 742 crates compiled into Desktop binaries.
 | `zip` | `9.3.0` | Rust |
 | `zlib-rs` | `0.6.8` | Rust |
 | `zmij` | `1.0.23` | Rust |
-| `zopfli` | `0.8.4` | Rust |
 | `zvariant` | `5.15.0` | Rust |
 | `zvariant_derive` | `5.15.0` | Rust |
 | `zvariant_utils` | `4.2.0` | Rust |

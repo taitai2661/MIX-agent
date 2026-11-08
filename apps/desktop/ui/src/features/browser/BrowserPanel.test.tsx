@@ -1,41 +1,20 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { setLanguage } from "@/lib/i18n";
+import { api } from "@/lib/api";
 import { useUi } from "@/lib/ui";
 import { BrowserPanel } from "./BrowserPanel";
-import { normalizeAddress, displayAddress } from "./BrowserToolbar";
+import { displayAddress, normalizeAddress } from "./BrowserToolbar";
 
 vi.mock("@/lib/api", () => ({
   api: {
-    browserStatus: vi.fn(async () => ({
-      backend: "chromium",
-      source: "installed",
-      executable: "/tmp/chromium",
-      installed_version: "156.0.8078.73",
-      pinned_version: "156.0.8078.73",
-      update_available: false,
-      install: {
-        status: "ready",
-        progress: 100,
-        stage: "done",
-        failure: null,
-        failure_code: null,
-        bytes_done: null,
-        bytes_total: null,
-        version: "156.0.8078.73",
-      },
-      profiles: 1,
-      artifacts: 0,
-      allow_local: false,
-    })),
-    browserProfiles: vi.fn(async () => []),
     browserInvoke: vi.fn(async () => ({
       ok: true,
       payload: {
-        active: { url: "https://example.com/", title: "Example" },
+        active: { id: "t1", url: "https://example.com/", title: "Example" },
         pages: [
           {
-            id: "tab-1",
+            id: "t1",
             url: "https://example.com/",
             title: "Example",
             active: true,
@@ -47,31 +26,13 @@ vi.mock("@/lib/api", () => ({
       artifact_id: null,
       error: null,
     })),
-    browserFrame: vi.fn(async () => ({
-      data: "data:image/jpeg;base64,AA==",
-      width: 1280,
-      height: 900,
-      url: "https://example.com/",
-      title: "Example",
-      can_go_back: false,
-      can_go_forward: false,
-    })),
-    browserResetProfile: vi.fn(async () => undefined),
-    browserInstall: vi.fn(),
-    browserInstallCancel: vi.fn(),
-    browserUninstall: vi.fn(),
-    browserInstallEvent: vi.fn(async () => () => undefined),
-    browserArtifact: vi.fn(async () => "data:image/png;base64,AA=="),
+    browserSurfaceBounds: vi.fn(async () => undefined),
+    browserStateEvent: vi.fn(async () => () => undefined),
     browserStop: vi.fn(async () => undefined),
-    browserKeepalive: vi.fn(async () => undefined),
-    browserScreencastStart: vi.fn(async () => undefined),
-    browserScreencastStop: vi.fn(async () => undefined),
-    browserFrameEvent: vi.fn(async () => () => undefined),
+    browserClearData: vi.fn(async () => undefined),
     openExternal: vi.fn(async () => undefined),
   },
 }));
-
-import { api } from "@/lib/api";
 
 const mockedApi = vi.mocked(api);
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
@@ -80,6 +41,18 @@ beforeAll(() => setLanguage("ja"));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    x: 10,
+    y: 10,
+    width: 600,
+    height: 400,
+    top: 10,
+    left: 10,
+    right: 610,
+    bottom: 410,
+    toJSON: () => ({}),
+  } as DOMRect);
   useUi.setState({
     workspaceId: WORKSPACE,
     conversationId: null,
@@ -91,41 +64,18 @@ beforeEach(() => {
 });
 
 describe("BrowserPanel", () => {
-  it("auto-starts live view for an agent-opened pane", async () => {
+  it("shows the native surface and the active tab", async () => {
     render(<BrowserPanel />);
+    expect(await screen.findByText("Example")).toBeInTheDocument();
+    expect(await screen.findByLabelText("アドレスバー")).toHaveValue(
+      "example.com",
+    );
     expect(
-      await screen.findByAltText("ブラウザのライブ画面"),
+      screen.getByText("ネイティブブラウザを読み込んでいます…"),
     ).toBeInTheDocument();
-    expect(mockedApi.browserScreencastStart).toHaveBeenCalledWith(WORKSPACE);
-  });
-
-  it("opens the install path when Chromium is missing", async () => {
-    mockedApi.browserStatus.mockResolvedValueOnce({
-      backend: "disabled",
-      source: "none",
-      executable: null,
-      installed_version: null,
-      pinned_version: "156.0.8078.73",
-      update_available: false,
-      install: {
-        status: "not_installed",
-        progress: null,
-        stage: null,
-        failure: null,
-        failure_code: null,
-        bytes_done: null,
-        bytes_total: null,
-        version: null,
-      },
-      profiles: 0,
-      artifacts: 0,
-      allow_local: false,
-    });
-    render(<BrowserPanel />);
-    expect(
-      await screen.findByRole("button", { name: /Chromium をインストール/ }),
-    ).toBeInTheDocument();
-    expect(mockedApi.browserScreencastStart).not.toHaveBeenCalled();
+    expect(mockedApi.browserInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "info" }),
+    );
   });
 
   it("shows the thread prompt without a workspace", async () => {
@@ -136,25 +86,15 @@ describe("BrowserPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not auto-start for a user-opened pane", async () => {
-    useUi.setState({ browserOpenedBy: "user" });
+  it("reports the surface rectangle to Rust", async () => {
     render(<BrowserPanel />);
-    expect(
-      await screen.findByText(
-        "ライブ表示を開始すると、ブラウザ画面をここで確認できます。",
+    await screen.findByText("Example");
+    await waitFor(() =>
+      expect(mockedApi.browserSurfaceBounds).toHaveBeenCalledWith(
+        WORKSPACE,
+        expect.objectContaining({ visible: true }),
       ),
-    ).toBeInTheDocument();
-    expect(mockedApi.browserScreencastStart).not.toHaveBeenCalled();
-  });
-
-  it("waits for status before deciding the pane is missing Chromium", async () => {
-    render(<BrowserPanel />);
-    await waitFor(() => expect(mockedApi.browserStatus).toHaveBeenCalled());
-    expect(
-      screen.queryByText(
-        "ブラウザ機能を使うにはChromiumをインストールしてください。約200MBをダウンロードします。",
-      ),
-    ).toBeNull();
+    );
   });
 });
 

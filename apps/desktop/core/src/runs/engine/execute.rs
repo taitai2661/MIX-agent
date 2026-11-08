@@ -2,9 +2,9 @@ use super::helpers::*;
 use super::*;
 
 impl RunEngine {
-    pub async fn execute(self: &Arc<Self>, request: RunRequest) -> anyhow::Result<RunOutcome> {
+    pub async fn execute(self: &Arc<Self>, mut request: RunRequest) -> anyhow::Result<RunOutcome> {
         let run_id = request.run_id;
-        let provider = self
+        let mut provider = self
             .providers
             .get(&request.provider_id)
             .await
@@ -117,6 +117,8 @@ impl RunEngine {
             }
         }
         let mut last_finish: Option<String> = None;
+        let mut turn_performances: Vec<TurnPerformance> = Vec::new();
+        let mut auto_fallbacks: Vec<AutoFallbackAttempt> = Vec::new();
         let mut stagnation = StagnationDetector::new();
         let mut verification = VerificationLedger::new(request.verify_command.clone());
         // Signals for the current turn, collected as tool calls execute. Kept
@@ -270,6 +272,8 @@ impl RunEngine {
                                     totals: totals.clone(),
                                     finish_reason: last_finish,
                                     steps,
+                                    turn_performances: turn_performances.clone(),
+                                    auto_fallbacks: auto_fallbacks.clone(),
                                 },
                             )
                             .await;
@@ -380,6 +384,11 @@ impl RunEngine {
                 .run_turn(run_id, provider.as_ref(), &request, current, &system)
                 .await?;
 
+            // Record the turn before any early return consumes its error. A
+            // failed turn is exactly what Auto needs to learn from; recording
+            // only the final Run status lost it.
+            turn_performances.push(turn.perf.clone());
+
             // A cancellation observed mid-stream comes back as `turn.error`;
             // report it as Cancelled rather than as a failure. `run_turn` keeps
             // the deltas it had already streamed in `turn.text/reasoning`, so
@@ -402,6 +411,55 @@ impl RunEngine {
                     .await;
             }
 
+            // Auto fallback: only before any content or tool call reached the
+            // transcript. Retrying after a partial answer would duplicate it,
+            // and a tool call may already have changed the workspace.
+            if let Some(kind) = turn.perf.failure_kind {
+                let no_content =
+                    turn.text.is_empty() && turn.reasoning.is_empty() && turn.tool_calls.is_empty();
+                if no_content && kind.is_fallback_eligible() {
+                    if let Some(next) = request.auto_fallbacks.first().cloned() {
+                        let has_room = kind != ProviderErrorKind::TooLarge
+                            || next.context_window > request.context_window;
+                        if has_room {
+                            if let Some(next_provider) = self.providers.get(&next.provider_id).await
+                            {
+                                self.emit(
+                                    run_id,
+                                    "auto_fallback",
+                                    serde_json::json!({
+                                        "fromModelId": request.model_id,
+                                        "fromProviderId": request.provider_id,
+                                        "toModelId": next.model_id,
+                                        "toProviderId": next.provider_id,
+                                        "failureKind": kind.as_str(),
+                                    }),
+                                )
+                                .await;
+                                auto_fallbacks.push(AutoFallbackAttempt {
+                                    from_model_id: request.model_id.clone(),
+                                    from_provider_id: request.provider_id.clone(),
+                                    to_model_id: next.model_id.clone(),
+                                    to_provider_id: next.provider_id.clone(),
+                                    failure_kind: kind,
+                                });
+                                request.auto_fallbacks.remove(0);
+                                request.model_id = next.model_id;
+                                request.provider_id = next.provider_id;
+                                request.context_window = next.context_window;
+                                request.keep_alive = next.keep_alive;
+                                provider = next_provider;
+                                totals.context_window = request.context_window;
+                                // The attempt produced nothing; it must not
+                                // consume a step from the Run's budget.
+                                steps = steps.saturating_sub(1);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(err) = turn.error {
                 self.emit(run_id, "error", serde_json::json!({ "error": err }))
                     .await;
@@ -420,6 +478,8 @@ impl RunEngine {
                             totals: totals.clone(),
                             finish_reason: last_finish,
                             steps,
+                            turn_performances: turn_performances.clone(),
+                            auto_fallbacks: auto_fallbacks.clone(),
                         },
                     )
                     .await;
@@ -1124,6 +1184,8 @@ impl RunEngine {
                 totals: totals.clone(),
                 finish_reason: last_finish,
                 steps,
+                turn_performances,
+                auto_fallbacks,
             },
         )
         .await

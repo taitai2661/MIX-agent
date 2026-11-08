@@ -23,7 +23,8 @@ pub const BASE_BACKOFF_MS: u64 = 500;
 pub const MAX_BACKOFF_MS: u64 = 20_000;
 
 /// What kind of failure this is, and therefore whether retrying can help.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProviderErrorKind {
     /// Rate limited. Retryable, and `Retry-After` is meaningful.
     RateLimited,
@@ -42,12 +43,44 @@ pub enum ProviderErrorKind {
 }
 
 impl ProviderErrorKind {
+    /// Stable wire/database name. The Auto router persists this value, so it
+    /// must not change when the enum is renamed.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProviderErrorKind::RateLimited => "rate_limit",
+            ProviderErrorKind::Unavailable => "provider_5xx",
+            ProviderErrorKind::BadRequest => "bad_request",
+            ProviderErrorKind::Unauthorized => "auth",
+            ProviderErrorKind::TooLarge => "context_overflow",
+            ProviderErrorKind::Transport => "transport",
+            ProviderErrorKind::Other => "other",
+        }
+    }
+
     pub fn is_retryable(self) -> bool {
         matches!(
             self,
             ProviderErrorKind::RateLimited
                 | ProviderErrorKind::Unavailable
                 | ProviderErrorKind::Transport
+        )
+    }
+
+    /// Whether Auto may retry this failure on a different model before any
+    /// content has been emitted.
+    ///
+    /// Authentication and context-size failures are not transport retries, but
+    /// another provider/model can genuinely serve the turn, so they are
+    /// eligible for a fallback (the caller still checks that the replacement
+    /// has a large enough window).
+    pub fn is_fallback_eligible(self) -> bool {
+        matches!(
+            self,
+            ProviderErrorKind::RateLimited
+                | ProviderErrorKind::Unavailable
+                | ProviderErrorKind::Transport
+                | ProviderErrorKind::Unauthorized
+                | ProviderErrorKind::TooLarge
         )
     }
 
@@ -102,13 +135,100 @@ impl ProviderErrorKind {
                 }
             }
             let text = e.to_string();
-            if Self::from_transport(&text) == ProviderErrorKind::Transport {
-                return ProviderErrorKind::Transport;
+            // `send_with_retry` returns an `anyhow` message that names the
+            // final HTTP status; the status is not preserved as a typed source
+            // because `reqwest::Error` is consumed. Recover it from the text.
+            let from_text = Self::from_message(&text);
+            if from_text != ProviderErrorKind::Other {
+                return from_text;
             }
             current = e.source();
         }
         ProviderErrorKind::Other
     }
+
+    /// Classify an error string that reached the stream or the run engine
+    /// without a typed source.
+    ///
+    /// Adapters turn SSE `error` payloads and aborted streams into strings, so
+    /// this is the last place that can recover the failure taxonomy. It is
+    /// intentionally conservative: a status-looking number is only trusted
+    /// when it appears as a whole token (`429`, not `1429`), and an
+    /// unrecognised message stays `Other` rather than being punished as a
+    /// provider outage.
+    pub fn from_message(message: &str) -> Self {
+        let lower = message.to_lowercase();
+        let has = |needle: &str| contains_token(&lower, needle);
+        if has("429")
+            || lower.contains("rate limit")
+            || lower.contains("rate_limit")
+            || lower.contains("too many requests")
+        {
+            ProviderErrorKind::RateLimited
+        } else if has("401")
+            || has("403")
+            || lower.contains("unauthorized")
+            || lower.contains("forbidden")
+            || lower.contains("invalid api key")
+            || lower.contains("incorrect api key")
+        {
+            ProviderErrorKind::Unauthorized
+        } else if has("413")
+            || lower.contains("context length")
+            || lower.contains("context_length")
+            || lower.contains("maximum context")
+            || lower.contains("too many tokens")
+            || lower.contains("prompt is too long")
+        {
+            ProviderErrorKind::TooLarge
+        } else if lower.contains("timed out")
+            || lower.contains("timeout")
+            || lower.contains("connection reset")
+            || lower.contains("connection refused")
+            || lower.contains("broken pipe")
+            || lower.contains("dns")
+            || lower.contains("unexpected eof")
+        {
+            ProviderErrorKind::Transport
+        } else if has("500")
+            || has("502")
+            || has("503")
+            || has("504")
+            || lower.contains("overloaded")
+            || lower.contains("service unavailable")
+            || lower.contains("internal server error")
+        {
+            ProviderErrorKind::Unavailable
+        } else if has("400")
+            || has("404")
+            || has("422")
+            || lower.contains("invalid request")
+            || lower.contains("bad request")
+        {
+            ProviderErrorKind::BadRequest
+        } else {
+            ProviderErrorKind::Other
+        }
+    }
+}
+
+/// Whether `needle` appears as a whole token in `haystack`.
+///
+/// Prevents `1429` or `5030` from being read as HTTP statuses.
+fn contains_token(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let s = start + pos;
+        let e = s + needle.len();
+        let before = s == 0 || !bytes[s - 1].is_ascii_alphanumeric();
+        let after = e >= bytes.len() || !bytes[e].is_ascii_alphanumeric();
+        if before && after {
+            return true;
+        }
+        start = e;
+    }
+    false
 }
 
 /// Extract `Retry-After` in seconds, accepting both the delta-seconds and the
@@ -260,5 +380,91 @@ mod tests {
         let headers = reqwest::header::HeaderMap::new();
         assert_eq!(retry_after_secs(&headers), None);
         assert_eq!(wait_for(1, None), backoff(1));
+    }
+
+    #[test]
+    fn messages_are_classified_by_status_and_phrase() {
+        assert_eq!(
+            ProviderErrorKind::from_message("provider HTTP 429 after 4 attempts"),
+            ProviderErrorKind::RateLimited
+        );
+        assert_eq!(
+            ProviderErrorKind::from_message("503 Service Unavailable"),
+            ProviderErrorKind::Unavailable
+        );
+        assert_eq!(
+            ProviderErrorKind::from_message("invalid api key"),
+            ProviderErrorKind::Unauthorized
+        );
+        assert_eq!(
+            ProviderErrorKind::from_message("context length exceeded"),
+            ProviderErrorKind::TooLarge
+        );
+        assert_eq!(
+            ProviderErrorKind::from_message("request timed out"),
+            ProviderErrorKind::Transport
+        );
+        assert_eq!(
+            ProviderErrorKind::from_message(
+                "the provider stream ended without a completion signal"
+            ),
+            ProviderErrorKind::Other
+        );
+    }
+
+    #[test]
+    fn status_like_substrings_are_not_mistaken_for_http_codes() {
+        // 1429 and 5030 are not statuses; the token boundary keeps them from
+        // poisoning a model's reliability score.
+        assert_eq!(
+            ProviderErrorKind::from_message("usage 1429 tokens"),
+            ProviderErrorKind::Other
+        );
+        assert_eq!(
+            ProviderErrorKind::from_message("model 5030 in catalogue"),
+            ProviderErrorKind::Other
+        );
+    }
+
+    #[test]
+    fn database_names_are_stable() {
+        assert_eq!(ProviderErrorKind::RateLimited.as_str(), "rate_limit");
+        assert_eq!(ProviderErrorKind::Unavailable.as_str(), "provider_5xx");
+        assert_eq!(ProviderErrorKind::Unauthorized.as_str(), "auth");
+        assert_eq!(ProviderErrorKind::TooLarge.as_str(), "context_overflow");
+        assert_eq!(ProviderErrorKind::Transport.as_str(), "transport");
+    }
+
+    #[test]
+    fn a_status_named_only_in_an_anyhow_message_is_recovered() {
+        let err = anyhow::anyhow!("provider HTTP 503 after 4 attempt(s): overloaded");
+        assert_eq!(
+            ProviderErrorKind::from_error(err.as_ref()),
+            ProviderErrorKind::Unavailable
+        );
+        let err = anyhow::anyhow!("provider HTTP 429 after 4 attempt(s)");
+        assert_eq!(
+            ProviderErrorKind::from_error(err.as_ref()),
+            ProviderErrorKind::RateLimited
+        );
+    }
+
+    #[test]
+    fn only_recoverable_failures_are_fallback_eligible() {
+        for kind in [
+            ProviderErrorKind::RateLimited,
+            ProviderErrorKind::Unavailable,
+            ProviderErrorKind::Transport,
+            ProviderErrorKind::Unauthorized,
+            ProviderErrorKind::TooLarge,
+        ] {
+            assert!(kind.is_fallback_eligible(), "{kind:?} should fall back");
+        }
+        for kind in [ProviderErrorKind::BadRequest, ProviderErrorKind::Other] {
+            assert!(
+                !kind.is_fallback_eligible(),
+                "{kind:?} must not trigger a fallback"
+            );
+        }
     }
 }

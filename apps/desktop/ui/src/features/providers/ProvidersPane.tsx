@@ -36,6 +36,7 @@ import {
   LocalDiscoveryCard,
   LocalRuntimeManagementCard,
 } from "./LocalDiscoveryCard";
+import { ChatGptPane } from "./ChatGptPane";
 import type { ProviderPresetView, ProviderView } from "@/lib/types";
 
 function ProviderIcon({ kind }: { kind: string }) {
@@ -486,6 +487,11 @@ export function ProvidersPane() {
 
       {syncProvider.isError && <ErrorBox error={syncProvider.error} />}
       {deleteProvider.isError && <ErrorBox error={deleteProvider.error} />}
+
+      {/* ChatGPT/Codex is a provider-like connection without a base URL or key
+          of its own. It used to be a peer tab of every provider; keeping it
+          here means "connect a model" has one home. */}
+      <ChatGptPane />
     </Section>
   );
 }

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from mix_agent import pricing
@@ -48,7 +49,7 @@ COLLECTIONS = {
 }
 
 
-async def list_collection(collection: str, ctx=Depends(context)):
+def list_collection(collection: str, ctx=Depends(context)):
     db, s = ctx
     if collection not in COLLECTIONS:
         raise HTTPException(404)
@@ -115,20 +116,14 @@ def apply_context_override(value, previous=None):
     return value
 
 
-async def create_entity(collection: str, request: Request, ctx=Depends(context)):
+def create_entity(collection: str, payload: dict, explicit: set[str], ctx=Depends(context)):
     db, s = ctx
     if collection not in COLLECTIONS or COLLECTIONS[collection][1] is None:
         raise HTTPException(404)
     cls, schema = COLLECTIONS[collection]
-    from pydantic import ValidationError
-
-    try:
-        payload = await request.json()
-        value = schema.model_validate(payload).model_dump()
-    except ValidationError:
-        raise HTTPException(422, "入力項目を確認してください")
+    value = schema.model_validate(payload).model_dump()
     if collection == "conversations":
-        set_title_placeholder(value, explicit="title" in payload)
+        set_title_placeholder(value, explicit="title" in explicit)
     validate_entity(collection, value, db, s.owner_id)
     if collection == "models":
         value = apply_context_override(value)
@@ -138,16 +133,14 @@ async def create_entity(collection: str, request: Request, ctx=Depends(context))
     return public(row)
 
 
-async def edit_entity(collection: str, key: str, request: Request, ctx=Depends(context)):
+def edit_entity(collection: str, key: str, payload: dict, ctx=Depends(context)):
     db, s = ctx
     if collection not in COLLECTIONS or COLLECTIONS[collection][1] is None:
         raise HTTPException(404)
     cls, schema = COLLECTIONS[collection]
     row = own(db, cls, key, s.owner_id)
-    from pydantic import ValidationError
 
     try:
-        payload = await request.json()
         value = schema.model_validate(
             {**{k: v for k, v in row.data.items() if k in schema.model_fields}, **payload}
         ).model_dump()
@@ -204,8 +197,8 @@ def delete_entity(collection: str, key: str, ctx=Depends(context)):
 
 # Concrete routes expose request/response schemas to generated TypeScript clients.
 def register_collection(name, schema, view_schema=RecordView, include_list=True):
-    async def listing(ctx=Depends(context)):
-        return await list_collection(name, ctx)
+    def listing(ctx=Depends(context)):
+        return list_collection(name, ctx)
 
     if include_list:
         router.add_api_route(
@@ -214,8 +207,8 @@ def register_collection(name, schema, view_schema=RecordView, include_list=True)
     if schema is None:
         return
 
-    async def creating(body, request: Request, ctx=Depends(context)):
-        return await create_entity(name, request, ctx)
+    def creating(body, ctx=Depends(context)):
+        return create_entity(name, body.model_dump(), set(body.model_fields_set), ctx)
 
     creating.__annotations__["body"] = schema
     router.add_api_route(
@@ -229,8 +222,8 @@ def register_collection(name, schema, view_schema=RecordView, include_list=True)
         **{k: (v.annotation | None, None) for k, v in schema.model_fields.items()},
     )
 
-    async def editing(key: str, body, request: Request, ctx=Depends(context)):
-        return await edit_entity(name, key, request, ctx)
+    def editing(key: str, body, ctx=Depends(context)):
+        return edit_entity(name, key, body.model_dump(exclude_unset=True), ctx)
 
     editing.__annotations__["body"] = partial
     router.add_api_route(

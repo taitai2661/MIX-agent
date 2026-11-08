@@ -10,9 +10,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
   Bot,
+  ChevronDown,
+  ChevronUp,
   CornerDownLeft,
+  Search,
   ShieldCheck,
   Sparkles,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t, tf } from "@/lib/i18n";
@@ -49,7 +53,13 @@ type TranscriptRow =
  *  row; above it, only the viewport (plus overscan) is mounted. */
 const VIRTUALIZE_AFTER = 40;
 
+/** Last reading position per thread. Module-scoped on purpose: the component
+ *  is remounted by `key={conversationId}`, so React state died on every switch
+ *  and the old code always reopened a thread at the bottom. */
+const scrollPositions = new Map<string, { top: number; stuck: boolean }>();
+
 export function Transcript({
+  conversationId,
   messages,
   runs,
   liveRunId,
@@ -68,6 +78,8 @@ export function Transcript({
   loadingOlder = false,
   onLoadOlder,
 }: {
+  /** Thread whose reading position is remembered across switches. */
+  conversationId?: string | null;
   messages: MessageView[];
   runs: Map<string, RunView>;
   liveRunId: string | null;
@@ -102,8 +114,19 @@ export function Transcript({
   onLoadOlder?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatchIndex, setFindMatchIndex] = useState(0);
+  const [flashMessageId, setFlashMessageId] = useState<string | null>(null);
   const now = useNow();
-  const [stuck, setStuck] = useState(true);
+  const savedPosition = conversationId
+    ? scrollPositions.get(conversationId)
+    : undefined;
+  // A thread left scrolled-up reopens where it was; a thread left at the
+  // bottom keeps following the live answer.
+  const [stuck, setStuck] = useState(savedPosition?.stuck ?? true);
+  const restoredRef = useRef(false);
   const prevCountRef = useRef(messages.length);
   const rafRef = useRef(0);
   const stickRafRef = useRef(0);
@@ -120,16 +143,43 @@ export function Transcript({
       rafRef.current = 0;
       const el = scrollRef.current;
       if (!el) return;
-      setStuck(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      setStuck(atBottom);
+      if (conversationId) {
+        scrollPositions.set(conversationId, {
+          top: el.scrollTop,
+          stuck: atBottom,
+        });
+      }
     });
   };
+
+  // Restore the saved offset once the transcript has rows to scroll. Both the
+  // plain and virtual paths use this: the virtualizer also receives it as its
+  // `initialOffset`, but it can only act after its container exists.
+  useLayoutEffect(() => {
+    if (restoredRef.current) return;
+    const el = scrollRef.current;
+    if (!el || messages.length === 0) return;
+    restoredRef.current = true;
+    if (savedPosition && !savedPosition.stuck && savedPosition.top > 0) {
+      el.scrollTop = savedPosition.top;
+    }
+  }, [messages.length, savedPosition]);
 
   useEffect(
     () => () => {
       if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
       if (stickRafRef.current) window.cancelAnimationFrame(stickRafRef.current);
+      const el = scrollRef.current;
+      if (el && conversationId) {
+        scrollPositions.set(conversationId, {
+          top: el.scrollTop,
+          stuck: stuckRef.current,
+        });
+      }
     },
-    [],
+    [conversationId],
   );
 
   // Sending a message while scrolled up left the user staring at old history
@@ -265,6 +315,21 @@ export function Transcript({
     return out;
   }, [error, hasOlder, messages, onLoadOlder, showLive, virtualize]);
 
+  // In-thread find (⌘F / Ctrl+F). The transcript is virtualised above 40 rows,
+  // so a plain DOM query cannot reach every match; keep the row index and let
+  // the virtualizer jump to it.
+  const findMatches = useMemo(() => {
+    const q = findQuery.trim().toLowerCase();
+    if (!q) return [];
+    return rows.flatMap((row, rowIndex) =>
+      row.kind === "message" &&
+      `${row.message.content ?? ""}\n${row.message.reasoning ?? ""}`
+        .toLowerCase()
+        .includes(q)
+        ? [{ rowIndex, message: row.message }]
+        : [],
+    );
+  }, [findQuery, rows]);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -278,7 +343,75 @@ export function Transcript({
     },
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 6,
+    initialOffset:
+      savedPosition && !savedPosition.stuck ? savedPosition.top : undefined,
   });
+
+  // Reset and clamp the highlighted match as the query or result set changes.
+  useEffect(() => {
+    setFindMatchIndex(0);
+  }, [findQuery]);
+  useEffect(() => {
+    if (findMatchIndex < findMatches.length) return;
+    setFindMatchIndex(Math.max(0, findMatches.length - 1));
+  }, [findMatchIndex, findMatches.length]);
+
+  // Open find with the platform shortcut, close it with Escape. Skip while the
+  // embedded browser owns focus: ⌘F there belongs to the page, not the chat.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && !event.altKey && event.key.toLowerCase() === "f") {
+        const active = document.activeElement as HTMLElement | null;
+        if (active?.closest("[data-browser-pane]")) return;
+        event.preventDefault();
+        setFindOpen(true);
+        window.requestAnimationFrame(() => {
+          findInputRef.current?.focus();
+          findInputRef.current?.select();
+        });
+        return;
+      }
+      if (event.key === "Escape" && findOpen) {
+        event.preventDefault();
+        setFindOpen(false);
+        setFindQuery("");
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [findOpen]);
+
+  // Scroll the active hit into view (virtualizer index when the list is
+  // windowed, element.scrollIntoView otherwise) and flash its row briefly.
+  useEffect(() => {
+    if (!findOpen) return;
+    const match = findMatches[findMatchIndex];
+    if (!match) return;
+    if (virtualize) {
+      rowVirtualizer.scrollToIndex(match.rowIndex, { align: "center" });
+    } else {
+      window.requestAnimationFrame(() => {
+        const element = scrollRef.current?.querySelector<HTMLElement>(
+          `[data-message-id="${match.message.id}"]`,
+        );
+        // jsdom has no scrollIntoView; the browser does.
+        if (typeof element?.scrollIntoView === "function") {
+          element.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+      });
+    }
+    setFlashMessageId(match.message.id);
+    const timer = window.setTimeout(() => setFlashMessageId(null), 1400);
+    return () => window.clearTimeout(timer);
+  }, [findMatchIndex, findMatches, findOpen, rowVirtualizer, virtualize]);
+
+  const moveFind = (delta: number) => {
+    if (findMatches.length === 0) return;
+    setFindMatchIndex(
+      (index) => (index + delta + findMatches.length) % findMatches.length,
+    );
+  };
 
   const virtualTotalSize = rowVirtualizer.getTotalSize();
   // The virtualizer's total height is 0 on the first paint, so the normal
@@ -350,24 +483,33 @@ export function Transcript({
         );
       case "message":
         return (
-          <MessageItem
-            message={row.message}
-            runs={runs}
-            models={models}
-            onEdit={onEditMessage}
-            onRetry={onRetry}
-            onFork={onFork}
-            editDisabled={editDisabled}
-            retryDisabled={retryDisabled || editDisabled}
-            tailCount={messages.length - row.index - 1}
-            showRunError={
-              row.message.role === "assistant"
-                ? lastAssistantByRun.get(row.message.run_id ?? "") ===
-                  row.message.id
-                : orphanRunIds.has(row.message.run_id ?? "")
-            }
-            now={now}
-          />
+          <div
+            data-message-id={row.message.id}
+            className={cn(
+              "rounded-2xl transition-shadow duration-150",
+              flashMessageId === row.message.id &&
+                "ring-2 ring-brand/50 ring-offset-2 ring-offset-bg",
+            )}
+          >
+            <MessageItem
+              message={row.message}
+              runs={runs}
+              models={models}
+              onEdit={onEditMessage}
+              onRetry={onRetry}
+              onFork={onFork}
+              editDisabled={editDisabled}
+              retryDisabled={retryDisabled || editDisabled}
+              tailCount={messages.length - row.index - 1}
+              showRunError={
+                row.message.role === "assistant"
+                  ? lastAssistantByRun.get(row.message.run_id ?? "") ===
+                    row.message.id
+                  : orphanRunIds.has(row.message.run_id ?? "")
+              }
+              now={now}
+            />
+          </div>
         );
       case "live":
         return liveConversationId ? (
@@ -384,6 +526,73 @@ export function Transcript({
 
   return (
     <div className="relative min-h-0 flex-1">
+      {findOpen && (
+        <div
+          role="search"
+          aria-label={t("スレッド内を検索")}
+          className="absolute top-3 right-4 z-30 flex items-center gap-1 rounded-xl border border-line bg-surface/95 p-1.5 shadow-pop backdrop-blur-md"
+        >
+          <Search
+            size={13}
+            className="ms-1 shrink-0 text-faint"
+            aria-hidden="true"
+          />
+          <input
+            ref={findInputRef}
+            value={findQuery}
+            onChange={(event) => setFindQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                moveFind(event.shiftKey ? -1 : 1);
+              }
+            }}
+            placeholder={t("スレッド内を検索")}
+            aria-label={t("スレッド内を検索")}
+            className="h-7 w-44 min-w-0 bg-transparent px-1 text-xs text-fg outline-none placeholder:text-faint"
+          />
+          <span
+            aria-live="polite"
+            className="min-w-12 shrink-0 text-center font-mono text-2xs text-faint tabular-nums"
+          >
+            {findQuery.trim()
+              ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
+              : ""}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={findMatches.length === 0}
+            onClick={() => moveFind(-1)}
+            title={t("前の一致")}
+            aria-label={t("前の一致")}
+          >
+            <ChevronUp size={13} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={findMatches.length === 0}
+            onClick={() => moveFind(1)}
+            title={t("次の一致")}
+            aria-label={t("次の一致")}
+          >
+            <ChevronDown size={13} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => {
+              setFindOpen(false);
+              setFindQuery("");
+            }}
+            title={t("閉じる")}
+            aria-label={t("閉じる")}
+          >
+            <X size={13} />
+          </Button>
+        </div>
+      )}
       <div
         ref={scrollRef}
         onScroll={onScroll}

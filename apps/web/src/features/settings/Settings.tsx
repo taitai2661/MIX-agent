@@ -11,6 +11,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  type LucideIcon,
 } from "lucide-react";
 import { Fragment, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
@@ -35,44 +36,79 @@ import { NetworkSettings } from "@/features/settings/Network";
 import { Memories } from "@/features/memory/Memories";
 import { t, useLanguage } from "@/app/i18n";
 
-const groups = [
-  { label: null, items: [["", "概要", Settings2]] },
+type SettingsNavItem = readonly [
+  path: string,
+  label: string,
+  Icon: LucideIcon,
+  keywords?: readonly string[],
+];
+
+const groups: { label: string | null; items: readonly SettingsNavItem[] }[] = [
+  {
+    label: null,
+    items: [["", "概要", Settings2, ["home", "スタート", "overview"]]],
+  },
   {
     label: "AI",
     items: [
-      ["providers", "AI Providers", Server],
-      ["models", "モデル", Sparkles],
-      ["auto", "Auto", Sparkles],
-      ["memory", "Memory", Brain],
+      [
+        "providers",
+        "AI Providers",
+        Server,
+        ["api", "api key", "apiキー", "接続", "openai", "anthropic", "ollama"],
+      ],
+      ["models", "モデル", Sparkles, ["model", "取得", "一覧"]],
+      ["auto", "Auto", Sparkles, ["自動", "auto", "候補"]],
+      ["memory", "Memory", Brain, ["記憶", "メモリ", "memory"]],
     ],
   },
   {
     label: "ツールと連携",
     items: [
-      ["tools", "Tools・権限", ShieldCheck],
-      ["mcp", "MCP", Globe],
-      ["browser", "Browser", Globe],
-      ["web-search", "Web検索", Globe],
+      ["tools", "Tools・権限", ShieldCheck, ["tool", "許可", "permission"]],
+      ["mcp", "MCP", Globe, ["mcp", "連携", "サーバー"]],
+      ["browser", "Browser", Globe, ["ブラウザ", "browser", "chromium"]],
+      ["web-search", "Web検索", Globe, ["検索", "search", "web"]],
     ],
   },
-  { label: "基本設定", items: [["general", "一般", Settings2]] },
+  {
+    label: "基本設定",
+    items: [
+      [
+        "general",
+        "一般",
+        Settings2,
+        ["テーマ", "theme", "言語", "language", "既定モデル", "表示"],
+      ],
+    ],
+  },
   {
     label: "セキュリティとデータ",
     items: [
-      ["network", "通信とネットワーク", Network],
-      ["account", "アカウント・安全性", ShieldCheck],
-      ["backups", "バックアップ", Database],
+      [
+        "network",
+        "通信とネットワーク",
+        Network,
+        ["network", "ドメイン", "proxy", "通信"],
+      ],
+      [
+        "account",
+        "アカウント・安全性",
+        ShieldCheck,
+        ["account", "パスワード", "password", "ログイン", "認証"],
+      ],
+      ["backups", "バックアップ", Database, ["backup", "復元", "エクスポート"]],
     ],
   },
   {
     label: "運用",
     items: [
-      ["usage", "使用量", Coins],
-      ["statistics", "統計", BarChart3],
-      ["diagnostics", "障害診断", Activity],
+      ["usage", "使用量", Coins, ["usage", "トークン", "料金"]],
+      ["statistics", "統計", BarChart3, ["statistics", "集計"]],
+      ["diagnostics", "障害診断", Activity, ["diagnostics", "ログ", "診断"]],
     ],
   },
-] as const;
+];
 
 export function Settings({
   user,
@@ -85,13 +121,14 @@ export function Settings({
 }) {
   useLanguage();
   const [query, setQuery] = useState("");
+  const needle = query.trim().toLocaleLowerCase();
   const filteredGroups = groups
     .map((group) => ({
       ...group,
-      items: group.items.filter(([_, label]) =>
-        String(label)
-          .toLocaleLowerCase()
-          .includes(query.trim().toLocaleLowerCase()),
+      items: group.items.filter(([path, label, _icon, keywords]) =>
+        [label, path, ...(keywords ?? [])].some((value) =>
+          String(value).toLocaleLowerCase().includes(needle),
+        ),
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -131,6 +168,9 @@ export function Settings({
             }}
           />
         </label>
+        {filteredGroups.length === 0 && (
+          <p className="settings-nav-empty">{t("一致する設定がありません")}</p>
+        )}
         {filteredGroups.map((group) => (
           <Fragment key={group.label ?? "home"}>
             {group.label && (

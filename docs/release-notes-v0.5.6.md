@@ -15,7 +15,7 @@ v0.5.6は、Desktop版・Docker／Web版に共通する機能リリースです�
 - **Git連携のRun取り消し**: Run開始時の作業ツリー（未コミット変更を含む）を `refs/mix-agent/runs/<id>` に固定し、「このRunの変更を取り消す」で `terminal` が作成・変更したファイルも実行前へ戻せるようになりました。Git管理外のフォルダでは従来どおり `edit` / `files` の変更だけが対象です。
 - **会話のページングと全文検索**: サイドバーは50件ずつのカーソルページングで読み込み、SQLite FTS5（trigram）でメッセージ・ナレッジ・記憶を検索します。長いトランスクリプトは可視領域だけを描画します。
 - **ヘッドレス診断**: インストール済みバイナリで `--doctor` / `--doctor --json` / `--version` / `--help` を利用できます。データディレクトリ、DBのschema versionと `quick_check`、秘密情報バックエンドを読み取り専用で確認します。
-- **秘密情報の保存方式**: API Keyや認証情報はAES-256-GCMで暗号化してローカルに保存し、マスター鍵はOS標準の安全なストレージ（macOS Keychain / Windows Credential Manager / Linux Secret Service）に保管します。
+- **秘密情報の保存方式**: API Keyや認証情報はAES-256-GCMで暗号化してローカルに保存します。マスター鍵はWindowsではCredential Manager、macOS / Linuxでは所有者のみ読める0600の`.master_seed`に保管します。macOSのad-hoc署名ビルドではKeychainのACLが再ビルドごとに一致せず許可ダイアログが出続けるため、既定ではKeychainを読みません（旧版のKeychain seedは初回起動時に一度だけ`.master_seed`へ移行）。`MIX_SECRET_BACKEND=keychain-seed`でKeychain方式に切り替えられます。
 - **パフォーマンス改善**: 起動時のバックアップ／整合性チェックを必要時のみに限定し、ブラウザのアイドル終了を5分に短縮、UIの描画と検索を軽量化しました。
 
 ### Docker / Web版

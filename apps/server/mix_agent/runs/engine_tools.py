@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import UTC, timedelta
 
 from sqlalchemy import select
@@ -35,6 +36,8 @@ from mix_agent.runs.engine_support import (
     tool_attempt_key,
     update,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def complete_tool_call(db, run, call, current, result):
@@ -82,8 +85,8 @@ def complete_tool_call(db, run, call, current, result):
                     frames = frames[-30:]
                 update(run, browser_frames=frames)
                 emit(db, run.id, "browser_frame", frames[-1])
-            except Exception:  # noqa: BLE001, S110 - a screenshot failure must not fail the browser operation
-                pass  # A screenshot failure must not fail the browser operation.
+            except Exception:  # noqa: BLE001 - a screenshot failure must not fail the browser operation
+                LOGGER.debug("browser screenshot failed for run %s", run.id, exc_info=True)
     call.status = "completed"
     summary = activity_result((current or {}).get("id", call.data["tool_id"]), result)
     call.data = {**call.data, "result": result, **({"result_activity": summary} if summary else {})}

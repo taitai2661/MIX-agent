@@ -1,4 +1,4 @@
-//! Screenshot / PDF artifact metadata for the Browser Operator.
+//! Screenshot artifact metadata shared by the browser hosts.
 
 use serde::{Deserialize, Serialize};
 

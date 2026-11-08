@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   FolderTree,
   Globe,
   MessageSquare,
@@ -35,7 +36,13 @@ const CAPABILITIES = [
  * their language — and the rest of the wizard would otherwise be in whatever
  * `navigator.languages` guessed.
  */
-export function StepWelcome({ onDone }: { onDone: () => void }) {
+export function StepWelcome({
+  onDone,
+  onDefer,
+}: {
+  onDone: () => void;
+  onDefer: () => void;
+}) {
   const locale = useUi((s) => s.locale);
   const setLocale = useUi((s) => s.setLocale);
   const applySettings = useApplySettings();
@@ -49,47 +56,47 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="grid size-12 place-items-center rounded-2xl border border-line bg-gradient-to-b from-surface to-inset text-brand">
-        <Sparkles size={22} aria-hidden="true" />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <h2 className="text-xl font-semibold tracking-tight text-fg">
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-3">
+        <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-2xs font-medium text-muted shadow-xs">
+          <Sparkles size={11} className="text-brand" aria-hidden="true" />
+          {t("初回セットアップ")}
+        </span>
+        <h2 className="text-3xl font-semibold tracking-tight text-fg">
           {t("ようこそ")}
         </h2>
-        <p className="text-sm text-muted">
-          {t("ローカルで動く AI ワークスペースです。")}
+        <p className="max-w-lg text-sm leading-6 text-muted">
+          {t("ローカルで動く AI ワークスペースです。")}{" "}
+          {t("3 つのステップで、すぐに使い始められます。")}
         </p>
       </div>
 
-      <ul className="grid grid-cols-2 gap-3">
+      <ul className="grid gap-3 sm:grid-cols-2">
         {CAPABILITIES.map(({ Icon, title, body }) => (
           <li
             key={title}
-            className="flex items-start gap-2.5 rounded-xl border border-line bg-surface px-3 py-3 transition-colors hover:border-line-strong"
+            className="flex items-start gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-line-strong hover:shadow-sm"
           >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand">
-              <Icon size={14} aria-hidden="true" />
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
+              <Icon size={15} aria-hidden="true" />
             </span>
-            <span className="flex flex-col gap-0.5">
-              <span className="text-xs font-medium text-fg">{t(title)}</span>
-              <span className="text-xs text-faint">{t(body)}</span>
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-xs font-semibold text-fg">{t(title)}</span>
+              <span className="text-xs leading-5 text-muted">{t(body)}</span>
             </span>
           </li>
         ))}
       </ul>
 
-      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface/60 px-3.5 py-3">
-        <ShieldCheck
-          size={16}
-          className="mt-0.5 shrink-0 text-brand"
-          aria-hidden="true"
-        />
-        <div className="flex flex-col gap-0.5 text-xs">
-          <span className="font-medium text-fg">
+      <div className="flex items-start gap-3 rounded-xl border border-line bg-surface/60 p-4">
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-success-soft text-success">
+          <ShieldCheck size={15} aria-hidden="true" />
+        </span>
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-xs font-semibold text-fg">
             {t("ローカル実行と安全設計")}
           </span>
-          <span className="text-muted leading-relaxed">
+          <span className="text-xs leading-5 text-muted">
             {t(
               "会話履歴や設定はあなたの端末ローカルに安全に保存されます。ファイルの編集やシェル実行などの操作は、必ず事前に承認を求める安全設計になっています。",
             )}
@@ -97,8 +104,10 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-faint">{t("表示言語")}</span>
+      <div className="flex flex-col gap-2">
+        <span className="text-2xs font-semibold uppercase tracking-[0.12em] text-faint">
+          {t("表示言語")}
+        </span>
         <Row>
           <LanguageChoice
             language="ja"
@@ -113,14 +122,22 @@ export function StepWelcome({ onDone }: { onDone: () => void }) {
         </Row>
       </div>
 
-      <Row>
-        <Button variant="primary" size="lg" onClick={onDone}>
+      <div className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
+        <Button variant="primary" size="lg" onClick={onDone} className="group">
           {t("始める")}
+          <ArrowRight
+            size={14}
+            className="transition-transform duration-150 group-hover:translate-x-0.5"
+            aria-hidden="true"
+          />
+        </Button>
+        <Button variant="ghost" size="lg" onClick={onDefer}>
+          {t("あとで設定する")}
         </Button>
         <span className="text-xs text-faint">
           {t("設定はあとからいつでも変更できます。")}
         </span>
-      </Row>
+      </div>
     </div>
   );
 }

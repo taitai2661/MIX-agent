@@ -68,7 +68,7 @@ describe("ChatComposer", () => {
     const html = render();
     expect(html).toContain('placeholder="MIX agent にメッセージを送信…"');
     expect(html).toContain("Enterで送信 / Shift+Enterで改行");
-    expect(html).toContain("Test Model · chat");
+    expect(html).toContain("Test Model · チャット");
     expect(html).toContain('aria-label="送信"');
     expect(html).toContain("MIX agent の回答には誤りが含まれることがあります");
     expect(html).not.toContain("temporary-notice");
@@ -130,7 +130,7 @@ describe("ChatComposer", () => {
     });
     expect(html).toContain('aria-label="停止"');
     expect(html).not.toContain('aria-label="送信"');
-    expect(html).toContain("Auto · agent");
+    expect(html).toContain("Auto · エージェント");
     expect(html).toContain("調査モード");
   });
 

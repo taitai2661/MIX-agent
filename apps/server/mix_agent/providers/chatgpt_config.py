@@ -10,6 +10,13 @@ SCOPES = "openid profile email offline_access"
 CHATGPT_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 
+# The Codex catalog endpoint filters its response by `client_version`. MIX-agent
+# has its own (much lower) release number, so advertising the application
+# version makes the backend hide every model that requires a current Codex
+# client. Advertise the Codex protocol version this integration implements
+# instead. Bump this together with the Desktop edition when the catalog changes.
+CODEX_CLIENT_VERSION = "0.166.0"
+
 # Honest default. Some deployments may need the Codex CLI's own originator;
 # that is an explicit opt-in because it misrepresents the client.
 ORIGINATOR = "mix_agent"

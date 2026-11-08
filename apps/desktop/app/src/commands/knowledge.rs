@@ -1,3 +1,4 @@
+use crate::spotlight::payload::SpotlightKind;
 use crate::AppState;
 use mixd_core::knowledge::{KnowledgeDoc, KnowledgeService};
 use serde::Deserialize;
@@ -44,6 +45,10 @@ pub async fn ingest_knowledge(
     let doc = KnowledgeService::ingest(state.storage.as_ref(), &input.filename, &input.text)
         .await
         .map_err(crate::error::cmd_err)?;
+    state
+        .spotlight
+        .schedule(SpotlightKind::Knowledge, &doc.doc_id)
+        .await;
     Ok(KnowledgeDocView::from(doc))
 }
 
@@ -70,14 +75,23 @@ pub async fn import_knowledge_file(
     let doc = KnowledgeService::ingest(state.storage.as_ref(), &filename, &text)
         .await
         .map_err(crate::error::cmd_err)?;
+    state
+        .spotlight
+        .schedule(SpotlightKind::Knowledge, &doc.doc_id)
+        .await;
     Ok(KnowledgeDocView::from(doc))
 }
 
 #[tauri::command]
 pub async fn delete_knowledge(state: State<'_, AppState>, doc_id: String) -> Result<usize, String> {
-    KnowledgeService::delete_doc(state.storage.as_ref(), &doc_id)
+    let removed = KnowledgeService::delete_doc(state.storage.as_ref(), &doc_id)
         .await
-        .map_err(crate::error::cmd_err)
+        .map_err(crate::error::cmd_err)?;
+    state
+        .spotlight
+        .schedule_deleted(SpotlightKind::Knowledge, &doc_id)
+        .await;
+    Ok(removed)
 }
 
 #[derive(serde::Serialize)]

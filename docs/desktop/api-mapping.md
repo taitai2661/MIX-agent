@@ -147,21 +147,15 @@ Desktop 版は SSE ではなく `app::RunEvent` を `emit` で配信します。
 
 | Docker 版 | Desktop 版 | Phase |
 | --- | --- | --- |
-| `GET /browser/status` | `browser::browser_status()` | 4 |
-| `GET /browser/status`（導入状態） | `browser::browser_status()`（`installed_version` / `pinned_version` / `update_available` を含む） | 6 |
-| `POST /browser/install` | `browser::browser_install()` | 6 |
-| `POST /browser/install`（キャンセル） | `browser::browser_install_cancel()` | 6 |
-| `POST /browser/update` | `browser::browser_install(force=true)` | 6 |
-| `POST /browser/remove`（Desktop独自） | `browser::browser_uninstall()` | 6 |
-| `GET /browser/profiles` | `browser::browser_profiles()` | 4 |
-| `POST /browser/profiles/{key}/reset` | `browser::browser_reset_profile()` | 4 |
 | `POST /runs/{key}/browser/{action}` | `browser::browser_invoke()` | 4 |
-| `GET /runs/{key}/browser-frames/{artifact_id}` | `browser::browser_frame()`（workspace_id 指定のライブ表示用・非永続 PNG） | 4 |
+| `GET /runs/{key}/browser-frames/{artifact_id}` | `browser::browser_artifact()`（ネイティブ WebView のスクリーンショット） | 4 |
+| Desktop独自 | `browser::browser_surface_bounds()`（子 WebView の矩形） | 6 |
+| Desktop独自 | `browser::browser_clear_data()`（閲覧データ削除） | 6 |
 
-Desktop も Docker 版と同じく、実行時に Chromium を導入・更新できる。取得元は
-`apps/desktop/browser/src/chromium-manifest.json` に固定した Chrome for Testing で、
-`browser_install` が `<app-data>/chromium` へインストールする。`browser_uninstall`
-は Desktop 独自の管理対象削除で、システムブラウザには触れない。
+Desktop は Chromium を導入・更新しない。ページは Tauri ウィンドウ内の
+ネイティブ子 WebView（WKWebView / WebView2 / WebKitGTK）が描画し、
+`browser` ツールは `eval_with_callback` で同じページを操作する。
+Docker 版の Playwright Chromium と `browser_*` ツールは別系統として残る。
 
 ## Memories
 
@@ -289,9 +283,10 @@ Docker 版にはローカル作業フォルダを直接扱う equivalent がな�
 | --- | --- | --- |
 | — | `update::app_version()` | 6 |
 | — | `update::check_for_update()` | 6 |
-| — | `update::install_update()` | 6 |
+| — | `update::download_update()` | 6 |
+| — | `update::pending_update()` | 6 |
 
-Tauri updater plugin は Rust 側からのみ駆動し、WebView には `updater:*` 権限を渡しません。`check_for_update` は `latest.json` を取得して新バージョンの有無を返し、`install_update` は再取得・署名検証・ダウンロード・インストールを行います（進捗は `update://progress` イベント）。詳細は [`architecture.md`](architecture.md) の「更新方法」を参照してください。
+Tauri updater plugin は Rust 側からのみ駆動し、WebView には `updater:*` 権限を渡しません。`check_for_update` は `latest.json` を取得して新バージョンの有無を返し、`download_update` は署名検証してペイロードをステージします（進捗は `update://progress`、完了は `update://ready` イベント）。適用はアプリ終了時の Rust フックが行い、`pending_update` は次回起動時にステージ済みの更新を復元します。再起動は自動化しません。詳細は [`architecture.md`](architecture.md) の「更新方法」を参照してください。
 
 ## 対応していない Docker 版エンドポイント
 

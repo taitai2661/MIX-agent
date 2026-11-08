@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import type { ComposerMode } from "./composerTypes";
 
 export interface SlashCommand {
   id: string;
@@ -17,6 +18,8 @@ export interface SlashCommand {
   description: string;
   prompt: string;
   icon: typeof Sparkles;
+  /** Run mode this command switches to before submitting its prompt. */
+  mode?: ComposerMode;
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
@@ -59,6 +62,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     prompt:
       "このタスクの実装計画と手順を段階的にステップバイステップで策定してください。",
     icon: ListChecks,
+    // Switches the composer to the engine's read-only plan mode, so the model
+    // investigates first and presents the result through `user_plan` instead of
+    // editing files.
+    mode: "plan",
   },
   {
     id: "explain",
@@ -75,6 +82,8 @@ interface SlashCommandPopoverProps {
   onSelect: (command: SlashCommand) => void;
   selectedIndex: number;
   setSelectedIndex: (idx: number | ((prev: number) => number)) => void;
+  /** Modes the active surface exposes; commands that need another mode hide. */
+  allowedModes?: ReadonlyArray<ComposerMode>;
 }
 
 export const SlashCommandPopover = memo(function SlashCommandPopover({
@@ -82,10 +91,18 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
   onSelect,
   selectedIndex,
   setSelectedIndex,
+  allowedModes,
 }: SlashCommandPopoverProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const filtered = SLASH_COMMANDS.filter(
+  const visible = SLASH_COMMANDS.filter(
+    (cmd) =>
+      cmd.mode === undefined ||
+      !allowedModes ||
+      allowedModes.length === 0 ||
+      allowedModes.includes(cmd.mode),
+  );
+  const filtered = visible.filter(
     (cmd) =>
       cmd.name.toLowerCase().includes(query.toLowerCase()) ||
       cmd.description.toLowerCase().includes(query.toLowerCase()),
@@ -109,52 +126,43 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
   return (
     <div
       ref={containerRef}
-      className="absolute bottom-full left-4 z-40 mb-2 max-h-64 w-88 overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-scale"
+      className="absolute inset-x-0 bottom-full z-40 mb-2 flex max-h-[min(26rem,70vh)] flex-col overflow-y-auto rounded-2xl border border-line bg-surface p-1.5 shadow-pop animate-scale"
       role="listbox"
       aria-label={t("クイックコマンド")}
     >
-      <div className="flex items-center justify-between px-2.5 py-1.5 text-2xs font-medium text-faint border-b border-line">
-        <span>{t("クイックコマンド (/)")}</span>
-      </div>
+      {filtered.map((cmd, idx) => {
+        const isSelected = idx === selectedIndex;
+        const Icon = cmd.icon;
 
-      <div className="flex flex-col gap-0.5 pt-1">
-        {filtered.map((cmd, idx) => {
-          const isSelected = idx === selectedIndex;
-          const Icon = cmd.icon;
-
-          return (
-            <button
-              key={cmd.id}
-              type="button"
-              data-slash-item
-              role="option"
-              aria-selected={isSelected}
-              onMouseEnter={() => setSelectedIndex(idx)}
-              onClick={() => onSelect(cmd)}
-              className={cn(
-                "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs text-start transition-colors",
-                isSelected
-                  ? "bg-hover text-fg font-medium"
-                  : "text-muted hover:bg-hover hover:text-fg",
-              )}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md bg-inset text-brand">
-                <Icon size={13} aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-semibold text-fg">
-                    {cmd.name}
-                  </span>
-                  <span className="text-2xs text-muted truncate">
-                    {t(cmd.description)}
-                  </span>
-                </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+        return (
+          <button
+            key={cmd.id}
+            type="button"
+            data-slash-item
+            role="option"
+            aria-selected={isSelected}
+            onMouseEnter={() => setSelectedIndex(idx)}
+            onClick={() => onSelect(cmd)}
+            className={cn(
+              "flex h-11 w-full shrink-0 cursor-pointer items-center gap-3 rounded-xl px-3 text-start transition-colors duration-100",
+              isSelected ? "bg-hover" : "hover:bg-hover/60",
+            )}
+          >
+            <Icon
+              size={18}
+              strokeWidth={1.8}
+              className="shrink-0 text-muted"
+              aria-hidden="true"
+            />
+            <span className="shrink-0 text-sm font-medium text-fg">
+              {cmd.name}
+            </span>
+            <span className="min-w-0 truncate text-xs text-muted">
+              {t(cmd.description)}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 });

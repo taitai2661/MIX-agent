@@ -7,6 +7,12 @@ export function WindowControls() {
   // can report a Windows-ish UA before `plugin-os` resolves. Showing our own
   // buttons first would overlap the traffic lights.
   const [isMac, setIsMac] = useState(true);
+  // `null` until the native window answers. A decorated window (the Windows or
+  // Linux build running with the stock decorations, e.g. an older installer or
+  // a `--config` that skipped the platform override) already draws minimize /
+  // maximize / close, so landing on `false` after a paint would flash a second
+  // set on top. Stay hidden until Tauri says the window is undecorated.
+  const [decorated, setDecorated] = useState<boolean | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -33,6 +39,11 @@ export function WindowControls() {
         const appWindow = getCurrentWindow();
         const max = await appWindow.isMaximized();
         setIsMaximized(max);
+        // Windows/Linux normally run with `decorations: false` (see
+        // tauri.windows.conf.json / tauri.linux.conf.json) because the shell
+        // draws its own title bar. If the window is decorated instead, the OS
+        // chrome is the authoritative set and ours would duplicate it.
+        setDecorated(await appWindow.isDecorated());
         unlisten = await appWindow.onResized(async () => {
           try {
             setIsMaximized(await appWindow.isMaximized());
@@ -41,7 +52,9 @@ export function WindowControls() {
           }
         });
       } catch {
-        // Tauri 外（Web ブラウザプレビューやテスト環境）では無視
+        // Tauri 外（Web ブラウザプレビューやテスト環境）では無視。ネイティブの
+        // ウィンドウ装飾も無いので、アプリ内のボタンをそのまま使う。
+        setDecorated(false);
       }
     })();
 
@@ -51,7 +64,7 @@ export function WindowControls() {
     };
   }, []);
 
-  if (isMac) {
+  if (isMac || decorated !== false) {
     return null;
   }
 

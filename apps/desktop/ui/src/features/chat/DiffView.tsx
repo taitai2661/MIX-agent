@@ -362,14 +362,14 @@ export function DiffView({
 /** Right-panel wrapper: renders the active diff target with a close button. */
 export function DiffPanel() {
   const diffTarget = useUi((s) => s.diffTarget);
-  const setRightPanel = useUi((s) => s.setRightPanel);
+  const closeRightPanel = useUi((s) => s.closeRightPanel);
   if (!diffTarget) return null;
   return (
     <>
       <PanelHeader
         icon={<FileDiff size={14} />}
         title={diffTarget.label}
-        onClose={() => setRightPanel("none")}
+        onClose={closeRightPanel}
       />
       <div className={PANEL_BODY}>
         <DiffView

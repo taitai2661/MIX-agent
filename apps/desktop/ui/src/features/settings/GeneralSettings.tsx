@@ -27,6 +27,7 @@ import { useModels, useProviders } from "@/lib/queries";
 import { useSettingsForm } from "@/lib/settings";
 import { clearPromptHistory, promptHistoryCount } from "@/lib/promptHistory";
 import { clearComposerDrafts, countComposerDrafts } from "@/lib/drafts";
+import { NetworkSettings } from "./NetworkSettings";
 
 export function GeneralSettings() {
   const { data, patch } = useSettingsForm();
@@ -36,6 +37,11 @@ export function GeneralSettings() {
   const sendShortcut = useUi((s) => s.sendShortcut);
   const setSendShortcut = useUi((s) => s.setSendShortcut);
   const { confirm, dialog } = useConfirm();
+  const monthlySpend = useQuery({
+    queryKey: ["monthly-spend"],
+    queryFn: api.getMonthlySpend,
+    refetchInterval: 60_000,
+  });
   const [historyCount, setHistoryCount] = useState(() => promptHistoryCount());
   const [draftCount, setDraftCount] = useState(() => countComposerDrafts());
   const queryClient = useQueryClient();
@@ -131,7 +137,7 @@ export function GeneralSettings() {
             >
               <option value="chat">{t("チャット")}</option>
               <option value="thinking">{t("思考")}</option>
-              <option value="agent">{t("エージェント")}</option>
+              <option value="agent">{t("自動実行")}</option>
             </Select>
           </Field>
         </div>
@@ -186,6 +192,27 @@ export function GeneralSettings() {
             "ウィンドウを閉じてもトレイに残り、スケジュールと実行中のタスクは継続します。完全に終了するにはトレイメニューの「Quit」を使います。",
           )}
         </p>
+        <Field
+          label={t("承認待ちの保持時間（分）")}
+          hint={t(
+            "エージェントが承認を待つ時間です。この時間を過ぎると自動的に拒否されます。離席することが多い場合は長めにしてください（1〜10080分）。",
+          )}
+        >
+          <Input
+            type="number"
+            min={1}
+            max={10080}
+            value={data.approval_ttl_minutes}
+            onChange={(e) =>
+              patch({
+                approval_ttl_minutes: Math.min(
+                  10080,
+                  Math.max(1, Number(e.target.value) || 1),
+                ),
+              })
+            }
+          />
+        </Field>
       </Card>
 
       <Card title={t("ターミナルのサンドボックス")} icon={<Lock size={13} />}>
@@ -236,6 +263,34 @@ export function GeneralSettings() {
         )}
       </Card>
 
+      <Card title={t("コスト管理")} icon={<Zap size={13} />}>
+        <Field
+          label={t("月次予算 (USD)")}
+          hint={t(
+            "この額に達するとクラウドモデルの新しい実行を開始しません（0 または空欄で無効）。ローカルモデルは対象外です。",
+          )}
+        >
+          <Input
+            type="number"
+            min={0}
+            step={0.01}
+            placeholder={t("無制限")}
+            value={data.monthly_budget_usd ?? ""}
+            onChange={(e) =>
+              patch({
+                monthly_budget_usd:
+                  e.target.value === "" ? null : Number(e.target.value),
+              })
+            }
+          />
+        </Field>
+        <p className="m-0 text-xs text-muted">
+          {tf("今月の推定使用額: ${amount}", {
+            amount: (monthlySpend.data ?? 0).toFixed(2),
+          })}
+        </p>
+      </Card>
+
       <Card title={t("メッセージ送信キー")} icon={<Keyboard size={13} />}>
         <div className="flex flex-col gap-2">
           <p className="m-0 text-xs text-muted">
@@ -260,6 +315,52 @@ export function GeneralSettings() {
             </SegmentedOption>
           </Segmented>
         </div>
+      </Card>
+
+      <Card title={t("Auto ルーティング")} icon={<Compass size={13} />}>
+        <Field
+          label={t("優先度")}
+          hint={t(
+            "Auto がモデルを選ぶときの基準です。速度は実測 TTFT と tokens/s が貯まってから効きます。",
+          )}
+        >
+          <Select
+            value={data.auto_priority}
+            onChange={(e) =>
+              patch({
+                auto_priority: e.target.value as
+                  | "balanced"
+                  | "speed"
+                  | "quality"
+                  | "cost",
+              })
+            }
+          >
+            <option value="balanced">{t("バランス（推奨）")}</option>
+            <option value="speed">{t("速度を優先")}</option>
+            <option value="quality">{t("品質を優先")}</option>
+            <option value="cost">{t("コストを優先")}</option>
+          </Select>
+        </Field>
+        <Field
+          label={t("フォールバック")}
+          hint={t(
+            "最初の応答前に失敗した場合、別の Auto 候補で再試行します。応答が始まった後は再試行しません。",
+          )}
+        >
+          <Select
+            value={String(data.auto_fallback_attempts)}
+            onChange={(e) =>
+              patch({
+                auto_fallback_attempts: Number(e.target.value) as 0 | 1 | 2,
+              })
+            }
+          >
+            <option value="0">{t("なし")}</option>
+            <option value="1">{t("1回（推奨）")}</option>
+            <option value="2">{t("2回")}</option>
+          </Select>
+        </Field>
       </Card>
 
       <Card title={t("ローカルランタイム")} icon={<ServerCog size={13} />}>
@@ -398,6 +499,10 @@ export function GeneralSettings() {
           {t("SQLCipher対応は今後のバージョンで提供予定です。")}
         </p>
       </Card>
+
+      {/* Network lived in its own low-frequency tab; it belongs beside the
+          other runtime/app safety switches rather than as a peer of "一般". */}
+      <NetworkSettings />
       {dialog}
     </Section>
   );

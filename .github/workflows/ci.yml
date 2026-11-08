@@ -65,6 +65,10 @@ jobs:
         run: uv run --project apps/server ruff check apps/server runners deploy scripts tests experiments
       - name: Ruff format check (whole repository)
         run: uv run --project apps/server ruff format --check apps/server runners deploy scripts tests experiments
+      # The server is a single-worker process with synchronous SQLAlchemy.
+      # An `async def` route that does not truly await blocks every request.
+      - name: Async route / sync DB check
+        run: python3 scripts/check-async-db.py
       - name: Pyright (type check + warning budget)
         working-directory: apps/server
         run: uv run python ../../scripts/check-pyright-budget.py
@@ -259,7 +263,7 @@ jobs:
 
   desktop-rust:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -280,7 +284,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.91.0"
-          components: clippy
+          components: clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: apps/desktop
@@ -296,6 +300,19 @@ jobs:
       - name: cargo test
         working-directory: apps/desktop
         run: cargo test --workspace
+
+      # Rust had no coverage floor: the three-OS matrix only proved that tests
+      # pass, not which code they touch. Core and storage own the engine and
+      # secret/DB paths, so they get an explicit gate. Install the tool only on
+      # the coverage OS; the other two matrix legs run the same tests without
+      # paying for instrumentation.
+      - name: Install cargo-llvm-cov
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Core/storage coverage gate
+        if: matrix.os == 'ubuntu-22.04'
+        working-directory: apps/desktop
+        run: cargo llvm-cov -p mixd-core -p mixd-storage --summary-only --fail-under-lines 70
 
       # Spec §5's ranking gate, same thresholds and same shared fixture as the
       # `docker-backend` job — the fixture suite is the one suite whose numbers
@@ -374,14 +391,10 @@ jobs:
         working-directory: apps/desktop
         run: pnpm tauri build --no-bundle
 
-      - name: Chromium pin script is valid
-        working-directory: apps/desktop
-        run: node --check scripts/pin-chromium.mjs
 
   # Packaging is not covered by `tauri build --no-bundle` on Linux: NSIS/MSI
   # configuration, Windows resource paths and the WiX language settings only
-  # fail on an actual Windows bundle. Chromium is no longer bundled, so this
-  # job does not download a browser on every pull request.
+  # fail on an actual Windows bundle.
   desktop-package-windows:
     runs-on: windows-latest
     timeout-minutes: 45

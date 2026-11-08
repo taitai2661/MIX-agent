@@ -9,8 +9,49 @@ import {
   CONVERSATIONS_QUERY_KEY,
   PENDING_APPROVALS_QUERY_KEY,
 } from "@/lib/queries";
-import { useUi, type SettingsTab, type View } from "@/lib/ui";
+import { surfaceForMode, useUi, type SettingsTab, type View } from "@/lib/ui";
 import { t } from "@/lib/i18n";
+import { recordUxEvent } from "@/lib/uxEvents";
+import type { SpotlightTarget } from "@/lib/types";
+
+/** Read the browser tool's optional presentation hint.
+ *
+ * The tool schema advertises `split_ratio` as a 0.2–0.8 share of the shell
+ * width. It is not an action and the backend ignores it; the UI applies it
+ * when the agent opens the pane. A missing/invalid value means "leave the
+ * user's remembered split alone".
+ */
+export function browserSplitRatio(argumentsValue: unknown): number | null {
+  if (!argumentsValue || typeof argumentsValue !== "object") return null;
+  const raw = (argumentsValue as Record<string, unknown>).split_ratio;
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number(raw)
+        : Number.NaN;
+  if (!Number.isFinite(value)) return null;
+  return Math.min(0.8, Math.max(0.2, value));
+}
+
+/** Navigate to the target carried by a Spotlight result click. */
+function applySpotlightTarget(target: SpotlightTarget) {
+  const state = useUi.getState();
+  switch (target.kind) {
+    case "conversation":
+      state.setSurface(surfaceForMode(target.mode ?? "chat"));
+      state.setConversationId(target.id);
+      state.setView("chat");
+      break;
+    case "project":
+      state.setActiveProjectId(target.id);
+      state.setView("projects");
+      break;
+    case "knowledge":
+      state.openSettings("knowledge");
+      break;
+  }
+}
 
 /**
  * Open a blank chat without creating an empty conversation row.
@@ -22,6 +63,7 @@ export function useNewThread() {
   const startNewThread = useUi((s) => s.startNewThread);
   const setView = useUi((s) => s.setView);
   return () => {
+    recordUxEvent("new_thread", { surface: useUi.getState().surface });
     startNewThread();
     setView("chat");
   };
@@ -42,7 +84,7 @@ export function useCreateThread() {
       const { surface, mode, modelId, activeProjectId } = useUi.getState();
       const isAgent = surface === "desktop-agent";
       const threadMode = isAgent
-        ? "agent"
+        ? mode
         : mode === "thinking"
           ? "thinking"
           : "chat";
@@ -56,6 +98,10 @@ export function useCreateThread() {
       });
     },
     onSuccess: (created) => {
+      recordUxEvent("new_thread", {
+        surface: useUi.getState().surface,
+        created: true,
+      });
       void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
       setConversationId(created.id);
       setView("chat");
@@ -100,9 +146,18 @@ export function useShellEvents(handlers: {
         // without stealing focus. It never replaces another pane the user is
         // reading, and a manual close is respected until the next run event.
         if (evt.kind === "tool_started") {
-          const data = (evt.data ?? {}) as { name?: unknown };
+          const data = (evt.data ?? {}) as {
+            name?: unknown;
+            arguments?: unknown;
+          };
           if (data.name === "browser") {
             const state = useUi.getState();
+            const requestedRatio = browserSplitRatio(data.arguments);
+            // A presentation hint is only meaningful while the browser owns
+            // the panel. Do not replace a diff/usage pane the user is reading.
+            if (requestedRatio !== null && state.rightPanel === "browser") {
+              state.setRightPanelRatio(requestedRatio);
+            }
             const conversation = conversationForRun(evt.run_id);
             if (
               state.browserAutoOpen &&
@@ -112,7 +167,10 @@ export function useShellEvents(handlers: {
               state.browserDismissedRunId !== evt.run_id &&
               conversation === state.conversationId
             ) {
-              state.openBrowserPanel("agent");
+              state.openBrowserPanel(
+                "agent",
+                requestedRatio !== null ? { ratio: requestedRatio } : undefined,
+              );
             }
           }
         }
@@ -151,6 +209,15 @@ export function useShellEvents(handlers: {
             }, 1500);
           }
         }
+      }),
+    );
+
+    // Global quick input (Cmd/Ctrl+Shift+Space). Rust brings the window up and
+    // emits this; the palette is the fastest place to start a thread or jump
+    // somewhere without hunting for the right view first.
+    track(
+      listen("shortcut://quick-input", () => {
+        if (active) useUi.getState().setPaletteOpen(true);
       }),
     );
 
@@ -211,6 +278,28 @@ export function useShellEvents(handlers: {
       }),
     );
 
+    // A Spotlight result click arrives as the identifier's navigation target.
+    // The event and the pending drain cover the two races: the app is already
+    // running, or the click cold-started it before this listener existed.
+    track(
+      listen<SpotlightTarget>("spotlight://open", (event) => {
+        if (!active) return;
+        applySpotlightTarget(event.payload);
+        // The event and the pending slot are two delivery paths for one click;
+        // once the event arrived, clear the cold-start copy so a WebView remount
+        // does not replay the navigation.
+        void api.spotlightTakePending().catch(() => undefined);
+      }),
+    );
+    void api
+      .spotlightTakePending()
+      .then((target) => {
+        if (active && target) applySpotlightTarget(target);
+      })
+      .catch(() => {
+        // Older builds without the command simply never produce a target.
+      });
+
     return () => {
       active = false;
       offs.forEach((un) => un());
@@ -232,17 +321,19 @@ export function useAppShortcuts(enabled = true) {
   const toggleFileTree = useUi((s) => s.toggleFileTree);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const openSettings = useUi((s) => s.openSettings);
-  const setRightPanel = useUi((s) => s.setRightPanel);
+  const closeRightPanel = useUi((s) => s.closeRightPanel);
   const setSurface = useUi((s) => s.setSurface);
   const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
+  const setApprovalsOpen = useUi((s) => s.setApprovalsOpen);
   const setters = useRef({
     setPaletteOpen,
     toggleFileTree,
     toggleSidebar,
     openSettings,
-    setRightPanel,
+    closeRightPanel,
     setSurface,
     setShortcutsOpen,
+    setApprovalsOpen,
   });
   useEffect(() => {
     setters.current = {
@@ -250,9 +341,10 @@ export function useAppShortcuts(enabled = true) {
       toggleFileTree,
       toggleSidebar,
       openSettings,
-      setRightPanel,
+      closeRightPanel,
       setSurface,
       setShortcutsOpen,
+      setApprovalsOpen,
     };
   });
 
@@ -263,9 +355,10 @@ export function useAppShortcuts(enabled = true) {
         setPaletteOpen: palette,
         toggleFileTree: tree,
         toggleSidebar: sidebar,
-        setRightPanel: rightPanelSetter,
+        closeRightPanel: closePanel,
         setSurface: surface,
         setShortcutsOpen: shortcuts,
+        setApprovalsOpen: approvals,
       } = setters.current;
 
       const isMod = e.metaKey || e.ctrlKey;
@@ -290,6 +383,13 @@ export function useAppShortcuts(enabled = true) {
         return;
       }
 
+      // Save is handled by the Settings pane itself; suppressing the WebView's
+      // own Save dialog here keeps ⌘S from doing something surprising on every
+      // other screen.
+      if (isMod && !e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        return;
+      }
       if (isMod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         palette(true);
@@ -319,7 +419,7 @@ export function useAppShortcuts(enabled = true) {
         } else if (state.sidePanelMode === "full") {
           state.setSidePanelMode("split");
         } else {
-          state.setRightPanel("none");
+          state.closeRightPanel();
         }
         return;
       }
@@ -380,6 +480,11 @@ export function useAppShortcuts(enabled = true) {
         !e.defaultPrevented
       ) {
         const state = useUi.getState();
+        if (state.approvalsOpen) {
+          e.preventDefault();
+          approvals(false);
+          return;
+        }
         if (
           state.rightPanel !== "none" &&
           !state.paletteOpen &&
@@ -387,7 +492,7 @@ export function useAppShortcuts(enabled = true) {
           !hasOpenOverlay()
         ) {
           e.preventDefault();
-          rightPanelSetter("none");
+          closePanel();
           return;
         }
       }
