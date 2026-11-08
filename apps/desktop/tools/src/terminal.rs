@@ -165,6 +165,10 @@ struct ShellSession {
     /// True while a command owns this shell. Eviction must not kill a shell
     /// another Run is actively using.
     busy: std::sync::atomic::AtomicBool,
+    /// Set once the first command has been written. Input sent before the
+    /// login shell reaches its prompt is swallowed by Git Bash's startup on
+    /// Windows, which then looks like a marker timeout.
+    warmed: std::sync::atomic::AtomicBool,
 }
 
 pub fn truncate_to_char_boundary(text: &str, max_bytes: usize) -> &str {
@@ -564,6 +568,9 @@ impl TerminalTool {
                 ),
             };
         };
+        // Match `run`: do not inject input into Git Bash before its startup
+        // has produced the first prompt, or the shell may swallow it.
+        session.ensure_warmed(5_000).await;
         // Same containment rule as `run`: a previous `cd` outside the project
         // must not become the directory an interactive command runs in.
         if !cwd_inside(&session.cwd().await, project_root) {

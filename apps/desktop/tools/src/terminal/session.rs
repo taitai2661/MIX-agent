@@ -101,6 +101,7 @@ impl ShellSession {
             sandbox_job: std::sync::Mutex::new(sandbox_job),
             config,
             busy: std::sync::atomic::AtomicBool::new(false),
+            warmed: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -129,6 +130,30 @@ impl ShellSession {
 
     pub(crate) async fn cwd(&self) -> String {
         self.cwd.lock().await.clone()
+    }
+
+    /// Wait (bounded) for the shell's first output before writing to it.
+    ///
+    /// Interactive Git Bash sources a login profile before it starts reading
+    /// input. On a loaded Windows runner that can take long enough that the
+    /// first command is consumed by the startup and never runs, which surfaces
+    /// as a protocol-marker timeout. The wait is best-effort: a shell that
+    /// stays silent is still used after `max_ms`, so short-lived test shells
+    /// and non-interactive shells are not blocked indefinitely.
+    pub(crate) async fn ensure_warmed(&self, max_ms: u64) {
+        if self.warmed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_ms);
+        loop {
+            if !self.output.lock().await.is_empty() {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
     }
 
     /// Run `command`, returning its output, exit code and the resulting cwd.
@@ -222,6 +247,12 @@ impl ShellSession {
                 cwd_marker = cwd_marker,
             )
         };
+
+        // Git Bash on Windows can swallow PTY input that arrives before its
+        // login profile has finished and the first prompt is on screen. Wait
+        // for that initial output before writing the first command. A shell
+        // that never prints a prompt still proceeds after the bounded wait.
+        self.ensure_warmed(max_ms.min(10_000)).await;
 
         {
             let mut writer = self.writer.lock().await;

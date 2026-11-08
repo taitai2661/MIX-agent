@@ -169,6 +169,13 @@ jobs:
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
 
+      # Tauri downloads NSIS/WiX from GitHub Releases during bundling; those
+      # asset endpoints intermittently return 504. Prefetch them with retries
+      # so a release build does not fail after the Rust compile has finished.
+      - name: Prefetch Tauri Windows bundle tools
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/prefetch-tauri-windows-tools
+
       # Developer ID credentials are optional: without them the build keeps the
       # ad-hoc signature used for the beta. When the secrets are present they
       # are exported for the build step, and Tauri signs/notarizes the bundle.

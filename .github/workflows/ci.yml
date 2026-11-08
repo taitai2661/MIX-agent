@@ -418,6 +418,11 @@ jobs:
         run: pnpm install --frozen-lockfile
         env:
           COREPACK_ENABLE_AUTO_PIN: "0"
+      # Tauri downloads NSIS/WiX from GitHub Releases during bundling; those
+      # asset endpoints intermittently return 504 and throw away the compile.
+      # Restore them from cache (and retry the first download) up front.
+      - name: Prefetch Tauri Windows bundle tools
+        uses: ./.github/actions/prefetch-tauri-windows-tools
       - name: Build Windows installers
         working-directory: apps/desktop
         shell: bash

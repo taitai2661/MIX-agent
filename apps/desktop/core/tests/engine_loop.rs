@@ -1968,6 +1968,32 @@ async fn parallel_reads_keep_call_order_and_line_numbers() {
     );
 }
 
+/// Warm the persistent shell for the exact (Run, directory) pair the next
+/// `execute` will use.
+///
+/// `TerminalTool` keys sessions per Run and directory, so warming with a fresh
+/// `run_id` starts an unrelated shell and leaves the measured Run cold. The
+/// first ConPTY spawn on a Windows runner can then exceed the default timeout.
+/// A direct registry dispatch consumes no provider turns, so the scripted turn
+/// order stays aligned.
+async fn warm_persistent_shell(harness: &Harness, run_id: Uuid, workspace_id: Uuid) {
+    let ctx = ToolContext {
+        run_id,
+        workspace_id,
+        root_path: Some(harness.workspace.to_string_lossy().to_string()),
+        additional_paths: Vec::new(),
+        approval_token: None,
+    };
+    let registry = harness.engine.tools.read().await;
+    let _ = registry
+        .dispatch(
+            ctx,
+            "terminal",
+            serde_json::json!({"command": "echo warmup"}),
+        )
+        .await;
+}
+
 /// A configured formatter runs after a step that changed a file. It was
 /// previously only mentioned in a prompt hint and never executed.
 #[tokio::test]
@@ -1989,30 +2015,10 @@ async fn the_formatter_runs_after_a_mutation() {
     let harness = Harness::new([script(), script()].concat()).await;
     allow_tool(&harness, "files").await;
     let _drain = spawn_event_drain(&harness.engine);
-    // Warm the persistent ConPTY shell directly: the formatter dispatch
-    // goes through it with the default timeout, and the first spawn on a
-    // cold Windows runner can exceed it. This consumes no provider turns,
-    // so the measured scripts below stay aligned.
-    {
-        let ctx = ToolContext {
-            run_id: Uuid::new_v4(),
-            workspace_id: Uuid::new_v4(),
-            root_path: Some(harness.workspace.to_string_lossy().to_string()),
-            additional_paths: Vec::new(),
-            approval_token: None,
-        };
-        let registry = harness.engine.tools.read().await;
-        let _ = registry
-            .dispatch(
-                ctx,
-                "terminal",
-                serde_json::json!({"command": "echo warmup"}),
-            )
-            .await;
-    }
     for _ in 0..2 {
         let mut request = harness.request().await;
         request.format_command = Some("touch formatted.marker".to_string());
+        warm_persistent_shell(&harness, request.run_id, request.workspace_id).await;
 
         let outcome = harness.engine.execute(request).await.expect("run");
         assert_eq!(outcome.status, RunStatus::Completed);
@@ -2119,34 +2125,11 @@ async fn an_edit_to_a_file_changed_after_the_read_is_refused() {
     allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
     std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
-    // Warm the persistent ConPTY shell directly: the `echo` dispatch goes
-    // through it with the default timeout, and the first spawn on a cold
-    // Windows runner can exceed it. This consumes no provider turns, so
-    // the measured scripts below stay aligned.
-    {
-        let ctx = ToolContext {
-            run_id: Uuid::new_v4(),
-            workspace_id: Uuid::new_v4(),
-            root_path: Some(harness.workspace.to_string_lossy().to_string()),
-            additional_paths: Vec::new(),
-            approval_token: None,
-        };
-        let registry = harness.engine.tools.read().await;
-        let _ = registry
-            .dispatch(
-                ctx,
-                "terminal",
-                serde_json::json!({"command": "echo warmup"}),
-            )
-            .await;
-    }
 
     for _ in 0..2 {
-        let outcome = harness
-            .engine
-            .execute(harness.request().await)
-            .await
-            .expect("run");
+        let request = harness.request().await;
+        warm_persistent_shell(&harness, request.run_id, request.workspace_id).await;
+        let outcome = harness.engine.execute(request).await.expect("run");
         let Some(edit) = outcome.tool_calls.iter().find(|call| call.name == "edit") else {
             // Cold ConPTY spawn can time out the terminal turn and abort the
             // run before the edit turn; retry against the now-warm shell.

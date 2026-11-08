@@ -67,9 +67,12 @@ describe("BrowserPanel", () => {
   it("shows the native surface and the active tab", async () => {
     render(<BrowserPanel />);
     expect(await screen.findByText("Example")).toBeInTheDocument();
-    expect(await screen.findByLabelText("アドレスバー")).toHaveValue(
-      "example.com",
-    );
+    // The title and the omnibox are fed by the same info refresh, but the
+    // toolbar updates its address in a passive effect. Wait for that effect
+    // instead of asserting immediately after the title appears: under a loaded
+    // CI runner the DOM mutation can be observed before passive effects flush.
+    const addressBar = screen.getByLabelText("アドレスバー");
+    await waitFor(() => expect(addressBar).toHaveValue("example.com"));
     expect(
       screen.getByText("ネイティブブラウザを読み込んでいます…"),
     ).toBeInTheDocument();

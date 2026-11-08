@@ -1,0 +1,122 @@
+name: Prefetch Tauri Windows bundle tools
+description: Cache and pre-download the NSIS and WiX toolchains that Tauri fetches at bundle time.
+
+# `tauri build --bundles nsis,msi` downloads NSIS and WiX from GitHub Releases
+# into `%LOCALAPPDATA%\tauri` on first use. Those asset endpoints intermittently
+# return 504 to hosted runners, which fails a 10-minute build at the very last
+# step. Restore the tool cache and fetch anything missing with retries before
+# the build starts, so a transient download error cannot discard the compile.
+#
+# The versions and hashes below mirror tauri-bundler 2.12.x. Keep them in sync
+# when the Tauri CLI is upgraded (the cache key changes with them).
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the Tauri tools directory
+      shell: pwsh
+      run: |
+        "TAURI_TOOLS_DIR=$env:LOCALAPPDATA\tauri" >> $env:GITHUB_ENV
+
+    - name: Restore the Tauri tools cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ env.TAURI_TOOLS_DIR }}
+        key: tauri-bundle-tools-windows-nsis-3.11-wix-3.14.1
+
+    - name: Download missing bundle tools
+      shell: pwsh
+      env:
+        NSIS_URL: https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip
+        NSIS_SHA1: EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D
+        NSIS_UTILS_URL: https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll
+        NSIS_UTILS_SHA1: 75197FEE3C6A814FE035788D1C34EAD39349B860
+        WIX_URL: https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip
+        WIX_SHA256: 6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31
+      run: |
+        $ErrorActionPreference = "Stop"
+        $toolsDir = Join-Path $env:LOCALAPPDATA "tauri"
+        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+
+        function Get-VerifiedFile {
+          param(
+            [Parameter(Mandatory = $true)][string]$Url,
+            [Parameter(Mandatory = $true)][string]$Destination,
+            [Parameter(Mandatory = $true)][string]$Algorithm,
+            [Parameter(Mandatory = $true)][string]$ExpectedHash
+          )
+          if ((Test-Path $Destination) -and ((Get-FileHash $Destination -Algorithm $Algorithm).Hash -eq $ExpectedHash)) {
+            Write-Host "Using cached $(Split-Path $Destination -Leaf)"
+            return
+          }
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            Remove-Item $Destination -Force -ErrorAction SilentlyContinue
+            Write-Host "Downloading $Url (attempt $attempt/5)"
+            & curl.exe --fail --location --silent --show-error `
+              --connect-timeout 15 --max-time 120 --output $Destination $Url
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $Destination)) {
+              $actual = (Get-FileHash $Destination -Algorithm $Algorithm).Hash
+              if ($actual -eq $ExpectedHash) {
+                return
+              }
+              Write-Warning "Hash mismatch for $Url (got $actual)"
+            }
+            Start-Sleep -Seconds ([Math]::Min(5 * $attempt, 20))
+          }
+          throw "Could not download $Url after 5 attempts"
+        }
+
+        $nsisDir = Join-Path $toolsDir "NSIS"
+        $nsisFiles = @(
+          "makensis.exe",
+          "Bin/makensis.exe",
+          "Stubs/lzma-x86-unicode",
+          "Stubs/lzma_solid-x86-unicode",
+          "Include/MUI2.nsh",
+          "Include/FileFunc.nsh",
+          "Include/x64.nsh",
+          "Include/nsDialogs.nsh",
+          "Include/WinMessages.nsh",
+          "Include/Win/COM.nsh",
+          "Include/Win/Propkey.nsh",
+          "Include/Win/RestartManager.nsh"
+        )
+        $nsisMissing = $nsisFiles | Where-Object { -not (Test-Path (Join-Path $nsisDir $_)) }
+        if ($nsisMissing) {
+          $nsisZip = Join-Path $env:RUNNER_TEMP "nsis-3.11.zip"
+          Get-VerifiedFile $env:NSIS_URL $nsisZip "Sha1" $env:NSIS_SHA1
+          $staging = Join-Path $env:RUNNER_TEMP "nsis-staging"
+          Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -Path $nsisZip -DestinationPath $staging -Force
+          if (Test-Path $nsisDir) { Remove-Item $nsisDir -Recurse -Force }
+          Move-Item (Join-Path $staging "nsis-3.11") $nsisDir
+        }
+
+        # tauri-bundler verifies this plugin's SHA-1 on every build, so a stale
+        # or partial cache would otherwise trigger its own network download.
+        $utilsDll = Join-Path $nsisDir "Plugins/x86-unicode/additional/nsis_tauri_utils.dll"
+        if (-not ((Test-Path $utilsDll) -and ((Get-FileHash $utilsDll -Algorithm Sha1).Hash -eq $env:NSIS_UTILS_SHA1))) {
+          New-Item -ItemType Directory -Force -Path (Split-Path $utilsDll -Parent) | Out-Null
+          Get-VerifiedFile $env:NSIS_UTILS_URL $utilsDll "Sha1" $env:NSIS_UTILS_SHA1
+        }
+
+        $wixDir = Join-Path $toolsDir "WixTools314"
+        $wixFiles = @(
+          "candle.exe",
+          "candle.exe.config",
+          "darice.cub",
+          "light.exe",
+          "light.exe.config",
+          "wconsole.dll",
+          "winterop.dll",
+          "wix.dll",
+          "WixUIExtension.dll",
+          "WixUtilExtension.dll"
+        )
+        $wixMissing = $wixFiles | Where-Object { -not (Test-Path (Join-Path $wixDir $_)) }
+        if ($wixMissing) {
+          $wixZip = Join-Path $env:RUNNER_TEMP "wix314-binaries.zip"
+          Get-VerifiedFile $env:WIX_URL $wixZip "Sha256" $env:WIX_SHA256
+          if (Test-Path $wixDir) { Remove-Item $wixDir -Recurse -Force }
+          Expand-Archive -Path $wixZip -DestinationPath $wixDir -Force
+        }

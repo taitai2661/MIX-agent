@@ -393,7 +393,9 @@ async fn send_input_writes_to_the_live_shell_and_returns_new_output() {
             serde_json::json!({
                 "action": "send",
                 "input": "echo interactive-ok",
-                "wait_ms": 750,
+                // A loaded Windows runner can take seconds to echo and run
+                // the line; 750 ms observed an empty buffer and failed.
+                "wait_ms": 5_000,
             }),
         )
         .await
@@ -412,7 +414,7 @@ async fn send_input_writes_to_the_live_shell_and_returns_new_output() {
             serde_json::json!({
                 "action": "send",
                 "input": "echo second-ok",
-                "wait_ms": 750,
+                "wait_ms": 5_000,
             }),
         )
         .await
