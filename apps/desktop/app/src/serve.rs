@@ -270,7 +270,7 @@ fn lock_owner_alive(pid: i32, started: i64) -> bool {
             OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
         };
         let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32) };
-        if handle == 0 {
+        if handle.is_null() {
             // ERROR_ACCESS_DENIED means the PID exists but is owned by another
             // user: fail closed and treat the lock as live.
             return unsafe { GetLastError() == ERROR_ACCESS_DENIED };

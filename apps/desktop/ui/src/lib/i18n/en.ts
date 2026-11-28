@@ -556,8 +556,7 @@ export const en: Record<string, string> = {
   "コミットしました": "Committed",
   "{count}件のステージ済み変更をコミットします。":
     "Commit {count} staged change(s).",
-  "{count}件のステージ済み変更をコミット":
-    "Commit {count} staged change(s)",
+  "{count}件のステージ済み変更をコミット": "Commit {count} staged change(s)",
   "実行はバックグラウンドで継続しています。トレイから再表示できます。":
     "The run continues in the background. Reopen it from the tray.",
   "ブラウザ画面": "Browser view",

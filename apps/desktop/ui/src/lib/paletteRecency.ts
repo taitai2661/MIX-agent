@@ -94,8 +94,5 @@ export function rankByFrecency<T extends { id: string }>(
   used.sort((a, b) => b.entry.last - a.entry.last || a.index - b.index);
   const promoted = used.slice(0, maxPromoted).map(({ item }) => item);
   const promotedIds = new Set(promoted.map((item) => item.id));
-  return [
-    ...promoted,
-    ...items.filter((item) => !promotedIds.has(item.id)),
-  ];
+  return [...promoted, ...items.filter((item) => !promotedIds.has(item.id))];
 }

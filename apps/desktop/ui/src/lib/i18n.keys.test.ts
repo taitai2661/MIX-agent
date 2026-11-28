@@ -242,7 +242,9 @@ describe("i18n key coverage", () => {
           /[\u3040-\u30ff\u3400-\u9fff]/.test(value) &&
           !ALLOWED_JAPANESE_VALUES.has(value),
       )
-      .map(([key, value]) => `${JSON.stringify(key)} => ${JSON.stringify(value)}`);
+      .map(
+        ([key, value]) => `${JSON.stringify(key)} => ${JSON.stringify(value)}`,
+      );
     expect(untranslated).toEqual([]);
   });
 

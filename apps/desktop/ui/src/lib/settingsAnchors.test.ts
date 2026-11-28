@@ -13,9 +13,9 @@ describe("matchSettingsAnchors", () => {
     expect(
       matchSettingsAnchors("api key", identity).map((hit) => hit.id),
     ).toContain("providers-api-key");
-    expect(matchSettingsAnchors("sqlcipher", identity).map((hit) => hit.id)).toContain(
-      "general-db-encryption",
-    );
+    expect(
+      matchSettingsAnchors("sqlcipher", identity).map((hit) => hit.id),
+    ).toContain("general-db-encryption");
   });
 
   it("matches the translated label as well as the canonical key", () => {

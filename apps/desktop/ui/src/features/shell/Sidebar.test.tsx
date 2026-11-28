@@ -119,9 +119,10 @@ describe("Sidebar", () => {
     fireEvent.click(approval);
     expect(approval).toHaveAttribute("aria-pressed", "true");
     expect(running).toHaveAttribute("aria-pressed", "false");
-    expect(
-      screen.getByRole("button", { name: "すべて" }),
-    ).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "すべて" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("navigates to projects and agent settings from the grouped nav", () => {

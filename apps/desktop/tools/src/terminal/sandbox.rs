@@ -528,6 +528,22 @@ pub(crate) fn windows_sandbox_denies_command(command: &str) -> Option<&'static s
         .chars()
         .filter(|ch| *ch != '*' && *ch != '?')
         .collect();
+    // A glob can also stand in for an 8.3 short name (`C:\Progra*1` for
+    // `C:\Progra~1`). Keep a second form with each wildcard run replaced by
+    // `~1` so those spellings reach the short-name deny entries below.
+    let mut glob_short = String::with_capacity(normalized.len());
+    let mut in_glob = false;
+    for ch in normalized.chars() {
+        if ch == '*' || ch == '?' {
+            if !in_glob {
+                glob_short.push_str("~1");
+                in_glob = true;
+            }
+        } else {
+            glob_short.push(ch);
+            in_glob = false;
+        }
+    }
     // Ordered most-specific first so the reason names the real target.
     const DENIED: &[(&str, &str)] = &[
         (
@@ -600,7 +616,11 @@ pub(crate) fn windows_sandbox_denies_command(command: &str) -> Option<&'static s
     ];
     DENIED
         .iter()
-        .find(|(pattern, _)| normalized.contains(pattern) || collapsed.contains(pattern))
+        .find(|(pattern, _)| {
+            normalized.contains(pattern)
+                || collapsed.contains(pattern)
+                || glob_short.contains(pattern)
+        })
         .map(|(_, reason)| *reason)
 }
 

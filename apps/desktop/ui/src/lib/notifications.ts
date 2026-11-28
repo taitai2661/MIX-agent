@@ -30,9 +30,7 @@ const MAX_AGE_MS = 2 * 60 * 1000;
 function isTarget(value: unknown): value is NotificationTarget {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
-  if (
-    record.kind !== "thread" && record.kind !== "approval"
-  ) {
+  if (record.kind !== "thread" && record.kind !== "approval") {
     return false;
   }
   return typeof record.conversationId === "string" && !!record.conversationId;
@@ -57,7 +55,10 @@ export async function notifyWithTarget(input: {
 }): Promise<boolean> {
   try {
     if (!(await isPermissionGranted())) return false;
-    setJSON(KEY, { target: input.target, at: Date.now() } satisfies StoredTarget);
+    setJSON(KEY, {
+      target: input.target,
+      at: Date.now(),
+    } satisfies StoredTarget);
     sendNotification({ title: input.title, body: input.body });
     return true;
   } catch {

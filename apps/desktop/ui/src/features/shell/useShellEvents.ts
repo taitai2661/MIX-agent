@@ -203,7 +203,8 @@ export function useShellEvents(handlers: {
           ) {
             const conversationId = conversationForRun(evt.run_id);
             const approvalId =
-              (evt.data as { approval_id?: unknown })?.approval_id ?? evt.run_id;
+              (evt.data as { approval_id?: unknown })?.approval_id ??
+              evt.run_id;
             const key = `${evt.run_id}:${String(approvalId)}`;
             if (conversationId && !notifiedApprovals.has(key)) {
               notifiedApprovals.add(key);
@@ -360,7 +361,9 @@ export function useShellEvents(handlers: {
       }>(CONVERSATIONS_QUERY_KEY);
       const mode = cached?.pages
         .flatMap((page) => page.items)
-        .find((conversation) => conversation.id === target.conversationId)?.mode;
+        .find(
+          (conversation) => conversation.id === target.conversationId,
+        )?.mode;
       state.setView("chat");
       state.setConversationId(target.conversationId);
       if (mode) state.setSurface(surfaceForMode(mode));

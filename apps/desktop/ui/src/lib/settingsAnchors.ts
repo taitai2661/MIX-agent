@@ -157,7 +157,12 @@ export const SETTINGS_ANCHORS: readonly SettingsAnchor[] = [
     label: "MCP サーバを追加",
     keywords: ["mcp", "server", "stdio"],
   },
-  { id: "skills-import", tab: "skills", label: "取り込む", keywords: ["skill"] },
+  {
+    id: "skills-import",
+    tab: "skills",
+    label: "取り込む",
+    keywords: ["skill"],
+  },
   {
     id: "memory-add",
     tab: "memory",

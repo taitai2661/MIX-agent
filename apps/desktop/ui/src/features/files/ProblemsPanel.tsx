@@ -112,8 +112,10 @@ export function extractProblems(calls: readonly unknown[]): Problem[] {
 function relativePath(root: string | null, path: string): string {
   if (!root) return path;
   const normalized = root.replace(/[\\/]+$/, "");
-  if (path.startsWith(`${normalized}/`)) return path.slice(normalized.length + 1);
-  if (path.startsWith(`${normalized}\\`)) return path.slice(normalized.length + 1);
+  if (path.startsWith(`${normalized}/`))
+    return path.slice(normalized.length + 1);
+  if (path.startsWith(`${normalized}\\`))
+    return path.slice(normalized.length + 1);
   return path;
 }
 
@@ -203,10 +205,7 @@ export function ProblemsPanel() {
                           <button
                             type="button"
                             onClick={() =>
-                              openFilePreview(
-                                label,
-                                problem.line ?? 1,
-                              )
+                              openFilePreview(label, problem.line ?? 1)
                             }
                             className="flex w-full min-w-0 items-start gap-1.5 rounded-md px-1.5 py-1 text-start transition-colors hover:bg-hover"
                           >

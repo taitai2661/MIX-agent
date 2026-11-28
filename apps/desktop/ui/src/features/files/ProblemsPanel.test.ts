@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { extractProblems } from "./ProblemsPanel";
 
-const lsp = (
-  path: string,
-  diagnostics: Array<Record<string, unknown>>,
-) => ({
+const lsp = (path: string, diagnostics: Array<Record<string, unknown>>) => ({
   tool_name: "lsp",
   result: { action: "diagnostics", path, diagnostics },
 });
@@ -26,15 +23,9 @@ describe("extractProblems", () => {
 
   it("keeps only the latest diagnostics for each file", () => {
     const problems = extractProblems([
-      lsp("/repo/a.ts", [
-        { line: 1, severity: "error", message: "old" },
-      ]),
-      lsp("/repo/b.ts", [
-        { line: 2, severity: "info", message: "other file" },
-      ]),
-      lsp("/repo/a.ts", [
-        { line: 3, severity: "warning", message: "new" },
-      ]),
+      lsp("/repo/a.ts", [{ line: 1, severity: "error", message: "old" }]),
+      lsp("/repo/b.ts", [{ line: 2, severity: "info", message: "other file" }]),
+      lsp("/repo/a.ts", [{ line: 3, severity: "warning", message: "new" }]),
     ]);
     expect(problems.map((problem) => problem.message).sort()).toEqual([
       "new",

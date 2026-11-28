@@ -311,8 +311,7 @@ export function SettingsPane() {
           return text.includes(phrase) && text.length <= phrase.length + 80;
         });
         const target = candidates.sort(
-          (a, b) =>
-            (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0),
+          (a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0),
         )[0];
         const section = target?.closest("section") ?? target;
         if (!section) return;

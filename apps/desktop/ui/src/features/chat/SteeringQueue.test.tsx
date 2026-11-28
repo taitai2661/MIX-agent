@@ -17,8 +17,7 @@ vi.mock("@/lib/api", () => ({
     listSteering: () => listSteering(),
     updateSteering: (runId: string, seq: number, content: string) =>
       updateSteering(runId, seq, content),
-    removeSteering: (runId: string, seq: number) =>
-      removeSteering(runId, seq),
+    removeSteering: (runId: string, seq: number) => removeSteering(runId, seq),
   },
 }));
 
@@ -70,8 +69,6 @@ describe("SteeringQueue", () => {
     renderQueue();
     await screen.findByText("修正して");
     fireEvent.click(screen.getByRole("button", { name: "指示を削除" }));
-    await waitFor(() =>
-      expect(removeSteering).toHaveBeenCalledWith("r1", 1),
-    );
+    await waitFor(() => expect(removeSteering).toHaveBeenCalledWith("r1", 1));
   });
 });

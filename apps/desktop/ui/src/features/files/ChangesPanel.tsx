@@ -179,9 +179,7 @@ const GitDiffBlock = memo(function GitDiffBlock({
     if (!hunk) return;
     const ok = await confirm({
       title: t("この差分を元に戻す"),
-      description: t(
-        "このハンクだけを元に戻します。ほかの変更は残ります。",
-      ),
+      description: t("このハンクだけを元に戻します。ほかの変更は残ります。"),
       confirmLabel: t("元に戻す"),
       tone: "danger",
     });
