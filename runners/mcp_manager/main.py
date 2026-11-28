@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import io
+import ipaddress
 import itertools
 import json
 import logging
 import os
+import posixpath
 import re
 import secrets
+import tarfile
+import tempfile
 import uuid
 from abc import ABC, abstractmethod
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -22,24 +29,76 @@ app = FastAPI(docs_url=None, redoc_url=None)
 LOGGER = logging.getLogger(__name__)
 LABEL = "io.mix-agent.mcp"
 NAME_RE = re.compile(r"^[a-f0-9-]{1,36}$")
+# Hostname-only, like the server's validate_domain(): no IP literals, no
+# single-label/metadata names. A dot is required so `169.254.169.254`,
+# `localhost` and `metadata` cannot enter an egress allow-list.
 DOMAIN_RE = re.compile(
-    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
+MAX_RESOURCE_LOCKS = 256
+MAX_SNAPSHOT_RESOURCES = 20
+MAX_SNAPSHOT_TOTAL_BYTES = 256 * 1024 * 1024
+OCI_RPC_DEADLINE_SECONDS = 120
 RUNTIME_IMAGE = os.getenv("MCP_RUNTIME_IMAGE", "mix-agent-mcp-runtime:local")
 MANAGER_CONTAINER = os.getenv("HOSTNAME", "mcp-manager")
 EGRESS_CONTAINER = os.getenv("MCP_EGRESS_CONTAINER", "mix-agent-egress-proxy-1")
 POLICY = Path(os.getenv("POLICY_FILE", "/policy/mcp-policy.json"))
+# The workload receives a dedicated, low-privilege token: it must never be able
+# to authenticate to the manager's own admin API by reading its mounted file.
+# Safe default: the dedicated workload token, never the manager's admin token.
+WORKLOAD_TOKEN_FILE = Path(os.getenv("MCP_WORKLOAD_TOKEN_FILE", "/workload-token/mcp-workload.token"))
+WORKLOAD_TOKEN_VOLUME = os.getenv("MCP_WORKLOAD_TOKEN_VOLUME", "mix-agent_mcp-workload-token")
 LOCKS: dict[str, asyncio.Lock] = {}
+OCI_CHANNEL_LOCK = asyncio.Lock()
+# One lock for every policy read-modify-write: per-resource LOCKS only serialise
+# lifecycle actions for a single MCP, but install/uninstall/discover all mutate
+# the same policy document and used a fixed temp file, losing each other's rules.
+POLICY_WRITE_LOCK = asyncio.Lock()
 OCI_CHANNELS: dict[str, tuple[object, asyncio.Lock, str]] = {}
 RPC_IDS = itertools.count(1)
+
+
+async def drop_oci_channel(resource_id: str) -> None:
+    """Forget the attach stream: a restarted container owns a new process."""
+    async with OCI_CHANNEL_LOCK:
+        channel = OCI_CHANNELS.pop(resource_id, None)
+    if channel:
+        try:
+            # Take the channel's own lock so we never close a WebSocket in the
+            # middle of an in-flight send/recv. A stuck RPC must not block a
+            # lifecycle action forever, hence the short deadline.
+            async with asyncio.timeout(5), channel[1]:
+                await channel[0].close()
+        except Exception:  # noqa: BLE001 - the container is gone; close is best-effort
+            LOGGER.debug("failed to close OCI channel for %s", resource_id, exc_info=True)
 
 
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
     token = Path(os.getenv("TOKEN_FILE", "/tokens/manager.token")).read_text().strip()
-    if not secrets.compare_digest(request.headers.get("authorization", ""), "Bearer " + token):
+    provided = request.headers.get("authorization", "")
+    # compare_digest() raises TypeError for non-ASCII str, which would surface
+    # as a 500 on the auth boundary instead of a clean rejection.
+    if not provided.isascii() or not secrets.compare_digest(provided, "Bearer " + token):
         return JSONResponse({"detail": "Unauthorized"}, 401)
     return await call_next(request)
+
+
+class DockerOperationError(RuntimeError):
+    """A Docker failure with internal detail for logs/predicates only.
+
+    ``str(error)`` stays generic so endpoint handlers never echo daemon
+    internals (container names, paths, image refs) to API clients. Internal
+    code that needs to distinguish "already exists" reads ``detail``.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__("Docker operation failed")
+        self.detail = detail
+
+
+def _docker_detail(error: RuntimeError) -> str:
+    return getattr(error, "detail", str(error)).lower()
 
 
 class ContainerRuntimeDriver(ABC):
@@ -50,31 +109,88 @@ class ContainerRuntimeDriver(ABC):
     async def action(self, resource_id: str, action: str, delete_volume: bool = False) -> dict: ...
 
 
+def _docker_target() -> tuple[str, str | None]:
+    """Return the Docker API base URL and an optional unix-socket path.
+
+    Both the HTTP client and the OCI attach WebSocket must use the *same*
+    configured endpoint.  Production sets ``DOCKER_HOST`` to the socket proxy;
+    the raw host socket is never mounted into this container. The unix-socket
+    branch exists only for local development and host-side tests.
+    """
+    docker_host = os.getenv("DOCKER_HOST", "").strip()
+    if docker_host.startswith("tcp://"):
+        docker_host = "http://" + docker_host[len("tcp://") :]
+    if docker_host.startswith(("http://", "https://")):
+        base_url = docker_host.rstrip("/")
+        if not base_url.endswith("/v1.47"):
+            base_url += "/v1.47"
+        return base_url, None
+    socket = docker_host.removeprefix("unix://") if docker_host else os.getenv("DOCKER_SOCKET", "")
+    return "http://docker/v1.47", (socket or "/var/run/docker.sock")
+
+
+def _mount_signature(mount: dict) -> tuple:
+    """Normalise create-config and inspect mounts into a comparable tuple.
+
+    Docker's create API uses ``Source``/``Target``/``ReadOnly`` while inspect
+    uses ``Source``/``Destination``/``RW``; tmpfs options may also differ in
+    representation, so only the size is compared. ``Mode`` is intentionally
+    omitted to avoid restarting identical containers on a formatting change.
+    """
+    options = mount.get("TmpfsOptions") or {}
+    readonly = not bool(mount["RW"]) if "RW" in mount else bool(mount.get("ReadOnly"))
+    return (
+        mount.get("Type"),
+        mount.get("Source") or mount.get("Name") or "",
+        mount.get("Destination") or mount.get("Target"),
+        readonly,
+        options.get("SizeBytes"),
+    )
+
+
+def _container_config_matches(existing: dict, config: dict) -> bool:
+    """Compare the *inspected* image/env/mounts/security options to the intent.
+
+    Self-reported labels are not sufficient: any peer with access to the Docker
+    socket proxy can create a container wearing the expected fingerprint while
+    running a different image or mounting a different token source.
+    """
+    actual = existing.get("Config", {}) or {}
+    host = existing.get("HostConfig", {}) or {}
+    if actual.get("Image") != config.get("Image"):
+        return False
+    if list(actual.get("Env") or []) != list(config.get("Env") or []):
+        return False
+    if actual.get("User") != config.get("User"):
+        return False
+    if actual.get("WorkingDir") != config.get("WorkingDir"):
+        return False
+    actual_mounts = sorted((_mount_signature(m) for m in host.get("Mounts") or []), key=repr)
+    expected_mounts = sorted(
+        (_mount_signature(m) for m in (config.get("HostConfig") or {}).get("Mounts") or []), key=repr
+    )
+    if actual_mounts != expected_mounts:
+        return False
+    if sorted(host.get("SecurityOpt") or []) != sorted(
+        (config.get("HostConfig") or {}).get("SecurityOpt") or []
+    ):
+        return False
+    return True
+
+
 class DockerAPI:
     def __init__(self):
-        """Talk to Docker through a socket proxy when configured.
-
-        The manager no longer needs the raw host socket.  Production Compose
-        points ``DOCKER_HOST`` at ``docker-socket-proxy``, which exposes only
-        containers, volumes, networks and images; the unix-socket fallback is
-        kept for local development and tests.
-        """
-        docker_host = os.getenv("DOCKER_HOST", "").strip()
-        if docker_host.startswith("tcp://"):
-            docker_host = "http://" + docker_host[len("tcp://") :]
-        if docker_host.startswith("http://") or docker_host.startswith("https://"):
-            base_url = docker_host.rstrip("/")
-            if not base_url.endswith("/v1.47"):
-                base_url += "/v1.47"
-            self.client = httpx.AsyncClient(base_url=base_url, timeout=120, trust_env=False)
-        else:
-            socket = docker_host.removeprefix("unix://") if docker_host else "/var/run/docker.sock"
+        """Talk to Docker through the configured proxy or unix socket."""
+        base_url, socket = _docker_target()
+        if socket:
             self.client = httpx.AsyncClient(
                 transport=httpx.AsyncHTTPTransport(uds=socket),
-                base_url="http://docker/v1.47",
+                base_url=base_url,
                 timeout=120,
                 trust_env=False,
             )
+        else:
+            self.client = httpx.AsyncClient(base_url=base_url, timeout=120, trust_env=False)
 
     async def call(self, method: str, path: str, *, body=None, ok=(200, 201, 204, 304)) -> dict:
         response = await self.client.request(method, path, json=body)
@@ -84,7 +200,10 @@ class DockerAPI:
                 message = response.json().get("message", message)
             except Exception:  # noqa: BLE001 - keep the generic Docker error message
                 LOGGER.debug("Docker error response was not JSON", exc_info=True)
-            raise RuntimeError(message)
+            # Log the detail, but never hand it to an API client: Docker error
+            # bodies contain internal container names, paths and image refs.
+            LOGGER.warning("Docker API %s %s failed: %s", method, path, message)
+            raise DockerOperationError(message)
         if not response.content:
             return {}
         return response.json()
@@ -114,6 +233,14 @@ def _capability(value: dict) -> dict:
         host = str(raw).lower().rstrip(".")
         if not DOMAIN_RE.fullmatch(host):
             raise ValueError("Invalid allowed domain")
+        # A dotted string can still be an IP literal; the server's
+        # validate_domain() rejects those too. Keep both editions aligned.
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("Invalid allowed domain")
         domains.append(host)
     if mode == "restricted" and not domains:
         raise ValueError("Restricted network capability needs allowed domains")
@@ -128,11 +255,75 @@ def _load_policy() -> dict:
         return {}
 
 
-def _save_policy(value: dict) -> None:
+async def _save_policy(value: dict) -> None:
+    """Low-level atomic+durable write. Callers hold ``POLICY_WRITE_LOCK``."""
     POLICY.parent.mkdir(parents=True, exist_ok=True)
-    temporary = POLICY.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, sort_keys=True))
-    temporary.replace(POLICY)
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        dir=POLICY.parent,
+        prefix="mcp-policy.",
+        suffix=".tmp",
+        delete=False,
+        encoding="utf-8",
+    )
+    temporary = Path(handle.name)
+    try:
+        # The proxy reads this file as uid 1000; mode 0644 matches egress_policy.
+        os.chmod(temporary, 0o644)
+        with handle:
+            json.dump(value, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, POLICY)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@asynccontextmanager
+async def _policy_update():
+    """Serialise a full read-modify-write of the shared policy document."""
+    async with POLICY_WRITE_LOCK:
+        policy = _load_policy()
+        yield policy
+        await _save_policy(policy)
+
+
+def _checked_lock(resource_id: str) -> asyncio.Lock:
+    """Validate before touching process state and bound the lock map."""
+    _names(resource_id)  # raises ValueError for malformed ids
+    if len(LOCKS) >= MAX_RESOURCE_LOCKS and resource_id not in LOCKS:
+        raise ValueError("Too many MCP resources are being managed")
+    return LOCKS.setdefault(resource_id, asyncio.Lock())
+
+
+@asynccontextmanager
+async def _exclusive(resource_id: str):
+    """Non-blocking exclusive lifecycle operation for one resource.
+
+    There is no await between `locked()` and `acquire()`, so a concurrent
+    caller cannot sneak in: it gets a clean 409 instead of silently queueing.
+    """
+    lock = _checked_lock(resource_id)
+    if lock.locked():
+        raise HTTPException(409, "MCP lifecycle operation is already running")
+    await lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+@asynccontextmanager
+async def _resource_locks(resource_ids: list[str]):
+    """Acquire all resource locks in a stable order (snapshots/restores)."""
+    unique = sorted(set(resource_ids))
+    if len(unique) > MAX_SNAPSHOT_RESOURCES:
+        raise ValueError("Too many MCP resources in one snapshot operation")
+    locks = [_checked_lock(resource_id) for resource_id in unique]
+    async with AsyncExitStack() as stack:
+        for lock in locks:
+            await stack.enter_async_context(lock)
+        yield
 
 
 class DockerRuntimeDriver(ContainerRuntimeDriver):
@@ -147,7 +338,7 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
                 body={"Container": container, "EndpointConfig": {"Aliases": aliases or []}},
             )
         except RuntimeError as error:
-            if "already exists" not in str(error).lower():
+            if "already exists" not in _docker_detail(error):
                 raise
 
     async def prepare_volume(self, volume: str) -> None:
@@ -179,6 +370,34 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         finally:
             await self.api.call("DELETE", f"/containers/{helper}?force=true", ok=(204, 404))
 
+    async def _ensure_container(self, name: str, config: dict, resource_id: str, kind: str) -> None:
+        """Create ``name``, or only reuse a container we can prove is identical.
+
+        Swallowing Docker's "already in use" error and starting whatever happens
+        to own the name could run a different image or config (and bypass the
+        workload token mount). Foreign containers are rejected; a stale install
+        of this same resource is deleted and recreated. The fingerprint label is
+        advisory only: a peer with Docker API access can forge labels, so the
+        *actual* inspect data must match the config we intended to create.
+        """
+        try:
+            await self.api.call("POST", f"/containers/create?name={name}", body=config)
+            return
+        except RuntimeError as error:
+            if "already in use" not in _docker_detail(error):
+                raise
+        existing = await self.api.call("GET", f"/containers/{name}/json")
+        existing_config = existing.get("Config", {})
+        labels = existing_config.get("Labels") or {}
+        if labels.get(LABEL) != resource_id or labels.get(f"{LABEL}.driver") != kind:
+            raise RuntimeError("MCP container name is owned by a different workload")
+        if _container_config_matches(existing, config):
+            return
+        # Our resource, but a different install: recreate instead of starting a
+        # container whose image, env or token mount we did not verify.
+        await self.api.call("DELETE", f"/containers/{name}?force=true", ok=(204, 404))
+        await self.api.call("POST", f"/containers/create?name={name}", body=config)
+
     async def install(self, resource_id: str, manifest: dict, capability: dict) -> dict:
         container, network, volume = _names(resource_id)
         candidate = manifest.get("selected") or {}
@@ -195,7 +414,7 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
                 body={"Name": network, "Internal": True, "Labels": {LABEL: resource_id}},
             )
         except RuntimeError as error:
-            if "already exists" not in str(error).lower():
+            if "already exists" not in _docker_detail(error):
                 raise
         image = candidate["identifier"] if kind == "oci" else RUNTIME_IMAGE
         env = [
@@ -205,6 +424,7 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
             "HOME=/data/workspace",
             "TMPDIR=/tmp",
             "PYTHONPATH=/app",
+            f"TOKEN_FILE=/tokens/{WORKLOAD_TOKEN_FILE.name}",
         ]
         if capability["mode"] != "none" or kind in ("npm", "pypi"):
             env.extend(
@@ -218,7 +438,18 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         config = {
             "Image": image,
             "Env": env,
-            "Labels": {LABEL: resource_id, f"{LABEL}.driver": kind},
+            "Labels": {
+                LABEL: resource_id,
+                f"{LABEL}.driver": kind,
+                # Advisory fingerprint for observability. Reuse is decided by
+                # _container_config_matches() against the real inspect data;
+                # labels alone can be forged by another Docker API caller.
+                f"{LABEL}.fingerprint": hashlib.sha256(
+                    json.dumps(
+                        {"image": image, "env": env, "token_volume": WORKLOAD_TOKEN_VOLUME}, sort_keys=True
+                    ).encode()
+                ).hexdigest()[:24],
+            },
             "User": "1000:1000",
             "WorkingDir": "/data",
             "HostConfig": {
@@ -228,6 +459,12 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
                 "NetworkMode": network,
                 "Mounts": [
                     {"Type": "volume", "Source": volume, "Target": "/data", "ReadOnly": False},
+                    {
+                        "Type": "volume",
+                        "Source": WORKLOAD_TOKEN_VOLUME,
+                        "Target": "/tokens",
+                        "ReadOnly": True,
+                    },
                     {
                         "Type": "tmpfs",
                         "Target": "/tmp",
@@ -252,36 +489,31 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         }
         if kind in ("npm", "pypi"):
             config["ExposedPorts"] = {"8004/tcp": {}}
-        try:
-            await self.api.call("POST", f"/containers/create?name={container}", body=config)
-        except RuntimeError as error:
-            if "already in use" not in str(error).lower():
-                raise
+        await self._ensure_container(container, config, resource_id, kind)
         await self._connect(network, MANAGER_CONTAINER, ["mcp-manager"])
         needs_install_egress = kind in ("npm", "pypi")
         if capability["mode"] != "none" or needs_install_egress:
             await self._connect(network, EGRESS_CONTAINER, ["egress-proxy"])
         inspect = await self.api.call("GET", f"/containers/{container}/json")
         ip = inspect.get("NetworkSettings", {}).get("Networks", {}).get(network, {}).get("IPAddress", "")
-        policy = _load_policy()
-        policies = policy.setdefault("source_policies", {})
-        if ip:
-            policies[ip] = (
-                (
-                    {"mode": "restricted", "allowed_domains": ["registry.npmjs.org"]}
-                    if kind == "npm"
-                    else {"mode": "restricted", "allowed_domains": ["pypi.org", "files.pythonhosted.org"]}
+        async with _policy_update() as policy:
+            policies = policy.setdefault("source_policies", {})
+            if ip:
+                policies[ip] = (
+                    (
+                        {"mode": "restricted", "allowed_domains": ["registry.npmjs.org"]}
+                        if kind == "npm"
+                        else {"mode": "restricted", "allowed_domains": ["pypi.org", "files.pythonhosted.org"]}
+                    )
+                    if needs_install_egress
+                    else capability
                 )
-                if needs_install_egress
-                else capability
-            )
-        policy.setdefault("resource_policies", {})[resource_id] = {
-            "ip": ip,
-            "runtime": capability,
-            "installing": needs_install_egress,
-            "driver": kind,
-        }
-        _save_policy(policy)
+            policy.setdefault("resource_policies", {})[resource_id] = {
+                "ip": ip,
+                "runtime": capability,
+                "installing": needs_install_egress,
+                "driver": kind,
+            }
         await self.api.call("POST", f"/containers/{container}/start", ok=(204, 304))
         return {
             "container": container,
@@ -295,6 +527,9 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
         container, network, volume = _names(resource_id)
         if action in ("start", "stop", "restart"):
             await self.api.call("POST", f"/containers/{container}/{action}?t=20", ok=(204, 304))
+            # The websocket was attached to the previous process. Reusing it
+            # after a lifecycle change made discover/call fail forever.
+            await drop_oci_channel(resource_id)
         elif action == "status":
             value = await self.api.call("GET", f"/containers/{container}/json")
             return {
@@ -317,14 +552,11 @@ class DockerRuntimeDriver(ContainerRuntimeDriver):
                 except RuntimeError:
                     pass
             await self.api.call("DELETE", f"/networks/{network}", ok=(204, 404))
-            policy = _load_policy()
-            resource = policy.get("resource_policies", {}).pop(resource_id, {})
-            if resource.get("ip"):
-                policy.get("source_policies", {}).pop(resource["ip"], None)
-            _save_policy(policy)
-            channel = OCI_CHANNELS.pop(resource_id, None)
-            if channel:
-                await channel[0].close()
+            async with _policy_update() as policy:
+                resource = policy.get("resource_policies", {}).pop(resource_id, {})
+                if resource.get("ip"):
+                    policy.get("source_policies", {}).pop(resource["ip"], None)
+            await drop_oci_channel(resource_id)
             if delete_volume:
                 await self.api.call("DELETE", f"/volumes/{volume}", ok=(204, 404))
         else:
@@ -426,6 +658,41 @@ async def _volume_archive(resource_id: str) -> bytes:
         await DRIVER.api.call("DELETE", f"/containers/{helper}?force=true", ok=(204, 404))
 
 
+def _safe_archive(archive: bytes) -> None:
+    """Reject tar members that could write outside the restored volume."""
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
+        for member in tar.getmembers():
+            name = str(member.name).replace("\\", "/")
+            if name.startswith("/") or any(part == ".." for part in name.split("/")):
+                raise ValueError("Unsafe path in MCP volume snapshot")
+            if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+                raise ValueError("Unsupported member in MCP volume snapshot")
+            if member.issym() or member.islnk():
+                target = str(member.linkname).replace("\\", "/")
+                if target.startswith("/"):
+                    raise ValueError("Unsafe link in MCP volume snapshot")
+                resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), target))
+                if resolved == ".." or resolved.startswith("../") or resolved.startswith("/"):
+                    raise ValueError("Unsafe link in MCP volume snapshot")
+
+
+def _decoded_snapshot_volumes(body: dict) -> dict[str, bytes]:
+    volumes = body.get("volumes", {})
+    if not isinstance(volumes, dict) or len(volumes) > MAX_SNAPSHOT_RESOURCES:
+        raise ValueError("Invalid MCP volume snapshot")
+    decoded: dict[str, bytes] = {}
+    total = 0
+    for resource_id, archive in volumes.items():
+        _names(str(resource_id))
+        raw = base64.b64decode(archive, validate=True)
+        _safe_archive(raw)
+        total += len(raw)
+        if len(raw) > 128 * 1024 * 1024 or total > MAX_SNAPSHOT_TOTAL_BYTES:
+            raise ValueError("MCP volume exceeds snapshot limit")
+        decoded[str(resource_id)] = raw
+    return decoded
+
+
 async def _restore_archive(resource_id: str, archive: bytes) -> None:
     if not isinstance(DRIVER, DockerRuntimeDriver):
         raise ValueError("Runtime does not support snapshots")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
@@ -461,22 +728,28 @@ async def _restore_archive(resource_id: str, archive: bytes) -> None:
 
 @app.post("/v1/snapshot")
 async def snapshot(body: dict):
+    ids = [str(value) for value in body.get("resource_ids", [])]
     result = {}
-    for resource_id in body.get("resource_ids", []):
-        archive = await _volume_archive(str(resource_id))
-        if len(archive) > 128 * 1024 * 1024:
-            raise HTTPException(422, "MCP volume exceeds snapshot limit")
-        result[str(resource_id)] = base64.b64encode(archive).decode()
+    try:
+        # Hold the same locks lifecycle operations use: snapshotting a volume
+        # mid-install would produce an inconsistent, unrecoverable artifact.
+        async with _resource_locks(ids):
+            total = 0
+            for resource_id in ids:
+                archive = await _volume_archive(resource_id)
+                total += len(archive)
+                if len(archive) > 128 * 1024 * 1024 or total > MAX_SNAPSHOT_TOTAL_BYTES:
+                    raise ValueError("MCP volume exceeds snapshot limit")
+                result[resource_id] = base64.b64encode(archive).decode()
+    except (ValueError, TypeError, RuntimeError) as error:
+        raise HTTPException(422, str(error))
     return {"volumes": result}
 
 
 @app.post("/v1/validate-snapshot")
 async def validate_snapshot(body: dict):
     try:
-        for resource_id, archive in body.get("volumes", {}).items():
-            _names(resource_id)
-            if len(base64.b64decode(archive, validate=True)) > 128 * 1024 * 1024:
-                raise ValueError()
+        _decoded_snapshot_volumes(body)
     except Exception:  # noqa: BLE001 - intentionally classified; never leak raw details
         raise HTTPException(422, "Invalid MCP volume snapshot")
     return {"ok": True}
@@ -484,40 +757,40 @@ async def validate_snapshot(body: dict):
 
 @app.post("/v1/restore-snapshot")
 async def restore_snapshot(body: dict):
-    await validate_snapshot(body)
-    for resource_id, archive in body.get("volumes", {}).items():
-        await _restore_archive(resource_id, base64.b64decode(archive))
+    try:
+        volumes = _decoded_snapshot_volumes(body)
+        resource_ids = sorted(volumes)
+        async with _resource_locks(resource_ids):
+            for resource_id in resource_ids:
+                await _restore_archive(resource_id, volumes[resource_id])
+    except (ValueError, TypeError, RuntimeError) as error:
+        raise HTTPException(422, str(error))
     return {"ok": True}
 
 
 @app.post("/v1/install")
 async def install(body: dict):
     resource_id = str(body.get("resource_id", ""))
-    lock = LOCKS.setdefault(resource_id, asyncio.Lock())
-    if lock.locked():
-        raise HTTPException(409, "MCP lifecycle operation is already running")
-    async with lock:
-        try:
+    try:
+        async with _exclusive(resource_id):
             return await DRIVER.install(resource_id, body["manifest"], body.get("network_capability", {}))
-        except (ValueError, RuntimeError) as error:
-            raise HTTPException(422, str(error))
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(422, str(error))
 
 
 @app.post("/v1/runtime/{resource_id}/{action}")
 async def lifecycle(resource_id: str, action: str, body: dict):
-    lock = LOCKS.setdefault(resource_id, asyncio.Lock())
-    async with lock:
-        try:
+    try:
+        async with _exclusive(resource_id):
             return await DRIVER.action(resource_id, action, bool(body.get("delete_volume")))
-        except (ValueError, RuntimeError) as error:
-            raise HTTPException(422, str(error))
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(422, str(error))
 
 
 @app.post("/v1/update/{resource_id}")
 async def update(resource_id: str, body: dict):
-    lock = LOCKS.setdefault(resource_id, asyncio.Lock())
-    async with lock:
-        try:
+    try:
+        async with _exclusive(resource_id):
             if not isinstance(DRIVER, DockerRuntimeDriver):
                 raise ValueError("Runtime does not support transactional updates")  # noqa: TRY004 - ValueError is this app's domain-error convention (mapped to HTTP 422)
             return await DRIVER.update(
@@ -527,8 +800,8 @@ async def update(resource_id: str, body: dict):
                 body.get("network_capability", {}),
                 body.get("health", {}),
             )
-        except (ValueError, RuntimeError) as error:
-            raise HTTPException(422, str(error))
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(422, str(error))
 
 
 async def _proxy(resource_id: str, path: str, body: dict) -> dict:
@@ -546,11 +819,16 @@ async def _proxy(resource_id: str, path: str, body: dict) -> dict:
             return {"tools": value.get("tools", value.get("capabilities", {}).get("tools", []))}
         return value
     container, _, _ = _names(resource_id)
+    token = WORKLOAD_TOKEN_FILE.read_text().strip()
     async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
         response = None
         for attempt in range(60):
             try:
-                response = await client.post(f"http://{container}:8004/{path}", json=body)
+                response = await client.post(
+                    f"http://{container}:8004/{path}",
+                    json=body,
+                    headers={"Authorization": "Bearer " + token},
+                )
                 break
             except httpx.ConnectError:
                 if attempt == 59:
@@ -561,25 +839,25 @@ async def _proxy(resource_id: str, path: str, body: dict) -> dict:
         response.raise_for_status()
         value = response.json()
     if path == "discover" and isinstance(DRIVER, DockerRuntimeDriver):
-        policy = _load_policy()
-        resource = policy.get("resource_policies", {}).get(resource_id, {})
-        if resource.get("installing"):
-            runtime = resource.get("runtime", {"mode": "none", "allowed_domains": []})
-            ip = resource.get("ip", "")
-            if ip:
-                policy.setdefault("source_policies", {})[ip] = runtime
-            resource["installing"] = False
-            _save_policy(policy)
-            if runtime.get("mode") == "none":
-                _, network, _ = _names(resource_id)
-                try:
-                    await DRIVER.api.call(
-                        "POST",
-                        f"/networks/{network}/disconnect",
-                        body={"Container": EGRESS_CONTAINER, "Force": False},
-                    )
-                except RuntimeError:
-                    pass
+        runtime = None
+        async with _policy_update() as policy:
+            resource = policy.get("resource_policies", {}).get(resource_id, {})
+            if resource.get("installing"):
+                runtime = resource.get("runtime", {"mode": "none", "allowed_domains": []})
+                ip = resource.get("ip", "")
+                if ip:
+                    policy.setdefault("source_policies", {})[ip] = runtime
+                resource["installing"] = False
+        if runtime is not None and runtime.get("mode") == "none":
+            _, network, _ = _names(resource_id)
+            try:
+                await DRIVER.api.call(
+                    "POST",
+                    f"/networks/{network}/disconnect",
+                    body={"Container": EGRESS_CONTAINER, "Force": False},
+                )
+            except RuntimeError:
+                pass
     return value
 
 
@@ -587,20 +865,29 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
     import websockets
 
     container, _, _ = _names(resource_id)
-    channel = OCI_CHANNELS.get(resource_id)
-    if not channel:
-        uri = f"ws://localhost/v1.47/containers/{container}/attach/ws?stdin=1&stdout=1&stderr=1&stream=1"
-        websocket = await websockets.unix_connect(
-            os.getenv("DOCKER_SOCKET", "/var/run/docker.sock"), uri=uri, max_size=16 * 1024 * 1024
-        )
-        channel = (websocket, asyncio.Lock(), "modern")
-        OCI_CHANNELS[resource_id] = channel
+    # Two concurrent first calls must not each open an attach stream: one
+    # would be orphaned and leak a Docker connection forever.
+    async with OCI_CHANNEL_LOCK:
+        channel = OCI_CHANNELS.get(resource_id)
+        if not channel:
+            base_url, socket = _docker_target()
+            endpoint = base_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+            uri = f"{endpoint}/containers/{container}/attach/ws?stdin=1&stdout=1&stderr=1&stream=1"
+            # Attach over the same proxied DOCKER_HOST the HTTP API uses. The raw
+            # host socket is never mounted here; a unix path is only a local-dev
+            # fallback and is passed via ``unix_connect`` without any http proxy.
+            if socket:
+                websocket = await websockets.unix_connect(socket, uri=uri, max_size=16 * 1024 * 1024)
+            else:
+                websocket = await websockets.connect(uri, max_size=16 * 1024 * 1024)
+            channel = (websocket, asyncio.Lock(), "modern")
+            OCI_CHANNELS[resource_id] = channel
     websocket, lock, _ = channel
     async with lock:
         request_id = next(RPC_IDS)
         request_params = dict(params)
         request_params["_meta"] = {
-            "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.7"},
+            "io.modelcontextprotocol/clientInfo": {"name": "MIX agent", "version": "0.5.8"},
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         }
         await websocket.send(
@@ -609,8 +896,18 @@ async def _oci_rpc(resource_id: str, method: str, params: dict) -> dict:
                 + "\n"
             ).encode()
         )
-        for _ in range(100):
-            raw = await asyncio.wait_for(websocket.recv(), 115)
+        # A bounded deadline replaces the previous 100 x 115s (~3h) loop,
+        # which could pin the manager's only channel lock long after callers
+        # had timed out.
+        deadline = asyncio.get_running_loop().time() + OCI_RPC_DEADLINE_SECONDS
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise ValueError("OCI MCP response was not received")
+            try:
+                raw = await asyncio.wait_for(websocket.recv(), min(15, remaining))
+            except TimeoutError:
+                continue
             if isinstance(raw, bytes):
                 raw = raw.decode(errors="replace")
             for line in raw.splitlines():

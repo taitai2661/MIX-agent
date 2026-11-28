@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Code2,
   Clock3,
+  Download,
   FileText,
   Globe2,
   History,
@@ -18,9 +19,11 @@ import {
   ShieldAlert,
   Terminal,
   Undo2,
+  Upload,
   Wrench,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import type { RunEventPayload } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { t, tf } from "@/lib/i18n";
@@ -30,9 +33,11 @@ import {
   isFileWrite,
   optString,
   record,
+  buildTrajectory,
   reduceRunEvents,
   type TodoItem,
   type ToolActivity,
+  type TrajectoryPoint,
 } from "@/lib/runEvents";
 import { useRunEvents } from "@/lib/runStore";
 import { Card, PanelHeader, PANEL_BODY } from "@/components/layout";
@@ -260,6 +265,178 @@ function TodoList({ items }: { items: TodoItem[] }) {
   );
 }
 
+/** Stable empty fallback so the trajectory memo does not rebuild. */
+const EMPTY_EVENTS: RunEventPayload[] = [];
+
+/** Chronological event list backing the Trajectory tab: every event in
+ *  sequence order with a one-line summary, filterable by kind and text. */
+function TrajectoryView({ points }: { points: TrajectoryPoint[] }) {
+  const [kind, setKind] = useState("all");
+  const [query, setQuery] = useState("");
+  const kinds = useMemo(
+    () => [...new Set(points.map((p) => p.kind))].sort(),
+    [points],
+  );
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return points.filter(
+      (p) =>
+        (kind === "all" || p.kind === kind) &&
+        (q === "" ||
+          p.label.toLowerCase().includes(q) ||
+          p.detail.toLowerCase().includes(q) ||
+          p.kind.toLowerCase().includes(q)),
+    );
+  }, [points, kind, query]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-1.5">
+        <div className="relative min-w-0 flex-1">
+          <Search
+            size={12}
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-faint"
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("イベントを検索")}
+            className="w-full rounded-md border border-line bg-inset py-1 pr-2 pl-7 text-xs text-fg placeholder:text-faint"
+          />
+        </div>
+        <select
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+          aria-label={t("種類で絞り込み")}
+          className="max-w-36 rounded-md border border-line bg-inset px-1.5 py-1 text-xs text-fg"
+        >
+          <option value="all">{t("すべて")}</option>
+          {kinds.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+        </select>
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyState compact title={t("イベントはありません")} />
+      ) : (
+        <ol className="flex max-h-96 flex-col gap-px overflow-y-auto rounded-lg border border-line bg-surface p-1 shadow-xs">
+          {filtered.map((p) => (
+            <li
+              key={p.sequence}
+              className="flex items-baseline gap-2 rounded px-1.5 py-1 text-xs"
+            >
+              <span className="shrink-0 font-mono text-2xs text-faint">
+                #{p.sequence}
+              </span>
+              <span className="shrink-0 font-mono text-2xs text-faint">
+                {new Date(p.createdAt).toLocaleTimeString()}
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate"
+                title={p.detail || p.kind}
+              >
+                <span className="font-mono font-medium text-fg">{p.label}</span>
+                {p.detail && <span className="text-muted"> — {p.detail}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="m-0 text-xs text-faint">
+        {tf("{count} 件のイベント", { count: filtered.length })}
+      </p>
+    </div>
+  );
+}
+
+/** Export (JSONL/Markdown) and import (JSONL) for one run's event log. */
+function RunIoCard({ runId }: { runId: string }) {
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"jsonl" | "md" | "import" | null>(null);
+  const queryClient = useQueryClient();
+
+  const save = async (format: "jsonl" | "md") => {
+    setBusy(format);
+    setNote(null);
+    try {
+      const content =
+        format === "jsonl"
+          ? await api.exportRunEventsJsonl(runId)
+          : await api.exportRunMarkdown(runId);
+      const ext = format === "jsonl" ? "jsonl" : "md";
+      const path = await api.pickSaveFile({
+        title: t("Runのエクスポート"),
+        defaultName: `run-${shortId(runId)}.${ext}`,
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      });
+      if (!path) return;
+      await api.saveTextFile(path, content);
+      setNote(t("エクスポートしました。"));
+    } catch (err) {
+      setNote(errorMessage(err) || t("エラー"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const load = async () => {
+    setBusy("import");
+    setNote(null);
+    try {
+      const paths = await api.pickOpenFile({
+        title: t("Runのインポート"),
+        filters: [{ name: "JSONL", extensions: ["jsonl"] }],
+      });
+      const path = paths?.[0];
+      if (!path) return;
+      const count = await api.importRunEventsFile(runId, path);
+      setNote(tf("{count} 件のイベントを取り込みました。", { count }));
+      void queryClient.invalidateQueries({ queryKey: ["run_events", runId] });
+    } catch (err) {
+      setNote(errorMessage(err) || t("エラー"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card
+      title={t("エクスポート / インポート")}
+      icon={<Download size={13} />}
+      bodyClassName="p-2.5"
+    >
+      <div className="flex flex-wrap gap-1.5">
+        <Button
+          size="sm"
+          disabled={busy !== null}
+          onClick={() => void save("jsonl")}
+        >
+          <Download size={12} /> JSONL
+        </Button>
+        <Button
+          size="sm"
+          disabled={busy !== null}
+          onClick={() => void save("md")}
+        >
+          <Download size={12} /> Markdown
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy !== null}
+          onClick={() => void load()}
+        >
+          <Upload size={12} /> {t("取り込み")}
+        </Button>
+      </div>
+      {note && <p className="m-0 text-xs text-muted">{note}</p>}
+    </Card>
+  );
+}
+
 function safeJson(value: unknown): string {
   const text = JSON.stringify(value, null, 2) ?? "";
   return text.length > 4000 ? `${text.slice(0, 4000)}…` : text;
@@ -315,6 +492,20 @@ export function ActivityPanel({
     },
     onError: (error) => setRevertNote(errorMessage(error) || t("エラー")),
   });
+  const revertPaths = useMutation({
+    mutationFn: (paths: string[]) => api.revertRunWorkspacePaths(runId!, paths),
+    onSuccess: (count) => {
+      setRevertNote(
+        tf("{count} 件のファイルを実行前の内容に戻しました。", { count }),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["file_diff"] });
+      void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["run_workspace_changes", runId],
+      });
+    },
+    onError: (error) => setRevertNote(errorMessage(error) || t("エラー")),
+  });
   const checkpoints = useQuery({
     queryKey: ["checkpoints", runId],
     queryFn: () => api.listCheckpoints(runId!),
@@ -332,6 +523,17 @@ export function ActivityPanel({
   );
   const timeline = isLive ? liveTimeline : replayed;
   const empty = !runId || (timeline && timeline.tools.length === 0);
+
+  // Trajectory tab: raw chronology for the timeline view. Live runs read the
+  // bounded buffer the store keeps per run; finished runs read the persisted
+  // history query both tabs already share.
+  const [tab, setTab] = useState<"activity" | "trajectory">("activity");
+  const liveEvents = liveEntry?.events ?? EMPTY_EVENTS;
+  const rawEvents = isLive ? liveEvents : (history.data ?? EMPTY_EVENTS);
+  const points = useMemo(
+    () => (runId ? buildTrajectory(rawEvents) : []),
+    [runId, rawEvents],
+  );
 
   // Resuming a checkpoint used to reject unhandled: the button never disabled
   // and the panel silently stayed on the pre-resume snapshot.
@@ -379,145 +581,221 @@ export function ActivityPanel({
           `Card` has, has no automatic minimum size to fall back on. The cards
           were silently squashed and cut off instead of the column scrolling. */}
       <div className={PANEL_BODY}>
-        {runId && !history.isError && !timeline && <ListSkeleton rows={1} />}
-        {runId && history.isError && <ErrorBox error={history.error} />}
-        {resumeError && <ErrorBox error={resumeError} />}
-        {empty && (
-          <EmptyState compact title={t("アクティビティはありません")} />
-        )}
-
-        {runId && timeline && timeline.tools.length > 0 && (
-          <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface shadow-xs">
-            {timeline.tools.map((tool) => (
-              <ToolRow key={tool.id} tool={tool} />
+        {runId && (
+          <div
+            className="flex gap-1 rounded-lg border border-line bg-inset p-0.5"
+            role="tablist"
+          >
+            {(
+              [
+                ["activity", t("アクティビティ")],
+                ["trajectory", t("時系列")],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={tab === key}
+                onClick={() => setTab(key)}
+                className={cn(
+                  "flex-1 rounded-md px-2 py-1 text-xs transition-colors",
+                  tab === key
+                    ? "bg-surface font-medium text-fg shadow-xs"
+                    : "text-faint hover:text-muted",
+                )}
+              >
+                {label}
+              </button>
             ))}
           </div>
         )}
-
-        {runId && timeline && timeline.todos.length > 0 && (
-          <TodoList items={timeline.todos} />
-        )}
-
-        {runId && timeline && timeline.contextCompactions.length > 0 && (
-          <ContextCompactionNotice items={timeline.contextCompactions} />
-        )}
-
-        {runId && timeline?.verificationFailed && (
-          <Card
-            className="border-danger"
-            title={t("検証に失敗しました")}
-            icon={<ShieldAlert size={13} className="text-danger" />}
-            bodyClassName="p-2.5"
-          >
-            <p className="m-0 text-xs text-muted">
-              {timeline.verificationFailed}
-            </p>
-          </Card>
-        )}
-
-        {runId && timeline?.verification && !timeline.verificationFailed && (
-          <Card
-            title={t("変更の確認中")}
-            icon={<ShieldAlert size={13} />}
-            bodyClassName="p-2.5"
-          >
-            <p className="m-0 text-xs text-muted">
-              {timeline.verification.reason || timeline.verification.tool}
-            </p>
-          </Card>
-        )}
-
-        {runId && !isLive && (checkpoints.data?.length ?? 0) > 0 && (
-          <Card
-            title={t("チェックポイント")}
-            icon={<History size={13} />}
-            bodyClassName="gap-0 p-0"
-          >
-            <ul className="flex flex-col divide-y divide-line">
-              {(checkpoints.data ?? []).map((c) => (
-                <li
-                  key={c.id}
-                  className="flex items-center justify-between gap-2 px-2.5 py-1.5"
-                >
-                  <span className="flex items-center gap-1.5 text-xs text-muted">
-                    <Clock3 size={13} /> {t("ステップ")} {c.step_index}
-                  </span>
-                  <Button
-                    size="sm"
-                    disabled={resumingId === c.id}
-                    onClick={() => void resumeFromCheckpoint(runId, c.id)}
-                  >
-                    <RotateCcw size={12} /> {t("再開")}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
-
-        {runId && !isLive && (
-          <Card
-            title={t("実行の取り消し")}
-            icon={<Undo2 size={13} />}
-            bodyClassName="p-2.5"
-          >
-            <p className="m-0 text-xs text-muted">
-              {workspaceChanges.data?.available
-                ? t(
-                    "このRunの変更をGitのスナップショットまで戻します。edit / files に加え、ターミナルが作成・変更したファイルも対象です。Run終了後に手で加えた変更も失われます。",
-                  )
-                : t(
-                    "このRunが edit / files で変更したファイルを、実行前の内容に戻します。ターミナル経由の変更は対象外です。",
-                  )}
-            </p>
-            {workspaceChanges.data?.available &&
-              workspaceChanges.data.files.length > 0 && (
-                <details className="group text-xs">
-                  <summary className="cursor-pointer list-none text-faint transition-colors hover:text-muted">
-                    {tf("{count} 件の変更を確認", {
-                      count: workspaceChanges.data.files.length,
-                    })}
-                  </summary>
-                  <ul className="mt-1 flex max-h-40 list-none flex-col gap-0.5 overflow-y-auto p-0 font-mono text-2xs text-muted">
-                    {workspaceChanges.data.files.map((file) => (
-                      <li key={file.path} className="flex gap-1.5">
-                        <span className="w-4 shrink-0 text-faint">
-                          {file.status}
-                        </span>
-                        <span className="min-w-0 truncate" title={file.path}>
-                          {file.path}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            <Button
-              variant="ghost-danger"
-              size="sm"
-              disabled={revert.isPending}
-              onClick={async () => {
-                if (
-                  await confirm({
-                    title: t("このRunの変更を取り消しますか？"),
-                    description: t(
-                      "実行前の内容に上書きします。取り消し後に手で加えた変更も失われます。",
-                    ),
-                    confirmLabel: t("取り消す"),
-                    tone: "danger",
-                  })
-                ) {
-                  revert.mutate(runId);
-                }
-              }}
-            >
-              <Undo2 size={12} /> {t("実行前の状態に戻す")}
-            </Button>
-            {revertNote && (
-              <p className="m-0 text-xs text-muted">{revertNote}</p>
+        {tab === "trajectory" ? (
+          <>
+            {runId && <TrajectoryView points={points} />}
+            {runId && <RunIoCard runId={runId} />}
+          </>
+        ) : (
+          <>
+            {runId && !history.isError && !timeline && (
+              <ListSkeleton rows={1} />
             )}
-            {dialog}
-          </Card>
+            {runId && history.isError && <ErrorBox error={history.error} />}
+            {resumeError && <ErrorBox error={resumeError} />}
+            {empty && (
+              <EmptyState compact title={t("アクティビティはありません")} />
+            )}
+
+            {runId && timeline && timeline.tools.length > 0 && (
+              <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface shadow-xs">
+                {timeline.tools.map((tool) => (
+                  <ToolRow key={tool.id} tool={tool} />
+                ))}
+              </div>
+            )}
+
+            {runId && timeline && timeline.todos.length > 0 && (
+              <TodoList items={timeline.todos} />
+            )}
+
+            {runId && timeline && timeline.contextCompactions.length > 0 && (
+              <ContextCompactionNotice items={timeline.contextCompactions} />
+            )}
+
+            {runId && timeline?.verificationFailed && (
+              <Card
+                className="border-danger"
+                title={t("検証に失敗しました")}
+                icon={<ShieldAlert size={13} className="text-danger" />}
+                bodyClassName="p-2.5"
+              >
+                <p className="m-0 text-xs text-muted">
+                  {timeline.verificationFailed}
+                </p>
+              </Card>
+            )}
+
+            {runId &&
+              timeline?.verification &&
+              !timeline.verificationFailed && (
+                <Card
+                  title={t("変更の確認中")}
+                  icon={<ShieldAlert size={13} />}
+                  bodyClassName="p-2.5"
+                >
+                  <p className="m-0 text-xs text-muted">
+                    {timeline.verification.reason || timeline.verification.tool}
+                  </p>
+                </Card>
+              )}
+
+            {runId && !isLive && (checkpoints.data?.length ?? 0) > 0 && (
+              <Card
+                title={t("チェックポイント")}
+                icon={<History size={13} />}
+                bodyClassName="gap-0 p-0"
+              >
+                <ul className="flex flex-col divide-y divide-line">
+                  {(checkpoints.data ?? []).map((c) => (
+                    <li
+                      key={c.id}
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5"
+                    >
+                      <span className="flex items-center gap-1.5 text-xs text-muted">
+                        <Clock3 size={13} /> {t("ステップ")} {c.step_index}
+                      </span>
+                      <Button
+                        size="sm"
+                        disabled={resumingId === c.id}
+                        onClick={() => void resumeFromCheckpoint(runId, c.id)}
+                      >
+                        <RotateCcw size={12} /> {t("再開")}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+
+            {runId && !isLive && (
+              <Card
+                title={t("実行の取り消し")}
+                icon={<Undo2 size={13} />}
+                bodyClassName="p-2.5"
+              >
+                <p className="m-0 text-xs text-muted">
+                  {workspaceChanges.data?.available
+                    ? t(
+                        "このRunの変更をGitのスナップショットまで戻します。edit / files に加え、ターミナルが作成・変更したファイルも対象です。Run終了後に手で加えた変更も失われます。",
+                      )
+                    : t(
+                        "このRunが edit / files で変更したファイルを、実行前の内容に戻します。ターミナル経由の変更は対象外です。",
+                      )}
+                </p>
+                {workspaceChanges.data?.available &&
+                  workspaceChanges.data.files.length > 0 && (
+                    <details className="group text-xs">
+                      <summary className="cursor-pointer list-none text-faint transition-colors hover:text-muted">
+                        {tf("{count} 件の変更を確認", {
+                          count: workspaceChanges.data.files.length,
+                        })}
+                      </summary>
+                      <ul className="mt-1 flex max-h-40 list-none flex-col gap-0.5 overflow-y-auto p-0 font-mono text-2xs text-muted">
+                        {workspaceChanges.data.files.map((file) => (
+                          <li
+                            key={file.path}
+                            className="flex items-center gap-1.5"
+                          >
+                            <span className="w-4 shrink-0 text-faint">
+                              {file.status}
+                            </span>
+                            <span
+                              className="min-w-0 flex-1 truncate"
+                              title={file.path}
+                            >
+                              {file.path}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="shrink-0 gap-1 px-1.5 text-2xs"
+                              disabled={revertPaths.isPending}
+                              title={tf("{path} を実行前に戻す", {
+                                path: file.path,
+                              })}
+                              onClick={async () => {
+                                if (
+                                  await confirm({
+                                    title:
+                                      t("このファイルの変更を取り消しますか？"),
+                                    description: t(
+                                      "選択したファイルだけを実行前の内容に戻します。Run終了後にこのファイルへ手で加えた変更も失われます。",
+                                    ),
+                                    confirmLabel: t("戻す"),
+                                    tone: "danger",
+                                  })
+                                ) {
+                                  revertPaths.mutate([file.path]);
+                                }
+                              }}
+                            >
+                              <Undo2 size={11} aria-hidden="true" />
+                              {t("戻す")}
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                <Button
+                  variant="ghost-danger"
+                  size="sm"
+                  disabled={revert.isPending}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: t("このRunの変更を取り消しますか？"),
+                        description: t(
+                          "実行前の内容に上書きします。取り消し後に手で加えた変更も失われます。",
+                        ),
+                        confirmLabel: t("取り消す"),
+                        tone: "danger",
+                      })
+                    ) {
+                      revert.mutate(runId);
+                    }
+                  }}
+                >
+                  <Undo2 size={12} /> {t("実行前の状態に戻す")}
+                </Button>
+                {revertNote && (
+                  <p className="m-0 text-xs text-muted">{revertNote}</p>
+                )}
+                {dialog}
+              </Card>
+            )}
+            {runId && <RunIoCard runId={runId} />}
+          </>
         )}
       </div>
     </>

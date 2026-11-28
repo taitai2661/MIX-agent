@@ -79,7 +79,7 @@ export function StepStart({
         />
       </ul>
 
-      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-inset/50 p-3.5">
+      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-inset p-3.5">
         <ShieldCheck
           size={15}
           className="mt-0.5 shrink-0 text-brand"

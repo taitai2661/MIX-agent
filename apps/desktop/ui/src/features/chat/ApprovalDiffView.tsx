@@ -156,8 +156,8 @@ export const ApprovalDiffView = memo(function ApprovalDiffView({
   return (
     <div className="flex flex-col gap-2">
       {parsed?.command ? (
-        <div className="rounded border border-line bg-card/60 p-2.5">
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-fg-muted">
+        <div className="rounded-lg border border-line bg-surface p-2.5">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted">
             <Terminal size={13} />
             <span>{t("実行コマンド")}</span>
           </div>
@@ -169,21 +169,21 @@ export const ApprovalDiffView = memo(function ApprovalDiffView({
               </span>
             </div>
           )}
-          <div className="overflow-x-auto rounded bg-inset p-2 font-mono text-xs text-brand">
+          <div className="overflow-x-auto rounded-md bg-inset p-2 font-mono text-xs text-brand">
             $ {parsed.command}
           </div>
         </div>
       ) : parsed?.unified && diffLines && diffLines.length > 0 ? (
-        <div className="flex flex-col gap-1.5 rounded border border-line bg-card/60 p-2">
+        <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface p-2">
           {parsed.path && (
-            <div className="flex items-center gap-1.5 px-1 text-xs font-medium text-fg-muted">
+            <div className="flex items-center gap-1.5 px-1 text-xs font-medium text-muted">
               <FileCode size={13} />
               <span className="truncate font-mono" title={parsed.path}>
                 {parsed.path}
               </span>
             </div>
           )}
-          <div className="max-h-60 overflow-y-auto rounded bg-inset">
+          <div className="max-h-60 overflow-y-auto rounded-md bg-inset">
             {/* No line-number gutter: the approval payload carries old/new
                 strings, not the file, so any absolute number would be made up. */}
             <DiffLines lines={diffLines} showLineNumbers={false} />
@@ -199,7 +199,7 @@ export const ApprovalDiffView = memo(function ApprovalDiffView({
               <button
                 type="button"
                 onClick={() => setShowFullDiff(true)}
-                className="rounded px-1.5 py-0.5 font-medium text-brand hover:bg-brand-soft"
+                className="rounded-md px-1.5 py-0.5 font-medium text-brand hover:bg-brand-soft"
               >
                 {t("全文を表示")}
               </button>
@@ -212,7 +212,7 @@ export const ApprovalDiffView = memo(function ApprovalDiffView({
         <button
           type="button"
           onClick={() => setShowRaw((prev) => !prev)}
-          className="flex items-center gap-1 text-xs text-fg-muted transition hover:text-fg"
+          className="flex items-center gap-1 text-xs text-muted transition hover:text-fg"
         >
           {showRaw ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           <span>{t("引数の詳細 (JSON)")}</span>
@@ -228,7 +228,7 @@ export const ApprovalDiffView = memo(function ApprovalDiffView({
                 <button
                   type="button"
                   onClick={() => setShowFullRaw(true)}
-                  className="rounded px-1.5 py-0.5 font-medium text-brand hover:bg-brand-soft"
+                  className="rounded-md px-1.5 py-0.5 font-medium text-brand hover:bg-brand-soft"
                 >
                   {t("全文を表示")}
                 </button>

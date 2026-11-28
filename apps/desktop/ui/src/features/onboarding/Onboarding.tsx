@@ -178,7 +178,7 @@ export function Onboarding({
             </div>
 
             <div className="mt-14 flex flex-col gap-4">
-              <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-2xs font-semibold tracking-[0.12em] text-muted shadow-xs">
+              <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-2xs font-semibold tracking-[0.16em] text-muted shadow-xs">
                 <AsideIcon
                   size={12}
                   className="text-brand"
@@ -206,7 +206,7 @@ export function Onboarding({
             )}
 
             <div className="mt-auto pt-10">
-              <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface/60 p-3.5">
+              <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface p-3.5">
                 <ShieldCheck
                   size={15}
                   className="mt-0.5 shrink-0 text-brand"
@@ -240,7 +240,7 @@ export function Onboarding({
                 <div key={step} className="animate-rise flex flex-col gap-6">
                   <StepIntro step={step} />
 
-                  <div className="rounded-2xl border border-line bg-surface/95 p-5 shadow-sm sm:p-6">
+                  <div className="rounded-2xl border border-line bg-surface p-5 shadow-sm sm:p-6">
                     {step === 0 && <StepProvider onDone={() => setStep(1)} />}
 
                     {step === 1 && (

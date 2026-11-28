@@ -22,6 +22,7 @@ import { Card, Field, Row, Section } from "@/components/layout";
 import { ErrorBox } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -282,6 +283,7 @@ function RuntimeCard({
 }) {
   const [model, setModel] = useState("");
   const [showLogs, setShowLogs] = useState(false);
+  const { confirm, dialog } = useConfirm();
   // Logs used to ride along in every 10-second snapshot (up to 500 lines per
   // runtime). Fetch them only while the panel is open.
   const logs = useQuery({
@@ -557,12 +559,15 @@ function RuntimeCard({
                     variant="ghost-danger"
                     title={t("削除")}
                     disabled={pending || !runtime.online}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          tf("「{model}」を削除しますか？", { model: item.id }),
-                        )
-                      ) {
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: tf("「{model}」を削除しますか？", {
+                          model: item.id,
+                        }),
+                        confirmLabel: t("削除"),
+                        tone: "danger",
+                      });
+                      if (ok) {
                         onAction({
                           op: "delete",
                           slug: runtime.slug,
@@ -601,6 +606,7 @@ function RuntimeCard({
           </Field>
         </div>
       )}
+      {dialog}
     </div>
   );
 }

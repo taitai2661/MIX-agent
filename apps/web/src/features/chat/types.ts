@@ -1,11 +1,38 @@
 import type { Row } from "@/app/api";
 import type { components } from "@/generated/api";
+import { isSafeHttpUrl } from "@/lib/safeLinks";
 import type { ActivitySummary } from "./ToolActivity";
 
 export type ChatMode = components["schemas"]["MessageInput"]["mode"];
 export type RunStatus = components["schemas"]["RunView"]["status"];
 export type ApprovalDecision =
   components["schemas"]["DecisionInput"]["decision"];
+
+/**
+ * Decision callback used from the approval card through the transcript to
+ * `Chat.handleApproval`. `acknowledgeRisk` is only sent for a risky grant whose
+ * checkbox the user ticked — the server rejects such a grant without it (422)
+ * and expects the plain `{ decision }` body otherwise.
+ */
+export type ApprovalDecisionHandler = (
+  approvalId: string,
+  decision: ApprovalDecision,
+  acknowledgeRisk?: boolean,
+) => void | Promise<void>;
+
+/**
+ * Approvals that change state or reach an external service must not offer a
+ * persistent "always allow" grant. Mirrors the desktop risk classifier; the
+ * server decides the actual level, the client only gates the UI.
+ */
+const ELEVATED_RISKS = new Set(["write", "external", "dangerous"]);
+export function isElevatedRisk(risk?: string | null): boolean {
+  // The server uses `risk.strip().lower()`; match it so a padded value does not
+  // require acknowledgement server-side while showing no checkbox client-side.
+  return (
+    typeof risk === "string" && ELEVATED_RISKS.has(risk.trim().toLowerCase())
+  );
+}
 export type Artifact = components["schemas"]["ArtifactView"];
 export type ConversationHistory =
   components["schemas"]["ConversationMessagesView"];
@@ -187,7 +214,8 @@ function parseActivity(value: unknown): ActivitySummary | undefined {
         (source): source is { host: string; url: string } =>
           isRecord(source) &&
           typeof source.host === "string" &&
-          typeof source.url === "string",
+          // Never carry a javascript:/data:/control-char URL into an href.
+          isSafeHttpUrl(source.url),
       )
     : undefined;
   return {

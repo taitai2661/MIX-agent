@@ -23,6 +23,61 @@ pub async fn steer_run(
     Ok(state.engine.steer(id, content).await)
 }
 
+#[derive(Serialize)]
+pub struct SteeringView {
+    /// Sequence assigned when the message was queued; stable for edit/remove.
+    pub seq: u64,
+    pub content: String,
+}
+
+/// Messages queued for the next turn of an active Run.
+///
+/// The queue lives in memory and is drained at the next model turn, so the UI
+/// polls while a Run is busy rather than treating this as durable history.
+#[tauri::command]
+pub async fn list_steering(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<Vec<SteeringView>, String> {
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    Ok(state
+        .engine
+        .steering_queue(id)
+        .await
+        .into_iter()
+        .map(|entry| SteeringView {
+            seq: entry.seq,
+            content: entry.text,
+        })
+        .collect())
+}
+
+/// Rewrite a queued steering message before it is folded into the next turn.
+#[tauri::command]
+pub async fn update_steering(
+    state: State<'_, AppState>,
+    run_id: String,
+    seq: u64,
+    content: String,
+) -> Result<bool, String> {
+    if content.trim().is_empty() {
+        return Err("message is empty".to_string());
+    }
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    Ok(state.engine.update_steering(id, seq, content).await)
+}
+
+/// Remove a queued steering message before it is folded into the next turn.
+#[tauri::command]
+pub async fn remove_steering(
+    state: State<'_, AppState>,
+    run_id: String,
+    seq: u64,
+) -> Result<bool, String> {
+    let id = Uuid::parse_str(&run_id).map_err(crate::error::cmd_err)?;
+    Ok(state.engine.remove_steering(id, seq).await)
+}
+
 /// Restore every file the Run changed through `edit` / `files` to its
 /// pre-Run content. Terminal commands are out of scope.
 #[tauri::command]
@@ -79,6 +134,31 @@ pub async fn revert_run_workspace(
         .await
         .map_err(crate::error::cmd_err)?;
     Ok(git_touched + file_touched)
+}
+
+/// Revert only the selected paths. The whole-run baseline stays available.
+#[tauri::command]
+pub async fn revert_run_workspace_paths(
+    state: State<'_, AppState>,
+    run_id: String,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    let id = crate::workspace_baseline::parse_run_id(&run_id)?;
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let live: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM runs WHERE id = ? AND status IN \
+         ('queued','running','waiting_approval','budget_extension_pending')",
+    )
+    .bind(id.to_string())
+    .fetch_optional(state.storage.pool())
+    .await
+    .map_err(crate::error::cmd_err)?;
+    if live.is_some() {
+        return Err("実行中のRunは取り消せません。先に停止してください。".to_string());
+    }
+    crate::workspace_baseline::revert_paths(state.storage.pool(), id, &paths).await
 }
 
 #[tauri::command]
@@ -305,10 +385,16 @@ pub async fn cancel_run(state: State<'_, AppState>, id: String) -> Result<(), St
         return Err(format!("run not found: {id}"));
     }
     state.engine.cancel(run_id).await;
+    let now = chrono::Utc::now().to_rfc3339();
+    // `run_view_from_row` reads the status out of `data`, so updating only the
+    // column left cancelled runs showing `waiting_approval` in the list.
+    // Keep both in step, the same way `quit_app` does.
     let result = sqlx::query(
-        "UPDATE runs SET status = 'cancelled' \
-         WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')",
+        "UPDATE runs SET status = 'cancelled', \
+         data = json_set(data, '$.status', 'cancelled', '$.updatedAt', ?1) \
+         WHERE id = ?2 AND status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')",
     )
+    .bind(&now)
     .bind(run_id.to_string())
     .execute(state.storage.pool())
     .await
@@ -547,6 +633,8 @@ pub async fn resume_run(state: State<'_, AppState>, input: ResumeInput) -> Resul
         user_message: String::new(),
         resume_from: Some(snapshot),
         auto_fallbacks: Vec::new(),
+        step_models: Vec::new(),
+        monthly_pressure: 0.0,
     };
 
     // Keep the `data` blob in sync with the status column (the UI and
@@ -735,7 +823,6 @@ pub struct CheckpointView {
     pub step_index: u32,
     pub created_at: String,
 }
-
 #[tauri::command]
 pub async fn list_checkpoints(
     state: State<'_, AppState>,
@@ -754,5 +841,318 @@ pub async fn list_checkpoints(
             step_index,
             created_at,
         })
+        .collect())
+}
+
+/// Export one Run's persisted event log as JSONL: one JSON object per line in
+/// `RunEventView` shape (`run_id`, `sequence`, `kind`, `data`, `created_at`).
+///
+/// The frontend saves the returned string with the file picker
+/// (`pick_save_file` + `save_text_file`), so this command never touches the
+/// filesystem itself. The output is also the import format accepted by
+/// [`import_run_events`], making a JSONL dump a portable Run archive.
+#[tauri::command]
+pub async fn export_run_events_jsonl(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<String, String> {
+    // Reject a malformed id up front: the fetch would silently return an
+    // empty log for a run that never existed.
+    Uuid::parse_str(&run_id).map_err(|_| format!("invalid run id: {run_id}"))?;
+    let events = fetch_run_events(state.storage.pool(), &run_id).await?;
+    let mut out = String::new();
+    for event in &events {
+        let line = serde_json::to_string(event).map_err(crate::error::cmd_err)?;
+        out.push_str(&line);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Render one Run's event log as a human-readable Markdown transcript.
+///
+/// Tool calls keep their arguments and outcome, approvals/checkpoints/errors
+/// become sections, and streamed text is concatenated in event order. This is
+/// the "share this run" format; [`export_run_events_jsonl`] is the
+/// machine-readable one.
+#[tauri::command]
+pub async fn export_run_markdown(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<String, String> {
+    Uuid::parse_str(&run_id).map_err(|_| format!("invalid run id: {run_id}"))?;
+    let events = fetch_run_events(state.storage.pool(), &run_id).await?;
+    Ok(render_run_markdown(&run_id, &events))
+}
+
+pub fn render_run_markdown(run_id: &str, events: &[RunEventView]) -> String {
+    fn short_json(value: &serde_json::Value) -> String {
+        let text = serde_json::to_string_pretty(value).unwrap_or_default();
+        const LIMIT: usize = 2000;
+        if text.len() > LIMIT {
+            format!("{}…", &text[..LIMIT])
+        } else {
+            text
+        }
+    }
+    let mut out = format!("# Run {run_id}\n\n");
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    for event in events {
+        let data = &event.data;
+        let field = |key: &str| data.get(key).and_then(|v| v.as_str()).unwrap_or("");
+        match event.kind.as_str() {
+            "text" => text.push_str(field("delta")),
+            "reasoning" => reasoning.push_str(field("delta")),
+            "status" => {
+                let status = field("status");
+                if !status.is_empty() {
+                    out.push_str(&format!("**status:** {status}\n\n"));
+                }
+                if let Some(err) = data.get("error").and_then(|v| v.as_str()) {
+                    out.push_str(&format!("**error:** {err}\n\n"));
+                }
+            }
+            "error" => {
+                let err = field("error");
+                if !err.is_empty() {
+                    out.push_str(&format!("## Error\n\n{err}\n\n"));
+                }
+            }
+            "tool_started" => {
+                let name = field("name");
+                let name = if name.is_empty() { "tool" } else { name };
+                out.push_str(&format!("## Tool: {name}\n\n"));
+                if let Some(args) = data.get("arguments") {
+                    out.push_str(&format!("```json\n{}\n```\n\n", short_json(args)));
+                }
+            }
+            "tool_result" => {
+                if let Some(err) = data.get("error").and_then(|v| v.as_str()) {
+                    out.push_str(&format!("**failed:** {err}\n\n"));
+                } else if let Some(result) = data.get("result") {
+                    out.push_str(&format!("```json\n{}\n```\n\n", short_json(result)));
+                }
+            }
+            "tool_approval_requested" => {
+                out.push_str(&format!("**approval requested:** {}\n\n", field("name")));
+            }
+            "checkpoint_saved" => {
+                let id = data
+                    .get("checkpoint_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                out.push_str(&format!("**checkpoint:** {id}\n\n"));
+            }
+            "stagnation_detected" => {
+                let hint = field("hint");
+                if !hint.is_empty() {
+                    out.push_str(&format!("**stagnation:** {hint}\n\n"));
+                }
+            }
+            "verification_failed" => {
+                let reason = field("reason");
+                if !reason.is_empty() {
+                    out.push_str(&format!("**verification failed:** {reason}\n\n"));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !reasoning.is_empty() {
+        out.push_str(&format!("## Reasoning\n\n{reasoning}\n\n"));
+    }
+    if !text.is_empty() {
+        out.push_str(&format!("## Response\n\n{text}\n\n"));
+    }
+    out
+}
+
+/// Import a JSONL dump produced by [`export_run_events_jsonl`] back into
+/// `run_events` for `run_id`. Returns the number of rows inserted.
+///
+/// Lines whose `(run_id, sequence)` already exists are skipped
+/// (`INSERT OR IGNORE`), so importing the same dump twice is safe. A line
+/// carrying a different `run_id` is rejected instead of being silently
+/// re-homed: importing another run's log would corrupt this run's replay.
+#[tauri::command]
+pub async fn import_run_events(
+    state: State<'_, AppState>,
+    run_id: String,
+    jsonl: String,
+) -> Result<usize, String> {
+    Uuid::parse_str(&run_id).map_err(|_| format!("invalid run id: {run_id}"))?;
+    let exists: Option<String> = sqlx::query_scalar("SELECT id FROM runs WHERE id = ?")
+        .bind(&run_id)
+        .fetch_optional(state.storage.pool())
+        .await
+        .map_err(crate::error::cmd_err)?;
+    if exists.is_none() {
+        return Err(format!("run not found: {run_id}"));
+    }
+    import_run_events_rows(state.storage.pool(), &run_id, &jsonl).await
+}
+
+/// Read a JSONL dump from `path` and import it, so the UI can offer
+/// "import" with just a file-picker path and no separate file-read command.
+#[tauri::command]
+pub async fn import_run_events_file(
+    state: State<'_, AppState>,
+    run_id: String,
+    path: String,
+) -> Result<usize, String> {
+    Uuid::parse_str(&run_id).map_err(|_| format!("invalid run id: {run_id}"))?;
+    // A dump is bounded by `MAX_REPLAY_EVENTS` rows; 8 MiB leaves ample headroom
+    // while refusing to read an arbitrary huge file into memory.
+    const MAX_DUMP_BYTES: u64 = 8 * 1024 * 1024;
+    let meta = std::fs::metadata(&path).map_err(crate::error::cmd_err)?;
+    if meta.len() > MAX_DUMP_BYTES {
+        return Err(format!(
+            "dump is too large ({} bytes, max {MAX_DUMP_BYTES})",
+            meta.len()
+        ));
+    }
+    let jsonl = std::fs::read_to_string(&path).map_err(crate::error::cmd_err)?;
+    import_run_events(state, run_id, jsonl).await
+}
+
+pub async fn import_run_events_rows(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    run_id: &str,
+    jsonl: &str,
+) -> Result<usize, String> {
+    let limit = mixd_core::runs::events::MAX_REPLAY_EVENTS as usize;
+    let lines: Vec<&str> = jsonl
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() > limit {
+        return Err(format!(
+            "too many events ({} lines, max {limit})",
+            lines.len()
+        ));
+    }
+    let mut inserted = 0usize;
+    for (index, line) in lines.iter().enumerate() {
+        let value: serde_json::Value =
+            serde_json::from_str(line).map_err(|err| format!("line {}: {err}", index + 1))?;
+        if !value.is_object() {
+            return Err(format!("line {}: expected a JSON object", index + 1));
+        }
+        if let Some(line_run) = value.get("run_id").and_then(|v| v.as_str()) {
+            if line_run != run_id {
+                return Err(format!(
+                    "line {}: run_id {line_run} does not match {run_id}",
+                    index + 1
+                ));
+            }
+        }
+        let kind = value
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .filter(|kind| !kind.is_empty())
+            .ok_or_else(|| format!("line {}: missing kind", index + 1))?;
+        let sequence = value
+            .get("sequence")
+            .and_then(|v| v.as_i64())
+            .filter(|sequence| *sequence > 0)
+            .ok_or_else(|| format!("line {}: missing positive sequence", index + 1))?;
+        let data = value
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let data_text = serde_json::to_string(&data).map_err(crate::error::cmd_err)?;
+        let created_at = value
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let id = value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO run_events (id, run_id, sequence, kind, data, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(run_id)
+        .bind(sequence)
+        .bind(kind)
+        .bind(&data_text)
+        .bind(&created_at)
+        .execute(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
+        inserted += result.rows_affected() as usize;
+    }
+    Ok(inserted)
+}
+
+/// One run-event FTS hit for the Trajectory search surface.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunEventSearchHit {
+    pub run_id: String,
+    pub conversation_id: Option<String>,
+    pub sequence: i64,
+    pub kind: String,
+    /// FTS5 snippet around the match, for the result row.
+    pub excerpt: String,
+    pub created_at: String,
+}
+
+/// Search every run's event log through the FTS5 index (`0007`).
+///
+/// This is what makes the Trajectory view searchable across runs: tool
+/// arguments, streamed text, errors and status transitions all match, where
+/// transcript search (`search_messages`) only ever saw chat messages.
+/// Queries shorter than three characters (and queries with no FTS5-safe run)
+/// return an empty list.
+#[tauri::command]
+pub async fn search_run_events(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<RunEventSearchHit>, String> {
+    search_run_events_with(state.storage.pool(), &query, limit).await
+}
+
+pub async fn search_run_events_with(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    query: &str,
+    limit: Option<u32>,
+) -> Result<Vec<RunEventSearchHit>, String> {
+    let Some(match_query) = mixd_core::retrieval::fts_match_query(query) else {
+        return Ok(Vec::new());
+    };
+    let limit = limit.unwrap_or(20).clamp(1, 100);
+    let rows: Vec<(String, Option<String>, i64, String, String, String)> = sqlx::query_as(
+        "SELECT s.run_id, r.conversation_id, s.sequence, s.kind, \
+                snippet(run_events_search, 0, '', '', '…', 12), e.created_at \
+         FROM run_events_search s \
+         JOIN run_events e ON e.run_id = s.run_id AND e.sequence = s.sequence \
+         LEFT JOIN runs r ON r.id = s.run_id \
+         WHERE run_events_search MATCH ? \
+         ORDER BY bm25(run_events_search) LIMIT ?",
+    )
+    .bind(match_query)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(run_id, conversation_id, sequence, kind, excerpt, created_at)| RunEventSearchHit {
+                run_id,
+                conversation_id,
+                sequence,
+                kind,
+                excerpt,
+                created_at,
+            },
+        )
         .collect())
 }

@@ -1,4 +1,3 @@
-import re
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,6 +33,7 @@ from mix_agent.db.models import (
 from mix_agent.memory import service as memory
 from mix_agent.runs.state import NON_TERMINAL_STATES
 from mix_agent.tools.execute import runner_request
+from mix_agent.tools.network import validate_domain
 from mix_agent.tools.registry import call_scope, fingerprint, registry
 
 router = APIRouter(prefix="/api/v1")
@@ -189,16 +189,15 @@ async def browser_update(ctx=Depends(context)):
 def set_settings(body: SettingsInput, ctx=Depends(context)):
     db, s = ctx
     row = own(db, Settings, "settings", s.owner_id)
-    domains = [
-        d.lower().strip()
-        for d in (
-            body.allowed_domains
-            if "allowed_domains" in body.model_fields_set
-            else row.data.get("allowed_domains", [])
-        )
-    ]
-    if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", d) or "." not in d for d in domains):
-        raise HTTPException(422, "通信許可先は正確なドメイン名で指定してください")
+    raw_domains = (
+        body.allowed_domains
+        if "allowed_domains" in body.model_fields_set
+        else row.data.get("allowed_domains", [])
+    )
+    try:  # validate_domain rejects IP literals and malformed DNS labels
+        domains = sorted({validate_domain(d) for d in raw_domains})
+    except ValueError as exc:
+        raise HTTPException(422, "通信許可先は正確なドメイン名で指定してください") from exc
     update_values = body.model_dump(
         exclude={"brave_api_key", "tavily_api_key", "exa_api_key", "serper_api_key", "auto_model_ids"},
         exclude_unset=True,
@@ -248,7 +247,7 @@ def set_settings(body: SettingsInput, ctx=Depends(context)):
     # Write the proxy policy only after the settings row is durable. The old
     # order left the proxy on the new allow-list while the UI still showed (and
     # a rollback restored) the previous one.
-    egress_policy.write_policy_or_503(domains)
+    egress_policy.write_policy_or_503(domains, data.get("network_mode"))
     return public(row)
 
 

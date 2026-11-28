@@ -68,7 +68,9 @@ def update(progress=None, stage=None):
 @app.middleware("http")
 async def authenticate(request: Request, call_next):
     token = Path(os.getenv("TOKEN_FILE", "/tokens/browser-provisioner.token")).read_text().strip()
-    if not secrets.compare_digest(request.headers.get("authorization", ""), "Bearer " + token):
+    provided = request.headers.get("authorization", "")
+    # compare_digest() raises TypeError for non-ASCII str (a 500 otherwise).
+    if not provided.isascii() or not secrets.compare_digest(provided, "Bearer " + token):
         return JSONResponse({"detail": "Unauthorized"}, 401)
     return await call_next(request)
 

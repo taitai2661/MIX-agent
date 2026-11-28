@@ -50,11 +50,6 @@ def load_policy(path, *, required=True):
 POLICY_MODES = ("public_web", "restricted", "none")
 
 
-def host_allowed(host, allowed_domains):
-    """An empty list means unrestricted public egress; otherwise use exact matches."""
-    return not allowed_domains or host in allowed_domains
-
-
 def normalize_domains(values):
     return [value.lower().rstrip(".") for value in values or [] if isinstance(value, str)]
 
@@ -80,6 +75,11 @@ def resolve_policy(policy, source_policy=None):
     (empty list = ``public_web``, non-empty = ``restricted``) so an upgrade
     cannot silently cut off a working deployment, but the inference is logged
     because it is exactly the ambiguity that makes "empty list" unsafe.
+
+    A per-source (per-MCP) policy deliberately takes precedence over the global
+    document: the global policy is the default, not a ceiling. This lets an
+    administrator grant one MCP a different capability without changing every
+    other workload; see docs/operations.md and tests/security/test_proxy_policy.py.
     """
     source = source_policy or {}
     raw_mode = source.get("mode") or policy.get("mode")
@@ -99,12 +99,19 @@ def resolve_policy(policy, source_policy=None):
 
 
 async def transfer(reader, writer):
+    while chunk := await asyncio.wait_for(reader.read(65536), IDLE_TIMEOUT):
+        writer.write(chunk)
+        await writer.drain()
+
+
+def half_close(writer):
+    """Signal EOF on one direction without discarding the other direction."""
+    if writer.is_closing():
+        return
     try:
-        while chunk := await asyncio.wait_for(reader.read(65536), IDLE_TIMEOUT):
-            writer.write(chunk)
-            await writer.drain()
-    finally:
-        writer.close()
+        writer.write_eof()
+    except (NotImplementedError, OSError):
+        pass
 
 
 async def handle(reader, writer):
@@ -164,13 +171,25 @@ async def handle(reader, writer):
                 ).encode("latin1")
             )
         await writer.drain()
-        tasks = [
-            asyncio.create_task(transfer(reader, upstream)),
-            asyncio.create_task(transfer(remote, writer)),
-        ]
-        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
+        to_upstream = asyncio.create_task(transfer(reader, upstream))
+        to_client = asyncio.create_task(transfer(remote, writer))
+        tasks = [to_upstream, to_client]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        # A client that half-closes a CONNECT tunnel still expects the server's
+        # answer. Cancelling the other direction as soon as one ended truncated
+        # that answer; signal EOF to the peer whose input finished and give the
+        # remaining direction a short chance to drain before giving up.
+        if to_upstream in done:
+            half_close(upstream)
+        if to_client in done:
+            half_close(writer)
+        if pending:
+            try:
+                await asyncio.wait(pending, timeout=2.0)
+            finally:
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     except Exception as exc:  # noqa: BLE001 - transport boundary; respond and log
         logger.info("request failed from %s to %s: %s", source_ip, target, type(exc).__name__)

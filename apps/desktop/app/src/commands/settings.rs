@@ -544,48 +544,37 @@ pub async fn read_settings(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<SettingsVi
     })
 }
 
-/// Replace the single settings row.
+/// Merge the incoming document into the single settings row.
 ///
-/// The incoming document is merged over the stored one (input wins) instead of
-/// blindly overwriting it, so a key written by a newer build — or a
-/// concurrent writer — is preserved rather than dropped by a read-modify-write
-/// race. Unknown keys survive because the merge happens on raw JSON values.
+/// The input wins per key, so a field written by a newer build or another
+/// window survives. The merge is a single SQLite `json_patch` statement rather
+/// than a SELECT → merge → UPDATE: the old sequence let two windows read the
+/// same row and the later write silently drop the earlier one.
 pub async fn write_settings(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     input: SettingsView,
 ) -> Result<SettingsView, String> {
     validate_settings(&input)?;
-    let mut merged = serde_json::Value::Object(Default::default());
-    let existing: Option<(String,)> =
+    let patch = serde_json::to_string(&input).map_err(crate::error::cmd_err)?;
+    sqlx::query(
+        "INSERT INTO app_settings (id, owner_id, data) VALUES ('singleton', ?, json(?)) \
+         ON CONFLICT(id) DO UPDATE SET data = json_patch(app_settings.data, json(excluded.data))",
+    )
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(&patch)
+    .execute(pool)
+    .await
+    .map_err(crate::error::cmd_err)?;
+    // Return the merged row, not just the input, so callers see fields that
+    // were preserved from another writer.
+    let raw: Option<(String,)> =
         sqlx::query_as("SELECT data FROM app_settings WHERE id = 'singleton'")
             .fetch_optional(pool)
             .await
             .map_err(crate::error::cmd_err)?;
-    if let Some((raw,)) = existing {
-        if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(&raw)
-        {
-            merged = serde_json::Value::Object(map);
-        }
-    }
-    let input_value = serde_json::to_value(&input).map_err(crate::error::cmd_err)?;
-    if let (serde_json::Value::Object(base), serde_json::Value::Object(patch)) =
-        (&mut merged, input_value)
-    {
-        for (k, v) in patch {
-            base.insert(k, v);
-        }
-    }
-    let json = serde_json::to_string(&merged).map_err(crate::error::cmd_err)?;
-    sqlx::query(
-        "INSERT INTO app_settings (id, owner_id, data) VALUES ('singleton', ?, ?) \
-         ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-    )
-    .bind(mixd_storage::records::SINGLE_USER_ID)
-    .bind(&json)
-    .execute(pool)
-    .await
-    .map_err(crate::error::cmd_err)?;
-    Ok(input)
+    Ok(raw
+        .and_then(|(raw,)| serde_json::from_str::<SettingsView>(&raw).ok())
+        .unwrap_or(input))
 }
 
 #[cfg(test)]

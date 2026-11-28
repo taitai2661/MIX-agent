@@ -31,7 +31,7 @@ Docker 版の中核機能（Provider Adapter / Run Engine / Tool Registry / SSE 
 ```text
 apps/desktop/
 ├── Cargo.toml            # Cargo workspace root（app / core / providers / tools / browser / mcp / storage）
-├── rust-toolchain.toml   # 固定ツールチェーン（1.91.0 / stable + rustfmt / clippy）
+├── rust-toolchain.toml   # 固定ツールチェーン（1.91.0 に固定・stable トラックではない + rustfmt / clippy）
 ├── rustfmt.toml          # rustfmt 設定
 ├── clippy.toml           # clippy 設定
 ├── package.json          # Desktop 側の pnpm workspace root
@@ -135,6 +135,26 @@ pnpm tauri:build     # 現在の OS の全ターゲット（Windows は NSIS + M
 
 `--doctor` はデータディレクトリの書き込み可否、DB の schema version と `quick_check`、秘密情報バックエンド（`file` / `keychain-seed` / `keychain`）の到達性を読み取り専用で確認します。macOS の既定は `file` で、旧 Keychain seed の移行後は Keychain にアクセスしません。DB を変更しないため、破損時の一次切り分けに使えます。
 
+### ヘッドレス実行（CLI）
+
+インストール済みバイナリは、ウィンドウを開かずに同じ Run Engine を実行できます。
+
+```sh
+"MIX-agent Desktop" run --workspace ~/src/app "失敗しているテストを直して"
+"MIX-agent Desktop" run -C ~/src/app --json --yes "依存関係を更新して" | jq .
+cat task.md | "MIX-agent Desktop" run -C ~/src/app --json
+```
+
+- `--model` / `--provider` を省略すると、有効なプロバイダーの最初のモデルを使います。
+- `--yes` はツール承認をすべて自動化します（危険なコマンドも含む）。付けない場合、書き込み・シェル実行は即座に拒否され、読み取り系だけが動きます。
+- `--json` は Run イベントを NDJSON で出力し、最後に `{"type":"result", ...}` を 1 行出します。
+- 既定では会話・Run の行を終了後に削除します。`--keep` で履歴に残せます。
+- 終了コードは `0` 成功 / `1` 失敗 / `2` 引数エラー / `130` キャンセルです。
+
+### セーフモード
+
+`--safe-mode` を付けて起動すると、MCP 接続・ブラウザツール・スケジュール・Spotlight 索引・ローカルランタイムの自動起動を無効化します。壊れた MCP 設定や常駐プロセスで起動できなくなったときの復旧用です。起動中はヘッダーにセーフモードのバナーが出ます。
+
 ### 言語サーバー（任意）
 
 `lsp` ツールは PATH 上の言語サーバーを自動検出します。未導入でも他の機能は動きます。
@@ -164,7 +184,7 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 | `symbols` | `map`（リポジトリ全体の構造マップ）/ `outline`（ファイル内の定義一覧）/ `references`（シンボル参照検索） | allow |
 | `lsp` | 実言語サーバーによる `diagnostics`（型エラー・lint）と `definition`（宣言へジャンプ）。rust-analyzer / typescript-language-server / pyright・pylsp / gopls を自動検出 | allow |
 | `git` | 読み取り専用の `status` / `diff` / `log` / `show` / `blame` | allow |
-| `terminal` | **永続 PTY シェル**。`cd` によるカレントディレクトリ移動や環境変数が引き継がれる。`action: "send"` で実行中の REPL やプロンプトへ入力できる | ask |
+| `terminal` | **永続 PTY シェル**。`cd` によるカレントディレクトリ移動や環境変数が引き継がれる。`action: "send"` で実行中の REPL やプロンプトへ入力できる。右パネルの「ターミナル」から同じシェルを直接操作でき、出力は実行中からストリーミング表示、`Ctrl-C` で停止できる | ask |
 | `workspace_check` | シェルなしで git status, git diff, python syntax を安全に確認 | allow |
 | `knowledge` | SQLite + FTS5 によるドキュメントの登録・全文検索・Web クリップ保存 | 検索: allow / 書込: ask |
 | `todo` | 複数ステップ作業のためのチェックリスト。ターン毎に AI へ自動注入 | allow |
@@ -181,6 +201,7 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 
 - **呼び出し単位の判定**: 単に「ファイル書き込み全体」を一括許可するのではなく、「どのパスへの書き込みか」「どのコマンドの実行か」といった**操作対象のスコープ**に絞って許可ルールが保存されます。
 - **安全な既定値**: 読み取りや検索は即座に実行（`allow`）されますが、ファイル変更・シェル実行・ブラウザ操作は常にユーザーの確認（`ask`）を挟みます。
+- **危険なコマンドの二段階承認**: `terminal` のコマンドは実行前に分類され、`rm -rf /`・`curl … | sh`・`sudo`・`git push --force`・認証情報の読み出しなどは **危険** と判定されます。危険なコマンドは「常に許可」に保存できず、警告と「内容を理解しました」のチェックを経ないと実行できません。`rm -rf node_modules` のようなビルドディレクトリの掃除は「確認を推奨」に留めます。
 
 ### ChatGPT（非公式・専用連携）
 
@@ -192,6 +213,7 @@ Desktop 版の Agent は、ローカルマシンでの作業を最大限効率�
 
 - 設定 ▸ 一般の「ログイン時に起動」で OS の自動起動に登録します（macOS は LaunchAgent、Windows は Run キー、Linux は XDG autostart）。起動時は `--hidden` でトレイ常駐します。
 - ウィンドウを閉じてもプロセスは残り、スケジュール・実行中の Run・承認待ちは継続します。完全終了はトレイメニューの「Quit」です。
+- 「ファイル ▸ 新しいウィンドウ」（`⌘⇧N` / `Ctrl+Shift+N`）、トレイ、またはコマンドパレットから 2 つ目のウィンドウを開けます。バックエンドは共有されるため、別々のスレッドを並べて比較できます。
 
 ### 変更レビューとロールバック
 

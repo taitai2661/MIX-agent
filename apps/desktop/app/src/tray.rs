@@ -9,6 +9,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, Runtime};
 
 pub const EVT_SHOW: &str = "tray://show";
+pub const EVT_NEW_WINDOW: &str = "tray://new-window";
 pub const EVT_QUIT: &str = "tray://quit";
 
 pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<()> {
@@ -24,6 +25,17 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<
         true,
         None::<&str>,
     )?;
+    let new_window = MenuItem::with_id(
+        app,
+        EVT_NEW_WINDOW,
+        if ja {
+            "新しいウィンドウ"
+        } else {
+            "New Window"
+        },
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(
         app,
         EVT_QUIT,
@@ -31,7 +43,15 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<
         true,
         None::<&str>,
     )?;
-    let menu = Menu::with_items(app, &[&show, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show,
+            &new_window,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
 
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("MIX-agent Desktop")
@@ -44,6 +64,11 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<
                     let _ = window.show();
                     let _ = window.unminimize();
                     let _ = window.set_focus();
+                }
+            }
+            EVT_NEW_WINDOW => {
+                if let Err(err) = crate::window::open(app) {
+                    tracing::warn!(%err, "could not open a new window from the tray");
                 }
             }
             // Route through the same guard as Cmd+Q: a live Run must be

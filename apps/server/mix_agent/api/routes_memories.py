@@ -8,11 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from mix_agent.api.common import context, own, public
-from mix_agent.api.schemas import (
-    MemoryInput,
-    MemoryResolveConflictInput,
-    MemoryResolveConflictView,
-)
+from mix_agent.api.helpers import pagination
+from mix_agent.api.schemas import MemoryInput, MemoryResolveConflictInput, MemoryResolveConflictView
 from mix_agent.auth.security import read_secret
 from mix_agent.db.models import Memory, MemoryActionEvent, MemoryRevision
 from mix_agent.memory import embeddings as mem_embeddings
@@ -35,7 +32,9 @@ def memories(q: str = "", state: str | None = None, ctx=Depends(context)):
         rows = memory.list_traces(db, s.owner_id, q, state)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
-    records = {row.id: row for row in db.scalars(select(Memory).where(Memory.owner_id == s.owner_id))}
+    # Only the ids on this page are needed, and only their `created_at`; the
+    # listing is capped, so the owner's whole table is never loaded.
+    records = pagination.memory_created_at(db, s.owner_id, [item["id"] for item in rows])
     # Spec §4: how many edges touch each row, counted once for the whole page.
     # Same convention `views.render` uses — the key appears only when the count
     # is non-zero, so a store without links answers exactly what it did before
@@ -48,7 +47,7 @@ def memories(q: str = "", state: str | None = None, ctx=Depends(context)):
                 **{k: v for k, v in item.items() if k != "id"},
                 **({"link_count": counts[item["id"]]} if counts.get(item["id"]) else {}),
             },
-            "created_at": records[item["id"]].created_at.isoformat() if item["id"] in records else "",
+            "created_at": records[item["id"]].isoformat() if item["id"] in records else "",
         }
         for item in rows
         if item["id"] in records
@@ -169,11 +168,9 @@ async def edit_memory(key: str, body: MemoryInput, ctx=Depends(context)):
 def memory_history(key: str, ctx=Depends(context)):
     db, s = ctx
     own(db, Memory, key, s.owner_id)
-    rows = db.scalars(
-        select(MemoryRevision)
-        .where(MemoryRevision.owner_id == s.owner_id, MemoryRevision.data["memory_id"].as_string() == key)
-        .order_by(MemoryRevision.created_at.desc())
-    )
+    # A memory can be edited hundreds of times; the revision log is a history,
+    # not an archive, so only the newest page is returned.
+    rows = pagination.memory_revisions(db, s.owner_id, key, pagination.MEMORY_REVISION_LIMIT)
     return [public(r) for r in rows]
 
 

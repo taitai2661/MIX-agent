@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  AppWindow,
   Bot,
   CornerDownLeft,
   FolderTree,
@@ -29,6 +30,12 @@ import {
   useConversationSearch,
   useRecentConversations,
 } from "@/lib/queries";
+import {
+  loadPaletteUsage,
+  rankByFrecency,
+  recordPaletteUse,
+  type PaletteUsage,
+} from "@/lib/paletteRecency";
 import {
   surfaceForMode,
   useUi,
@@ -124,6 +131,7 @@ export function CommandPalette() {
   const locale = useUi((s) => s.locale);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [usage, setUsage] = useState<PaletteUsage>(() => loadPaletteUsage());
   const deferredQuery = useDeferredValue(query);
 
   // Title search is server-side, so it covers every thread rather than the
@@ -295,6 +303,16 @@ export function CommandPalette() {
         },
       },
       {
+        id: "action:new-window",
+        label: t("新しいウィンドウ"),
+        keys: chord("Mod", "Shift", "N"),
+        icon: <AppWindow size={15} />,
+        kind: "action",
+        run: () => {
+          void api.newWindow();
+        },
+      },
+      {
         id: "action:settings",
         label: t("設定を開く"),
         keys: chord("Mod", ","),
@@ -341,7 +359,10 @@ export function CommandPalette() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return items.slice(0, 12);
+    // No query: learn the user's habits. `rankByFrecency` only promotes a
+    // capped number of previously-used rows, so the primary actions stay near
+    // the top even after months of use.
+    if (!q) return rankByFrecency(items, usage).slice(0, 12);
     // Full-text message hits are already matched by SQLite. Applying the
     // generic substring/fuzzy test again dropped OR hits whose excerpt did not
     // contain the whole query (e.g. "hello" for "hello world"). Keep them out
@@ -359,11 +380,29 @@ export function CommandPalette() {
       if (exact.length + fuzzy.length >= 20) break;
     }
     return [...exact, ...searchHits, ...fuzzy].slice(0, 20);
-  }, [items, query]);
+  }, [items, query, usage]);
+
+  // Record the activation before running it: a command that opens another
+  // view can unmount this palette immediately, and the write must not depend
+  // on surviving that.
+  const activate = (item: PaletteItem) => {
+    setUsage(recordPaletteUse(item.id));
+    item.run();
+    setOpen(false);
+  };
 
   useEffect(() => {
     setSelected(0);
   }, [query]);
+
+  // `filtered` also shrinks when async title/message searches arrive after the
+  // query changed. Without clamping, `selected` pointed at a row that no
+  // longer existed and Enter did nothing.
+  useEffect(() => {
+    setSelected((current) =>
+      Math.min(current, Math.max(0, filtered.length - 1)),
+    );
+  }, [filtered.length]);
 
   // Keep the keyboard-highlighted row inside the scroll viewport. Guarded for
   // jsdom, where `scrollIntoView` is not implemented.
@@ -387,17 +426,16 @@ export function CommandPalette() {
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelected((s) => Math.min(s + 1, filtered.length - 1));
+      setSelected((s) =>
+        filtered.length ? Math.min(s + 1, filtered.length - 1) : 0,
+      );
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelected((s) => Math.max(s - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const item = filtered[selected];
-      if (item) {
-        item.run();
-        setOpen(false);
-      }
+      const item = filtered[selected] ?? filtered[0];
+      if (item) activate(item);
     } else if (e.key === "Escape") {
       setOpen(false);
     } else if (e.key === "Tab") {
@@ -483,10 +521,7 @@ export function CommandPalette() {
                       selected={i === selected}
                       onMouseEnter={() => setSelected(i)}
                       onFocus={() => setSelected(i)}
-                      onClick={() => {
-                        item.run();
-                        setOpen(false);
-                      }}
+                      onClick={() => activate(item)}
                     >
                       <span className="shrink-0 text-faint" aria-hidden="true">
                         {item.icon}
@@ -530,7 +565,7 @@ export function CommandPalette() {
             </>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-3 border-t border-line bg-surface/60 px-3 py-1.5 text-2xs text-faint">
+        <div className="flex shrink-0 items-center gap-3 border-t border-line bg-surface px-3 py-1.5 text-2xs text-faint">
           <span className="inline-flex items-center gap-1" aria-hidden="true">
             <Kbd>↑↓</Kbd> {t("移動")}
           </span>

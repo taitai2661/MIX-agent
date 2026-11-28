@@ -1,11 +1,21 @@
 name: Validate release candidate
 
 on:
+  # Release preflights require a green run of this workflow for the tagged SHA.
+  # PR runs are keyed to the PR head, which differs from the merge commit on
+  # main, so runs on push to main are mandatory too (no paths filter: every
+  # main commit that can be tagged must have a validation result).
+  push:
+    branches: [main]
   pull_request:
     paths:
       - "deploy/**"
       - "compose.yaml"
       - "apps/MIX-agent/**"
+      - "apps/desktop/**"
+      - "apps/web/**"
+      - "packages/tool_contracts/**"
+      - "package.json"
       - "scripts/**"
       - ".github/workflows/validate-release.yml"
   workflow_dispatch:
@@ -16,8 +26,19 @@ permissions:
 jobs:
   application:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Same pinned Python as ci.yml's parity / repo-hygiene jobs, so the
+      # release-candidate gates below run against an identical interpreter.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      # Moved up from below so the Node-based version gate can use the pinned
+      # runtime instead of whatever the runner image happens to ship.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
       - name: Reject case-colliding Apps/ tree
         shell: bash
         run: |
@@ -28,6 +49,36 @@ jobs:
             echo "::error::Do not commit a top-level Apps/ tree; use scripts/stage-store-source.sh."
             exit 1
           fi
+
+      # A release candidate must also pass the cheap deterministic gates that
+      # ci.yml runs on every push. Without these, a PR that only touched store
+      # files could ship a version drift, a committed credential, broken doc
+      # links or a diverged cross-edition contract.
+      - name: Check version consistency
+        run: node scripts/check-version-consistency.mjs
+      - name: Committed credentials (including fixtures and docs)
+        # Same full-repository scan as ci.yml's repo-hygiene gate: a credential
+        # under tests/ or docs/ is still a real credential.
+        run: python3 scripts/check-secrets.py
+      - name: Documentation links
+        run: python3 scripts/check-doc-links.py
+      - name: Memory spec parity check
+        run: python3 scripts/check-memory-parity.py
+      - name: Error code / translation parity check
+        run: python3 scripts/check-error-i18n.py
+      - name: Greeting parity check
+        run: python3 scripts/check-greeting-parity.py
+      - name: Browser contract parity check
+        run: python3 scripts/check-browser-parity.py
+      - name: Run event contract parity check
+        run: python3 scripts/check-run-event-parity.py
+      - name: ChatGPT / Codex contract parity check
+        run: python3 scripts/check-chatgpt-parity.py
+      - name: Skill package parity check
+        run: python3 scripts/check-skill-parity.py
+      - name: Snapshot copy parity check
+        run: python3 scripts/check-snapshot-parity.py
+
       - name: Check generated store manifest
         working-directory: .
         shell: bash
@@ -65,12 +116,12 @@ jobs:
           for target in init app execution browser-runner browser-provisioner mcp mcp-runtime egress; do
             docker build --target "$target" -f deploy/docker/Dockerfile -t "mix-agent-$target:validation" .
           done
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: "10.11.0"
+      - uses: ./.github/actions/cache-pnpm-store
+        with:
+          lockfile: apps/web/pnpm-lock.yaml
       - name: Check frontend
         working-directory: apps/web
         run: |

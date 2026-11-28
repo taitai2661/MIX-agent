@@ -225,6 +225,61 @@ async fn run_git(root: &std::path::Path, args: &[&str]) -> Result<std::process::
     .map_err(crate::error::cmd_err)
 }
 
+/// `git apply` reads the patch on stdin. Same hardening as [`run_git`], plus
+/// a bounded write so a bad patch cannot hang the UI thread.
+async fn run_git_stdin(
+    root: &std::path::Path,
+    args: &[&str],
+    input: &[u8],
+) -> Result<std::process::Output, String> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-c")
+        .arg("core.fsmonitor=false")
+        .arg("-c")
+        .arg("core.hooksPath=/dev/null")
+        .arg("-c")
+        .arg("core.untrackedCache=false")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_EXTERNAL_DIFF")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("GIT_SSH_COMMAND")
+        .env_remove("GIT_PROXY_COMMAND")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    let mut child = cmd.spawn().map_err(crate::error::cmd_err)?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input)
+            .await
+            .map_err(|e| format!("git apply stdin failed: {e}"))?;
+        // Dropping stdin closes the pipe so git reaches EOF.
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_millis(GIT_TIMEOUT_MS),
+        child.wait_with_output(),
+    )
+    .await
+    .map_err(|_| "git timed out".to_string())?
+    .map_err(crate::error::cmd_err)
+}
+
 /// Branch names are re-read at most this often. `git status` is polled every
 /// 15 s, and `rev-parse` used to be a second subprocess on every poll even
 /// though the branch changes far less often.
@@ -554,6 +609,104 @@ pub async fn git_restore(
         return Err(format!("git restore error: {err}"));
     }
 
+    Ok(())
+}
+
+/// Commit the currently staged changes.
+///
+/// Signing is disabled for this invocation: `commit.gpgsign` and `gpg.program`
+/// live in the repository's own config, which is attacker-controlled when the
+/// user opens an untrusted project. The UI manages staging explicitly, so the
+/// command commits exactly what the user reviewed in the "ステージ済み" tab.
+#[tauri::command]
+pub async fn git_commit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    root_path: String,
+    message: String,
+) -> Result<String, String> {
+    const MAX_MESSAGE_BYTES: usize = 8 * 1024;
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("コミットメッセージを入力してください".to_string());
+    }
+    if message.len() > MAX_MESSAGE_BYTES {
+        return Err(format!(
+            "コミットメッセージが長すぎます（最大 {MAX_MESSAGE_BYTES} バイト）"
+        ));
+    }
+
+    let root = resolve_root(&app, &state, &root_path).await?;
+    let output = run_git(
+        &root,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            message,
+            "--quiet",
+        ],
+    )
+    .await
+    .map_err(|e| format!("git commit failed: {e}"))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let err = err.trim();
+        return Err(format!(
+            "git commit error: {}",
+            if err.is_empty() { "unknown error" } else { err }
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Apply (or reverse-apply) a single-hunk patch.
+///
+/// The UI composes the file header plus one hunk from the diff it is showing.
+/// `--recount` lets the hunk apply even when the UI dropped surrounding
+/// context; `--cached` targets the index only, so reverting a staged hunk
+/// leaves the working tree untouched (it becomes an unstaged change).
+#[tauri::command]
+pub async fn git_apply_patch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    root_path: String,
+    patch: String,
+    reverse: bool,
+    cached: bool,
+) -> Result<(), String> {
+    if patch.trim().is_empty() {
+        return Err("patch is empty".to_string());
+    }
+    let root = resolve_root(&app, &state, &root_path).await?;
+    let mut args = vec![
+        "apply",
+        "--recount",
+        "--unidiff-zero",
+        "--whitespace=nowarn",
+    ];
+    if reverse {
+        args.push("--reverse");
+    }
+    if cached {
+        args.push("--cached");
+    }
+    args.push("-");
+
+    let output = run_git_stdin(&root, &args, patch.as_bytes())
+        .await
+        .map_err(|e| format!("git apply failed: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let err = err.trim();
+        return Err(format!(
+            "git apply error: {}",
+            if err.is_empty() { "unknown error" } else { err }
+        ));
+    }
     Ok(())
 }
 

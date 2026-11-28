@@ -82,6 +82,15 @@ semver = "1"
 # SIGTERM for a runtime child process on Unix; Windows uses `start_kill`.
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# `serve.lock` liveness probe on Windows: OpenProcess + WaitForSingleObject(0)
+# is a real process-table check, so a long-running `serve` is not mistaken for
+# a stale lock (and its live Runs are not reconciled away by the GUI).
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Core Spotlight indexing (macOS only). `objc2-core-spotlight` is a pure-Rust
 # binding; it avoids a Swift build step and keeps the macOS 12 deployment

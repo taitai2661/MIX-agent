@@ -20,6 +20,10 @@ chrono.workspace = true
 uuid.workspace = true
 mixd-storage = { workspace = true }
 mixd-providers = { workspace = true }
+# The shared private-IP deny predicate lives in the browser contract crate (the
+# tools egress policy re-exports it too), so the MCP HTTP client cannot drift
+# from the `navigate` / web-fetch gates on what counts as a forbidden address.
+mixd-browser = { workspace = true }
 reqwest.workspace = true
 futures-util = "0.3"
 url = "2.5"

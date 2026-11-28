@@ -352,6 +352,52 @@ pub async fn changes(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<WorkspaceC
     })
 }
 
+/// Restore one changed path from the baseline. Returns whether it was touched.
+async fn restore_one(root: &Path, baseline: &WorkspaceBaseline, file: &WorkspaceChange) -> bool {
+    let Some(path) = within_root(root, &file.path) else {
+        tracing::warn!(path = %file.path, "skipping a rollback path outside the workspace");
+        return false;
+    };
+    if file.status == "?" {
+        return match tokio::fs::remove_file(&path).await {
+            Ok(()) => true,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+            Err(err) => {
+                tracing::warn!(?err, path = %path.display(), "could not remove a generated file");
+                false
+            }
+        };
+    }
+    // Restore both the worktree and the index so a later `git diff --cached`
+    // does not still show the reverted change as staged.
+    match git(
+        root,
+        &[
+            "restore",
+            "--source",
+            &baseline.base,
+            "--staged",
+            "--worktree",
+            "--",
+            &file.path,
+        ],
+    )
+    .await
+    {
+        Ok(_) => true,
+        Err(err) => {
+            // A path that did not exist at the baseline cannot be restored;
+            // remove it instead (the `A` case in `--name-status`).
+            if file.status == "A" {
+                tokio::fs::remove_file(&path).await.is_ok()
+            } else {
+                tracing::warn!(%err, path = %file.path, "git restore failed during rollback");
+                false
+            }
+        }
+    }
+}
+
 /// Restore the worktree to the baseline. Returns the number of paths touched.
 pub async fn revert(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<usize, String> {
     let Some(baseline) = load(pool, run_id).await else {
@@ -367,48 +413,8 @@ pub async fn revert(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<usize, Stri
     let changed = changes(pool, run_id).await?;
     let mut touched = 0usize;
     for file in changed.files {
-        let Some(path) = within_root(&root, &file.path) else {
-            tracing::warn!(path = %file.path, "skipping a rollback path outside the workspace");
-            continue;
-        };
-        if file.status == "?" {
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => touched += 1,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    tracing::warn!(?err, path = %path.display(), "could not remove a generated file");
-                }
-            }
-            continue;
-        }
-        // Restore both the worktree and the index so a later `git diff --cached`
-        // does not still show the reverted change as staged.
-        match git(
-            &root,
-            &[
-                "restore",
-                "--source",
-                &baseline.base,
-                "--staged",
-                "--worktree",
-                "--",
-                &file.path,
-            ],
-        )
-        .await
-        {
-            Ok(_) => touched += 1,
-            Err(err) => {
-                // A path that did not exist at the baseline cannot be restored;
-                // remove it instead (the `A` case in `--name-status`).
-                if file.status == "A" {
-                    if tokio::fs::remove_file(&path).await.is_ok() {
-                        touched += 1;
-                    }
-                } else {
-                    tracing::warn!(%err, path = %file.path, "git restore failed during rollback");
-                }
-            }
+        if restore_one(&root, &baseline, &file).await {
+            touched += 1;
         }
     }
     let ref_name = format!("refs/mix-agent/runs/{run_id}");
@@ -420,6 +426,42 @@ pub async fn revert(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<usize, Stri
             .await,
         "clear workspace baseline",
     );
+    Ok(touched)
+}
+
+/// Restore only the requested paths from the baseline.
+///
+/// This is the "revert this file" action: unlike [`revert`] it leaves the
+/// baseline in place, so the user can undo one path at a time and still revert
+/// the rest afterwards. Paths that were not changed by the Run are ignored
+/// rather than trusted from the renderer.
+pub async fn revert_paths(
+    pool: &SqlitePool,
+    run_id: uuid::Uuid,
+    paths: &[String],
+) -> Result<usize, String> {
+    let Some(baseline) = load(pool, run_id).await else {
+        return Ok(0);
+    };
+    let root = PathBuf::from(&baseline.root);
+    if !root.is_dir() {
+        return Err(format!(
+            "the workspace folder no longer exists: {}",
+            baseline.root
+        ));
+    }
+    let wanted: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let changed = changes(pool, run_id).await?;
+    let mut touched = 0usize;
+    for file in changed
+        .files
+        .iter()
+        .filter(|file| wanted.contains(file.path.as_str()))
+    {
+        if restore_one(&root, &baseline, file).await {
+            touched += 1;
+        }
+    }
     Ok(touched)
 }
 

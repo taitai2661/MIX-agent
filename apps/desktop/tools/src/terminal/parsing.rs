@@ -65,6 +65,23 @@ pub(crate) fn slice_output(text: &str, start_marker: &str, sentinel: &str) -> St
     lines[begin..end].join("\n")
 }
 
+/// Parse the `__MIXD_CWD_…__<path>` / `__MIXD_EXIT_…__<code>` query output.
+pub(crate) fn parse_user_status(
+    text: &str,
+    cwd_marker: &str,
+    exit_marker: &str,
+) -> Option<(String, i32)> {
+    let cwd = text
+        .lines()
+        .find_map(|line| line.strip_prefix(cwd_marker))
+        .map(|rest| rest.trim_end_matches('\r').to_string())?;
+    let code = text
+        .lines()
+        .find_map(|line| line.strip_prefix(exit_marker))
+        .and_then(|rest| rest.trim().parse::<i32>().ok())?;
+    Some((cwd, code))
+}
+
 /// Cap the returned output, saying how much was dropped.
 ///
 /// Shared with the workspace `git_diff` preview path via
@@ -139,8 +156,10 @@ pub(crate) fn decode_status_text(raw: &[u8]) -> String {
 
 pub(crate) fn decode_utf16(rest: &[u8], decode: fn([u8; 2]) -> u16) -> String {
     let units: Vec<u16> = rest
-        .chunks_exact(2)
-        .map(|chunk| decode([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| decode(*chunk))
         .collect();
     String::from_utf16_lossy(&units)
 }

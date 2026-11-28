@@ -1,7 +1,7 @@
 import { memo } from "react";
-import { EyeOff, Wrench } from "lucide-react";
+import { Eye, EyeOff, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { t } from "@/lib/i18n";
+import { t, useLanguage } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +20,7 @@ import {
   useChatComposerContext,
 } from "./ChatComposerContext";
 import type { ComposerMode, ComposerProps } from "./composerTypes";
-import { useComposerState } from "./useComposerState";
+import { collectPasteImages, useComposerState } from "./useComposerState";
 
 export type { DraftAttachment } from "./composerTypes";
 
@@ -29,6 +29,9 @@ const NOOP_SET_MODE: (mode: ComposerMode) => void = () => {};
 const NOOP_SET_MODEL: (id: string) => void = () => {};
 
 export const Composer = memo(function Composer(props: ComposerProps) {
+  // `memo` would otherwise keep the previous locale's copy when settings
+  // change the display language with unchanged props.
+  useLanguage();
   // UI state comes from the provider when the caller omits it. `useUi`
   // selectors inside the provider keep this subscribed per-field, so run
   // streaming (~16 store flushes/s) does not re-render the composer.
@@ -75,6 +78,7 @@ export const Composer = memo(function Composer(props: ComposerProps) {
     sendShortcut,
     busy,
     modelId,
+    setModelId,
     selectedModel,
     staleModel,
     onSend,
@@ -175,13 +179,13 @@ export const Composer = memo(function Composer(props: ComposerProps) {
                 state.checkSlash();
               }}
               onPaste={(e) => {
-                const files = [...(e.clipboardData?.files ?? [])].filter((f) =>
-                  f.type.startsWith("image/"),
-                );
-                if (files.length > 0) {
-                  e.preventDefault();
-                  void state.addImageFiles(files);
-                }
+                // Decide synchronously: `preventDefault()` after an await is
+                // already too late — the browser has inserted the clipboard's
+                // text/plain representation into the textarea by then.
+                const images = collectPasteImages(e);
+                if (images.length === 0) return;
+                e.preventDefault();
+                void state.addImageFiles(images).catch(() => undefined);
               }}
               onDrop={(e) => {
                 e.preventDefault();
@@ -219,6 +223,8 @@ export const Composer = memo(function Composer(props: ComposerProps) {
             attachmentCount={state.attachments.length}
             attaching={state.attaching}
             onAttach={state.onAttach}
+            onScreenshot={state.captureScreenshot}
+            screenshotAvailable={state.screenshotAvailable}
             onInsertMention={state.onInsertMention}
             rootPath={rootPath}
             temporaryMode={state.temporaryMode}
@@ -243,6 +249,12 @@ export const Composer = memo(function Composer(props: ComposerProps) {
           className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint"
         >
           <span className="min-w-0 flex-1" />
+          {state.autoVisionActive && state.hasImage && (
+            <Badge tone="info">
+              <Eye size={10} aria-hidden="true" />
+              {t("Auto (Vision) に自動切替")}
+            </Badge>
+          )}
           {state.temporaryMode && (
             <Badge tone="warning">
               <EyeOff size={10} aria-hidden="true" />

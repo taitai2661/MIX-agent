@@ -1,5 +1,4 @@
 import json
-import time
 
 import httpx
 import pytest
@@ -200,6 +199,9 @@ async def test_the_http_catalog_is_downloaded_once_per_ttl(monkeypatch):
 
     first = await models_dev.lookup(("openai",), "gpt-4o")
     second = await models_dev.lookup(("openai",), "gpt-4o")
-    assert first["context_window"] == second["context_window"] == 1_000
+    third = await models_dev.lookup(("openai",), "gpt-4o")
+    # Observable behaviour: all three lookups are served from one download.
+    # Do not assert on the private cache's `fetched_at`: the transport call
+    # count is what "once per TTL" actually promises callers.
+    assert first["context_window"] == second["context_window"] == third["context_window"] == 1_000
     assert calls == ["https://example.test/api.json"]
-    assert models_dev._catalog_cache["catalog"]["fetched_at"] <= time.monotonic()

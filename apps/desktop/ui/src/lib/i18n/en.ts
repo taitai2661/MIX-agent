@@ -44,6 +44,15 @@ export const en: Record<string, string> = {
   "プロジェクト": "Projects",
   "スケジュール": "Schedules",
   "診断": "Diagnostics",
+  "問題": "Problems",
+  "承認待ちの操作があります": "An action is waiting for approval",
+  "実行が完了しました": "Run completed",
+  "実行が失敗しました": "Run failed",
+  "診断はまだありません": "No diagnostics yet",
+  "エージェントが lsp ツールで診断を実行すると、ここに結果が表示されます。":
+    "Run diagnostics through the lsp tool and the results will appear here.",
+  "{count}件の問題": "{count} problem(s)",
+  "{count}ファイル": "{count} file(s)",
   "名前を変更": "Rename",
   "削除": "Delete",
   "エクスポート": "Export",
@@ -76,6 +85,12 @@ export const en: Record<string, string> = {
   "送信": "Send",
   "停止": "Stop",
   "画像を添付": "Attach image",
+  "スクショを撮って添付": "Capture a screenshot",
+  "共有する画面を選択": "Choose a screen or window to share",
+  "この環境では画面キャプチャに対応していません":
+    "Screen capture is not supported in this environment",
+  "画面キャプチャを開始できませんでした": "Could not start screen capture",
+  "Auto (Vision) に自動切替": "Auto-switched to Auto (Vision)",
   "音声入力": "Voice input",
   "このブラウザは音声入力に対応していません":
     "This browser does not support voice input",
@@ -150,6 +165,11 @@ export const en: Record<string, string> = {
   "今回のみ許可": "Allow once",
   "常に許可": "Always allow",
   "拒否": "Deny",
+  "+5分": "+5 min",
+  "承認の期限を延長します": "Extend the approval deadline",
+  "5分延長": "Extend by 5 minutes",
+  "15分延長": "Extend by 15 minutes",
+  "1時間延長": "Extend by 1 hour",
   "予算を使い切りました": "Budget exhausted",
   "延長する": "Extend",
   "ここで終了する": "End here",
@@ -159,6 +179,17 @@ export const en: Record<string, string> = {
     "Destructive tool {tool} fired; a confirming read is expected.",
   "ステップ上限 {steps} / ツール上限 {calls} に到達しました。":
     "Reached the step limit ({steps}) / tool limit ({calls}).",
+
+  // Structured question card
+  "質問があります": "Question",
+  "複数選択可": "Multiple answers allowed",
+  "おすすめ": "Suggested",
+  "補足（任意）": "Note (optional)",
+  "選択肢にない希望があれば書いてください":
+    "Add anything the options don't cover",
+  "回答する": "Answer",
+  "実行が終了したため回答は届きませんでした。チャット欄から送信し直してください。":
+    "The run already ended, so the answer was not delivered. Please resend it from the chat box.",
 
   // Usage
   "使用状況": "Usage",
@@ -220,7 +251,19 @@ export const en: Record<string, string> = {
   // Tool activity
   "このRunのアクティビティ": "Run activity",
   "アクティビティ": "Activity",
+  "時系列": "Timeline",
   "アクティビティはありません": "No activity",
+  "イベントを検索": "Search events",
+  "種類で絞り込み": "Filter by kind",
+  "すべて": "All",
+  "イベントはありません": "No events",
+  "{count} 件のイベント": "{count} events",
+  "Runのエクスポート": "Export run",
+  "エクスポートしました。": "Exported.",
+  "Runのインポート": "Import run",
+  "{count} 件のイベントを取り込みました。": "Imported {count} events.",
+  "エクスポート / インポート": "Export / Import",
+  "取り込み": "Import",
   "実行中": "Running",
   "成功": "Success",
   "失敗": "Failed",
@@ -268,8 +311,15 @@ export const en: Record<string, string> = {
   "モデルが 1 つもロードされていません": "No models are loaded",
   "未起動": "Not running",
   "未設定": "Not set",
+  "保存中…": "Saving…",
   "保存しました": "Saved",
-  "未保存の変更": "Unsaved changes",
+  "保存できませんでした": "Could not save",
+  "コードを保存": "Save code",
+  "ファイルに保存": "Save to file",
+  "保存できませんでした: {reason}": "Could not save: {reason}",
+  "設定を保存しました": "Settings saved",
+  "設定を保存できませんでした": "Could not save settings",
+  "設定を元に戻す": "Undo",
   "無効": "Disabled",
   "有効": "Enabled",
   "更新": "Refresh",
@@ -488,6 +538,26 @@ export const en: Record<string, string> = {
 
   // Approvals pane
   "承認待ち": "Approval required",
+  "履歴の絞り込み": "Filter history",
+  "設定項目": "Settings fields",
+  "指示を編集": "Edit instruction",
+  "指示を削除": "Remove instruction",
+  "{count}件の指示を次のターンで送信します":
+    "{count} instruction(s) will be sent on the next turn",
+  "該当するスレッドがありません": "No matching threads",
+  "コミット": "Commit",
+  "この差分を元に戻す": "Revert this hunk",
+  "このハンクだけを元に戻します。ほかの変更は残ります。":
+    "Revert only this hunk; the other changes stay.",
+  "変更をコミット": "Commit changes",
+  "コミットメッセージ": "Commit message",
+  "変更内容を一言で説明…": "Describe the change in one line…",
+  "コミット中…": "Committing…",
+  "コミットしました": "Committed",
+  "{count}件のステージ済み変更をコミットします。":
+    "Commit {count} staged change(s).",
+  "{count}件のステージ済み変更をコミット":
+    "Commit {count} staged change(s)",
   "実行はバックグラウンドで継続しています。トレイから再表示できます。":
     "The run continues in the background. Reopen it from the tray.",
   "ブラウザ画面": "Browser view",
@@ -544,6 +614,7 @@ export const en: Record<string, string> = {
   "お気に入りに追加": "Add to favourites",
   "お気に入りから外す": "Remove from favourites",
   "モデルを管理": "Manage models",
+  "無料": "Free",
   "プロバイダーで絞り込む": "Filter by provider",
   "すべてのプロバイダー": "All providers",
   "{shown} / {total} 件のモデル": "{shown} / {total} models",
@@ -650,6 +721,12 @@ export const en: Record<string, string> = {
   "バックアップを検証し、再起動時に復元":
     "Verify a backup and reload it on restart",
   "復元": "Restore",
+  "履歴": "History",
+  "この Skill の履歴": "History of this skill",
+  "履歴はまだありません。上書きや削除の前に自動で保存されます。":
+    "No history yet. A snapshot is saved before every overwrite or delete.",
+  "{n} 文字": "{n} characters",
+  "保存時: {date}": "Saved: {date}",
   "今すぐ再起動": "Restart now",
   "{bytes} バイト（{tables} テーブル）を {path} に保存しました":
     "Saved {bytes} bytes ({tables} tables) to {path}",
@@ -846,6 +923,9 @@ export const en: Record<string, string> = {
   // primitive splits them into a title and a consequence, so the question and
   // the "what you lose" line are separate keys.
   "スレッドを削除しますか？": "Delete this thread?",
+  "スレッドを削除できませんでした": "Could not delete this thread",
+  "「{title}」を削除しました": "Deleted “{title}”",
+  "削除を取り消す": "Undo delete",
   "プロバイダーを削除しますか？": "Delete this provider?",
   "このプロバイダーのモデル一覧も消えます。": "Its model list goes with it.",
   "MCP 接続を削除しますか？": "Delete this MCP connection?",
@@ -1194,6 +1274,9 @@ export const en: Record<string, string> = {
   "回答を再生成": "Regenerate answer",
   "この回答を破棄して再生成": "Discard this answer and regenerate",
   "このメッセージから分岐": "Fork from this message",
+  "回答を高く評価": "Rate this answer highly",
+  "回答を低く評価": "Rate this answer poorly",
+  "評価を保存できませんでした": "Could not save your rating",
   "再送信": "Send again",
   "期限切れ（拒否されます）": "Expired (will be denied)",
   "残り {time}": "{time} left",
@@ -1269,12 +1352,6 @@ export const en: Record<string, string> = {
   "本文検索は3文字以上です。タイトルとコマンドを検索しています。":
     "Message search needs 3+ characters; searching titles and commands.",
   "変更は自動保存されます": "Changes save automatically",
-  "設定を保存": "Save settings",
-  "設定の変更が保存されていません": "Settings changes are not saved",
-  "変更は保持されますが、保存するまで反映されません。終了する前に設定画面で保存してください。":
-    "Your edits are kept, but they are not applied until you save. Save in Settings before quitting.",
-  "移動する": "Leave",
-  "設定に戻る": "Back to settings",
   "スレッド内を検索": "Find in thread",
   "前の一致": "Previous match",
   "次の一致": "Next match",
@@ -1458,4 +1535,68 @@ export const en: Record<string, string> = {
   "閲覧データを削除": "Clear browsing data",
   "スレッドを開始すると使えます。": "Start a thread to use it.",
   "ネイティブブラウザを読み込んでいます…": "Loading the native browser…",
+  "危険": "Dangerous",
+  "危険なコマンドです": "This command is dangerous",
+  "確認を推奨するコマンドです": "Review this command before running it",
+  "この操作は取り消せない可能性があります。内容を確認してから許可してください。":
+    "This operation may be irreversible. Review it before allowing.",
+  "内容を理解しました。このコマンドを実行します。":
+    "I understand. Run this command.",
+  "危険なコマンドは「常に許可」に保存できません。実行のたびに確認します。":
+    "Dangerous commands cannot be saved as “Always allow”; you will be asked every time.",
+  "警告を確認してから許可してください": "Review the warning, then allow it",
+  "確認して許可": "Review and allow",
+  "再帰的な削除": "Recursive delete",
+  "ディスク・デバイスへの書き込み": "Write to a disk or device",
+  "ワークスペース外への書き込み": "Write outside the workspace",
+  "権限の一括変更": "Bulk permission change",
+  "取得したスクリプトの直接実行": "Execute a downloaded script",
+  "動的コードの実行": "Dynamic code execution",
+  "管理者権限の使用": "Privilege escalation",
+  "無限ループ・プロセス爆発": "Infinite loop or fork bomb",
+  "Git 履歴の破壊的操作": "Destructive Git operation",
+  "認証情報へのアクセス": "Credential access",
+  "外部へのデータ送信": "Send data to an external host",
+  "システムの停止・再起動": "Shut down or reboot the system",
+  "コンテナ・インフラの破壊的操作":
+    "Destructive container or infrastructure operation",
+  "データベースの破壊的操作": "Destructive database operation",
+  "依存パッケージのインストール": "Install a dependency",
+  "ネットワークアクセス": "Network access",
+  "Git への書き込み": "Write to Git",
+  "コンテナ操作": "Container operation",
+  "権限の変更": "Permission change",
+  "プロセス操作": "Process control",
+  "ワークスペース外への出力": "Output outside the workspace",
+  "常駐サービスの操作": "Manage a background service",
+  "ターミナル": "Terminal",
+  "ターミナルを使うにはプロジェクトを開いてください":
+    "Open a project to use the terminal",
+  "ワークスペースのフォルダを開くと、その場所でコマンドを実行できます。":
+    "Open a workspace folder to run commands in it.",
+  "表示をクリア": "Clear the view",
+  "エージェントと同じ永続シェルでコマンドを実行します。cd と環境変数は次のコマンドにも引き継がれます。":
+    "Commands run in the same persistent shell as the agent. `cd` and environment variables carry over to the next command.",
+  "コマンドを入力（例: git status）": "Type a command (e.g. git status)",
+  "実行するコマンド": "Command to run",
+  "実行": "Run",
+  "最大 {seconds} 秒で打ち切ります。": "Stops after {seconds} seconds.",
+  "承認なしで実行されます。内容を確認してから送信してください。":
+    "Runs without an approval prompt. Review the command before sending it.",
+  "Ctrl-C を送信": "Send Ctrl-C",
+  "実行中のコマンドへ入力（Enter で送信）":
+    "Type into the running command (Enter to send)",
+  "実行中のコマンドへの入力": "Input for the running command",
+  "入力を送信": "Send input",
+  "入力は実行中のプロセスへそのまま送られます。停止は Ctrl-C（停止ボタン）です。":
+    "Input is sent directly to the running process. Use Ctrl-C (the stop button) to interrupt it.",
+  "このファイルの変更を取り消しますか？": "Revert this file?",
+  "選択したファイルだけを実行前の内容に戻します。Run終了後にこのファイルへ手で加えた変更も失われます。":
+    "Only the selected file is restored to its pre-Run content. Manual changes made to it after the Run finished are lost too.",
+  "戻す": "Revert",
+  "{path} を実行前に戻す": "Revert {path} to its pre-Run state",
+  "新しいウィンドウ": "New Window",
+  "セーフモードで起動しています": "Running in safe mode",
+  "MCP・ブラウザ・スケジュール・ローカルランタイムの自動起動は無効です。設定を確認したら通常どおり起動し直してください。":
+    "MCP, the browser, schedules and local-runtime auto-start are disabled. Restart normally after checking the configuration.",
 };

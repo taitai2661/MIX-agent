@@ -40,7 +40,7 @@ MIX-agent は、外部のクラウドサービスに依存せず、自分のマ�
 | **導入の手軽さ** | ⭐⭐⭐ **極めて簡単**（Docker 不要）<br>Releases からインストーラーをダウンロードして起動 | ⭐⭐ **標準**（Docker 環境が必要）<br>`git clone` 後に `docker compose up -d` で起動 |
 | **ユーザーインターフェース** | OS ネイティブウィンドウ、差分プレビュー、システムトレイ | Web ブラウザ（レスポンシブ UI） |
 | **技術スタック** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
-| **プロセス構成** | 単一バイナリ + tokio in-proc（ブラウザは Tauri 子 WebView） | Docker Compose（app, web, db, runner, proxy コンテナ群） |
+| **プロセス構成** | 単一バイナリ + tokio in-proc（ブラウザは Tauri 子 WebView） | Docker Compose（app, db, runner, proxy コンテナ群。SPA は app が配信） |
 | **データ・秘密情報の保存** | ローカル SQLite (WAL/FTS5) + AES-GCM 暗号化ファイル（macOS は `.master_seed`、Windows は Credential Manager） | PostgreSQL + AES-GCM 暗号化（Docker ボリューム） |
 | **端末・ファイル操作** | ローカルマシンのファイルを直接編集、**永続 PTY シェル** | マウントされた `/project` や専用コンテナ内での操作 |
 | **ブラウザ操作** | アプリ内のネイティブ子 WebView を共有操作 | execution-runner コンテナ内の Playwright |
@@ -146,7 +146,7 @@ docker compose up -d --build
 - **Thinking**: Reasoning（思考）対応モデルの能力を引き出し、論理的な思考ステップを経てタスクを実行。
 - **Agent**: 長時間の作業を自律完遂するための実行ループ。チェックポイント保存、停滞検知と自己修復、厳格な検証ループ、予算動的調整に加え、**編集後の自動整形（format_command）**、**実行中の追加指示（steering）**、**Run 単位の変更取り消し**、**読み取り専用ツールの並列実行**を備えます。
 
-### 2. 52 種類の Provider 対応 & 自動能力判定
+### 2. 53 種類の Provider 対応 & 自動能力判定
 - OpenAI、Anthropic、Gemini、OpenRouter、Groq、Mistral、DeepSeek、Cohere、Ollama、LM Studio などの主要 Provider プリセットを網羅。
 - **Capability Probe**: モデルの Tool Calling 対応状況を実行前に副作用のない安全なプローブで自動検証。
 - **ローカルランタイム管理（Desktop）**: Ollama / LM Studio を自動検出し、アプリから起動・停止・再起動、モデルの取得・削除・ロード/アンロードまで行えます。Ollama は `num_ctx`（既定 8K 上限）と `keep_alive` をネイティブ API で制御します。
@@ -175,9 +175,10 @@ docker compose up -d --build
 - **OS 権限**: ログイン中のローカルユーザーの権限でネイティブ動作します。
 - **秘密情報**: API Key や認証情報は AES-256-GCM で暗号化してローカルに保存します。マスター seed は Windows では Credential Manager、macOS / Linux では所有者のみ読める 0600 の `.master_seed` に保管します（macOS の ad-hoc 署名ビルドで Keychain の許可ダイアログが出続けるのを避けるため。`MIX_SECRET_BACKEND=keychain-seed` で Keychain 方式に切り替え可能）。
 - **権限ゲート**: ファイル書き込み、コマンド実行、ブラウザ操作などは既定で確認ダイアログ（`Ask`）が表示され、許可したパスやコマンドのみが実行されます。
+- **ターミナルサンドボックス（任意）**: 設定 `sandbox_terminal` で起動するシェルを OS 機能で隔離します。macOS は `sandbox-exec`、Linux は `bubblewrap`（なければ `firejail`）でルートを読み取り専用にし、ワークスペースとビルドキャッシュ以外への書き込みを拒否します。Windows は Job Object によるプロセスツリー隔離のみで、ファイルシステムの書き込み隔離は未対応です。
 
 ### Docker 版のセキュリティモデル
-- **コンテナ隔離**: 実行部（Runner）は非 root、read-only rootfs、Capability 制限でコンテナ起動します。ホストや Docker Socket はマウントされません。
+- **コンテナ隔離**: 実行部（Runner）は非 root、read-only rootfs、Capability 制限でコンテナ起動します。Docker Socket はホストから直接マウントせず、隔離された `docker-socket-proxy` 経由で MCP 管理コンテナだけがアクセスします。
 - **通信制限**: Runner は内部ネットワークと egress-proxy を経由して通信します。ポリシーの `mode` が `public_web`（初期値）なら公開ホスト、`restricted` なら許可ドメインとの完全一致のみ、`none` なら全拒否です。Private IP への接続は自動的に拒否されます。
 - **ネットワーク公開**: 標準では `localhost:8080` のみ公開。LAN 公開やリバースプロキシ構成時は `MIX_BIND` や `PUBLIC_ORIGIN` を適切に設定してください。
 
@@ -219,7 +220,6 @@ docker compose --profile test run --rm test # バックエンドテスト
 | [システムアーキテクチャ](docs/architecture.md) | プロジェクト全体の構造とエディションの設計思想 |
 | [Desktop アーキテクチャ](docs/desktop/architecture.md) | Desktop 版（Rust + Tauri 2）の内部設計・セキュリティ・更新方法 |
 | [運用ガイド](docs/operations.md) | Docker 版の運用、バックアップ・復元手順 |
-| [検証状況](docs/verification.md) | 実機・Provider での動作検証ログ |
 | [ZimaOS ガイド](docs/zimaos.md) | ZimaOS / CasaOS コミュニティストアでの導入 |
 | [コントリビューション](CONTRIBUTING.md) | 開発の流れと PR の提出手順 |
 

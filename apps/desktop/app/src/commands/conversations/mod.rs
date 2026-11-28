@@ -57,6 +57,7 @@ pub mod limits {
 }
 
 mod crud;
+mod history;
 mod messages;
 mod run;
 mod summary;
@@ -64,6 +65,7 @@ mod support;
 mod views;
 
 pub use crud::*;
+pub use history::*;
 pub use messages::*;
 pub use run::*;
 pub use summary::*;

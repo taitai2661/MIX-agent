@@ -9,6 +9,10 @@ from urllib.parse import urlsplit
 
 DATA = Path(os.getenv("MIX_DATA", ".data")).resolve()
 KEYS = Path(os.getenv("MIX_KEYS", str(DATA / "keys"))).resolve()
+# Version written into newly encrypted secrets. To rotate, place the old key at
+# master.key.v<N> and set MIX_KEY_VERSION=<new> after replacing master.key;
+# decrypt() keeps reading every version from the keyring.
+KEY_VERSION = int(os.getenv("MIX_KEY_VERSION", "1"))
 ARTIFACTS = DATA / "artifacts"
 # Directory scanned for Agent Skills (``*/SKILL.md``). Inside the data volume
 # by default; point MIX_SKILLS_DIR at a host folder to author them there.

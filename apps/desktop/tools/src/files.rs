@@ -497,6 +497,13 @@ impl Tool for FilesTool {
             Ok(outcome) => {
                 if let Err(err) = &outcome {
                     tracing::warn!(action, path, %err, "file tool failed");
+                } else if outcome.as_ref().map(|result| result.ok).unwrap_or(false)
+                    && matches!(action.as_str(), "write" | "delete")
+                {
+                    // A read/list/search cannot change the tree; invalidating
+                    // on every one of them threw away the cache between
+                    // `grep` → `read` → `grep` in the same turn.
+                    super::search::invalidate_walk_cache();
                 }
                 outcome
             }

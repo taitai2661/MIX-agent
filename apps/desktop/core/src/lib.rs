@@ -13,6 +13,7 @@ pub mod memory;
 pub mod memory_jobs;
 pub mod memory_lifecycle;
 pub mod memory_links;
+pub mod memory_pack;
 pub mod mode;
 pub mod pricing;
 pub mod prompt;

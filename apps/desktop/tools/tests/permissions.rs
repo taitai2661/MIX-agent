@@ -3,7 +3,9 @@
 
 use mixd_storage::{SecretStore, Storage};
 use mixd_tools::approval::ApprovalOutcome;
-use mixd_tools::execute::{PermissionContext, ToolExecutor};
+use mixd_tools::execute::{
+    PermissionContext, ToolExecutor, MAX_APPROVAL_TTL_SECS, MIN_APPROVAL_EXTENSION_SECS,
+};
 use mixd_tools::permission::{PermissionDecision, RuleScope};
 use std::env;
 use std::sync::Arc;
@@ -374,6 +376,120 @@ async fn an_expired_prompt_is_reclaimed_from_the_map_and_the_database() {
     assert_eq!(executor.open_waiters().await, 0);
 }
 
+/// Extending a prompt must move the in-memory deadline, the parked waiter and
+/// the persisted row together; otherwise the reaper would close a card the UI
+/// still shows as answerable.
+#[tokio::test]
+async fn extending_an_approval_moves_every_deadline() {
+    let (executor, _dir) = executor().await;
+    let run_id = seed_call(&executor, "call-extended").await;
+    let (_rx, before) = executor
+        .request_approval(
+            run_id,
+            "call-extended",
+            TOOL,
+            serde_json::json!({"cmd": "npm test"}),
+            None,
+            None,
+        )
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+
+    let (_run, _call, after) = executor
+        .extend_approval(&approval_id, 300)
+        .await
+        .expect("extend");
+
+    assert!(after > before, "the new deadline must move forward");
+    assert_eq!(
+        executor.list_pending().await[0].expires_at,
+        after,
+        "the in-memory prompt must expose the new deadline"
+    );
+    let persisted: String = sqlx::query_scalar("SELECT expires FROM approvals WHERE id = ?")
+        .bind(&approval_id)
+        .fetch_one(executor.storage.pool())
+        .await
+        .expect("approval row");
+    assert_eq!(
+        chrono::DateTime::parse_from_rfc3339(&persisted)
+            .expect("rfc3339")
+            .with_timezone(&chrono::Utc),
+        after,
+        "the approvals row must carry the same deadline"
+    );
+
+    // The prompt is still answerable after the extension.
+    executor
+        .resolve_approval(&approval_id, TOOL, ApprovalOutcome::Deny)
+        .await
+        .expect("resolve after extend");
+    assert!(executor.list_pending().await.is_empty());
+}
+
+#[tokio::test]
+async fn extension_rejects_out_of_range_seconds_and_honours_the_absolute_cap() {
+    let (executor, _dir) = executor().await;
+    executor.set_approval_ttl_secs(MAX_APPROVAL_TTL_SECS);
+    let run_id = seed_call(&executor, "call-extension-bounds").await;
+    let (_rx, before) = executor
+        .request_approval(
+            run_id,
+            "call-extension-bounds",
+            TOOL,
+            serde_json::json!({}),
+            None,
+            None,
+        )
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+
+    assert!(executor
+        .extend_approval(&approval_id, MIN_APPROVAL_EXTENSION_SECS - 1)
+        .await
+        .is_err());
+    assert!(executor
+        .extend_approval(&approval_id, 24 * 60 * 60 + 1)
+        .await
+        .is_err());
+
+    // The prompt is already at the 7-day ceiling, so another day is clamped.
+    let (_, _, after) = executor
+        .extend_approval(&approval_id, 24 * 60 * 60)
+        .await
+        .expect("extend");
+    let cap = chrono::Utc::now() + chrono::Duration::seconds(MAX_APPROVAL_TTL_SECS);
+    assert!(
+        after >= before,
+        "extension must never move a deadline backwards"
+    );
+    assert!(
+        after <= cap + chrono::Duration::seconds(1),
+        "cumulative deadline must stay under the absolute TTL cap"
+    );
+}
+
+#[tokio::test]
+async fn extending_a_resolved_prompt_is_rejected() {
+    let (executor, _dir) = executor().await;
+    let run_id = seed_call(&executor, "call-gone").await;
+    let (_rx, _expires) = executor
+        .request_approval(run_id, "call-gone", TOOL, serde_json::json!({}), None, None)
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+    executor
+        .resolve_approval(&approval_id, TOOL, ApprovalOutcome::Deny)
+        .await
+        .expect("resolve");
+    assert!(
+        executor.extend_approval(&approval_id, 300).await.is_err(),
+        "a resolved prompt must not be resurrected"
+    );
+}
+
 /// Answering normally must clear all three copies too, so the sweep cannot be
 /// the only path that keeps the structures in step.
 #[tokio::test]
@@ -664,6 +780,259 @@ async fn a_session_allow_is_not_persisted() {
     assert_eq!(
         executor
             .resolve_permission(TOOL, &other, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask
+    );
+}
+
+/// The app refuses "Always Allow" for dangerous commands, but the tools layer
+/// must enforce it too: a non-GUI caller can send `remember: true` directly.
+#[tokio::test]
+async fn a_dangerous_command_cannot_be_persisted_by_always_allow() {
+    let (executor, _dir) = executor().await;
+    let run_id = seed_call(&executor, "call-dangerous-remember").await;
+    let danger = "rm -rf ~";
+    let (rx, _expires) = executor
+        .request_approval(
+            run_id,
+            "call-dangerous-remember",
+            TOOL,
+            serde_json::json!({ "command": danger }),
+            None,
+            Some(danger.to_string()),
+        )
+        .await
+        .expect("prompt");
+    let approval_id = executor.list_pending().await[0].approval_id.clone();
+
+    executor
+        .resolve_approval(
+            &approval_id,
+            TOOL,
+            ApprovalOutcome::Approve {
+                remember: true,
+                remember_session: true,
+            },
+        )
+        .await
+        .expect("resolve");
+
+    // The Run still gets the one-off grant, but both remember flags are gone.
+    assert_eq!(
+        rx.await.expect("outcome delivered"),
+        ApprovalOutcome::Approve {
+            remember: false,
+            remember_session: false,
+        }
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permission_rules")
+        .fetch_one(executor.storage.pool())
+        .await
+        .expect("count");
+    assert_eq!(rows, 0, "no durable or session rule may be written");
+    let ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some(danger),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask,
+        "the dangerous command must prompt again next time"
+    );
+
+    // A safe command on another tool keeps the original behaviour.
+    let run_id = seed_call(&executor, "call-safe-remember").await;
+    executor
+        .request_approval(
+            run_id,
+            "call-safe-remember",
+            "files",
+            serde_json::json!({ "path": "README.md" }),
+            None,
+            Some("README.md".to_string()),
+        )
+        .await
+        .expect("prompt");
+    let id = executor.list_pending().await[0].approval_id.clone();
+    executor
+        .resolve_approval(
+            &id,
+            "files",
+            ApprovalOutcome::Approve {
+                remember: true,
+                remember_session: false,
+            },
+        )
+        .await
+        .expect("resolve");
+    assert_eq!(
+        executor
+            .resolve_permission(
+                "files",
+                &PermissionContext {
+                    workspace_id: None,
+                    pattern_target: Some("README.md"),
+                },
+                PermissionDecision::Ask,
+            )
+            .await,
+        PermissionDecision::Allow
+    );
+}
+
+#[tokio::test]
+async fn an_unparseable_deny_pattern_fails_closed() {
+    let (executor, _dir) = executor().await;
+    // `***` is rejected by glob (only `*` and `**` are legal).
+    write_rule(
+        &executor,
+        "global:files:broken-deny",
+        "files",
+        "global",
+        "deny",
+        Some("***"),
+        None,
+    )
+    .await;
+    let ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some("src/main.rs"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &ctx, PermissionDecision::Allow)
+            .await,
+        PermissionDecision::Deny,
+        "a broken Deny glob must not silently become an allow"
+    );
+
+    write_rule(
+        &executor,
+        "global:git:broken-allow",
+        "git",
+        "global",
+        "allow",
+        Some("***"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        executor
+            .resolve_permission("git", &ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Ask,
+        "a broken Allow glob must not widen access"
+    );
+}
+
+#[tokio::test]
+async fn windows_style_globs_match_after_separator_normalisation() {
+    let (executor, _dir) = executor().await;
+    write_rule(
+        &executor,
+        "global:files:win-system",
+        "files",
+        "global",
+        "deny",
+        Some(r"C:\Windows\**\*"),
+        None,
+    )
+    .await;
+    let ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some(r"C:\Windows\System32\drivers\etc\hosts"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &ctx, PermissionDecision::Allow)
+            .await,
+        PermissionDecision::Deny,
+        "a Windows recursive glob must be parsed, not substring-matched"
+    );
+}
+
+#[tokio::test]
+async fn headless_approval_reports_the_configured_ttl() {
+    let (executor, _dir) = executor().await;
+    executor.set_approval_ttl_secs(900);
+    executor.set_headless_approval(Some(false));
+    let (_rx, expires) = executor
+        .request_approval(
+            Uuid::new_v4(),
+            "call-headless-ttl",
+            TOOL,
+            serde_json::json!({}),
+            None,
+            None,
+        )
+        .await
+        .expect("headless prompt");
+    let remaining = expires - chrono::Utc::now();
+    assert!(
+        remaining <= chrono::Duration::seconds(900) && remaining > chrono::Duration::seconds(895),
+        "expected ~900 s from the configured TTL, got {remaining:?}"
+    );
+}
+
+#[tokio::test]
+async fn policy_file_fills_the_default_but_never_beats_a_stored_rule() {
+    let (executor, _dir) = executor().await;
+    let file = mixd_storage::policy::parse_policy_toml(
+        "version = 1\n[[rules]]\ntool = \"files\"\ndecision = \"deny\"\npattern = \"**/.env\"\n",
+    )
+    .expect("policy file");
+    executor.set_policy_file(Some(Arc::new(file)));
+
+    let ctx = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some("a/.env"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission("files", &ctx, PermissionDecision::Allow)
+            .await,
+        PermissionDecision::Deny,
+        "the file policy supplies the decision when no DB rule matches"
+    );
+    assert_eq!(
+        executor
+            .resolve_permission("files", &ctx, PermissionDecision::Deny)
+            .await,
+        PermissionDecision::Deny
+    );
+
+    // A stored rule always wins over the file.
+    executor
+        .remember_rule(
+            "files",
+            PermissionDecision::Allow,
+            RuleScope::Global,
+            None,
+            Some("**/.env"),
+        )
+        .await
+        .expect("stored rule");
+    assert_eq!(
+        executor
+            .resolve_permission("files", &ctx, PermissionDecision::Ask)
+            .await,
+        PermissionDecision::Allow
+    );
+
+    // A file may never allow a dangerous terminal command.
+    let allow_all =
+        mixd_storage::policy::parse_policy_toml("version = 1\n[defaults]\ndecision = \"allow\"\n")
+            .expect("allow-all policy");
+    executor.set_policy_file(Some(Arc::new(allow_all)));
+    let danger = PermissionContext {
+        workspace_id: None,
+        pattern_target: Some("rm -rf ~"),
+    };
+    assert_eq!(
+        executor
+            .resolve_permission(TOOL, &danger, PermissionDecision::Ask)
             .await,
         PermissionDecision::Ask
     );

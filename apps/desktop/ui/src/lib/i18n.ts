@@ -8,6 +8,8 @@
 /// keying by id means editing the Japanese wording cannot silently drop the
 /// English translation.
 
+import { useSyncExternalStore } from "react";
+
 import { getString, setString } from "@/lib/storage";
 import { en } from "./i18n/en";
 
@@ -30,6 +32,7 @@ export function browserLanguage(
 }
 
 let language: Language = initialLanguage();
+const listeners = new Set<() => void>();
 
 function initialLanguage(): Language {
   const stored = getString(STORAGE_KEY);
@@ -46,6 +49,36 @@ export function setLanguage(value: Language): void {
   language = value;
   setString(STORAGE_KEY, value);
   if (typeof document !== "undefined") document.documentElement.lang = value;
+  listeners.forEach((listener) => listener());
+}
+
+/** Subscribe to language changes (used by `useSyncExternalStore`). */
+export function subscribeLanguage(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/**
+ * Re-render the caller when the display language changes. `t()` reads a module
+ * variable, so a one-time call at the app root is enough to repaint every
+ * subtree that uses `t()` when settings change the locale.
+ */
+export function useLanguage(): Language {
+  return useSyncExternalStore(subscribeLanguage, getLanguage, getLanguage);
+}
+
+/**
+ * `t()` for components that need their own subscription. A root-only
+ * `useLanguage()` is not sufficient once a consumer is `memo`ized with stable
+ * props: React will skip its render, leaving Japanese copy on screen after the
+ * user switched to English. Call this in such leaves (the return value can be
+ * ignored when only `t()` is used).
+ */
+export function useT(): (value: string) => string {
+  useLanguage();
+  return t;
 }
 
 if (typeof document !== "undefined") document.documentElement.lang = language;

@@ -14,6 +14,7 @@ This script fails (exit status 1) when:
   * a fragment has no English entry in its edition's ``translations.ts``
   * a greeting suggestion label/prompt has no English entry
   * a fragment id or Japanese text is duplicated inside one edition
+  * a fragment id exists in only one edition (unless explicitly allowed below)
   * a shared fragment id has a different English text
 
 Usage::
@@ -51,6 +52,32 @@ EDITIONS = {
 # (see desktop/README.md), which changes both the Japanese and English text.
 ALLOWED_DIVERGENCE = {"ac-1", "wk-3"}
 
+# Fragment ids that deliberately exist on only one side. All of them are
+# Desktop-only because its greeting composes two extra branches that Docker's
+# greeting pool does not have:
+#   * a "project scope" branch keyed off the active project folder
+#     (`compose.test.ts` asserts `pc-1` with a project and `np-1` without one):
+#       np-1..3, pc-1..3, and the matching note fragments nt-20..21;
+#   * an Agent-mode note about reviewable diffs (`nt-17..19`, selected only for
+#     agent mode in `index.test.ts`), which the Docker note pool has no equivalent for.
+# Every other one-sided id is drift.
+ALLOWED_ONE_SIDED = {
+    "desktop": {
+        "np-1",
+        "np-2",
+        "np-3",
+        "pc-1",
+        "pc-2",
+        "pc-3",
+        "nt-17",
+        "nt-18",
+        "nt-19",
+        "nt-20",
+        "nt-21",
+    },
+    "docker": set(),
+}
+
 SENTENCE = re.compile(r'sentence\(\s*"([^"]*)"\s*,\s*"((?:[^"\\]|\\.)*)"')
 LABEL = re.compile(r'label:\s*"((?:[^"\\]|\\.)*)"')
 PROMPT = re.compile(r'prompt:\s*"((?:[^"\\]|\\.)*)"')
@@ -62,18 +89,24 @@ def unescape(raw: str) -> str:
     return raw.replace('\\"', '"').replace("\\\\", "\\")
 
 
-def parse_fragments(paths: dict[str, Path]) -> tuple[dict[str, str], list[str]]:
+def parse_fragments(
+    paths: dict[str, Path], name: str, problems: list[str]
+) -> tuple[dict[str, str], list[str]]:
     """id -> Japanese text, from the pools and the compose fallback.
 
     The compose fallback text legitimately repeats a pools fragment, so the
-    duplicate check runs against the pools-only texts returned alongside.
+    duplicate *text* check runs against the pools-only texts returned alongside.
+    Ids, in contrast, must be unique across both files of one edition.
     """
     fragments: dict[str, str] = {}
     pool_texts: list[str] = []
     for key in ("pools", "compose"):
         text = paths[key].read_text(encoding="utf-8")
         for match in SENTENCE.finditer(text):
-            fragments[match.group(1)] = unescape(match.group(2))
+            fragment_id = match.group(1)
+            if fragment_id in fragments:
+                problems.append(f"{name}: duplicated fragment id: {fragment_id}")
+            fragments[fragment_id] = unescape(match.group(2))
             if key == "pools":
                 pool_texts.append(unescape(match.group(2)))
     return fragments, pool_texts
@@ -107,7 +140,7 @@ def main() -> int:
     editions: dict[str, dict[str, dict[str, str]]] = {}
 
     for name, paths in EDITIONS.items():
-        fragments, pool_texts = parse_fragments(paths)
+        fragments, pool_texts = parse_fragments(paths, name, problems)
         suggestions = parse_suggestions(paths["suggestions"])
         translations = parse_translations(paths["translations"])
 
@@ -123,7 +156,19 @@ def main() -> int:
     desktop = editions["desktop"]
     docker = editions["docker"]
 
-    for fragment_id in sorted(set(desktop["fragments"]) & set(docker["fragments"])):
+    desktop_ids = set(desktop["fragments"])
+    docker_ids = set(docker["fragments"])
+    for edition, ids, other in (("desktop", desktop_ids, docker_ids), ("docker", docker_ids, desktop_ids)):
+        allowed = ALLOWED_ONE_SIDED[edition]
+        for fragment_id in sorted(ids - other - allowed):
+            problems.append(f"{edition}-only fragment id: {fragment_id}")
+        for fragment_id in sorted(allowed & other):
+            problems.append(
+                f"{edition}: documented one-sided id {fragment_id} is now shared; "
+                "remove it from ALLOWED_ONE_SIDED"
+            )
+
+    for fragment_id in sorted(desktop_ids & docker_ids):
         if fragment_id in ALLOWED_DIVERGENCE:
             continue
         if desktop["fragments"][fragment_id] != docker["fragments"][fragment_id]:
@@ -142,8 +187,9 @@ def main() -> int:
     print(
         f"desktop fragments: {len(desktop['fragments'])}  "
         f"docker fragments: {len(docker['fragments'])}  "
-        f"shared: {len(set(desktop['fragments']) & set(docker['fragments']))}  "
-        f"desktop-only: {len(set(desktop['fragments']) - set(docker['fragments']))}"
+        f"shared: {len(desktop_ids & docker_ids)}  "
+        f"desktop-only: {len(desktop_ids - docker_ids)}  "
+        f"docker-only: {len(docker_ids - desktop_ids)}"
     )
 
     if problems:

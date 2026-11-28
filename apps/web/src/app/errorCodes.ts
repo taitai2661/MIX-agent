@@ -42,6 +42,10 @@ export const ERROR_CODES_EN: Record<string, string> = {
   "browser.manual_unavailable":
     "Manual control cannot be started for this run.",
   "approval.invalid": "This approval is no longer valid.",
+  "approval.risk_acknowledgement_required":
+    "Acknowledge the risk before allowing this operation.",
+  "approval.persistent_grant_not_allowed":
+    "Elevated risks cannot be allowed permanently.",
   "conversation.trash_required":
     "Move the conversation to trash before deleting it permanently.",
   "auth.username_taken": "That username is already taken.",

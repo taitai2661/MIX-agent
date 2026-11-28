@@ -34,6 +34,12 @@ glob = "0.3"
 pdf-extract = "0.12"
 lopdf = "0.47"
 
+[target.'cfg(unix)'.dependencies]
+# SIGINT delivery for the terminal pane. A PTY write of \x03 is not enough
+# when the slave is in raw mode (portable-pty's default), so the foreground
+# process group is signalled directly.
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",

@@ -358,6 +358,10 @@ impl Tool for EditTool {
             Ok(outcome) => {
                 if let Err(err) = &outcome {
                     tracing::warn!(action, path, %err, "edit tool failed");
+                } else if outcome.as_ref().map(|result| result.ok).unwrap_or(false) {
+                    // The next `grep`/`glob` must see the file we just wrote,
+                    // not a cached walk from before the edit.
+                    super::search::invalidate_walk_cache();
                 }
                 outcome
             }

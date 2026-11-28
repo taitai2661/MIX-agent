@@ -1,17 +1,19 @@
-import { memo, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Columns2,
   FileDiff,
   FileText,
   GitBranch,
+  GitCommitHorizontal,
   Minus,
   Plus,
   Rows,
   Undo2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { t, tf } from "@/lib/i18n";
+import { useToasts } from "@/lib/toast";
 import { useUi } from "@/lib/ui";
 import { DiffLines, parseUnifiedDiff } from "@/features/chat/DiffView";
 import { useActiveRoot, useGitStatus } from "@/lib/queries";
@@ -25,7 +27,16 @@ import {
   ErrorBox,
   ListSkeleton,
 } from "@/components/shared";
-import { useConfirm } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  useConfirm,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/input";
 import { Segmented, SegmentedOption } from "@/components/ui/segmented";
 import { GitStatusBadge } from "@/components/ui/status";
 import { gitStatusLabel, gitStatusLetter, gitStatusTone } from "@/lib/git";
@@ -55,25 +66,63 @@ const GitDiffBody = memo(function GitDiffBody({
   root?: string | null;
   scope?: Scope;
 }) {
-  const blocks = useMemo(
-    () =>
-      unified
-        .split(/^diff --git /m)
-        .filter((b) => b.trim())
-        .slice(0, 50),
-    [unified],
-  );
+  const blocks = useMemo(() => {
+    const seen = new Map<string, number>();
+    return unified
+      .split(/^diff --git /m)
+      .filter((b) => b.trim())
+      .slice(0, 50)
+      .map((block) => {
+        // `GitDiffBlock` keeps local state (split view, expansion). An index
+        // key moved that state to another file whenever a file was added or
+        // removed above it. Derive the key from the diff header instead.
+        const header = block.split("\n")[0] ?? "";
+        const path = header.match(/b\/(.+?)(?:\s|$)/)?.[1] ?? header;
+        const occurrence = (seen.get(path) ?? 0) + 1;
+        seen.set(path, occurrence);
+        return { key: occurrence > 1 ? `${path}#${occurrence}` : path, block };
+      });
+  }, [unified]);
   if (!unified.trim()) {
     return <EmptyState title={t("差分はありません")} />;
   }
   return (
     <div className="flex flex-col gap-2.5">
-      {blocks.map((block, i) => (
-        <GitDiffBlock key={i} block={block} root={root} scope={scope} />
+      {blocks.map(({ key, block }) => (
+        <GitDiffBlock key={key} block={block} root={root} scope={scope} />
       ))}
     </div>
   );
 });
+
+/**
+ * Split one file block into its shared header and each hunk body.
+ *
+ * `git apply` needs the file header (`diff --git …`, mode/index, ---/+++) plus
+ * exactly one `@@` body. Keeping the raw text (rather than re-rendering from
+ * the parsed lines) preserves "\ No newline at end of file" and any extended
+ * header lines the UI does not understand.
+ */
+export function splitDiffHunks(block: string): {
+  header: string;
+  hunks: string[];
+} {
+  const lines = block.split("\n");
+  const first = lines.findIndex((line) => line.startsWith("@@"));
+  if (first < 0) return { header: `diff --git ${block}`, hunks: [] };
+  const header = `diff --git ${lines.slice(0, first).join("\n")}`;
+  const hunks: string[] = [];
+  let current: string[] = [];
+  for (const line of lines.slice(first)) {
+    if (line.startsWith("@@") && current.length > 0) {
+      hunks.push(current.join("\n"));
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.length > 0) hunks.push(current.join("\n"));
+  return { header, hunks };
+}
 
 const GitDiffBlock = memo(function GitDiffBlock({
   block,
@@ -100,6 +149,7 @@ const GitDiffBlock = memo(function GitDiffBlock({
     const parsed = parseUnifiedDiff(`diff --git ${block}`);
     return { lines: parsed.slice(0, 2000), capped: parsed.length > 2000 };
   }, [block]);
+  const hunks = useMemo(() => splitDiffHunks(block), [block]);
 
   const handleRestore = async () => {
     if (!root || busy) return;
@@ -114,6 +164,37 @@ const GitDiffBlock = memo(function GitDiffBlock({
     setError(null);
     try {
       await api.gitRestore(root, label, scope === "staged");
+      void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+      void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRevertHunk = async (index: number) => {
+    if (!root || busy) return;
+    const hunk = hunks.hunks[index];
+    if (!hunk) return;
+    const ok = await confirm({
+      title: t("この差分を元に戻す"),
+      description: t(
+        "このハンクだけを元に戻します。ほかの変更は残ります。",
+      ),
+      confirmLabel: t("元に戻す"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.gitApplyPatch(root, `${hunks.header}\n${hunk}\n`, {
+        reverse: true,
+        // Reverting a staged hunk must touch the index only; the working tree
+        // still contains the change, so it simply becomes unstaged.
+        cached: scope === "staged",
+      });
       void queryClient.invalidateQueries({ queryKey: ["git_status"] });
       void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
     } catch (err) {
@@ -196,7 +277,27 @@ const GitDiffBlock = memo(function GitDiffBlock({
           <ErrorBadge error={error} />
         </div>
       )}
-      <DiffLines lines={lines} split={split} />
+      <DiffLines
+        lines={lines}
+        split={split}
+        hunkAction={
+          root
+            ? (index) => (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={busy}
+                  onClick={() => void handleRevertHunk(index)}
+                  title={t("この差分を元に戻す")}
+                  aria-label={t("この差分を元に戻す")}
+                  className="shrink-0 text-brand hover:text-danger"
+                >
+                  <Undo2 size={10} />
+                </Button>
+              )
+            : undefined
+        }
+      />
       {capped && (
         <p className="text-xs text-faint">
           {t("大きな差分のため先頭2000行のみ表示します")}
@@ -216,10 +317,28 @@ export function ChangesPanel({
   const gitDiffPath = useUi((s) => s.gitDiffPath);
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
   const [scope, setScope] = useState<Scope>("unstaged");
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const pushToast = useToasts((s) => s.push);
+  const queryClient = useQueryClient();
 
   // The changes list needs one row per file, including files inside untracked
   // directories; the tree and titlebar use the collapsed (`-unormal`) form.
   const status = useGitStatus(root, true);
+  const stagedCount = (status.data?.entries ?? []).filter((entry) =>
+    entryMatchesScope(entry, "staged"),
+  ).length;
+
+  const commit = useMutation({
+    mutationFn: () => api.gitCommit(root!, commitMessage.trim()),
+    onSuccess: () => {
+      setCommitOpen(false);
+      setCommitMessage("");
+      pushToast({ message: t("コミットしました") });
+      void queryClient.invalidateQueries({ queryKey: ["git_status"] });
+      void queryClient.invalidateQueries({ queryKey: ["git_diff"] });
+    },
+  });
 
   const diff = useQuery({
     queryKey: ["git_diff", root, scope, gitDiffPath],
@@ -330,6 +449,23 @@ export function ChangesPanel({
               <span className="min-w-0 truncate">{status.data.branch}</span>
             </Badge>
           )}
+          {stagedCount > 0 && (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              onClick={() => {
+                commit.reset();
+                setCommitOpen(true);
+              }}
+              title={tf("{count}件のステージ済み変更をコミット", {
+                count: stagedCount,
+              })}
+            >
+              <GitCommitHorizontal size={12} />
+              {t("コミット")}
+            </Button>
+          )}
         </div>
 
         {status.isPending ? (
@@ -362,6 +498,67 @@ export function ChangesPanel({
           </ul>
         )}
       </div>
+      <Dialog
+        open={commitOpen}
+        onOpenChange={(open) => {
+          if (!commit.isPending) setCommitOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GitCommitHorizontal size={16} className="text-faint" />
+              {t("変更をコミット")}
+            </DialogTitle>
+            <DialogDescription>
+              {tf("{count}件のステージ済み変更をコミットします。", {
+                count: stagedCount,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">
+              {t("コミットメッセージ")}
+            </span>
+            <Textarea
+              value={commitMessage}
+              onChange={(e) => setCommitMessage(e.target.value)}
+              placeholder={t("変更内容を一言で説明…")}
+              rows={4}
+              // A commit dialog is a typed answer, not a menu: focus the field.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              onKeyDown={(e) => {
+                // Cmd/Ctrl+Enter commits without reaching for the mouse.
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  if (commitMessage.trim() && !commit.isPending) {
+                    commit.mutate();
+                  }
+                }
+              }}
+            />
+          </label>
+          {commit.isError && <ErrorBadge error={commit.error} />}
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCommitOpen(false)}
+              disabled={commit.isPending}
+            >
+              {t("キャンセル")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => commit.mutate()}
+              disabled={!commitMessage.trim() || commit.isPending}
+            >
+              {commit.isPending ? t("コミット中…") : t("コミット")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -370,6 +567,7 @@ export function ChangesPanel({
 export function FilePreviewPanel() {
   const root = useActiveRoot();
   const path = useUi((s) => s.filePreviewPath);
+  const highlightLine = useUi((s) => s.filePreviewLine);
   const closeRightPanel = useUi((s) => s.closeRightPanel);
 
   const file = useQuery({
@@ -420,6 +618,7 @@ export function FilePreviewPanel() {
         <FilePreviewBody
           content={file.data.content}
           truncated={file.data.truncated}
+          highlightLine={highlightLine}
         />
       )}
     </>
@@ -431,9 +630,12 @@ const PREVIEW_MAX_LINES = 1000;
 const FilePreviewBody = memo(function FilePreviewBody({
   content,
   truncated,
+  highlightLine = null,
 }: {
   content: string;
   truncated: boolean;
+  /** One-based line to reveal (Problems / search jump). */
+  highlightLine?: number | null;
 }) {
   const { lines, capped } = useMemo(() => {
     const all = content.split("\n");
@@ -442,6 +644,31 @@ const FilePreviewBody = memo(function FilePreviewBody({
       capped: all.length > PREVIEW_MAX_LINES,
     };
   }, [content]);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const timer = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!highlightLine) return;
+    const row = bodyRef.current?.querySelector<HTMLElement>(
+      `[data-preview-line="${highlightLine}"]`,
+    );
+    if (!row) return;
+    row.scrollIntoView?.({ block: "center" });
+    row.classList.add("bg-warning-soft");
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      row.classList.remove("bg-warning-soft");
+      timer.current = null;
+    }, 2000);
+    return () => {
+      if (timer.current !== null) {
+        window.clearTimeout(timer.current);
+        timer.current = null;
+      }
+      row.classList.remove("bg-warning-soft");
+    };
+  }, [highlightLine, content]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {(truncated || capped) && (
@@ -449,9 +676,13 @@ const FilePreviewBody = memo(function FilePreviewBody({
           {t("ファイルが大きすぎるため冒頭のみ表示します")}
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
         {lines.map((line, i) => (
-          <div key={i} className="flex font-mono text-xs leading-5">
+          <div
+            key={i}
+            data-preview-line={i + 1}
+            className="flex font-mono text-xs leading-5"
+          >
             <span className="sticky start-0 w-11 shrink-0 border-e border-line bg-inset px-1.5 text-end text-faint select-none">
               {i + 1}
             </span>

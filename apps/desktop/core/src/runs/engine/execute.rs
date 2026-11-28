@@ -1,3 +1,4 @@
+use super::execute_turn::TurnResult;
 use super::helpers::*;
 use super::*;
 
@@ -9,6 +10,10 @@ impl RunEngine {
             .get(&request.provider_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("provider not configured: {}", request.provider_id))?;
+        // The request stays the dispatch-time record. Routing and Auto fallback
+        // change this per-turn handle instead, so audit events can tell the two
+        // apart and a tier switch cannot silently rewrite the run's identity.
+        let mut serving = ServingModel::from_request(&request);
 
         let cancellation = RunCancellation::new();
         self.active
@@ -52,6 +57,20 @@ impl RunEngine {
                     .await
                 {
                     Ok(block) => {
+                        // A skipped unindexed full scan is not the same as an
+                        // empty store: surface it instead of silently injecting
+                        // nothing (notably for CJK queries on a large store).
+                        if block.degraded {
+                            self.emit(
+                                run_id,
+                                "memory_recall_degraded",
+                                serde_json::json!({
+                                    "reason": "unindexed_full_scan_skipped",
+                                    "memories": block.memories.len(),
+                                }),
+                            )
+                            .await;
+                        }
                         if let Some(msg) = block.to_message() {
                             self.emit(
                                 run_id,
@@ -59,6 +78,7 @@ impl RunEngine {
                                 serde_json::json!({
                                     "memories": block.memories.len(),
                                     "knowledge": block.knowledge.len(),
+                                    "degraded": block.degraded,
                                 }),
                             )
                             .await;
@@ -120,11 +140,16 @@ impl RunEngine {
         let mut turn_performances: Vec<TurnPerformance> = Vec::new();
         let mut auto_fallbacks: Vec<AutoFallbackAttempt> = Vec::new();
         let mut stagnation = StagnationDetector::new();
-        let mut verification = VerificationLedger::new(request.verify_command.clone());
+        let mut verification = VerificationLedger::new(request.verify_command.clone())
+            .with_root(request.root_path.as_deref());
         // Signals for the current turn, collected as tool calls execute. Kept
         // out here because the classifier needs the tool result, which only
         // exists after dispatch.
         let mut signals: Vec<crate::runs::stagnation::TurnSignal> = Vec::new();
+        // Provider failures terminate the loop or trigger a fallback before
+        // `stagnation.observe`, so the ProviderUnstable branch never saw a
+        // signal. Carry the count into the *next* observed turn instead.
+        let mut pending_provider_errors: u32 = 0;
         // How many extra turns the agent has been given to verify an
         // unconfirmed destructive call. Bounded so a model that never reads
         // anything back cannot loop forever.
@@ -187,7 +212,7 @@ impl RunEngine {
                     .finish_cancelled(
                         run_id,
                         request.conversation_id,
-                        &request.model_id,
+                        &serving.model_id,
                         final_text,
                         final_reasoning,
                         all_tool_calls,
@@ -208,7 +233,7 @@ impl RunEngine {
                 self.append_message(
                     request.conversation_id,
                     run_id,
-                    &request.model_id,
+                    &serving.model_id,
                     &message_to_history(&message),
                 )
                 .await;
@@ -233,7 +258,7 @@ impl RunEngine {
                             .finish_cancelled(
                                 run_id,
                                 request.conversation_id,
-                                &request.model_id,
+                                &serving.model_id,
                                 final_text,
                                 final_reasoning,
                                 all_tool_calls,
@@ -254,6 +279,9 @@ impl RunEngine {
                         "budget_grants_exhausted"
                     };
                     if extended {
+                        // Single source of truth: persist the engine's own
+                        // budget, not whatever limits the UI happened to send.
+                        self.persist_budget(run_id, &budget).await;
                         self.set_run_state(run_id, RunStatus::Running, serde_json::json!({}))
                             .await;
                     } else {
@@ -280,6 +308,73 @@ impl RunEngine {
                     }
                 }
             }
+
+            // B9 cost-aware step routing: pick the tier for this turn from the
+            // mode, the verification state and live budget pressure, then serve
+            // it with a pre-resolved tier model when one is configured (Auto
+            // runs). Switching happens at the turn boundary, so the transcript
+            // stays provider-agnostic: messages pair tool calls by id/name,
+            // never by model. Fixed-model runs keep their model; the decision
+            // is still emitted so the cost panel can show what *would* have
+            // served the turn.
+            let verification_pending = self.policy.strict_verification
+                && (verification.is_blocked() || verification.needs_verification());
+            let decision = crate::routing::decide_tier(
+                request.mode,
+                steps,
+                verification_pending,
+                budget.token_pressure(),
+                request.monthly_pressure,
+            );
+            let mut tier_switched = false;
+            if let Some(target) =
+                crate::routing::select_tier_model(decision.tier, &request.step_models)
+            {
+                if target.provider_id != serving.provider_id || target.model_id != serving.model_id
+                {
+                    if let Some(next_provider) = self.providers.get(&target.provider_id).await {
+                        let from_model_id = serving.model_id.clone();
+                        let from_provider_id = serving.provider_id.clone();
+                        serving.model_id = target.model_id.clone();
+                        serving.provider_id = target.provider_id.clone();
+                        serving.context_window = target.context_window;
+                        serving.keep_alive = target.keep_alive.clone();
+                        totals.context_window = serving.context_window;
+                        provider = next_provider;
+                        tier_switched = true;
+                        // `model_selected` describes dispatch. Every later
+                        // change of the serving model must be visible on its
+                        // own so the UI and the audit trail stay in sync.
+                        self.emit(
+                            run_id,
+                            "model_switched",
+                            serde_json::json!({
+                                "reason": "step_routing",
+                                "fromModelId": from_model_id,
+                                "fromProviderId": from_provider_id,
+                                "toModelId": serving.model_id,
+                                "toProviderId": serving.provider_id,
+                                "tier": decision.tier.as_str(),
+                            }),
+                        )
+                        .await;
+                    }
+                }
+            }
+            self.emit(
+                run_id,
+                "step_routing",
+                serde_json::json!({
+                    "tier": decision.tier.as_str(),
+                    "baseTier": decision.base.as_str(),
+                    "pressure": decision.pressure,
+                    "switched": tier_switched,
+                    "modelId": serving.model_id,
+                    "dispatchModelId": request.model_id,
+                    "reason": decision.reason(),
+                }),
+            )
+            .await;
 
             steps += 1;
 
@@ -342,10 +437,14 @@ impl RunEngine {
 
             if self.policy.context_tiered_summary {
                 let source_messages = current.len();
-                // The summariser opens its own Provider turn, so it needs the
-                // bare model name for the same reason `run_turn` does.
-                let model = request.wire_model().to_string();
-                let provider_handle = provider.clone();
+                // History compression rephrases rather than reasons, so it
+                // runs on the cheapest configured tier (Local, then Cheap)
+                // instead of the turn's model. The turn exists to *save*
+                // context money; spending frontier money on it would defeat
+                // the purpose. Falls back to the turn's model when no tier
+                // model is configured or reachable.
+                let (summary_provider, summary_model) =
+                    self.summary_provider(&request, &serving, &provider).await;
                 // The summariser is handed exactly the slice being dropped, so
                 // the summary never duplicates the tail kept verbatim. The
                 // history and the summary are moved in and handed straight
@@ -355,7 +454,7 @@ impl RunEngine {
                     std::mem::take(&mut summary),
                     request.context_window,
                     |older| async move {
-                        summarize_turns(provider_handle.as_ref(), &model, &older).await
+                        summarize_turns(summary_provider.as_ref(), &summary_model, &older).await
                     },
                 )
                 .await;
@@ -380,9 +479,46 @@ impl RunEngine {
                 }
             }
 
-            let turn = self
-                .run_turn(run_id, provider.as_ref(), &request, current, &system)
-                .await?;
+            // `run_turn` folds a provider-stream open failure into
+            // `TurnResult.error` already. Any *other* error must follow the
+            // same path: a bare `?` here used to leave the `runs` row
+            // `running` and the `active`/`steering` entries pinned forever.
+            // Turning it into a failed turn means the normal error branch
+            // below reaches `finish_run(Failed, …)` and `release_run`.
+            let turn = match self
+                .run_turn(
+                    run_id,
+                    provider.as_ref(),
+                    &request,
+                    &serving,
+                    current,
+                    &system,
+                )
+                .await
+            {
+                Ok(turn) => turn,
+                Err(err) => {
+                    tracing::error!(%run_id, %err, "run_turn failed; reporting it as a failed turn");
+                    TurnResult {
+                        text: String::new(),
+                        reasoning: String::new(),
+                        tool_calls: Vec::new(),
+                        native_items: Vec::new(),
+                        usage: None,
+                        finish_reason: None,
+                        perf: TurnPerformance {
+                            model_id: serving.model_id.clone(),
+                            provider_id: serving.provider_id.clone(),
+                            ttft_ms: None,
+                            duration_ms: 0,
+                            input_tokens: None,
+                            output_tokens: None,
+                            failure_kind: Some(ProviderErrorKind::from_error(err.as_ref())),
+                        },
+                        error: Some(err.to_string()),
+                    }
+                }
+            };
 
             // Record the turn before any early return consumes its error. A
             // failed turn is exactly what Auto needs to learn from; recording
@@ -399,7 +535,7 @@ impl RunEngine {
                     .finish_cancelled(
                         run_id,
                         request.conversation_id,
-                        &request.model_id,
+                        &serving.model_id,
                         turn.text,
                         turn.reasoning,
                         all_tool_calls,
@@ -420,7 +556,7 @@ impl RunEngine {
                 if no_content && kind.is_fallback_eligible() {
                     if let Some(next) = request.auto_fallbacks.first().cloned() {
                         let has_room = kind != ProviderErrorKind::TooLarge
-                            || next.context_window > request.context_window;
+                            || next.context_window > serving.context_window;
                         if has_room {
                             if let Some(next_provider) = self.providers.get(&next.provider_id).await
                             {
@@ -428,8 +564,8 @@ impl RunEngine {
                                     run_id,
                                     "auto_fallback",
                                     serde_json::json!({
-                                        "fromModelId": request.model_id,
-                                        "fromProviderId": request.provider_id,
+                                        "fromModelId": serving.model_id,
+                                        "fromProviderId": serving.provider_id,
                                         "toModelId": next.model_id,
                                         "toProviderId": next.provider_id,
                                         "failureKind": kind.as_str(),
@@ -437,19 +573,23 @@ impl RunEngine {
                                 )
                                 .await;
                                 auto_fallbacks.push(AutoFallbackAttempt {
-                                    from_model_id: request.model_id.clone(),
-                                    from_provider_id: request.provider_id.clone(),
+                                    from_model_id: serving.model_id.clone(),
+                                    from_provider_id: serving.provider_id.clone(),
                                     to_model_id: next.model_id.clone(),
                                     to_provider_id: next.provider_id.clone(),
                                     failure_kind: kind,
                                 });
                                 request.auto_fallbacks.remove(0);
-                                request.model_id = next.model_id;
-                                request.provider_id = next.provider_id;
-                                request.context_window = next.context_window;
-                                request.keep_alive = next.keep_alive;
+                                serving.model_id = next.model_id;
+                                serving.provider_id = next.provider_id;
+                                serving.context_window = next.context_window;
+                                serving.keep_alive = next.keep_alive;
                                 provider = next_provider;
-                                totals.context_window = request.context_window;
+                                totals.context_window = serving.context_window;
+                                // Feed the failure to the next observed turn
+                                // so a run that keeps switching providers can
+                                // actually raise ProviderUnstable.
+                                pending_provider_errors = pending_provider_errors.saturating_add(1);
                                 // The attempt produced nothing; it must not
                                 // consume a step from the Run's budget.
                                 steps = steps.saturating_sub(1);
@@ -496,7 +636,7 @@ impl RunEngine {
                 totals.estimated_cost_usd = if provider.billing() == BillingMode::Subscription {
                     Some(0.0)
                 } else {
-                    crate::pricing::estimate_cost_usd(request.wire_model(), &totals.as_usage())
+                    crate::pricing::estimate_cost_usd(serving.wire_model(), &totals.as_usage())
                 };
                 self.emit(
                     run_id,
@@ -523,7 +663,11 @@ impl RunEngine {
             // Cloning let every turn's signals be re-fed on every later turn, so
             // the window filled with duplicates after three real failures and
             // kept firing the repair hint forever.
-            let turn_signals = std::mem::take(&mut signals);
+            let mut turn_signals = std::mem::take(&mut signals);
+            for _ in 0..pending_provider_errors {
+                turn_signals.push(crate::runs::stagnation::TurnSignal::ProviderError);
+            }
+            pending_provider_errors = 0;
             if self.policy.stagnation_detection {
                 if let Some(report) = stagnation.observe(turn_signals) {
                     self.emit(
@@ -539,6 +683,17 @@ impl RunEngine {
                         if let Ok(block) =
                             crate::retrieval::retrieve_all(self.storage.as_ref(), &query).await
                         {
+                            if block.degraded {
+                                self.emit(
+                                    run_id,
+                                    "memory_recall_degraded",
+                                    serde_json::json!({
+                                        "reason": "unindexed_full_scan_skipped",
+                                        "stage": "repair_retrieval",
+                                    }),
+                                )
+                                .await;
+                            }
                             if let Some(msg) = block.to_message() {
                                 messages.push(msg);
                             }
@@ -586,7 +741,7 @@ impl RunEngine {
                         self.append_message(
                             request.conversation_id,
                             run_id,
-                            &request.model_id,
+                            &serving.model_id,
                             &message_to_history(&final_message),
                         )
                         .await;
@@ -598,7 +753,7 @@ impl RunEngine {
                                 serde_json::json!({
                                     "role": "assistant",
                                     "content": turn.text,
-                                    "model_id": request.model_id,
+                                    "model_id": serving.model_id,
                                 }),
                             )
                             .await;
@@ -662,6 +817,17 @@ impl RunEngine {
                         if let Ok(block) =
                             crate::retrieval::retrieve_all(self.storage.as_ref(), &query).await
                         {
+                            if block.degraded {
+                                self.emit(
+                                    run_id,
+                                    "memory_recall_degraded",
+                                    serde_json::json!({
+                                        "reason": "unindexed_full_scan_skipped",
+                                        "stage": "repair_retrieval",
+                                    }),
+                                )
+                                .await;
+                            }
                             if let Some(msg) = block.to_message() {
                                 messages.push(msg);
                             }
@@ -679,7 +845,7 @@ impl RunEngine {
                 self.append_message(
                     request.conversation_id,
                     run_id,
-                    &request.model_id,
+                    &serving.model_id,
                     &message_to_history(&final_message),
                 )
                 .await;
@@ -692,7 +858,7 @@ impl RunEngine {
                             "role": "assistant",
                             "content": turn.text,
                             "reasoning": turn.reasoning,
-                            "model_id": request.model_id,
+                            "model_id": serving.model_id,
                         }),
                     )
                     .await;
@@ -710,7 +876,7 @@ impl RunEngine {
             self.append_message(
                 request.conversation_id,
                 run_id,
-                &request.model_id,
+                &serving.model_id,
                 &message_to_history(&assistant_message),
             )
             .await;
@@ -972,12 +1138,11 @@ impl RunEngine {
                             .as_ref()
                             .and_then(exit_code_of)
                             .is_some_and(|code| code == 0);
-                        verification.note_command(
-                            args.get("command")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default(),
-                            exit_ok,
-                        );
+                        // `terminal` with action:"send" types into the live
+                        // shell via `input`, so the command text (and the
+                        // effect key) must come from the same helper.
+                        verification
+                            .note_command(crate::runs::verification::terminal_input(args), exit_ok);
                     }
                 }
                 let content = match &result.error {
@@ -998,7 +1163,7 @@ impl RunEngine {
                 self.append_message(
                     request.conversation_id,
                     run_id,
-                    &request.model_id,
+                    &serving.model_id,
                     &message_to_history(message),
                 )
                 .await;
@@ -1136,7 +1301,7 @@ impl RunEngine {
                     tool_calls: total_tool_calls,
                     messages: messages.iter().map(message_to_history).collect(),
                 };
-                let id = self
+                match self
                     .checkpoints
                     .save(
                         run_id,
@@ -1145,13 +1310,28 @@ impl RunEngine {
                         &snapshot,
                         self.storage.as_ref(),
                     )
-                    .await;
-                self.emit(
-                    run_id,
-                    "checkpoint_saved",
-                    serde_json::json!({ "checkpoint_id": id, "step": steps }),
-                )
-                .await;
+                    .await
+                {
+                    Ok(id) => {
+                        self.emit(
+                            run_id,
+                            "checkpoint_saved",
+                            serde_json::json!({ "checkpoint_id": id, "step": steps }),
+                        )
+                        .await;
+                    }
+                    Err(err) => {
+                        // Never announce a checkpoint that was not written:
+                        // the UI would offer a resume that no row can serve.
+                        tracing::warn!(%run_id, %err, steps, "checkpoint not saved");
+                        self.emit(
+                            run_id,
+                            "checkpoint_failed",
+                            serde_json::json!({ "step": steps, "error": err.to_string() }),
+                        )
+                        .await;
+                    }
+                }
             }
         }
 
@@ -1219,4 +1399,31 @@ async fn budget_snapshot(run_id: &RunId, engine: &RunEngine) -> Option<serde_jso
         })
         .unwrap_or_default();
     data.get("budget").cloned()
+}
+
+impl RunEngine {
+    /// Provider and wire model for the history-compression turn (B9).
+    ///
+    /// Prefers the cheapest configured tier ([`crate::routing::SUMMARY_TIER_PREFERENCE`])
+    /// by exact tier match, falling back to the turn's own model when no tier
+    /// model is configured or its provider is no longer registered.
+    pub(super) async fn summary_provider(
+        &self,
+        request: &RunRequest,
+        serving: &ServingModel,
+        current: &Arc<dyn Provider>,
+    ) -> (Arc<dyn Provider>, String) {
+        for tier in crate::routing::SUMMARY_TIER_PREFERENCE {
+            if let Some(candidate) = crate::routing::tier_model_exact(&request.step_models, tier) {
+                if let Some(handle) = self.providers.get(&candidate.provider_id).await {
+                    let model =
+                        wire_model_for(&candidate.model_id, &candidate.provider_id).to_string();
+                    return (handle, model);
+                }
+            }
+        }
+        // No cheap tier configured: compress on the model actually serving this
+        // turn, not the one chosen at dispatch.
+        (current.clone(), serving.wire_model().to_string())
+    }
 }

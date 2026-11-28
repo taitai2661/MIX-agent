@@ -1,6 +1,28 @@
 use super::*;
 
 impl RunEngine {
+    /// This run's budget answer channel. Created on first use so unrelated
+    /// runs never wake each other; dropped in `release_run`.
+    pub(super) async fn budget_notify(&self, run_id: RunId) -> Arc<tokio::sync::Notify> {
+        self.budget_notifies
+            .lock()
+            .await
+            .entry(run_id)
+            .or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+            .clone()
+    }
+
+    pub(super) async fn notify_budget(&self, run_id: RunId) {
+        // Never create a channel here: `resolve_budget` can be called for a run
+        // that already finished, and `release_run` has removed its waiter. An
+        // orphaned entry would otherwise leak for the process lifetime. The DB
+        // decision row and `budget_decisions` remain the durable fallback.
+        let waiter = self.budget_notifies.lock().await.get(&run_id).cloned();
+        if let Some(notify) = waiter {
+            notify.notify_waiters();
+        }
+    }
+
     /// Ask the user for a budget extension. Returns `None` when the Run was
     /// cancelled while waiting, `Some(granted)` otherwise.
     pub(super) async fn await_budget_extension(
@@ -57,12 +79,19 @@ impl RunEngine {
         let deadline =
             std::time::Instant::now() + Duration::from_secs(budget.extension_timeout_secs);
         let cancellation = self.cancellation_of(run_id).await;
+        let notify = self.budget_notify(run_id).await;
         let granted = loop {
             // A cancelled Run must not sit here until the deadline and then be
             // written out as `completed`.
             if cancellation.is_cancelled() {
                 break false;
             }
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            // Arm the waiter *before* reading the decision: otherwise an
+            // answer arriving in between is lost (`notify_waiters` only wakes
+            // registered waiters) and the run stalls until the DB poll.
+            notified.as_mut().enable();
             if let Some(granted) = self.take_budget_decision(run_id).await {
                 break granted;
             }
@@ -74,7 +103,7 @@ impl RunEngine {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled_signal() => break false,
-                _ = self.budget_notify.notified() => continue,
+                _ = notified.as_mut() => continue,
                 _ = tokio::time::sleep(wait) => continue,
             }
         };
@@ -85,17 +114,36 @@ impl RunEngine {
         Some(granted)
     }
 
+    /// Persist the engine's authoritative budget after an extension.
+    ///
+    /// The UI expresses only grant/deny; the raised numbers come from
+    /// [`Budget::extend`] and are written here, so live and stored budgets
+    /// cannot diverge because a caller submitted different limits.
+    pub(super) async fn persist_budget(&self, run_id: RunId, budget: &Budget) {
+        let json = budget.to_json().to_string();
+        if let Err(err) =
+            sqlx::query("UPDATE runs SET data = json_set(data, '$.budget', json(?)) WHERE id = ?")
+                .bind(json)
+                .bind(run_id.to_string())
+                .execute(self.storage.pool())
+                .await
+        {
+            tracing::error!(%run_id, %err, "failed to persist the extended budget");
+        }
+    }
+
     /// Record the user's answer to a pending budget-extension request.
     ///
     /// Returns an error when the Run is not (or no longer) waiting for one, so
-    /// the UI never treats an ignored answer as accepted. `budget` carries the
-    /// raised limits a grant applies; they are persisted so a later resume sees
-    /// the same numbers.
+    /// the UI never treats an ignored answer as accepted. The `budget` argument
+    /// is accepted for API compatibility but deliberately ignored: the engine
+    /// persists its own [`Budget::to_json`] after `extend`, making it the single
+    /// source of truth for the raised limits.
     pub async fn resolve_budget(
         &self,
         run_id: RunId,
         granted: bool,
-        budget: Option<serde_json::Value>,
+        _budget: Option<serde_json::Value>,
     ) -> Result<(), String> {
         let mut sql = if granted {
             String::from(
@@ -108,23 +156,14 @@ impl RunEngine {
                  SET data = json_set(data, '$.budgetDecision', json('false')",
             )
         };
-        let mut binds: Vec<String> = Vec::new();
         if granted {
-            if let Some(budget) = &budget {
-                sql.push_str(", '$.budget', json(?)");
-                binds.push(budget.to_string());
-            }
             sql.push_str("), status = 'running'");
         } else {
             sql.push_str("), status = 'completed'");
         }
         sql.push_str(" WHERE id = ? AND status = 'budget_extension_pending'");
 
-        let mut query = sqlx::query(&sql);
-        for b in &binds {
-            query = query.bind(b);
-        }
-        let res = query
+        let res = sqlx::query(&sql)
             .bind(run_id.to_string())
             .execute(self.storage.pool())
             .await
@@ -135,9 +174,9 @@ impl RunEngine {
             ));
         }
         self.budget_decisions.lock().await.insert(run_id, granted);
-        // Wake the `await_budget_extension` loop immediately; the DB row it
-        // also wrote stays as the audit/fallback copy.
-        self.budget_notify.notify_waiters();
+        // Wake only this run's waiter immediately; the DB row it also wrote
+        // stays as the audit/fallback copy.
+        self.notify_budget(run_id).await;
         Ok(())
     }
 

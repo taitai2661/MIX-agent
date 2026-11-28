@@ -25,6 +25,7 @@ const approval: PendingApprovalView = {
   arguments: { command: "npm test" },
   created_at: new Date().toISOString(),
   expires_at: new Date(Date.now() + 60_000).toISOString(),
+  risk: null,
   conversation_id: "conv-1",
   conversation_title: "テストを実行",
   conversation_mode: "agent",

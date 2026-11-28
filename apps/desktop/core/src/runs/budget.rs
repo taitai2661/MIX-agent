@@ -21,6 +21,16 @@ pub struct Budget {
     pub tokens_used: u32,
     pub grants_used: u32,
     pub max_grants: u32,
+    /// Separated child-run aggregation: totals reported by delegated sub-runs
+    /// (see `record_child`). These never gate `check` — a child's spend does
+    /// not consume the parent's step / tool-call / token allowance, it is only
+    /// summed here so the transcript can account for the whole workflow.
+    #[serde(default)]
+    pub child_steps_total: u32,
+    #[serde(default)]
+    pub child_tool_calls_total: u32,
+    #[serde(default)]
+    pub child_tokens_total: u32,
     #[serde(skip)]
     pub started_at: std::time::Instant,
     #[serde(skip)]
@@ -45,6 +55,14 @@ impl<'de> Deserialize<'de> for Budget {
             tokens_used: u32,
             grants_used: u32,
             max_grants: u32,
+            // Rows written before child-run aggregation existed omit these;
+            // defaulting keeps them loadable and starts the sums at zero.
+            #[serde(default)]
+            child_steps_total: u32,
+            #[serde(default)]
+            child_tool_calls_total: u32,
+            #[serde(default)]
+            child_tokens_total: u32,
         }
         let raw = Raw::deserialize(deserializer)?;
         Ok(Self {
@@ -55,9 +73,33 @@ impl<'de> Deserialize<'de> for Budget {
             tokens_used: raw.tokens_used,
             grants_used: raw.grants_used,
             max_grants: raw.max_grants,
+            child_steps_total: raw.child_steps_total,
+            child_tool_calls_total: raw.child_tool_calls_total,
+            child_tokens_total: raw.child_tokens_total,
             started_at: std::time::Instant::now(),
             extension_timeout_secs: 300,
         })
+    }
+}
+
+/// Read a stored budget number without ever wrapping it.
+///
+/// `as u32` silently truncates: `2^32` became `0`, which for `tokenLimit` means
+/// "unlimited" — a corrupt or hand-edited row could remove the spending gate
+/// entirely. An out-of-range value must therefore *not* become `u32::MAX`
+/// either: for a token ceiling that is effectively unlimited too (`check` only
+/// fires at `tokens_used >= token_limit`, which nobody reaches at ~4 billion),
+/// and `token_pressure` would report ~0 so step routing would never downgrade.
+/// The safe answer is the caller-supplied `fallback` — the mode's ceiling for a
+/// limit, `0` for a usage counter — which keeps the gate intact.
+fn stored_u32(value: &serde_json::Value, key: &str, fallback: u32) -> u32 {
+    match value.get(key).and_then(|v| v.as_u64()) {
+        Some(v) => u32::try_from(v).unwrap_or_else(|_| {
+            tracing::warn!(%v, field = key, %fallback,
+                "stored budget value exceeds u32; falling back to the safe value");
+            fallback
+        }),
+        None => fallback,
     }
 }
 
@@ -77,6 +119,9 @@ impl Default for Budget {
             tokens_used: 0,
             grants_used: 0,
             max_grants: 2,
+            child_steps_total: 0,
+            child_tool_calls_total: 0,
+            child_tokens_total: 0,
             started_at: std::time::Instant::now(),
             extension_timeout_secs: 300,
         }
@@ -103,29 +148,21 @@ impl Budget {
     /// clicking "grant" on an agent run replaced its 300-step budget with the
     /// 12-step default — the user asked for more room and got less.
     pub fn from_json_with_base(value: &serde_json::Value, base: Self) -> Self {
-        let pick = |key: &str, fallback: u32| {
-            value
-                .get(key)
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(fallback)
-        };
         Self {
-            step_limit: pick("stepLimit", base.step_limit),
-            tool_call_limit: pick("toolCallLimit", base.tool_call_limit),
-            wall_clock_minutes: pick("wallClockMinutes", base.wall_clock_minutes),
+            step_limit: stored_u32(value, "stepLimit", base.step_limit),
+            tool_call_limit: stored_u32(value, "toolCallLimit", base.tool_call_limit),
+            wall_clock_minutes: stored_u32(value, "wallClockMinutes", base.wall_clock_minutes),
             // `null` (the UI's "not edited") keeps the mode's ceiling; a stored
             // `0` is a deliberate "unlimited" and is preserved.
-            token_limit: pick("tokenLimit", base.token_limit),
-            tokens_used: value
-                .get("tokensUsed")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            grants_used: value
-                .get("grantsUsed")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            max_grants: pick("maxGrants", base.max_grants),
+            token_limit: stored_u32(value, "tokenLimit", base.token_limit),
+            tokens_used: stored_u32(value, "tokensUsed", 0),
+            grants_used: stored_u32(value, "grantsUsed", 0),
+            max_grants: stored_u32(value, "maxGrants", base.max_grants),
+            // Child aggregation is report-only: a stored parent keeps its own
+            // sums, a fresh base starts them at zero.
+            child_steps_total: stored_u32(value, "childStepsTotal", 0),
+            child_tool_calls_total: stored_u32(value, "childToolCallsTotal", 0),
+            child_tokens_total: stored_u32(value, "childTokensTotal", 0),
             // The wall clock restarts when a run is resumed or reloaded;
             // carrying the old elapsed time would immediately re-exhaust it.
             started_at: std::time::Instant::now(),
@@ -146,7 +183,31 @@ impl Budget {
             "tokensUsed": self.tokens_used,
             "grantsUsed": self.grants_used,
             "maxGrants": self.max_grants,
+            "childStepsTotal": self.child_steps_total,
+            "childToolCallsTotal": self.child_tool_calls_total,
+            "childTokensTotal": self.child_tokens_total,
         })
+    }
+
+    /// Budget for a delegated child run: fully separate from the parent's.
+    ///
+    /// A sub-agent inherits the mode shape (small, bounded) but never the
+    /// parent's remaining allowance — sharing limits would let one fan-out of
+    /// eight exhaust the run it belongs to. The parent aggregates what the
+    /// children spent via [`Budget::record_child`]; it never deducts it.
+    pub fn for_child() -> Self {
+        Self::for_mode(Mode::Thinking)
+    }
+
+    /// Fold one finished child run into the separated counters.
+    ///
+    /// Deliberately deaf to the parent's own limits: `check` ignores these
+    /// fields, so a large fan-out is visible in the transcript without
+    /// tripping the parent's `step_limit` / `token_limit`.
+    pub fn record_child(&mut self, steps: u32, tool_calls: u32, tokens: u32) {
+        self.child_steps_total = self.child_steps_total.saturating_add(steps);
+        self.child_tool_calls_total = self.child_tool_calls_total.saturating_add(tool_calls);
+        self.child_tokens_total = self.child_tokens_total.saturating_add(tokens);
     }
 
     /// Record what a turn cost, so the token ceiling reflects the whole Run.
@@ -155,6 +216,22 @@ impl Budget {
         self.tokens_used = self
             .tokens_used
             .saturating_add(spent.min(u32::MAX as u64) as u32);
+    }
+
+    /// Fraction of the token ceiling spent, in `[0, 1]`.
+    ///
+    /// Feeds cost-aware step routing ([`crate::routing::budget_pressure`]):
+    /// routing downgrades model tiers as this approaches 1, *before* `check`
+    /// fires the hard stop. An unlimited ceiling (`0`) reports `0.0` — there
+    /// is no gate approaching, so there is nothing to steer away from.
+    pub fn token_pressure(&self) -> f32 {
+        if self.token_limit == 0 {
+            return 0.0;
+        }
+        // Both operands can be near u32::MAX; f32 has only 24 mantissa bits and
+        // would lose precision on the division. Compute in f64 and clamp last.
+        let ratio = self.tokens_used as f64 / self.token_limit as f64;
+        (ratio as f32).clamp(0.0, 1.0)
     }
 
     pub async fn check(&mut self, steps: u32, tool_calls: u32) -> BudgetVerdict {
@@ -308,6 +385,36 @@ mod tests {
     }
 
     #[test]
+    fn out_of_range_stored_values_fall_back_to_base_not_truncated() {
+        let base = Budget::for_mode(Mode::Agent);
+        let stored = serde_json::json!({
+            "stepLimit": 4_294_967_296u64, // 2^32 -> 0 when cast to u32
+            "tokenLimit": 18_446_744_073_709_551_615u64,
+            "tokensUsed": 4_294_967_297u64,
+        });
+        let restored = Budget::from_json_with_base(&stored, base.clone());
+        // `u32::MAX` would be just as much of an "unlimited" gate as the `0`
+        // the old truncation produced. The mode's own ceiling is the safe value.
+        assert_eq!(restored.step_limit, base.step_limit);
+        assert_eq!(restored.token_limit, base.token_limit);
+        assert!(restored.token_limit > 0, "the spending gate must survive");
+        assert_eq!(restored.tokens_used, 0);
+    }
+
+    #[test]
+    fn a_fallen_back_token_ceiling_still_drives_routing_pressure() {
+        let base = Budget::for_mode(Mode::Agent);
+        let stored = serde_json::json!({ "tokenLimit": 18_446_744_073_709_551_615u64 });
+        let mut restored = Budget::from_json_with_base(&stored, base.clone());
+        assert_eq!(restored.token_limit, base.token_limit);
+        restored.record_usage(base.token_limit as u64 / 2, 0);
+        assert!(
+            (restored.token_pressure() - 0.5).abs() < 1e-6,
+            "routing must still see the restored ceiling approaching"
+        );
+    }
+
+    #[test]
     fn explicit_overrides_win() {
         let agent = Budget::for_mode(Mode::Agent);
         let stored = serde_json::json!({ "stepLimit": 42, "wallClockMinutes": 5 });
@@ -328,5 +435,76 @@ mod tests {
         assert_eq!(restored.step_limit, b.step_limit);
         assert_eq!(restored.grants_used, b.grants_used);
         assert_eq!(restored.max_grants, b.max_grants);
+    }
+
+    #[tokio::test]
+    async fn child_spend_is_aggregated_without_consuming_the_parent() {
+        let mut parent = Budget::default();
+        parent.record_child(6, 9, 1_500);
+        parent.record_child(4, 3, 500);
+        assert_eq!(parent.child_steps_total, 10);
+        assert_eq!(parent.child_tool_calls_total, 12);
+        assert_eq!(parent.child_tokens_total, 2_000);
+        // The parent's own allowance is untouched: eight parallel children
+        // must not trip the run they belong to.
+        assert_eq!(parent.tokens_used, 0);
+        assert_eq!(parent.check(0, 0).await, BudgetVerdict::Ok);
+        // ...while the parent's own spend still gates exactly as before.
+        parent.record_usage(10, 5);
+        assert_eq!(parent.tokens_used, 15);
+        let restored = Budget::from_json_with_base(&parent.to_json(), Budget::default());
+        assert_eq!(restored.child_steps_total, 10);
+        assert_eq!(restored.child_tokens_total, 2_000);
+    }
+
+    #[test]
+    fn a_stored_document_without_child_counters_still_loads() {
+        let stored = serde_json::json!({
+            "stepLimit": 12,
+            "toolCallLimit": 12,
+            "wallClockMinutes": 20,
+            "grantsUsed": 0,
+            "maxGrants": 2,
+        });
+        let restored = Budget::from_json_with_base(&stored, Budget::default());
+        assert_eq!(restored.child_steps_total, 0);
+        assert_eq!(restored.child_tokens_total, 0);
+    }
+
+    #[test]
+    fn token_pressure_tracks_the_ceiling() {
+        let mut b = Budget::for_mode(Mode::Agent);
+        assert!(b.token_limit > 0);
+        assert_eq!(b.token_pressure(), 0.0);
+        b.record_usage(b.token_limit as u64 / 2, 0);
+        assert!((b.token_pressure() - 0.5).abs() < 1e-6);
+        b.record_usage(u64::MAX, u64::MAX);
+        assert_eq!(b.token_pressure(), 1.0, "overspend clamps, never exceeds 1");
+    }
+
+    #[test]
+    fn token_pressure_is_precise_for_large_ceilings() {
+        let b = Budget {
+            token_limit: u32::MAX,
+            tokens_used: u32::MAX / 4,
+            ..Default::default()
+        };
+        let pressure = b.token_pressure();
+        assert!(
+            (pressure - 0.25).abs() < 1e-5,
+            "f32 mantissa loss must not distort large ratios: {pressure}"
+        );
+    }
+
+    #[test]
+    fn an_unlimited_ceiling_has_no_pressure() {
+        let mut b = Budget::default();
+        assert_eq!(b.token_limit, 0);
+        b.record_usage(u64::MAX, u64::MAX);
+        assert_eq!(
+            b.token_pressure(),
+            0.0,
+            "no ceiling means no approaching gate to steer away from"
+        );
     }
 }

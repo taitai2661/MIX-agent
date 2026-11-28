@@ -40,7 +40,7 @@ Choose the edition that best fits your environment and workflow:
 | **Setup Effort** | ⭐⭐⭐ **Effortless** (No Docker required)<br>Download installer from Releases and launch | ⭐⭐ **Standard** (Requires Docker Engine & Compose)<br>`git clone` and `docker compose up -d` |
 | **User Interface** | OS Native Window, Diff Inspector, System Tray | Web Browser (Responsive UI) |
 | **Tech Stack** | Tauri 2 + Rust + React 19 | FastAPI (Python) + PostgreSQL + React 19 |
-| **Process Architecture** | Single binary + tokio in-proc (browser is a Tauri child WebView) | Docker Compose (app, web, db, runner, proxy containers) |
+| **Process Architecture** | Single binary + tokio in-proc (browser is a Tauri child WebView) | Docker Compose (app, db, runner, proxy containers; the SPA is served by `app`) |
 | **Storage & Secrets** | Local SQLite (WAL/FTS5) + AES-GCM encrypted file (`.master_seed` on macOS, Credential Manager on Windows) | PostgreSQL + AES-GCM Encryption (Docker volumes) |
 | **Terminal & Files** | Direct host file editing, **persistent PTY shell** | Operations isolated inside mounted `/project` or runner |
 | **Browser Operator** | Shared native child WebView inside the app | Playwright inside dedicated `execution-runner` |
@@ -145,7 +145,7 @@ Both editions share a unified agent engine with enterprise-grade capabilities:
 - **Thinking**: Harnesses reasoning models to deliberate before taking tool actions.
 - **Agent**: Autonomous loop designed for deep, multi-step tasks. Includes periodic checkpoints, stagnation detection with self-correction, rigorous verification gates, and dynamic budget extensions.
 
-### 2. 52 Provider Presets & Capability Probing
+### 2. 53 Provider Presets & Capability Probing
 - Built-in presets for OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral, DeepSeek, Cohere, Ollama, LM Studio, and more.
 - **Capability Probe**: Automatically checks model tool-calling readiness using zero-side-effect probes before runs.
 - **Local runtime management (Desktop)**: detects Ollama / LM Studio, then starts, stops, restarts, pulls, deletes, loads and unloads from the app. Ollama uses its native API for `num_ctx` (8K ceiling by default) and `keep_alive`.
@@ -174,10 +174,10 @@ Security and isolation models differ by edition:
 - **OS Permissions**: Runs natively with the permissions of your logged-in desktop user.
 - **Secrets Management**: API keys and tokens are encrypted at rest with AES-256-GCM. The master seed lives in the Windows Credential Manager, or in an owner-only 0600 `.master_seed` file on macOS / Linux. macOS uses the file by default because ad-hoc signed builds cannot keep a stable Keychain ACL and would prompt on every launch; set `MIX_SECRET_BACKEND=keychain-seed` to opt back into the Keychain layout.
 - **Interactive Gates**: High-impact actions (file writes, shell commands, browser automation) trigger interactive approval prompts (`Ask`) by default, scoped to specific paths or commands.
-- **Optional Terminal Sandbox**: On macOS, the opt-in terminal sandbox runs shells under `sandbox-exec` with writes confined to the workspace and temp directories (Linux and Windows are not supported yet).
+- **Optional Terminal Sandbox**: The opt-in `sandbox_terminal` setting isolates launched shells with OS facilities: macOS uses `sandbox-exec`, Linux uses `bubblewrap` (or `firejail` when unavailable) with a read-only root and writes confined to the workspace and build cache, and Windows uses a Job Object for process-tree isolation only (no filesystem write isolation).
 
 ### Docker Edition Security Model
-- **Container Isolation**: Execution runners run non-root with read-only root filesystems, dropped capabilities, and memory limits. Neither the host root nor the Docker socket are mounted.
+- **Container Isolation**: Execution runners run non-root with read-only root filesystems, dropped capabilities, and memory limits. The host is not mounted, and the Docker socket is reachable only through the isolated `docker-socket-proxy` by the MCP manager container.
 - **Network Egress Proxy**: Runners connect exclusively through an egress proxy. Its `mode` is `public_web` (default: any public host), `restricted` (exact allowlist matches only) or `none` (deny all); private IP ranges are blocked in every mode.
 - **Network Binding**: Listens on `localhost:8080` by default. Use `MIX_BIND` and `PUBLIC_ORIGIN` behind HTTPS reverse proxies for LAN/VPN setups.
 
@@ -219,7 +219,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 | [Architecture Overview](docs/architecture.md) | High-level monorepo architecture and design philosophy |
 | [Desktop Architecture](docs/desktop/architecture.md) | Desktop edition (Rust + Tauri 2) internals, security, and updates |
 | [Operations Guide](docs/operations.md) | Docker edition administration, backups, and restores |
-| [Verification Matrix](docs/verification.md) | Real-world provider and platform verification status |
 | [ZimaOS Guide](docs/zimaos.md) | Deployment via ZimaOS / CasaOS Community Store |
 | [Contributing Guide](CONTRIBUTING.md) | Contribution workflows and guidelines |
 

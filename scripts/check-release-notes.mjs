@@ -2,11 +2,6 @@
 /**
  * Refuse to publish a release whose notes are missing or explicitly a draft.
  *
- * `docs/README.md` records that `release-notes-v0.4.0.md` is an unpublished
- * draft, but nothing stopped a `v0.4.0` tag from publishing it. The desktop
- * workflow also used to fall back to a "notes coming soon" body, which made a
- * missing file look like a successful release.
- *
  * Usage:
  *   node scripts/check-release-notes.mjs --tag v0.5.4
  *   node scripts/check-release-notes.mjs --tag desktop-v0.5.4
@@ -35,15 +30,19 @@ if (!existsSync(file)) {
 }
 
 const text = readFileSync(file, "utf8");
+// Only the explicit draft phrases in the header are a release blocker. A bare
+// 未公開 appears in ordinary release notes (e.g. 「未公開メトリクス」 or 「非公開
+// バックエンド」), so matching it anywhere rejected perfectly publishable notes.
+// See docs/release-notes-*.md: a file marked as an unpublished draft blocks release.
 const draftMarkers = [
-  /archived draft/i,
-  /was not published/i,
-  /unpublished draft/i,
+  /\barchived draft\b/i,
+  /\bwas not published\b/i,
+  /\bunpublished draft\b/i,
   /未公開のドラフト/,
-  /未公開/,
 ];
+const headerLines = text.split(/\r?\n/).slice(0, 12);
 for (const marker of draftMarkers) {
-  if (marker.test(text)) {
+  if (headerLines.some((line) => marker.test(line))) {
     console.error(
       `::error::docs/release-notes-v${version}.md is marked as an unpublished draft (${marker}); ` +
         "publish real notes or choose the next version.",

@@ -10,6 +10,10 @@ from mix_agent.tools.network import request_public
 
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSION = "2025-11-25"
+# A stateless MCP exchange must be bounded tightly: the old 115s timeout let a
+# stalled remote hold a runner worker (and every queued call behind it) for two
+# minutes, and matched the legacy session path for no protocol reason.
+MCP_HTTP_TIMEOUT = 30
 _IDS = itertools.count(1)
 
 
@@ -44,7 +48,7 @@ def _headers(method: str, tool: str = "", headers: dict | None = None) -> dict:
 def _request(method: str, params: dict | None = None) -> dict:
     params = dict(params or {})
     meta = dict(params.get("_meta") or {})
-    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.5.7"}
+    meta["io.modelcontextprotocol/clientInfo"] = {"name": "MIX agent", "version": "0.5.8"}
     meta["io.modelcontextprotocol/protocolVersion"] = MODERN_VERSION
     params["_meta"] = meta
     return {"jsonrpc": "2.0", "id": next(_IDS), "method": method, "params": params}
@@ -57,7 +61,11 @@ async def modern_call(
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Remote MCP requires a public HTTPS URL")
     status, response_headers, body = await request_public(
-        "POST", url, headers=_headers(method, tool, headers), json=_request(method, params), timeout=115
+        "POST",
+        url,
+        headers=_headers(method, tool, headers),
+        json=_request(method, params),
+        timeout=MCP_HTTP_TIMEOUT,
     )
     if status < 200 or status >= 300:
         raise ValueError("MCP operation failed")

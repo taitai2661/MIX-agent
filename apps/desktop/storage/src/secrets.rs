@@ -933,6 +933,11 @@ impl SecretStore {
     }
 
     /// Ensure the master DB encryption key exists in the secret store.
+    ///
+    /// NOTE: this key is staged for a future SQLCipher integration only. The
+    /// SQLite connection is currently opened without a passphrase, so staging
+    /// it does NOT encrypt the database at rest. Do not report the DB as
+    /// encrypted on the strength of this key alone.
     pub async fn ensure_db_key(&self) -> anyhow::Result<[u8; 32]> {
         if let Ok(plain) = self.get(DB_KEY_PURPOSE, "master").await {
             if plain.len() == 32 {

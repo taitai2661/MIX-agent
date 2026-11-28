@@ -1,6 +1,6 @@
 """Build the ZimaOS store Compose from the regular deployment Compose.
 
-Run with: python scripts/render_zimaos_compose.py v0.5.6
+Run with: python scripts/render_zimaos_compose.py v0.5.8
 PyYAML is required for this maintainer-only script.
 """
 
@@ -42,6 +42,21 @@ ALLOWED_BIND_MOUNTS = ("/var/run/docker.sock",)
 # A tag without an entry is an error on purpose: a wrong one-liner published
 # to the store is worse than a failed generation.
 RELEASE_META = {
+    "v0.5.8": {
+        "update_at": "2026-11-28",
+        "notes": {
+            "en_US": (
+                "Feature release: headless CLI and safe mode, native WebView browser, "
+                "terminal sandbox and two-step approvals, new coding tools and UI "
+                "panels, 53 provider presets, and Docker/Web hardening."
+            ),
+            "ja_JP": (
+                "機能リリース。ヘッドレスCLIとセーフモード、OS標準WebViewブラウザ、"
+                "ターミナルサンドボックスと二段階承認、新ツール・UIパネル、"
+                "53種類のProvider対応、Docker/Webの強化など。"
+            ),
+        },
+    },
     "v0.5.7": {
         "update_at": "2026-11-08",
         "notes": {
@@ -177,21 +192,35 @@ def render(tag: str) -> str:
     source.pop("x-restricted", None)
     source.pop("secrets", None)
     for name in list(source["services"]):
-        # `db` and the Docker socket proxy are infrastructure services, not
-        # release images: keep them verbatim (the proxy image is pinned by
-        # digest in compose.yaml and must not be rewritten to a GHCR tag).
-        if name in ("db", "docker-socket-proxy"):
+        # `db`, `db-backup` and the Docker socket proxy are infrastructure
+        # services, not release images: keep them verbatim (the postgres and
+        # proxy images are pinned by digest in compose.yaml and must not be
+        # rewritten to a GHCR tag).
+        #
+        # `db-backup` used to be dropped here, which left `migrate`'s
+        # `depends_on: {db-backup: ...}` pointing at a service that no longer
+        # existed: the generated store Compose failed `docker compose config`
+        # with "service migrate depends on undefined service db-backup", so
+        # the published store artifact could not be installed at all.
+        if name in ("db", "db-backup", "docker-socket-proxy"):
             continue
         if name not in TARGETS:
             del source["services"][name]
             continue
         service = source["services"][name]
         service.pop("build", None)
+        # A store install pulls published images; a leftover `pull_policy:
+        # build` from compose.yaml would make Docker try to build from a
+        # context the store archive does not contain.
+        service.pop("pull_policy", None)
         service["image"] = f"{PACKAGE}-{TARGETS[name]}:{tag}"
         # Named volumes only; see _is_bind_mount.
         service["volumes"] = [volume for volume in service.get("volumes", []) if not _is_bind_mount(volume)]
-    # The ZimaOS dashboard is reached by private LAN IP. OAuth and push users
-    # must set PUBLIC_ORIGIN to their actual HTTPS origin after installation.
+    # The ZimaOS dashboard reaches the app by the NAS's private LAN IP, so a
+    # loopback bind would make the installed app unreachable. Keep the LAN bind
+    # but never expose it to the internet: the x-casaos description/tips below
+    # state the trusted-LAN-only requirement. OAuth and push users must set
+    # PUBLIC_ORIGIN to their actual HTTPS origin after installation.
     source["services"]["app"]["ports"] = ["8080:8080"]
     source["services"]["mcp-manager"]["environment"]["MCP_RUNTIME_IMAGE"] = f"{PACKAGE}-mcp-runtime:{tag}"
     # MCP manager connects this exact container to per-server Docker networks.

@@ -467,13 +467,25 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
             user_message: task.to_string(),
             resume_from: None,
             auto_fallbacks: Vec::new(),
+            step_models: Vec::new(),
+            monthly_pressure: 0.0,
         };
         let outcome = engine.execute(request).await?;
+        // The child ran under its own separate budget (`Mode::Thinking`, never
+        // the parent's remaining allowance). Its spend is reported alongside
+        // the conclusion so the parent can aggregate it; nothing is deducted
+        // from the parent's own budget here.
+        let totals = &outcome.totals;
         Ok(mixd_tools::agent::DelegateResult {
             agent: profile.name.clone(),
             steps: outcome.steps,
             tool_calls: outcome.tool_calls.iter().map(|c| c.name.clone()).collect(),
             text: outcome.text,
+            usage: Some(mixd_tools::agent::ChildUsage {
+                input_tokens: totals.input_tokens,
+                output_tokens: totals.output_tokens,
+                total_tokens: totals.total_tokens(),
+            }),
             error: match outcome.status {
                 RunStatus::Completed | RunStatus::Cancelled => None,
                 other => Some(format!("sub-agent ended as {}", other.as_str())),
@@ -520,8 +532,18 @@ impl mixd_tools::agent::AgentRunner for EngineAgentRunner {
         // The worktree was temporary: `cleanup_delegate_worktree` has already
         // removed it, so returning its path would point at a directory that no
         // longer exists. The diff and changed-file list are the durable result.
+        //
+        // Confirmation flow for the parent's merge decision: report whether
+        // the diff still applies cleanly on the parent workspace. Read-only
+        // (`git apply --check`) — nothing is merged here either way.
+        let mergeable = match &diff {
+            Some(patch) => Some(check_patch_applies(root, patch).await),
+            None => None,
+        };
         result.diff = diff;
         result.changed_files = changed_files;
+        result.mergeable = mergeable;
+        result.merge_base = Some(base);
         Ok(result)
     }
 }

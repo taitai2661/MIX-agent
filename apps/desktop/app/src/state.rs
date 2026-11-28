@@ -69,7 +69,7 @@ pub(crate) async fn refresh_registry(state: &AppState) {
         .unwrap_or_default();
     let mut tools = build_registry(
         &state.storage,
-        &state.browser,
+        Some(&state.browser),
         &state.mcp,
         &state.agent_runner,
         &state.embeddings,
@@ -101,7 +101,7 @@ pub(crate) async fn refresh_registry(state: &AppState) {
 /// registries have to recall Memory through one shared, cacheable source.
 pub(crate) fn build_registry(
     storage: &Arc<Storage>,
-    browser: &Arc<webview_browser::WebviewBrowserHost>,
+    browser: Option<&Arc<webview_browser::WebviewBrowserHost>>,
     mcp: &Arc<McpHost>,
     agent_runner: &Arc<EngineAgentRunner>,
     embeddings: &Arc<embedding::EmbeddingResolver>,
@@ -136,9 +136,12 @@ pub(crate) fn build_registry(
         .with_knowledge(Arc::new(CoreKnowledgeDispatch {
             storage: storage.clone(),
         }));
-    // The native child WebView is always available; there is no install step
-    // or executable to resolve anymore.
-    registry = registry.with_browser(browser.clone());
+    // The native child WebView is always available in the GUI. The headless
+    // CLI has no window, so it omits the browser Tool rather than advertising
+    // one that can never answer.
+    if let Some(browser) = browser {
+        registry = registry.with_browser(browser.clone());
+    }
     registry
 }
 
@@ -149,6 +152,19 @@ pub async fn build_app_state(
     app_data: &std::path::Path,
 ) -> anyhow::Result<AppState> {
     let build_started = std::time::Instant::now();
+    // The worktree creator (`prepare_delegate_worktree`) derives its base from
+    // `cli::data_dir()`. Refuse to start if the supplied app-data path is a
+    // different directory, otherwise the pruner below would watch an empty
+    // folder while every delegation leaks a checkout into the real one.
+    let canonical_data_dir = crate::cli::data_dir();
+    if app_data != canonical_data_dir {
+        anyhow::bail!(
+            "app data directory mismatch: build_app_state was given {} but the canonical \
+             data directory is {}; refusing to start with split worktree stores",
+            app_data.display(),
+            canonical_data_dir.display()
+        );
+    }
     // Old delegate checkouts are removed here rather than on every `agent`
     // call, so a crash does not leak a full copy of the workspace per fan-out.
     // It walks a directory tree, so it runs beside the window rather than in
@@ -216,17 +232,21 @@ pub async fn build_app_state(
     // window waits briefly on `mcp_ready` (see `dispatch`).
     let mcp = Arc::new(McpHost::new());
     let mcp_started = std::time::Instant::now();
-    match mixd_mcp::load_configs(storage.as_ref(), Some(secrets.as_ref())).await {
-        Ok(configs) => {
-            for config in configs {
-                mcp.add(config).await;
+    if crate::safe_mode() {
+        tracing::warn!("safe mode: MCP configurations are not loaded");
+    } else {
+        match mixd_mcp::load_configs(storage.as_ref(), Some(secrets.as_ref())).await {
+            Ok(configs) => {
+                for config in configs {
+                    mcp.add(config).await;
+                }
             }
-        }
-        Err(err) => {
-            tracing::warn!(
-                ?err,
-                "MCP configuration load failed; continuing without MCP tools"
-            );
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "MCP configuration load failed; continuing without MCP tools"
+                );
+            }
         }
     }
     tracing::info!(
@@ -248,7 +268,14 @@ pub async fn build_app_state(
     ));
     let tools = build_registry(
         &storage,
-        &browser,
+        // Safe mode also removes the browser Tool: a WebView that cannot be
+        // driven is safer than one the agent can drive while the user is
+        // diagnosing a problem.
+        if crate::safe_mode() {
+            None
+        } else {
+            Some(&browser)
+        },
         &mcp,
         &agent_runner,
         &embeddings,
@@ -333,8 +360,19 @@ pub async fn build_app_state(
     // installation cleans itself up.
     prune_orphan_models(storage.as_ref()).await;
     // Runs left in flight by a crash or force-quit can never advance: the
-    // cancellation and approval-waiter handles live in memory only.
-    reconcile_stale_runs(storage.as_ref()).await;
+    // cancellation and approval-waiter handles live in memory only. But a live
+    // `serve` process sharing this data dir has its own in-memory engine and
+    // owns any active Runs; blanket reconciliation here used to interrupt them
+    // while the phone was approving them. `serve.lock` is the Process
+    // generation marker that lets us tell the two cases apart.
+    if crate::serve::serve_instance_active(app_data) {
+        tracing::info!(
+            target: "startup",
+            "skipping stale-run reconciliation: a live serve instance owns this data dir"
+        );
+    } else {
+        reconcile_stale_runs(storage.as_ref()).await;
+    }
     // Phase 1 backfill: rows written before embeddings existed, or by a
     // different model, get a vector once per launch. Off the startup path and
     // strictly best effort — with no embeddable provider this task returns
@@ -454,6 +492,14 @@ pub(crate) async fn load_egress_policy(storage: &Storage) -> mixd_tools::EgressP
 /// counts it as a phantom active Run, and an orphaned approval can never be
 /// answered because the waiter that would wake it is gone. Mark them
 /// interrupted once at startup and expire their pending prompts.
+///
+/// Limitation: this is a whole-database sweep keyed off status, not a
+/// per-process generation tag. It is only safe when no other process is
+/// driving Runs — `build_app_state` checks `serve.lock` and skips the sweep
+/// while a `serve` instance is alive. Two ordinary GUI processes pointed at the
+/// same data dir are still outside that guarantee (Tauri's single-instance
+/// plugin handles the common case); a full generation tag on every Run would
+/// require a schema change in `mixd-storage`.
 pub(crate) async fn reconcile_stale_runs(storage: &Storage) {
     let now = chrono::Utc::now().to_rfc3339();
     let runs = sqlx::query(

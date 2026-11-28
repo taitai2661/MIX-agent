@@ -49,15 +49,9 @@ impl RunEngine {
         let mut needed: Vec<std::path::PathBuf> = Vec::new();
         {
             let mut guard = self.snapshots.lock().await;
-            // Keep the undo history for the most recent Runs only; an
-            // unbounded map would pin every edited file for the process
-            // lifetime.
-            if guard.len() > MAX_SNAPSHOT_RUNS && !guard.contains_key(&run_id) {
-                if let Some(oldest) = guard.keys().next().copied() {
-                    guard.remove(&oldest);
-                }
-            }
-            let entry = guard.entry(run_id).or_default();
+            // The ledger evicts in least-recently-used order and ages out old
+            // runs, so the run being edited is never the one thrown away.
+            let entry = guard.entry(run_id);
             if entry.len() >= MAX_SNAPSHOT_FILES {
                 return;
             }
@@ -81,12 +75,7 @@ impl RunEngine {
         if captured.is_empty() {
             return;
         }
-        self.snapshots
-            .lock()
-            .await
-            .entry(run_id)
-            .or_default()
-            .extend(captured);
+        self.snapshots.lock().await.entry(run_id).extend(captured);
     }
 
     /// Why a write should be refused because the file changed under the model.
@@ -156,15 +145,16 @@ impl RunEngine {
     /// which files a shell command writes is not knowable without sandboxing
     /// the write, so only `edit` / `files` mutations are snapshotted.
     pub async fn revert_run(&self, run_id: RunId) -> anyhow::Result<usize> {
-        let snapshots = self
-            .snapshots
-            .lock()
-            .await
-            .remove(&run_id)
-            .unwrap_or_default();
+        // Keep the originals until every file is back. The old code removed
+        // the entry up front, so a single failed restore destroyed the undo
+        // history for the files that had *not* been restored yet.
+        let snapshots = {
+            let guard = self.snapshots.lock().await;
+            guard.get(run_id).unwrap_or_default()
+        };
         let mut restored = 0usize;
-        for snapshot in snapshots.into_iter().rev() {
-            match snapshot.previous {
+        for snapshot in snapshots.iter().rev() {
+            match &snapshot.previous {
                 Some(bytes) => {
                     if let Some(parent) = snapshot.path.parent() {
                         let _ = tokio::fs::create_dir_all(parent).await;
@@ -179,6 +169,7 @@ impl RunEngine {
             }
             restored += 1;
         }
+        self.snapshots.lock().await.remove(run_id);
         Ok(restored)
     }
 
@@ -196,13 +187,74 @@ impl RunEngine {
         if !active {
             return false;
         }
+        let seq = self
+            .steering_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.steering
             .lock()
             .await
             .entry(run_id)
             .or_default()
-            .push(text);
+            .push(SteeredMessage { seq, text });
+        // Wake a blocked `ask_user` instead of letting it poll for this answer.
+        if let Some(notify) = self.steering_notifies.lock().await.get(&run_id) {
+            notify.notify_waiters();
+        }
         true
+    }
+
+    /// Snapshot the messages waiting for the next turn boundary.
+    ///
+    /// The queue is drained between turns, so callers must treat an empty
+    /// result as "nothing pending right now", not "nothing was ever sent".
+    pub async fn steering_queue(&self, run_id: RunId) -> Vec<SteeredMessage> {
+        self.steering
+            .lock()
+            .await
+            .get(&run_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Rewrite one queued message. Returns false when the Run already consumed
+    /// it (or it never existed), so the UI can refresh instead of showing a
+    /// stale editor.
+    pub async fn update_steering(&self, run_id: RunId, seq: u64, content: String) -> bool {
+        let text = content.trim().to_string();
+        if text.is_empty() {
+            return false;
+        }
+        let mut guard = self.steering.lock().await;
+        let Some(entries) = guard.get_mut(&run_id) else {
+            return false;
+        };
+        let Some(entry) = entries.iter_mut().find(|entry| entry.seq == seq) else {
+            return false;
+        };
+        entry.text = text;
+        true
+    }
+
+    /// Drop one queued message before the next turn boundary.
+    pub async fn remove_steering(&self, run_id: RunId, seq: u64) -> bool {
+        let mut guard = self.steering.lock().await;
+        let Some(entries) = guard.get_mut(&run_id) else {
+            return false;
+        };
+        let before = entries.len();
+        entries.retain(|entry| entry.seq != seq);
+        entries.len() != before
+    }
+
+    /// This run's answer channel, created on first use by a blocked `ask_user`
+    /// and dropped with the run in `release_run`.
+    pub(super) async fn steering_notify(&self, run_id: RunId) -> Arc<tokio::sync::Notify> {
+        self.steering_notifies
+            .lock()
+            .await
+            .entry(run_id)
+            .or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+            .clone()
     }
 
     pub(super) async fn take_steering(&self, run_id: RunId) -> Vec<String> {
@@ -211,6 +263,42 @@ impl RunEngine {
             .await
             .remove(&run_id)
             .unwrap_or_default()
+            .into_iter()
+            .map(|entry| entry.text)
+            .collect()
+    }
+
+    /// Take only messages queued *after* `seq`, leaving earlier ones in the
+    /// queue. Used by `ask_user` so a message that predates the question is
+    /// preserved for the next turn instead of answering it.
+    pub(super) async fn take_steering_after(&self, run_id: RunId, seq: u64) -> Vec<SteeredMessage> {
+        let mut guard = self.steering.lock().await;
+        let Some(entries) = guard.get_mut(&run_id) else {
+            return Vec::new();
+        };
+        // `question_seq` was reserved with `fetch_add(1)`, so every message
+        // queued after the question opened has a strictly greater stamp. A
+        // message with `seq == question_seq` cannot exist, but keeping `>=`
+        // here makes the boundary explicit and robust to a caller that only
+        // reads the counter.
+        let (older, newer): (Vec<_>, Vec<_>) =
+            entries.drain(..).partition(|entry| entry.seq <= seq);
+        *entries = older;
+        newer
+    }
+
+    /// Put answers that arrived after the question but were not the answer
+    /// back into the queue for the next turn.
+    pub(super) async fn requeue_steering(&self, run_id: RunId, entries: Vec<SteeredMessage>) {
+        if entries.is_empty() {
+            return;
+        }
+        self.steering
+            .lock()
+            .await
+            .entry(run_id)
+            .or_default()
+            .extend(entries);
     }
 
     /// Enable or disable the OS sandbox for shells spawned after this call.
@@ -371,6 +459,31 @@ impl RunEngine {
         status: RunStatus,
         extra: serde_json::Value,
     ) {
+        let _ = self.set_run_state_inner(run_id, status, extra, None).await;
+    }
+
+    /// Conditional transition: only write `status` when the row is still in
+    /// `expected`. Returns whether the write happened. Used by `ask_user` so a
+    /// cancellation that arrived while the card was open cannot be overwritten
+    /// by the "question finished, resume running" update.
+    pub(super) async fn set_run_state_if(
+        &self,
+        run_id: RunId,
+        expected: RunStatus,
+        status: RunStatus,
+        extra: serde_json::Value,
+    ) -> bool {
+        self.set_run_state_inner(run_id, status, extra, Some(expected))
+            .await
+    }
+
+    async fn set_run_state_inner(
+        &self,
+        run_id: RunId,
+        status: RunStatus,
+        extra: serde_json::Value,
+        expected: Option<RunStatus>,
+    ) -> bool {
         let mut sql =
             String::from("UPDATE runs SET data = json_set(data, '$.status', ?, '$.updatedAt', ?");
         let mut binds: Vec<String> =
@@ -385,27 +498,36 @@ impl RunEngine {
             binds.push(v.to_string());
         }
         sql.push_str("), status = ? WHERE id = ?");
+        if expected.is_some() {
+            sql.push_str(" AND status = ?");
+        }
 
         let mut query = sqlx::query(&sql);
         for b in &binds {
             query = query.bind(b);
         }
-        let result = query
-            .bind(status.as_str())
-            .bind(run_id.to_string())
-            .execute(self.storage.pool())
-            .await;
+        query = query.bind(status.as_str()).bind(run_id.to_string());
+        // Only add the argument when the placeholder was actually emitted:
+        // sqlx validates the bind count against the SQL text.
+        if let Some(expected) = expected {
+            query = query.bind(expected.as_str());
+        }
+        let result = query.execute(self.storage.pool()).await;
         match result {
             Ok(res) if res.rows_affected() == 0 => {
-                tracing::error!(
-                    %run_id,
-                    status = status.as_str(),
-                    "set_run_state matched no row; status was not persisted"
-                );
+                if expected.is_none() {
+                    tracing::error!(
+                        %run_id,
+                        status = status.as_str(),
+                        "set_run_state matched no row; status was not persisted"
+                    );
+                }
+                false
             }
-            Ok(_) => {}
+            Ok(_) => true,
             Err(err) => {
                 tracing::error!(%run_id, status = status.as_str(), %err, "set_run_state failed");
+                false
             }
         }
     }

@@ -3,4 +3,10 @@
 # only the SQLite runtime (`features = ["sqlite", ...]`). That optional driver
 # pulls in `rsa 0.9.10`, which has no fixed release. The MySQL code is never
 # compiled, so the timing side channel cannot be reached from this app.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+  "RUSTSEC-2023-0071",
+  # sqlx 0.8.x pins libsqlite3-sys to ^0.30.1; the patched 0.39+ line is only
+  # reachable through sqlx 0.9, which in turn requires Rust 1.94. Track the
+  # sqlx upgrade separately instead of forcing a toolchain bump here.
+  "RUSTSEC-2026-0459",
+]

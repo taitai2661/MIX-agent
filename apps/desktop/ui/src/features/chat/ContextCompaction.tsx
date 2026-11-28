@@ -22,7 +22,7 @@ export function ContextCompactionNotice({
   return (
     <details
       className={cn(
-        "group overflow-hidden rounded-lg border border-line bg-inset/60 text-xs shadow-xs",
+        "group overflow-hidden rounded-lg border border-line bg-inset text-xs shadow-xs",
         className,
       )}
     >

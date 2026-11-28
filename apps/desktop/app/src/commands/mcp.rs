@@ -222,20 +222,24 @@ pub async fn start_oauth(
         .get("url")
         .and_then(|v| v.as_str())
         .ok_or("remote MCP server needs a url")?;
-    let origin = url::Url::parse(base)
-        .map_err(crate::error::cmd_err)?
-        .origin()
-        .ascii_serialization();
-    let endpoints = mixd_mcp::oauth::OAuthEndpoints {
-        authorization_endpoint: format!("{}/authorize", origin),
-        token_endpoint: format!("{}/token", origin),
-        client_id: data
-            .get("clientId")
-            .and_then(|v| v.as_str())
-            .unwrap_or("mix-agent-desktop")
-            .to_string(),
-        scopes: vec!["mcp".to_string()],
-    };
+    // Validate the stored endpoint before asking the network anything about it.
+    url::Url::parse(base).map_err(crate::error::cmd_err)?;
+    let client_id = data
+        .get("clientId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mix-agent-desktop")
+        .to_string();
+    // Endpoints come from RFC 8414 / RFC 9728 metadata when the server
+    // publishes it, with the legacy `/authorize` + `/token` paths as a fallback.
+    // Discovery rejects plain-HTTP and cross-origin endpoints before use.
+    // Metadata discovery must use a client with the server's vetted addresses
+    // pinned and redirects disabled, otherwise a 3xx or a second DNS answer
+    // could turn discovery into an SSRF probe.
+    let http = mixd_mcp::host::safe_http_client_for(base)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    let endpoints =
+        mixd_mcp::oauth::discover_endpoints(&http, base, &client_id, vec!["mcp".to_string()]).await;
     let pkce = mixd_mcp::oauth::PkcePair::new();
     let request = mixd_mcp::oauth::AuthRequest {
         endpoints: endpoints.clone(),
@@ -243,7 +247,9 @@ pub async fn start_oauth(
         redirect_uri: "mix-agent-desktop://oauth".to_string(),
         resource: Some(base.to_string()),
     };
-    // Persist the pending flow so the deep-link callback can finish it.
+    // Persist the pending flow so the deep-link callback can finish it. `state`
+    // is a CSRF secret: store only its SHA-256 digest, never the raw value —
+    // not even in `data`, where a database read would hand it straight back.
     sqlx::query("INSERT INTO mcp_auth_states (id, owner_id, data, state_hash) VALUES (?, ?, ?, ?)")
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(mixd_storage::records::SINGLE_USER_ID)
@@ -251,12 +257,11 @@ pub async fn start_oauth(
             serde_json::json!({
                 "connectionId": connection_id,
                 "verifier": pkce.verifier,
-                "state": pkce.state,
                 "redirectUri": "mix-agent-desktop://oauth",
             })
             .to_string(),
         )
-        .bind(&pkce.state)
+        .bind(mixd_mcp::oauth::hash_state(&pkce.state))
         .execute(state.storage.pool())
         .await
         .map_err(crate::error::cmd_err)?;
@@ -289,13 +294,27 @@ pub async fn handle_oauth_callback(state: State<'_, AppState>, url: String) -> R
 /// which receives the URL as a bare string with no `State` in scope.
 pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), String> {
     let callback = mixd_mcp::oauth::parse_callback(url).map_err(crate::error::cmd_err)?;
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT id, data FROM mcp_auth_states WHERE state_hash = ?")
-            .bind(&callback.state)
+    // Look up by digest of the state carried in the deep link, exactly as it
+    // was stored by `start_oauth`; `created_at` comes from the table default.
+    let row: Option<(String, String, String)> =
+        sqlx::query_as("SELECT id, data, created_at FROM mcp_auth_states WHERE state_hash = ?")
+            .bind(mixd_mcp::oauth::hash_state(&callback.state))
             .fetch_optional(state.storage.pool())
             .await
             .map_err(crate::error::cmd_err)?;
-    let (auth_id, data_raw) = row.ok_or("no pending OAuth flow for this state")?;
+    let (auth_id, data_raw, created_at) = row.ok_or("no pending OAuth flow for this state")?;
+    if mixd_mcp::oauth::state_is_expired(&created_at, chrono::Utc::now()) {
+        // A stale row must not be completable later. Drop it best-effort, then
+        // fail before any token exchange with a message the UI can surface.
+        mixd_storage::log_write(
+            sqlx::query("DELETE FROM mcp_auth_states WHERE id = ?")
+                .bind(&auth_id)
+                .execute(state.storage.pool())
+                .await,
+            "clear expired MCP OAuth state",
+        );
+        return Err("OAuth flow expired; please start authorization again".to_string());
+    }
     let data: serde_json::Value = serde_json::from_str(&data_raw).unwrap_or_default();
     let connection_id = data
         .get("connectionId")
@@ -327,15 +346,25 @@ pub async fn complete_oauth_flow(state: &AppState, url: &str) -> Result<(), Stri
         .cloned()
         .and_then(|v| serde_json::from_value(v).ok())
         .ok_or("connection has no OAuth endpoints")?;
+    // The endpoints were validated when the flow started, but the stored
+    // connection data is editable/importable. Re-check them against the
+    // configured server URL before handing over the code and PKCE verifier.
+    let base = conn_data
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or("connection has no url")?;
+    mixd_mcp::oauth::validate_flow_endpoints(&endpoints, base).map_err(crate::error::cmd_err)?;
 
     let pkce = mixd_mcp::oauth::PkcePair {
         verifier,
         challenge: String::new(),
         state: callback.state.clone(),
     };
-    let http = mixd_providers::transport::client().map_err(crate::error::cmd_err)?;
+    let http = mixd_mcp::host::safe_http_client_for(&endpoints.token_endpoint)
+        .await
+        .map_err(crate::error::cmd_err)?;
     let tokens =
-        mixd_mcp::oauth::exchange_code(http, &endpoints, &pkce, &redirect_uri, &callback.code)
+        mixd_mcp::oauth::exchange_code(&http, &endpoints, &pkce, &redirect_uri, &callback.code)
             .await
             .map_err(crate::error::cmd_err)?;
     let access = tokens

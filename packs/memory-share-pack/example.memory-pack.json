@@ -1,0 +1,42 @@
+{
+  "format": "mixd-memory-pack/1",
+  "meta": {
+    "exported_at": "2026-11-09T00:00:00Z",
+    "exporter": "desktop",
+    "source": "desktop",
+    "count": 2
+  },
+  "items": [
+    {
+      "id": "m1",
+      "title": "エディタの好み",
+      "content": "ユーザは Zed を既定のエディタにしている",
+      "role": "fact",
+      "scope": "user",
+      "source_kind": "user",
+      "lifecycle_state": "established",
+      "verification": "unverified",
+      "confidence": 0.8,
+      "salience": 0.5,
+      "strength": 0.6,
+      "pinned": false
+    },
+    {
+      "id": "m2",
+      "title": "会議の制約",
+      "content": "月曜午前は会議を入れない",
+      "role": "fact",
+      "scope": "user",
+      "source_kind": "user",
+      "lifecycle_state": "established",
+      "verification": "unverified",
+      "confidence": 0.7,
+      "salience": 0.5,
+      "strength": 0.6,
+      "pinned": true
+    }
+  ],
+  "links": [
+    { "source": "m1", "target": "m2", "kind": "relates_to", "weight": 0.2 }
+  ]
+}

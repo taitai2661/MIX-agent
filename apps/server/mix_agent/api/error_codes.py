@@ -41,6 +41,8 @@ ERROR_CODES: dict[str, str] = {
     "この実行はすでに開始されています": "run.already_started",
     "この実行は手動操作を開始できません": "browser.manual_unavailable",
     "この承認は有効ではありません": "approval.invalid",
+    "危険な操作の許可にはリスクの確認が必要です (risk acknowledgement required)": "approval.risk_acknowledgement_required",
+    "危険な操作は常時許可できません (persistent grants are not allowed for elevated risks)": "approval.persistent_grant_not_allowed",
     "ごみ箱に移動してから完全削除してください": "conversation.trash_required",
     "そのユーザー名はすでに使われています": "auth.username_taken",
     "アーカイブは5MBまでです": "skill.archive_too_large",

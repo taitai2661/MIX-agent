@@ -38,11 +38,9 @@ ChatGPT／Codex連携はOpenAIの公開APIではなく、Codex CLIが使う非�
 
 v0.5.1以前にはアップデータが入っていないため、手動でインストールしてください。v0.5.2以降のバージョンからアプリ内更新を利用できます。
 
-### Chromiumについて
+### ブラウザについて
 
-ブラウザ機能の初回利用時は「設定 ▸ ブラウザ」からChrome for Testingを導入するか、システムのChromium / Chrome / Edgeへフォールバックしてください。
-
-オフライン環境では、Chrome for Testingのアーカイブを `<app-data>/chromium` へ手動で展開するか、`MIX_CHROMIUM_HOME=/path/to/chromium` を指定してください。Linux arm64はChrome for Testingの配布対象外のため、システムブラウザのみ利用できます。
+ブラウザ機能はOS標準のWebViewで動作します。WindowsはWebView2ランタイム、macOSはWKWebView、LinuxはWebKitGTKが必要です。Chrome for Testingのダウンロード・固定ピン・初回インストールは不要で、「設定 ▸ ブラウザ」からの導入操作や`<app-data>/chromium`への手動配置、`MIX_CHROMIUM_HOME`の指定は不要です（いずれも廃止済み）。
 
 ### インストーラー
 

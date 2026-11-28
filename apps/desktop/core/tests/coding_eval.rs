@@ -361,6 +361,8 @@ impl Harness {
             user_message: task.prompt.to_string(),
             resume_from: None,
             auto_fallbacks: Vec::new(),
+            step_models: Vec::new(),
+            monthly_pressure: 0.0,
         }
     }
 }

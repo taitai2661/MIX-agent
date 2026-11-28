@@ -28,6 +28,11 @@ CMD ["uvicorn", "mix_agent.main:app", "--host", "0.0.0.0", "--port", "8080", "--
 
 FROM runtime AS test
 RUN uv sync --frozen --dev --no-install-project
+# `tests/security/test_boundaries.py` exercises the read-only git workspace
+# checks; without git in the image the test would always skip.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+USER 1000:1000
 COPY apps/server/ /app/
 COPY tests/ /workspace/tests/
 COPY runners/ /workspace/runners/

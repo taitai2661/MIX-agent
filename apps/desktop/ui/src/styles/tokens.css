@@ -74,6 +74,29 @@
   --color-diff-del: #ffebe9;
   --color-diff-del-fg: #8a1f1f;
 
+  /* Terminal ANSI magenta/cyan. The 400-level Tailwind colours used to be
+     hardcoded here and were unreadable on a light surface; these are picked
+     per theme so the same escape code stays legible in both. */
+  --color-ansi-magenta: #a21caf;
+  --color-ansi-cyan: #0e7490;
+
+  /* Windows caption close button. The red is the OS convention, not the app's
+     danger tone, so it gets its own token instead of a literal hex at the
+     call site. */
+  --color-close-hover: #e81123;
+  --color-close-fg: #ffffff;
+
+  /* Deterministic browser-tab avatars. Six saturated fills that always carry
+     white text; kept out of the semantic palette because they identify a host,
+     they do not mean success/warning/danger. */
+  --color-avatar-1: #0284c7;
+  --color-avatar-2: #7c3aed;
+  --color-avatar-3: #059669;
+  --color-avatar-4: #d97706;
+  --color-avatar-5: #e11d48;
+  --color-avatar-6: #0e7490;
+  --color-avatar-fg: #ffffff;
+
   /* ---------------------------------------------------------- typography */
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
@@ -83,7 +106,14 @@
 
   /* Japanese UI: 11px meta labels and 13px model output were too small to
      read comfortably for long sessions. The scale is now 12 / 13 / 14 / 15;
-     only the large display sizes stay untouched so pane heights do not shift. */
+     only the large display sizes stay untouched so pane heights do not shift.
+
+     `3xs` is the one deliberate exception: numeric counters and single-letter
+     avatars only, never a Japanese label. `display-sm`/`display` are the
+     welcome screen's two responsive sizes, tokenised so the hero does not
+     carry arbitrary `text-[22px]` values. */
+  --text-3xs: 10px;
+  --text-3xs--line-height: 13px;
   --text-2xs: 12px;
   --text-2xs--line-height: 17px;
   --text-xs: 13px;
@@ -98,6 +128,10 @@
   --text-xl--line-height: 27px;
   --text-2xl: 24px;
   --text-2xl--line-height: 31px;
+  --text-display-sm: 22px;
+  --text-display-sm--line-height: 33px;
+  --text-display: 28px;
+  --text-display--line-height: 43px;
 
   /* -------------------------------------------------------------- radius */
   --radius-sm: 7px;
@@ -533,5 +567,31 @@
 
   .markdown-body pre {
     @apply overflow-x-auto rounded-lg border border-line bg-inset p-3 font-mono text-xs leading-5;
+  }
+}
+
+/* Settings search "jump to field": a short brand ring around the target card.
+   Animation only; the class is removed by the caller after ~1.8s. */
+@keyframes settings-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 45%, transparent);
+  }
+  25% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-brand) 35%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.settings-flash {
+  animation: settings-flash 1.8s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-flash {
+    animation: none;
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
   }
 }

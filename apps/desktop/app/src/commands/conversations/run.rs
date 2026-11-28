@@ -203,6 +203,24 @@ pub async fn dispatch(
         &run_id.to_string(),
     );
 
+    // B9: monthly spend pressure for cost-aware step routing. Static for the
+    // Run (a run is short next to a month); the token-ceiling pressure is
+    // tracked live by the engine from `Budget`. `0.0` = no cap configured.
+    let monthly_pressure: f32 = match crate::commands::settings::read_settings(pool)
+        .await
+        .ok()
+        .and_then(|settings| settings.monthly_budget_usd)
+        .filter(|cap| *cap > 0.0)
+    {
+        Some(cap) => crate::commands::settings::monthly_spend_usd(pool)
+            .await
+            .ok()
+            .map(|spent| (spent / cap) as f32)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0),
+        None => 0.0,
+    };
+
     // Resolve the serving model. `auto` picks the best candidate per request;
     // anything else is served as-is.
     let has_image = input
@@ -210,11 +228,12 @@ pub async fn dispatch(
         .iter()
         .any(|a| a.mime_type.starts_with("image/") || a.kind == "image");
     let tools_required = mode == mixd_core::Mode::Agent && !tools.is_empty();
-    let (model_id, provider_id, auto_selection, auto_fallbacks): (
+    let (model_id, provider_id, auto_selection, auto_fallbacks, step_models): (
         String,
         String,
         Option<mixd_core::auto::AutoSelection>,
         Vec<AutoFallback>,
+        Vec<mixd_core::routing::TierModel>,
     ) = if is_auto {
         let prior_contents: Vec<String> = sqlx::query_scalar::<_, Option<String>>(
             "SELECT json_extract(data, '$.content') FROM messages \
@@ -321,15 +340,62 @@ pub async fn dispatch(
                 keep_alive: None,
             });
         }
+        // B9 step routing: classify the primary + failure fallbacks into
+        // cost tiers (first model wins per tier). The engine picks one tier
+        // per turn from the mode, the verification state and live budget
+        // pressure, and serves it with the tier model when it is still
+        // registered.
+        let mut step_models: Vec<mixd_core::routing::TierModel> = Vec::new();
+        {
+            let mut ordered = Vec::with_capacity(fallbacks.len() + 1);
+            ordered.push((
+                resolved.model_id.clone(),
+                resolved.provider_id.clone(),
+                resolved.context_window,
+            ));
+            for f in &fallbacks {
+                ordered.push((f.model_id.clone(), f.provider_id.clone(), f.context_window));
+            }
+            for (mid, pid, ctx) in ordered {
+                let locality = crate::commands::providers::provider_locality(pool, &pid).await;
+                let wire = mid
+                    .split_once(':')
+                    .map(|(_, rest)| rest)
+                    .unwrap_or(&mid)
+                    .to_string();
+                let tier = mixd_core::routing::classify_candidate(locality.is_local, &wire);
+                if !step_models
+                    .iter()
+                    .any(|m: &mixd_core::routing::TierModel| m.tier == tier)
+                {
+                    step_models.push(mixd_core::routing::TierModel {
+                        tier,
+                        model_id: mid,
+                        provider_id: pid,
+                        context_window: ctx,
+                        // Tier turns use the runtime default; the serving
+                        // provider's keep-alive is resolved per turn.
+                        keep_alive: None,
+                    });
+                }
+            }
+        }
         (
             resolved.model_id,
             provider,
             Some(resolved.selection),
             fallbacks,
+            step_models,
         )
     } else {
         let provider_id = resolve_provider_id(state, &requested_model_id).await?;
-        (requested_model_id.clone(), provider_id, None, Vec::new())
+        (
+            requested_model_id.clone(),
+            provider_id,
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
     };
 
     // Hard monthly budget. Checked after the provider is resolved so a local
@@ -524,6 +590,8 @@ pub async fn dispatch(
         user_message: input.content,
         resume_from: None,
         auto_fallbacks,
+        step_models,
+        monthly_pressure,
     };
 
     let engine = state.engine.clone();

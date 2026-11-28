@@ -2,7 +2,7 @@
 
 > 状態: 計測実装済み / ユーザーテスト待ち
 > 対象: `apps/desktop/ui`
-> 関連: [`ux-improvement-plan.md`](ux-improvement-plan.md)
+> 対象: `apps/desktop/ui`
 
 ---
 
@@ -29,7 +29,7 @@ Phase 0 の成果物は次の2つ。
 | J4 | 設定変更 → 保存 | 設定を開く | 保存完了 | タブ到達、保存方式の誤解 |
 | J5 | 過去スレッドの検索 → 開く | 検索を開く | スレッド表示 | 検索手段の発見、0件率 |
 
-目標値は [`ux-improvement-plan.md`](ux-improvement-plan.md) の「成功指標」を参照。
+目標値は別途定める。
 
 ---
 

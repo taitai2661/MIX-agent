@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
   Activity,
+  CircleAlert,
   Columns2,
   Expand,
   Gauge,
@@ -12,6 +13,7 @@ import {
   MoreHorizontal,
   PanelRight,
   Shrink,
+  SquareTerminal,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -37,7 +39,9 @@ const TAB_ICONS: Record<RightPanelTab, LucideIcon> = {
   activity: Activity,
   usage: Gauge,
   changes: GitBranch,
+  problems: CircleAlert,
   browser: Globe,
+  terminal: SquareTerminal,
 };
 
 /**
@@ -252,12 +256,12 @@ function RightPanelTabs({
       aria-orientation="horizontal"
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="relative flex h-row min-w-0 flex-1 items-center gap-0.5 overflow-x-auto rounded-lg border border-line/60 bg-inset p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="relative flex h-row min-w-0 flex-1 items-center gap-0.5 overflow-x-auto rounded-md border border-line bg-inset p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {indicator && (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute top-0.5 bottom-0.5 left-0 rounded-md bg-surface shadow-xs transition-[transform,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+          className="pointer-events-none absolute top-0.5 bottom-0.5 left-0 rounded-sm bg-surface shadow-xs transition-[transform,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
           style={{
             transform: `translateX(${indicator.left}px)`,
             width: indicator.width,
@@ -285,9 +289,8 @@ function RightPanelTabs({
             title={label}
             onClick={() => onSelect(tab.value)}
             className={cn(
-              "relative z-10 inline-flex h-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2.5",
-              "text-xs font-medium whitespace-nowrap transition-colors duration-100 outline-none",
-              "focus-visible:ring-2 focus-visible:ring-brand/50",
+              "relative z-10 inline-flex h-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2.5",
+              "text-xs font-medium whitespace-nowrap transition-colors duration-100",
               selected
                 ? "text-fg"
                 : "text-muted hover:bg-hover/60 hover:text-fg",

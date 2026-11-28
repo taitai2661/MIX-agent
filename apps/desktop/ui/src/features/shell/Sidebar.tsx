@@ -21,14 +21,16 @@ import { threadGroup } from "@/lib/format";
 import { useNow } from "@/lib/clock";
 import { loadPinnedThreadIds, togglePinnedThreadId } from "@/lib/pinnedThreads";
 import { useUi, surfaceForMode, type View } from "@/lib/ui";
+import { useToasts } from "@/lib/toast";
 import type { ConversationSummary } from "@/lib/types";
 import {
   CONVERSATIONS_QUERY_KEY,
   useConversationPages,
   useConversationSearch,
+  usePendingApprovals,
   useProjects,
 } from "@/lib/queries";
-import { useApplySettings, useSettingsForm } from "@/lib/settings";
+import { useApplySettings } from "@/lib/settings";
 import { useRunEvents } from "@/lib/runStore";
 import { Button } from "@/components/ui/button";
 import {
@@ -119,7 +121,6 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
   const setSurface = useUi((s) => s.setSurface);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const applySettings = useApplySettings();
-  const { dirty: settingsDirty } = useSettingsForm();
   const queryClient = useQueryClient();
   const { confirm, dialog } = useConfirm();
   const now = useNow();
@@ -134,6 +135,11 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     SIDEBAR_MAX_WIDTH,
   );
   const [search, setSearch] = useState("");
+  // A status filter is independent of the text search: "show only what needs
+  // me" remains useful while typing.
+  const [threadFilter, setThreadFilter] = useState<
+    "all" | "running" | "approval"
+  >("all");
   // Defer the filter so typing stays at 60fps with hundreds of threads.
   const deferredSearch = useDeferredValue(search);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -143,6 +149,11 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     loadPinnedThreadIds(),
   );
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+  // Threads removed from the list but not yet deleted. Deletion happens when
+  // the undo toast goes away (timeout or close), so the toast is the single
+  // timer and "Undo" can never race a delete that already fired.
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
+  const pushToast = useToasts((s) => s.push);
 
   const togglePin = (id: string) => {
     const next = togglePinnedThreadId(id);
@@ -179,6 +190,16 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     () => new Set(busyConversationIds),
     [busyConversationIds],
   );
+  // One polling query serves every surface that needs the pending count
+  // (header badge, inbox drawer, this filter); react-query dedupes them.
+  const approvals = usePendingApprovals();
+  const approvalConversationIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const approval of approvals.data ?? []) {
+      if (approval.conversation_id) ids.add(approval.conversation_id);
+    }
+    return ids;
+  }, [approvals.data]);
 
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
@@ -204,10 +225,6 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteConversation(id),
-    onSuccess: (_data, id) => {
-      void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY });
-      if (conversationId === id) setConversationId(null);
-    },
   });
 
   const exportThread = async (conversation: ConversationSummary) => {
@@ -229,6 +246,52 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     }
   };
 
+  const unhideDeleted = (id: string) => {
+    setDeletingIds((previous) => {
+      if (!previous.has(id)) return previous;
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const deleteThread = (id: string) => {
+    remove.mutate(id, {
+      onSuccess: () => {
+        unhideDeleted(id);
+        if (conversationId === id) setConversationId(null);
+        void queryClient.invalidateQueries({
+          queryKey: CONVERSATIONS_QUERY_KEY,
+        });
+      },
+      onError: () => {
+        // A failed delete used to leave the row hidden until the next refetch,
+        // then it silently reappeared. Restore it now and say why.
+        unhideDeleted(id);
+        pushToast({ message: t("スレッドを削除できませんでした") });
+      },
+    });
+  };
+
+  // Hide immediately; the backend delete runs when the undo toast expires (or
+  // is closed). Using the toast as the timer is what keeps "Undo" honest: the
+  // old code had a separate 7 s timer that could fire while the button was
+  // still on screen.
+  const scheduleDelete = (conversation: ConversationSummary) => {
+    const id = conversation.id;
+    setDeletingIds((previous) => new Set(previous).add(id));
+    if (conversationId === id) setConversationId(null);
+    pushToast({
+      message: tf("「{title}」を削除しました", { title: conversation.title }),
+      action: {
+        label: t("削除を取り消す"),
+        onClick: () => unhideDeleted(id),
+      },
+      timeoutMs: 10000,
+      onDismiss: () => deleteThread(id),
+    });
+  };
+
   const removeThread = async (conversation: ConversationSummary) => {
     const ok = await confirm({
       title: t("スレッドを削除しますか？"),
@@ -236,10 +299,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
       confirmLabel: t("削除"),
       tone: "danger",
     });
-    if (ok) {
-      remove.reset();
-      remove.mutate(conversation.id);
-    }
+    if (ok) scheduleDelete(conversation);
   };
 
   const threads = useMemo(() => {
@@ -253,6 +313,15 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
     const list = source.filter((c) => {
       // Natural separation by active surface:
       if (surfaceForMode(c.mode) !== surface) {
+        return false;
+      }
+      // Hidden during the undo window; `scheduleDelete` removes it for real
+      // after the toast closes.
+      if (deletingIds.has(c.id)) return false;
+      if (threadFilter === "running" && !runningConversationIds.has(c.id)) {
+        return false;
+      }
+      if (threadFilter === "approval" && !approvalConversationIds.has(c.id)) {
         return false;
       }
       if (seen.has(c.id)) return false;
@@ -277,10 +346,20 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
       }
     }
     return groups;
-  }, [conversationRows, deferredSearch, pinnedSet, serverSearch.data, surface]);
+  }, [
+    conversationRows,
+    deferredSearch,
+    pinnedSet,
+    serverSearch.data,
+    surface,
+    deletingIds,
+    threadFilter,
+    runningConversationIds,
+    approvalConversationIds,
+  ]);
 
   const hasThreads = conversationRows.some(
-    (c) => surfaceForMode(c.mode) === surface,
+    (c) => surfaceForMode(c.mode) === surface && !deletingIds.has(c.id),
   );
   const searching = deferredSearch.trim().length > 0;
   const {
@@ -348,7 +427,7 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
         {/* Primary action + search, pinned so they are always reachable. */}
         <div className="flex shrink-0 flex-col gap-2 p-3 pb-1.5">
           {isAgent && (
-            <div className="flex items-center justify-between rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-xs shadow-xs">
+            <div className="flex items-center justify-between rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs shadow-xs">
               <div className="flex min-w-0 items-center gap-2">
                 <Folder size={14} className="shrink-0 text-brand" />
                 <span
@@ -362,9 +441,9 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
               </div>
               <Button
                 variant="ghost"
-                size="sm"
+                size="xs"
                 onClick={() => setView("projects")}
-                className="h-6 shrink-0 px-1.5 text-2xs text-muted hover:text-fg"
+                className="shrink-0 px-1.5 text-muted hover:text-fg"
                 title={t("プロジェクトを変更")}
               >
                 {t("変更")}
@@ -408,11 +487,55 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
             <button
               type="button"
               onClick={() => setSurface(otherSurface)}
-              className="shrink-0 rounded px-1 py-0.5 text-brand transition-colors hover:bg-brand-soft hover:text-brand"
+              className="shrink-0 rounded-md px-1 py-0.5 text-brand transition-colors hover:bg-brand-soft hover:text-brand"
               title={tf("{label}の履歴を見る", { label: otherSurfaceLabel })}
             >
               {otherSurfaceLabel} →
             </button>
+          </div>
+          <div
+            role="group"
+            aria-label={t("履歴の絞り込み")}
+            className="flex items-center gap-1 px-0.5"
+          >
+            {(
+              [
+                { id: "all", label: t("すべて") },
+                {
+                  id: "running",
+                  label: t("実行中"),
+                  count: runningConversationIds.size,
+                },
+                {
+                  id: "approval",
+                  label: t("承認待ち"),
+                  count: approvalConversationIds.size,
+                },
+              ] as const
+            ).map((filter) => {
+              const active = threadFilter === filter.id;
+              return (
+                <button
+                  key={filter.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setThreadFilter(filter.id)}
+                  className={[
+                    "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs transition-colors",
+                    active
+                      ? "bg-brand-soft font-medium text-brand"
+                      : "text-faint hover:bg-hover hover:text-fg",
+                  ].join(" ")}
+                >
+                  {filter.label}
+                  {"count" in filter && filter.count > 0 && (
+                    <span className="font-mono tabular-nums">
+                      {filter.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           {(exportError || rename.isError || remove.isError) && (
             <ErrorBox error={exportError ?? rename.error ?? remove.error} />
@@ -442,6 +565,8 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
           isAgent={isAgent}
           searching={searching}
           serverSearchPending={serverSearch.isPending}
+          filtering={threadFilter !== "all"}
+          onClearFilter={() => setThreadFilter("all")}
           filteredCount={filteredThreadCount}
           showThreadList={showThreadList}
           hasMore={hasMoreThreads}
@@ -481,16 +606,6 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
               icon={<Settings2 size={15} />}
               selected={view === "settings"}
               onClick={() => setView("settings")}
-              trailing={
-                settingsDirty ? (
-                  <span
-                    role="status"
-                    aria-label={t("未保存の変更")}
-                    title={t("未保存の変更")}
-                    className="size-1.5 rounded-full bg-warning"
-                  />
-                ) : undefined
-              }
             >
               {t("設定")}
             </NavRow>
@@ -569,6 +684,10 @@ export function Sidebar({ cap = null }: { cap?: number | null }) {
                   )}
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuSeparator />
+              <div className="px-2 py-1 text-2xs text-faint">
+                {t("変更は自動保存されます")}
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

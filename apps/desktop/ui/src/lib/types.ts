@@ -1,9 +1,12 @@
 /// Shared TypeScript surface for the Tauri command payload shapes.
 
+import type { RiskAssessment } from "./runEvents";
+
 export interface HealthReport {
   status: string;
   storage: boolean;
   engine: boolean;
+  safe_mode?: boolean;
 }
 
 export interface ProviderView {
@@ -258,6 +261,18 @@ export interface MessageSearchHit {
   created_at: string;
 }
 
+/** One hit from the run-event FTS index (`search_run_events`). */
+export interface RunEventSearchHit {
+  run_id: string;
+  conversation_id: string | null;
+  sequence: number;
+  kind: string;
+  excerpt: string;
+  created_at: string;
+}
+
+export type MessageFeedbackValue = "up" | "down";
+
 export interface MessageView {
   id: string;
   role: string;
@@ -270,6 +285,12 @@ export interface MessageView {
   attachments: MessageAttachmentView[];
   /** Monotonic row cursor used to page older messages. */
   seq: number;
+  /** True when Auto routing produced this assistant answer (rateable). */
+  auto_selection?: boolean;
+  /** Why Auto picked this model; shown as a tooltip on the Auto badge. */
+  auto_reason?: string | null;
+  /** `"up"` / `"down"` from the feedback table, or null. */
+  feedback?: MessageFeedbackValue | null;
 }
 
 export interface RunEventView {
@@ -523,6 +544,38 @@ export interface SkillView {
   updated_at: string;
 }
 
+/** A page of durable Tool call rows. `truncated` means older calls exist but
+ *  were not returned (the backend returns the most recent 2000). */
+export interface ToolCallHistoryPage {
+  calls: ToolCallHistoryView[];
+  truncated: boolean;
+}
+
+/** A durable Tool call row from a past (or running) Run. Arguments, result and
+ *  error are redacted in Rust before they cross the IPC boundary. */
+export interface ToolCallHistoryView {
+  id: string;
+  run_id: string;
+  status: string;
+  tool_name: string;
+  arguments: unknown;
+  result: unknown | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+  approval_id: string | null;
+}
+
+/** One stored snapshot of a skill (written on overwrite and on delete). */
+export interface SkillRevisionView {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  name: string;
+  description: string;
+  body_chars: number;
+}
+
 export interface ProjectView {
   id: string;
   name: string;
@@ -598,6 +651,44 @@ export interface CheckpointView {
   created_at: string;
 }
 
+/** One command from the terminal pane / the agent's persistent shell. */
+export interface TerminalCommandView {
+  command: string;
+  args: string[];
+  started_at: string;
+  finished_at: string;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  cwd: string | null;
+  persistent: boolean;
+}
+
+export interface ToolResultView {
+  ok: boolean;
+  content: unknown;
+  error: string | null;
+}
+
+export interface UserShellStart {
+  cwd: string;
+  persistent: boolean;
+}
+
+export interface UserShellPoll {
+  /** Output between the start marker and completion, capped to the tail. */
+  output: string;
+  done: boolean;
+  /** No command is running (including after a tab switch detached). */
+  idle: boolean;
+  persistent: boolean;
+  exit_code: number | null;
+  cwd: string | null;
+  /** Present when re-attaching to a command started in another window. */
+  command: string | null;
+  error: string | null;
+}
+
 export interface PermissionRuleView {
   id: string;
   tool_id: string;
@@ -615,6 +706,8 @@ export interface PendingApprovalView {
   arguments: unknown;
   created_at: string;
   expires_at: string;
+  /** Command-level grading; `null` for older rows and non-shell tools. */
+  risk: RiskAssessment | null;
   conversation_id: string | null;
   conversation_title: string | null;
   conversation_mode: string | null;

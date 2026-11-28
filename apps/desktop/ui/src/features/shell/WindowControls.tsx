@@ -133,7 +133,7 @@ export function WindowControls() {
         onClick={handleClose}
         aria-label={t("閉じる")}
         title={t("閉じる")}
-        className="inline-flex h-titlebar w-11 items-center justify-center text-muted transition-colors hover:bg-[#e81123] hover:text-white focus:outline-none"
+        className="inline-flex h-titlebar w-11 items-center justify-center text-muted transition-colors hover:bg-close-hover hover:text-close-fg focus:outline-none"
       >
         <X size={14} aria-hidden="true" />
       </button>

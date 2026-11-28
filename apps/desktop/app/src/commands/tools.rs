@@ -310,6 +310,9 @@ pub struct PendingApprovalView {
     pub arguments: serde_json::Value,
     pub created_at: String,
     pub expires_at: String,
+    /// Command-level grading. `None` for approvals created by an older build.
+    /// A `dangerous` prompt must be acknowledged and cannot be remembered.
+    pub risk: Option<mixd_tools::risk::RiskAssessment>,
     /// The task this prompt belongs to. A security decision that does not name
     /// its conversation/folder invites rubber-stamping: "常に許可" then applies
     /// to a task the user cannot identify.
@@ -350,6 +353,7 @@ pub async fn list_pending_approvals(
             arguments: p.arguments,
             created_at: p.created_at.to_rfc3339(),
             expires_at: p.expires_at.to_rfc3339(),
+            risk: p.risk,
             conversation_id,
             conversation_title,
             conversation_mode,

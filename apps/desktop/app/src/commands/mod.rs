@@ -28,10 +28,12 @@ pub mod providers;
 pub mod runs;
 pub mod schedules;
 pub mod settings;
+pub mod shell;
 pub mod skills;
 pub mod spotlight;
 pub mod tools;
 pub mod update;
+pub mod window;
 pub mod workspace;
 pub mod zip_util;
 

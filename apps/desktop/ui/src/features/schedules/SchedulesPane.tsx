@@ -319,7 +319,7 @@ export function SchedulesPane() {
                   className="block max-w-72 truncate text-2xs font-normal text-faint"
                   title={j.prompt}
                 >
-                  <span className="me-1 rounded bg-inset px-1 py-0.5 font-mono">
+                  <span className="me-1 rounded-md bg-inset px-1 py-0.5 font-mono">
                     {t(
                       j.mode === "agent"
                         ? "自動実行"

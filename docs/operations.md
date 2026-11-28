@@ -49,6 +49,8 @@ Browser Toolは専用RunnerのPlaywright Chromiumを使います。依存関係�
 
 Private IP・link-local・cloud metadata 宛の接続は mode に関係なく拒否されます。
 
+MCP サーバーごとの `source policy`（MCP 管理画面の Network capability）は、上記のグローバル `policy.json` より優先されます。これは設計上の仕様です。たとえば管理者が `restricted` に登録したドメイン以外へ、ある MCP にのみ `public_web` を許可できます。グローバル設定は「全サービス共通の既定値」であり上限ではありません。意図せず広い通信を許可しないよう、MCP の capability は個別にレビューしてください（`tests/security/test_proxy_policy.py` がこの優先順位を固定しています）。
+
 ## ChatGPT（Codex 使用枠）連携 — 非公式・自己責任
 
 > **警告**: この連携は OpenAI の公式 API ではなく、Codex CLI が利用する非公開

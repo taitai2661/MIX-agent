@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Search, Trash2 } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
@@ -130,6 +130,7 @@ export function ToggleRow({
   disabled?: boolean;
   className?: string;
 }) {
+  const hintId = useId();
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       <label className="flex items-center justify-between gap-4 text-sm text-fg">
@@ -138,9 +139,14 @@ export function ToggleRow({
           checked={checked}
           onCheckedChange={onChange}
           disabled={disabled}
+          aria-describedby={hint ? hintId : undefined}
         />
       </label>
-      {hint && <p className="m-0 text-xs text-muted">{hint}</p>}
+      {hint && (
+        <p id={hintId} className="m-0 text-xs text-muted">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

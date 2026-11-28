@@ -289,6 +289,97 @@ describe("ModelPicker", () => {
     await waitFor(() => expect(useUi.getState().settingsTab).toBe("providers"));
   });
 
+  it("shows the selected row with a check and the provider inline in recents", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={() => {}}
+        providers={providers}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "モデルを選択" }));
+    await user.click(await screen.findByText("Claude Sonnet"));
+    // Choosing records a recent; reopening shows the mixed Recent section,
+    // where the provider has to be spelled out because there is no group header.
+    await user.click(screen.getByRole("button", { name: "モデルを選択" }));
+    const list = await screen.findByRole("listbox");
+    expect(within(list).getByText("最近使ったモデル")).toBeInTheDocument();
+    expect(within(list).getByText("Anthropic")).toBeInTheDocument();
+    expect(
+      within(list).getByRole("option", { name: /Claude Sonnet/ }),
+    ).toHaveTextContent("Anthropic");
+    // The controlled prop did not change in this test, so the old selection
+    // keeps the check mark.
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .find((option) => option.getAttribute("aria-selected") === "true"),
+    ).toHaveTextContent("GPT-4o");
+  });
+
+  it("marks locally hosted models as free", async () => {
+    const localProviders: ProviderView[] = [
+      {
+        id: "ollama",
+        kind: "ollama",
+        label: "Ollama",
+        base_url: "http://127.0.0.1:11434/v1",
+        enabled: true,
+        has_api_key: false,
+        preset: "ollama",
+      },
+    ];
+    const localModels: ModelView[] = [
+      {
+        id: "ollama:llama3",
+        provider_id: "ollama",
+        label: "Llama 3",
+        context_window: 8192,
+        supports_vision: false,
+        supports_tool_calling: true,
+        supports_reasoning: false,
+        auto_candidate: true,
+      },
+    ];
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        models={localModels}
+        value="ollama:llama3"
+        onChange={() => {}}
+        providers={localProviders}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "モデルを選択" }));
+    const list = await screen.findByRole("listbox");
+    expect(within(list).getByText("無料")).toBeInTheDocument();
+  });
+
+  it("opens provider and model settings from the header actions", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        models={models}
+        value="openai:gpt-4o"
+        onChange={() => {}}
+        providers={providers}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "モデルを選択" }));
+    await user.click(
+      await screen.findByRole("button", { name: "プロバイダーを追加" }),
+    );
+    await waitFor(() => expect(useUi.getState().settingsTab).toBe("providers"));
+
+    await user.click(screen.getByRole("button", { name: "モデルを選択" }));
+    await user.click(
+      await screen.findByRole("button", { name: "モデルを管理" }),
+    );
+    await waitFor(() => expect(useUi.getState().settingsTab).toBe("models"));
+  });
+
   it("toggles temporary mode and tool access", async () => {
     const onTemporaryChange = vi.fn();
     const onAllowToolsChange = vi.fn();

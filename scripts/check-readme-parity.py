@@ -20,10 +20,15 @@ ROOT = Path(__file__).resolve().parents[1]
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
 FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
 LINK = re.compile(r"\[[^\]]*\]\(([^)#]+)(?:#[^)]*)?\)")
-COMMAND = re.compile(r"^\s*(?:pnpm|cargo|docker|git|node|python3?|uv|npm|rustup)\b.*$", re.MULTILINE)
+COMMAND = re.compile(
+    r"^\s*(?:\$\s+)?(?:sudo\s+)?(?:pnpm|cargo|docker|git|node|python3?|uv|npm|rustup)\b.*$",
+    re.MULTILINE,
+)
 
 
 def headings(text: str) -> list[int]:
+    """Heading levels only: the two editions are hand-translated, so the
+    heading text (and its generated anchor) is intentionally different."""
     return [len(match.group(1)) for match in HEADING.finditer(text)]
 
 
@@ -31,8 +36,10 @@ def commands(text: str) -> set[str]:
     found: set[str] = set()
     for block in FENCE.findall(text):
         for line in COMMAND.findall(block):
-            # Drop the trailing `# comment` so each language can annotate the
-            # same command in its own words.
+            # A leading `$ ` is a shell prompt, not part of the command. Drop
+            # the trailing `# comment` so each language can annotate the same
+            # command in its own words. `sudo` is kept: it changes the command.
+            line = re.sub(r"^\s*\$\s+", "", line)
             normalized = " ".join(line.split(" #", 1)[0].split())
             if normalized and not normalized.startswith(("#", "//")):
                 found.add(normalized)

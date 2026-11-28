@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::agent::{AgentRunner, AgentSource, AgentTool};
+use crate::ask_user::AskUserTool;
 use crate::edit::EditTool;
 use crate::egress::EgressPolicy;
 use crate::files::FilesTool;
@@ -95,6 +96,7 @@ impl ToolRegistry {
         tools.insert("workspace_check".to_string(), Arc::new(WorkspaceCheckTool));
         tools.insert("image_vision".to_string(), Arc::new(ImageVisionTool));
         tools.insert("user_plan".to_string(), Arc::new(UserPlanTool));
+        tools.insert("ask_user".to_string(), Arc::new(AskUserTool));
         // One store shared with the registry, not a second one: the engine
         // re-renders `registry.todos` into the head block each turn, and two
         // stores would mean the checklist the model writes is never the one it
@@ -134,10 +136,85 @@ impl ToolRegistry {
         }
     }
 
+    /// Run a command typed by the user in the terminal pane.
+    pub async fn terminal_run_user(
+        &self,
+        root: &str,
+        command: &str,
+        max_ms: u64,
+    ) -> anyhow::Result<crate::terminal::TerminalCommand> {
+        match &self.terminal_tool {
+            Some(tool) => tool.run_user_command(root, command, max_ms).await,
+            None => anyhow::bail!("terminal tool is not available"),
+        }
+    }
+
+    /// Start a streamed command in the pane's shell.
+    pub async fn terminal_start_user(
+        &self,
+        root: &str,
+        command: &str,
+        max_ms: u64,
+    ) -> anyhow::Result<crate::terminal::UserShellStart> {
+        match &self.terminal_tool {
+            Some(tool) => tool.start_user_command(root, command, max_ms).await,
+            None => anyhow::bail!("terminal tool is not available"),
+        }
+    }
+
+    /// Poll a streamed command's output.
+    pub async fn terminal_poll_user(
+        &self,
+        root: &str,
+    ) -> anyhow::Result<crate::terminal::UserShellPoll> {
+        match &self.terminal_tool {
+            Some(tool) => tool.poll_user_command(root).await,
+            None => anyhow::bail!("terminal tool is not available"),
+        }
+    }
+
+    /// Send Ctrl-C to the pane's foreground process.
+    pub async fn terminal_interrupt_user(&self, root: &str) -> anyhow::Result<()> {
+        match &self.terminal_tool {
+            Some(tool) => tool.interrupt_user_command(root).await,
+            None => anyhow::bail!("terminal tool is not available"),
+        }
+    }
+
+    /// Type into the user's live shell (interactive programs).
+    pub async fn terminal_send_user(
+        &self,
+        root: &str,
+        input: &str,
+        wait_ms: u64,
+    ) -> anyhow::Result<crate::ToolResult> {
+        match &self.terminal_tool {
+            Some(tool) => tool.send_user_input(root, input, wait_ms).await,
+            None => anyhow::bail!("terminal tool is not available"),
+        }
+    }
+
+    /// Recent agent + user commands, for the terminal pane's first paint.
+    pub async fn terminal_history(&self) -> Vec<crate::terminal::TerminalCommand> {
+        match &self.terminal_tool {
+            Some(tool) => tool.history().await,
+            None => Vec::new(),
+        }
+    }
+
     /// Also deny network inside the terminal sandbox (macOS only today).
     pub fn set_terminal_sandbox_network(&self, enabled: bool) {
         if let Some(tool) = &self.terminal_tool {
             tool.set_sandbox_network(enabled);
+        }
+    }
+
+    /// Opt into the strict terminal sandbox profile (macOS: also denies
+    /// credential reads and the network). The relaxed write-confinement
+    /// profile remains the default.
+    pub fn set_terminal_sandbox_strict(&self, enabled: bool) {
+        if let Some(tool) = &self.terminal_tool {
+            tool.set_sandbox_strict(enabled);
         }
     }
 
@@ -149,6 +226,8 @@ impl ToolRegistry {
         self.skill_tool = Some(tool);
         let resources = Arc::new(SkillResourceTool::new(source));
         self.tools.insert(resources.id().to_string(), resources);
+        // The advertised spec list was derived from the old tool map.
+        self.specs_cache.take();
         self
     }
 
@@ -161,6 +240,7 @@ impl ToolRegistry {
         let tool = Arc::new(AgentTool::new(source, runner));
         self.tools.insert("agent".to_string(), tool.clone());
         self.agent_tool = Some(tool);
+        self.specs_cache.take();
         self
     }
 
@@ -168,6 +248,7 @@ impl ToolRegistry {
     pub fn with_memory(mut self, dispatch: Arc<dyn MemoryDispatch>) -> Self {
         self.tools
             .insert("memory".to_string(), Arc::new(MemoryTool::new(dispatch)));
+        self.specs_cache.take();
         self
     }
 
@@ -176,6 +257,7 @@ impl ToolRegistry {
     pub fn with_knowledge(mut self, dispatch: Arc<dyn KnowledgeDispatch>) -> Self {
         let tool = Arc::new(KnowledgeTool::new(dispatch, self.egress.clone()));
         self.tools.insert(tool.id().to_string(), tool);
+        self.specs_cache.take();
         self
     }
 
@@ -205,6 +287,8 @@ impl ToolRegistry {
     /// Attach the browser host so the `browser` Tool becomes available.
     pub fn with_browser(mut self, host: Arc<dyn mixd_browser::BrowserHost>) -> Self {
         self.browser = Some(host);
+        // `build_specs` adds a `browser` spec when a host is present.
+        self.specs_cache.take();
         self
     }
 
@@ -400,7 +484,11 @@ impl ToolRegistry {
             let Some(mcp) = &self.mcp else {
                 return Err(anyhow::anyhow!("MCP host is not available"));
             };
-            return mcp.dispatch(name, args).await;
+            let result = mcp.dispatch(name, args).await;
+            // An MCP server can write files through its own filesystem tools.
+            // We cannot know which, so conservatively drop the walk cache.
+            crate::search::invalidate_walk_cache();
+            return result;
         }
         let tool = self
             .tools

@@ -20,12 +20,12 @@ pub const ACTIVE_SUMMARY_CHAR_BUDGET: usize = 4000;
 /// Number of archived summaries to keep.
 pub const ARCHIVE_ROW_LIMIT: usize = 12;
 /// Compression threshold used when the model's context window is unknown.
-pub const COMPRESS_THRESHOLD_CHARS: usize = 120_000;
-
-/// Rough characters per token. English prose and source code both land near
-/// four, and a heuristic that is 20% off only moves the compression point by
-/// 20% — it does not need to be a tokenizer.
-pub const CHARS_PER_TOKEN: usize = 4;
+///
+/// Expressed in estimated tokens rather than characters: the character-based
+/// constant it replaced (120 000) assumed four characters per token, which is
+/// true for English but under-counts Japanese, Chinese and Korean by roughly
+/// four times.
+pub const COMPRESS_THRESHOLD_TOKENS: usize = 30_000;
 
 /// Share of the context window the prompt may occupy before compressing.
 ///
@@ -34,25 +34,79 @@ pub const CHARS_PER_TOKEN: usize = 4;
 const PROMPT_BUDGET_PERCENT: usize = 60;
 
 /// Floor for the derived threshold, so a small local model does not compress on
-/// every single turn — compression itself costs a Provider call.
-const MIN_COMPRESS_THRESHOLD_CHARS: usize = 16_000;
+/// every single turn — compression itself costs a Provider call. 4 000 tokens
+/// is the same point the old 16 000-character floor landed on for English.
+const MIN_COMPRESS_THRESHOLD_TOKENS: usize = 4_000;
 
 /// Total characters of Tool results kept inline before the oldest ones are
 /// replaced with a pointer.
 pub const TOOL_RESULT_CHAR_BUDGET: usize = 60_000;
 
-/// Characters the prompt may reach before older turns are summarised.
+/// Tokens the prompt may reach before older turns are summarised.
 ///
 /// `window_tokens == 0` means "unknown" and keeps the fixed threshold. The
 /// previous behaviour was this fixed threshold for every model, which was both
 /// late for an 8k local model — the prompt was already over the window before
 /// anything was compressed — and needlessly eager for a 200k one.
-pub fn compress_threshold_chars(window_tokens: u32) -> usize {
+pub fn compress_threshold_tokens(window_tokens: u32) -> usize {
     if window_tokens == 0 {
-        return COMPRESS_THRESHOLD_CHARS;
+        return COMPRESS_THRESHOLD_TOKENS;
     }
-    let budget = window_tokens as usize * CHARS_PER_TOKEN * PROMPT_BUDGET_PERCENT / 100;
-    budget.max(MIN_COMPRESS_THRESHOLD_CHARS)
+    let budget = window_tokens as usize * PROMPT_BUDGET_PERCENT / 100;
+    budget.max(MIN_COMPRESS_THRESHOLD_TOKENS)
+}
+
+/// Quarter-token weight of one character.
+///
+/// The estimator works in quarter-tokens so it can stay integer-only:
+/// ASCII costs one quarter (four characters per token, as before), a CJK
+/// ideograph or kana costs four (about one token each, the conservative end of
+/// the range for Japanese tokenizers), and other non-ASCII text costs two.
+/// Emoji are usually two or more tokens; budgeting eight quarters (two tokens)
+/// keeps a chat full of them from slipping past the threshold.
+fn char_weight_quarters(ch: char) -> usize {
+    if ch.is_ascii() {
+        return 1;
+    }
+    let cp = ch as u32;
+    match cp {
+        0x1F300..=0x1FAFF | 0x2600..=0x27BF => 8,
+        0x1100..=0x11FF          // Hangul Jamo
+        | 0x2E80..=0x2EFF        // CJK radicals
+        | 0x3000..=0x303F        // CJK symbols and punctuation
+        | 0x3040..=0x30FF        // Hiragana + Katakana
+        | 0x3130..=0x318F        // Hangul compatibility Jamo
+        | 0x31F0..=0x31FF        // Katakana phonetic extensions
+        | 0x3400..=0x4DBF        // CJK extension A
+        | 0x4E00..=0x9FFF        // CJK unified ideographs
+        | 0xAC00..=0xD7AF        // Hangul syllables
+        | 0xF900..=0xFAFF        // CJK compatibility ideographs
+        | 0xFF00..=0xFFEF        // Fullwidth forms
+        | 0x20000..=0x2FA1F => 4, // CJK extensions B-F + compatibility supplement
+        _ => 2,
+    }
+}
+
+/// Estimate the prompt cost of a message list in tokens.
+///
+/// This is deliberately a heuristic, not a tokenizer: the provider is the only
+/// authority on the exact count. But it has to be the *right shape* — script
+/// aware — because a Japanese conversation that looks like 30 000 tokens to a
+/// four-characters-per-token estimate can really be 120 000, and the engine
+/// would then discover the overflow from a provider error instead of
+/// compressing in time.
+pub fn estimate_tokens(messages: &[crate::providers_bridge::Message]) -> usize {
+    let mut quarters: usize = 0;
+    for message in messages {
+        // ~4 tokens of role/separator overhead per message, the same figure the
+        // old character estimate used.
+        quarters = quarters.saturating_add(16);
+        quarters = quarters.saturating_add(message.role.chars().count());
+        for ch in message.content.chars() {
+            quarters = quarters.saturating_add(char_weight_quarters(ch));
+        }
+    }
+    quarters.div_ceil(4)
 }
 
 /// Replace the oldest oversized Tool results with a pointer.
@@ -210,14 +264,6 @@ pub struct CompressionOutcome {
     pub evicted_tool_results: usize,
 }
 
-/// Estimate the character cost of a message list.
-pub fn estimate_chars(messages: &[crate::providers_bridge::Message]) -> usize {
-    messages
-        .iter()
-        .map(|m| m.content.chars().count() + m.role.chars().count() + 16)
-        .sum()
-}
-
 /// A `tool` message is a Tool *result*: it is only meaningful when the
 /// assistant turn that requested it is still in the list. Splitting between the
 /// two produces a sequence strict providers reject.
@@ -289,7 +335,7 @@ where
     let (mut messages, evicted_tool_results) =
         evict_tool_results(messages, TOOL_RESULT_CHAR_BUDGET);
 
-    if estimate_chars(&messages) < compress_threshold_chars(window_tokens) {
+    if estimate_tokens(&messages) < compress_threshold_tokens(window_tokens) {
         return CompressionOutcome {
             messages,
             summary,
@@ -359,21 +405,55 @@ mod tests {
 
     #[test]
     fn an_unknown_window_keeps_the_fixed_threshold() {
-        assert_eq!(compress_threshold_chars(0), COMPRESS_THRESHOLD_CHARS);
+        assert_eq!(compress_threshold_tokens(0), COMPRESS_THRESHOLD_TOKENS);
     }
 
     #[test]
     fn a_small_window_compresses_much_earlier_than_a_large_one() {
-        let small = compress_threshold_chars(8_000);
-        let large = compress_threshold_chars(200_000);
+        let small = compress_threshold_tokens(8_000);
+        let large = compress_threshold_tokens(200_000);
         assert!(small < large);
-        assert_eq!(large, 200_000 * CHARS_PER_TOKEN * 60 / 100);
-        assert!(small >= MIN_COMPRESS_THRESHOLD_CHARS);
+        assert_eq!(large, 200_000 * 60 / 100);
+        assert!(small >= MIN_COMPRESS_THRESHOLD_TOKENS);
     }
 
     #[test]
     fn an_absurdly_small_window_still_has_a_floor() {
-        assert_eq!(compress_threshold_chars(100), MIN_COMPRESS_THRESHOLD_CHARS);
+        assert_eq!(
+            compress_threshold_tokens(100),
+            MIN_COMPRESS_THRESHOLD_TOKENS
+        );
+    }
+
+    #[test]
+    fn english_still_estimates_about_four_characters_per_token() {
+        let messages = vec![msg("user", &"word ".repeat(4_000))];
+        let tokens = estimate_tokens(&messages);
+        // 20 000 ASCII characters plus message overhead. Allow the 4-token
+        // overhead and rounding, but stay near the historical ratio.
+        assert!(
+            (4_500..=5_500).contains(&tokens),
+            "expected ~5k tokens, got {tokens}"
+        );
+    }
+
+    #[test]
+    fn japanese_is_not_undercounted_like_ascii() {
+        // The bug this guards against: 4 000 kana used to look like 1 000
+        // tokens, so an 8k-window model only started compressing after the
+        // prompt was already past its window.
+        let japanese = vec![msg("user", &"あ".repeat(4_000))];
+        let ascii = vec![msg("user", &"a".repeat(4_000))];
+        let japanese_tokens = estimate_tokens(&japanese);
+        let ascii_tokens = estimate_tokens(&ascii);
+        assert!(
+            japanese_tokens >= 3_500,
+            "4 000 kana must estimate near 4 000 tokens, got {japanese_tokens}"
+        );
+        assert!(
+            japanese_tokens >= ascii_tokens * 3,
+            "CJK must not use the ASCII ratio: ja={japanese_tokens} ascii={ascii_tokens}"
+        );
     }
 
     #[test]
@@ -424,7 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn compress_keeps_tail_verbatim() {
-        let big = "x".repeat(COMPRESS_THRESHOLD_CHARS);
+        let big = "x".repeat(COMPRESS_THRESHOLD_TOKENS * 4);
         let mut messages = vec![msg("user", &big)];
         for i in 0..10 {
             messages.push(msg("assistant", &format!("turn {}", i)));
@@ -442,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     async fn compress_fails_open_when_summariser_fails() {
-        let big = "x".repeat(COMPRESS_THRESHOLD_CHARS);
+        let big = "x".repeat(COMPRESS_THRESHOLD_TOKENS * 4);
         let mut messages = vec![msg("user", &big)];
         for i in 0..10 {
             messages.push(msg("assistant", &format!("turn {}", i)));
@@ -458,7 +538,7 @@ mod tests {
     /// boundary can land on one, which strict providers reject outright.
     #[tokio::test]
     async fn compress_never_orphans_a_tool_result() {
-        let big = "x".repeat(COMPRESS_THRESHOLD_CHARS);
+        let big = "x".repeat(COMPRESS_THRESHOLD_TOKENS * 4);
         // 13 messages => keep = 13/3 = 4, so the naive boundary is index 9.
         // Place the Tool result exactly there, with its requester just before.
         let mut messages = vec![msg("user", &big)];
@@ -510,7 +590,7 @@ mod tests {
     /// prompt and waste tokens.
     #[tokio::test]
     async fn compress_summarises_only_the_dropped_slice() {
-        let big = "x".repeat(COMPRESS_THRESHOLD_CHARS);
+        let big = "x".repeat(COMPRESS_THRESHOLD_TOKENS * 4);
         let mut messages = vec![msg("user", &big)];
         for i in 0..10 {
             messages.push(msg("assistant", &format!("turn {}", i)));

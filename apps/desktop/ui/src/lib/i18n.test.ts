@@ -1,5 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { browserLanguage, setLanguage, t, tf } from "./i18n";
+import { act, render, renderHook } from "@testing-library/react";
+import { createElement, memo } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  browserLanguage,
+  getLanguage,
+  setLanguage,
+  subscribeLanguage,
+  t,
+  tf,
+  useLanguage,
+  useT,
+} from "./i18n";
 
 describe("i18n", () => {
   afterEach(() => setLanguage("ja"));
@@ -43,6 +54,39 @@ describe("i18n", () => {
     expect(browserLanguage(["en-US"])).toBe("en");
     expect(browserLanguage(["de-DE"])).toBe("en");
     expect(browserLanguage([])).toBe("en");
+  });
+
+  it("notifies subscribers when the language changes", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeLanguage(listener);
+    setLanguage("en");
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(getLanguage()).toBe("en");
+    unsubscribe();
+    setLanguage("ja");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-renders useLanguage consumers after setLanguage", () => {
+    setLanguage("ja");
+    const { result } = renderHook(() => useLanguage());
+    expect(result.current).toBe("ja");
+    act(() => setLanguage("en"));
+    expect(result.current).toBe("en");
+    act(() => setLanguage("ja"));
+  });
+
+  it("updates memoized t() consumers after setLanguage", () => {
+    const MemoLeaf = memo(function MemoLeaf() {
+      const tt = useT();
+      return createElement("span", null, tt("送信"));
+    });
+    setLanguage("ja");
+    const { container } = render(createElement(MemoLeaf));
+    expect(container.textContent).toBe("送信");
+    act(() => setLanguage("en"));
+    expect(container.textContent).toBe("Send");
+    act(() => setLanguage("ja"));
   });
 
   it("translates relativeTime labels", async () => {

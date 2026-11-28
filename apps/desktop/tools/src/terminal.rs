@@ -51,6 +51,9 @@ const TRUNCATED_HEAD_BYTES: usize = 16 * 1024;
 /// of output, so an unbounded history is an unbounded memory leak over a long
 /// session.
 const MAX_HISTORY: usize = 200;
+/// Run scope for shells the user opened from the terminal pane. Distinct from
+/// an agent Run's UUID so the two can never share `cd`/environment state.
+const USER_SESSION_SCOPE: &str = "user";
 
 pub struct TerminalTool {
     pub max_wall_clock_ms: u64,
@@ -58,6 +61,13 @@ pub struct TerminalTool {
     /// Live shells, keyed per (Run, directory) so concurrent Runs and projects
     /// do not share a `cd` or environment.
     sessions: Arc<Mutex<HashMap<String, Arc<ShellSession>>>>,
+    /// In-flight streamed commands from the terminal pane, keyed by workspace
+    /// root. The pane polls this state instead of blocking on `run`.
+    user_runs: Arc<Mutex<HashMap<String, RunningUserCommand>>>,
+    /// One poll mutex per workspace root. React StrictMode mounts the polling
+    /// effect twice; serialising per workspace keeps that safe without holding
+    /// the global `user_runs` map across `await`s.
+    user_poll_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// When set, a new shell is started under the platform sandbox (macOS:
     /// `sandbox-exec` with writes confined to the workspace and temp dirs).
     /// Shared so a settings change reaches the registry's clone.
@@ -65,6 +75,10 @@ pub struct TerminalTool {
     /// Also deny network access inside the sandbox. Opt-in: package installs
     /// and test suites commonly need the network.
     sandbox_network: Arc<std::sync::atomic::AtomicBool>,
+    /// Opt-in strict sandbox profile: macOS additionally denies reads of
+    /// credential paths and blocks the network by default. The relaxed
+    /// write-confinement profile stays the default for compatibility.
+    sandbox_strict: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Whether this machine can actually enforce the terminal sandbox.
@@ -85,8 +99,11 @@ impl Default for TerminalTool {
             max_wall_clock_ms: DEFAULT_MAX_WALL_CLOCK_MS,
             history: Arc::new(Mutex::new(Vec::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            user_runs: Arc::new(Mutex::new(HashMap::new())),
+            user_poll_locks: Arc::new(Mutex::new(HashMap::new())),
             sandbox: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             sandbox_network: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sandbox_strict: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -114,6 +131,70 @@ impl TerminalTool {
         self.sandbox_network
             .load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    /// Enable the strict profile for shells started after this call. It adds
+    /// sensitive-read and network denials on macOS; elsewhere it is a no-op
+    /// beyond the existing best-effort gates.
+    pub fn set_sandbox_strict(&self, enabled: bool) {
+        self.sandbox_strict
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn sandbox_strict_enabled(&self) -> bool {
+        self.sandbox_strict
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Best-effort Windows gate shared by agent calls and every pane entry
+    /// point. A Job Object confines the process tree but not the filesystem.
+    fn windows_sandbox_reason(&self, command: &str) -> Option<&'static str> {
+        if self.sandbox_enabled() && cfg!(windows) {
+            windows_sandbox_denies_command(command)
+        } else {
+            None
+        }
+    }
+}
+
+/// One streamed command owned by the terminal pane.
+#[derive(Clone)]
+struct RunningUserCommand {
+    command: String,
+    cwd_marker: String,
+    exit_marker: String,
+    /// Raw-buffer offset captured before the command was written.
+    base: usize,
+    /// Size of the prompt-hook file when the command started. A larger file
+    /// means the hook ran, i.e. the command exited.
+    done_offset: u64,
+    deadline: std::time::Instant,
+    max_ms: u64,
+    /// The status query has been typed; the shell is between the command and
+    /// the exit marker.
+    status_sent: bool,
+    /// Command output captured before the status query, so the protocol lines
+    /// never appear in the pane.
+    pending_output: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserShellStart {
+    pub cwd: String,
+    pub persistent: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserShellPoll {
+    /// Output between the start and done markers, capped to the tail.
+    pub output: String,
+    pub done: bool,
+    pub idle: bool,
+    pub persistent: bool,
+    pub exit_code: Option<i32>,
+    pub cwd: Option<String>,
+    /// The command the pane re-attached to after a tab switch.
+    pub command: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +250,38 @@ struct ShellSession {
     /// login shell reaches its prompt is swallowed by Git Bash's startup on
     /// Windows, which then looks like a marker timeout.
     warmed: std::sync::atomic::AtomicBool,
+    /// Duplicated master fd used to find the terminal's foreground process
+    /// group and deliver SIGINT. `portable-pty` sets the slave to raw mode, so
+    /// writing `\x03` alone does not raise the signal.
+    #[cfg(unix)]
+    interrupt_fd: std::sync::Mutex<Option<std::os::fd::OwnedFd>>,
+    /// Directory holding the prompt-hook file and per-command exit-status
+    /// files. Normally the process temp dir, but on Linux with a sandbox it
+    /// is a private subdirectory of the workspace: bwrap (`--tmpfs /tmp`) and
+    /// firejail (`--private-tmp`) give the shell a *different* /tmp, so files
+    /// written there would be invisible to the polling parent process.
+    status_dir: PathBuf,
+    /// File appended to by the shell's prompt hook. The streaming terminal
+    /// waits for a new line instead of pre-writing a completion script into
+    /// stdin (an interactive command like `cat` would consume it).
+    done_path: PathBuf,
+    hook_ready: std::sync::atomic::AtomicBool,
+}
+
+/// Keep the end of a live terminal transcript.
+///
+/// A terminal is read from the bottom up, so the tail (the failing assertion,
+/// the prompt) is what matters; unlike `truncate_output`, there is no reason
+/// to preserve the head.
+fn tail_output(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut start = text.len().saturating_sub(max_bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("… [older output truncated] …\n{}", &text[start..])
 }
 
 pub fn truncate_to_char_boundary(text: &str, max_bytes: usize) -> &str {
@@ -177,6 +290,60 @@ pub fn truncate_to_char_boundary(text: &str, max_bytes: usize) -> &str {
         cut -= 1;
     }
     &text[..cut]
+}
+
+/// The bytes written to the shell to start a streamed pane command.
+///
+/// POSIX shells expose `$?` directly. PowerShell's blocking protocol in
+/// `session.rs` is the only other place that sets `$global:__mixd_rc`, and the
+/// pane never runs that protocol — without this append the status query in
+/// [`TerminalTool::poll_user_command`] would print an empty exit code.
+fn user_command_line(command: &str, is_posix: bool) -> String {
+    let mut line = command.to_string();
+    if !line.ends_with('\n') {
+        line.push('\n');
+    }
+    if !is_posix {
+        line.push_str(
+            "$global:__mixd_rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }\r\n",
+        );
+    }
+    line
+}
+
+/// The post-command status query typed once the prompt hook has fired.
+fn user_status_query(cwd_marker: &str, exit_marker: &str, is_posix: bool) -> String {
+    if is_posix {
+        format!(
+            "__mixd_rc=$?; printf '\\n{}%s\\n{}%s\\n' \"$PWD\" \"$__mixd_rc\"\n",
+            cwd_marker, exit_marker
+        )
+    } else {
+        format!(
+            "Write-Output \"{}$($ExecutionContext.SessionState.Path.CurrentLocation.Path)\"; Write-Output \"{}$global:__mixd_rc\"\r\n",
+            cwd_marker, exit_marker
+        )
+    }
+}
+
+/// True when the prompt hook appended a new line since the command started.
+fn prompt_hook_fired(path: &std::path::Path, done_offset: u64) -> bool {
+    std::fs::metadata(path)
+        .map(|meta| meta.len() > done_offset)
+        .unwrap_or(false)
+}
+
+fn idle_user_poll() -> UserShellPoll {
+    UserShellPoll {
+        output: String::new(),
+        done: true,
+        idle: true,
+        persistent: true,
+        exit_code: None,
+        cwd: None,
+        command: None,
+        error: None,
+    }
 }
 
 #[async_trait]
@@ -358,6 +525,18 @@ impl Tool for TerminalTool {
                 .get("input")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("input is required for action: send"))?;
+            // The sandbox's Job Object cannot confine the filesystem on
+            // Windows, so the deny list is enforced here too: interactive
+            // input reaches the same shell a `run` would.
+            if let Some(reason) = self.windows_sandbox_reason(input) {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: serde_json::json!({
+                        "cwd": session_dir.to_string_lossy(),
+                    }),
+                    error: Some(format!("terminal sandbox: {reason}")),
+                });
+            }
             let wait_ms = args
                 .get("wait_ms")
                 .and_then(|v| v.as_u64())
@@ -378,6 +557,25 @@ impl Tool for TerminalTool {
                 "command is required for action: run (use action: send to type into a live shell)"
             ));
         }
+        // Fail closed on Windows: the Job Object confines the process tree
+        // but not the filesystem, so a sandboxed command naming a dangerous
+        // system path is refused before any shell sees it.
+        let full = if cmd_args.is_empty() {
+            command.clone()
+        } else {
+            format!("{command} {}", cmd_args.join(" "))
+        };
+        if let Some(reason) = self.windows_sandbox_reason(&full) {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({
+                    "command": command,
+                    "exit_code": null,
+                    "cwd": workdir.to_string_lossy(),
+                }),
+                error: Some(format!("terminal sandbox: {reason}")),
+            });
+        }
         let started = chrono::Utc::now();
         let (stdout, exit_code, cwd, persistent) = if cmd_args.is_empty() {
             self.run_in_shell(
@@ -397,6 +595,7 @@ impl Tool for TerminalTool {
                 &cmd_args,
                 &workdir,
                 self.sandbox_network_enabled(),
+                self.sandbox_strict_enabled(),
             ) {
                 Some((program, args)) => self.run_once(&session_dir, &program, &args, max_ms).await,
                 None => {
@@ -443,14 +642,10 @@ impl Tool for TerminalTool {
                 None => "command did not report an exit status".to_string(),
             })
         };
-        {
-            let mut history = self.history.lock().await;
-            history.push(record);
-            if history.len() > MAX_HISTORY {
-                let excess = history.len() - MAX_HISTORY;
-                history.drain(..excess);
-            }
-        }
+        self.remember(record).await;
+        // A shell command can create or delete arbitrary files; the search
+        // cache must not outlive it.
+        crate::search::invalidate_walk_cache();
         Ok(ToolResult {
             ok,
             content: payload,
@@ -510,6 +705,7 @@ impl TerminalTool {
     async fn acquire_session(
         &self,
         session_dir: &std::path::Path,
+        sandbox_root: &std::path::Path,
         run_scope: &str,
     ) -> Option<Arc<ShellSession>> {
         let key = format!("{run_scope}|{}", session_dir.to_string_lossy());
@@ -529,13 +725,18 @@ impl TerminalTool {
                     stable_hash(&key),
                     SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 );
-                let sandbox_root = self.sandbox_enabled().then_some(session_dir);
+                // `session_dir` may be a `cwd` subdirectory; the kernel sandbox
+                // must cover the whole workspace, or a command could write
+                // anywhere else under the project. Keep the session directory
+                // only as the shell's starting cwd.
+                let sandbox_root = self.sandbox_enabled().then_some(sandbox_root);
                 let cwd_str = session_dir.to_string_lossy().to_string();
                 let spawned = ShellSession::spawn(
                     &cwd_str,
                     &session_id,
                     sandbox_root,
                     self.sandbox_network_enabled(),
+                    self.sandbox_strict_enabled(),
                 );
                 if let Some(session) = &spawned {
                     sessions.insert(key.clone(), session.clone());
@@ -558,7 +759,10 @@ impl TerminalTool {
         input: &str,
         wait_ms: u64,
     ) -> ToolResult {
-        let Some(session) = self.acquire_session(session_dir, run_scope).await else {
+        let Some(session) = self
+            .acquire_session(session_dir, project_root, run_scope)
+            .await
+        else {
             return ToolResult {
                 ok: false,
                 content: serde_json::json!({ "cwd": session_dir.to_string_lossy() }),
@@ -661,7 +865,9 @@ impl TerminalTool {
         // conversation in another window could silently move the parent's
         // shell, and the parent's next command ran somewhere it did not expect.
         let key = format!("{run_scope}|{}", session_dir.to_string_lossy());
-        let session = self.acquire_session(session_dir, run_scope).await;
+        let session = self
+            .acquire_session(session_dir, project_root, run_scope)
+            .await;
         let Some(session) = session else {
             // A sandbox was explicitly requested: degrading to an unsandboxed
             // one-shot child would quietly defeat the setting, so fail instead.
@@ -755,6 +961,336 @@ impl TerminalTool {
                 session.kill();
                 (err, None, Some(fallback_cwd), true)
             }
+        }
+    }
+
+    /// Run a command typed by the user in the terminal pane.
+    ///
+    /// Uses the same persistent shell and sandbox as the agent, but a separate
+    /// run scope (`user`) so a UI command cannot move the agent's `cd` or
+    /// environment. The caller has already checked that `root` is a workspace
+    /// the user explicitly opened.
+    pub async fn run_user_command(
+        &self,
+        root: &str,
+        command: &str,
+        max_ms: u64,
+    ) -> anyhow::Result<TerminalCommand> {
+        let workdir = canonicalize_portable(std::path::Path::new(root))?;
+        if !workdir.is_dir() {
+            anyhow::bail!("workspace root is not a directory");
+        }
+        let command = command.trim();
+        if command.is_empty() {
+            anyhow::bail!("command is empty");
+        }
+        if let Some(reason) = self.windows_sandbox_reason(command) {
+            anyhow::bail!("terminal sandbox: {reason}");
+        }
+        let max_ms = max_ms.clamp(1_000, MAX_WALL_CLOCK_MS);
+        let started = chrono::Utc::now();
+        let (stdout, exit_code, cwd, persistent) = self
+            .run_in_shell(&workdir, &workdir, USER_SESSION_SCOPE, command, max_ms)
+            .await;
+        let record = TerminalCommand {
+            command: command.to_string(),
+            args: Vec::new(),
+            started_at: started,
+            finished_at: chrono::Utc::now(),
+            exit_code,
+            stdout,
+            stderr: String::new(),
+            cwd,
+            persistent,
+        };
+        self.remember(record.clone()).await;
+        // The pane runs in the same workspace as `grep`/`glob`. Without this
+        // the user's `touch file` stayed invisible to search for the cache TTL.
+        crate::search::invalidate_walk_cache();
+        Ok(record)
+    }
+
+    /// Type into the user shell that a previous [`Self::run_user_command`]
+    /// created (REPLs, prompts). Returns whatever arrived in `wait_ms`.
+    pub async fn send_user_input(
+        &self,
+        root: &str,
+        input: &str,
+        wait_ms: u64,
+    ) -> anyhow::Result<ToolResult> {
+        let workdir = canonicalize_portable(std::path::Path::new(root))?;
+        if !workdir.is_dir() {
+            anyhow::bail!("workspace root is not a directory");
+        }
+        if let Some(reason) = self.windows_sandbox_reason(input) {
+            anyhow::bail!("terminal sandbox: {reason}");
+        }
+        let result = self
+            .send_input(
+                &workdir,
+                &workdir,
+                USER_SESSION_SCOPE,
+                input,
+                wait_ms.min(5_000),
+            )
+            .await;
+        crate::search::invalidate_walk_cache();
+        Ok(result)
+    }
+
+    /// Start a command in the pane's persistent shell and return immediately.
+    ///
+    /// The command is wrapped in the same start/sentinel protocol as the
+    /// blocking [`Self::run_user_command`], but the caller polls
+    /// [`Self::poll_user_command`] for output. This is what makes a long build
+    /// visible while it runs instead of after it finishes.
+    pub async fn start_user_command(
+        &self,
+        root: &str,
+        command: &str,
+        max_ms: u64,
+    ) -> anyhow::Result<UserShellStart> {
+        let workdir = canonicalize_portable(std::path::Path::new(root))?;
+        if !workdir.is_dir() {
+            anyhow::bail!("workspace root is not a directory");
+        }
+        let command = command.trim();
+        if command.is_empty() {
+            anyhow::bail!("command is empty");
+        }
+        // The pane is another entry point into the same shell as `run`/`send`;
+        // it must not skip the best-effort Windows sandbox gate.
+        if let Some(reason) = self.windows_sandbox_reason(command) {
+            anyhow::bail!("terminal sandbox: {reason}");
+        }
+        let key = workdir.to_string_lossy().to_string();
+        if self.user_runs.lock().await.contains_key(&key) {
+            anyhow::bail!("a command is already running in this workspace");
+        }
+        let session = self
+            .acquire_session(&workdir, &workdir, USER_SESSION_SCOPE)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("could not start a persistent shell"))?;
+        session.ensure_warmed(5_000).await;
+        session
+            .ensure_done_hook(5_000)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let base = session.buffer_len().await;
+        let done_offset = std::fs::metadata(session.done_path())
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        let nonce = uuid::Uuid::new_v4().as_simple().to_string();
+        let cwd_marker = format!("__MIXD_CWD_{nonce}__");
+        let exit_marker = format!("__MIXD_EXIT_{nonce}__");
+        session.set_busy(true);
+        let line = user_command_line(command, session.config.is_posix);
+        if let Err(err) = session.write_raw(line.as_bytes()).await {
+            session.set_busy(false);
+            anyhow::bail!("could not write to the shell: {err}");
+        }
+        let max_ms = max_ms.clamp(1_000, MAX_WALL_CLOCK_MS);
+        // The command has been written to the shared shell; a later `grep`
+        // must not serve a file list captured before it ran.
+        crate::search::invalidate_walk_cache();
+        self.user_runs.lock().await.insert(
+            key,
+            RunningUserCommand {
+                command: command.to_string(),
+                cwd_marker,
+                exit_marker,
+                base,
+                done_offset,
+                deadline: std::time::Instant::now() + std::time::Duration::from_millis(max_ms),
+                max_ms,
+                status_sent: false,
+                pending_output: String::new(),
+            },
+        );
+        Ok(UserShellStart {
+            cwd: session.cwd().await,
+            persistent: true,
+        })
+    }
+
+    /// Poll the in-flight command. Safe to call after a tab switch: it returns
+    /// `idle: true` when nothing is running, or re-attaches to the command.
+    pub async fn poll_user_command(&self, root: &str) -> anyhow::Result<UserShellPoll> {
+        let workdir = canonicalize_portable(std::path::Path::new(root))?;
+        let key = workdir.to_string_lossy().to_string();
+        // StrictMode double-poll protection lives in a per-workspace mutex, not
+        // in the global map. The map is now held only for the few synchronous
+        // instructions needed to clone/update one entry, never across an await.
+        let poll_lock = {
+            let mut locks = self.user_poll_locks.lock().await;
+            locks
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _poll_guard = poll_lock.lock().await;
+        let Some(mut state) = self.user_runs.lock().await.get(&key).cloned() else {
+            return Ok(idle_user_poll());
+        };
+        let Some(session) = self
+            .acquire_session(&workdir, &workdir, USER_SESSION_SCOPE)
+            .await
+        else {
+            self.user_runs.lock().await.remove(&key);
+            return Ok(UserShellPoll {
+                output: String::new(),
+                done: true,
+                idle: false,
+                persistent: false,
+                exit_code: None,
+                cwd: None,
+                command: Some(state.command),
+                error: Some("the shell is no longer running".to_string()),
+            });
+        };
+        let (text, trimmed) = session.snapshot_from(state.base).await;
+        if trimmed {
+            state.base = 0;
+        }
+
+        // A new line in the hook file means the command exited. Only now is it
+        // safe to type the status query: an interactive command would have
+        // consumed it as stdin if it had been written up front.
+        let hook_fired = prompt_hook_fired(session.done_path(), state.done_offset);
+        if !state.status_sent && hook_fired {
+            state.pending_output = text.clone();
+            state.status_sent = true;
+            let query = user_status_query(
+                &state.cwd_marker,
+                &state.exit_marker,
+                session.config.is_posix,
+            );
+            if let Err(err) = session.write_raw(query.as_bytes()).await {
+                self.user_runs.lock().await.remove(&key);
+                session.set_busy(false);
+                return Ok(UserShellPoll {
+                    output: tail_output(&state.pending_output, MAX_OUTPUT_BYTES),
+                    done: true,
+                    idle: false,
+                    persistent: false,
+                    exit_code: None,
+                    cwd: None,
+                    command: Some(state.command),
+                    error: Some(format!("could not read the exit status: {err}")),
+                });
+            }
+        }
+
+        if state.status_sent {
+            if let Some((cwd, exit_code)) =
+                parse_user_status(&text, &state.cwd_marker, &state.exit_marker)
+            {
+                *session.cwd.lock().await = cwd.clone();
+                let output = state.pending_output.clone();
+                self.user_runs.lock().await.remove(&key);
+                session.clear_output().await;
+                session.set_busy(false);
+                self.remember(TerminalCommand {
+                    command: state.command,
+                    args: Vec::new(),
+                    started_at: chrono::Utc::now(),
+                    finished_at: chrono::Utc::now(),
+                    exit_code: Some(exit_code),
+                    stdout: output.clone(),
+                    stderr: String::new(),
+                    cwd: Some(cwd.clone()),
+                    persistent: true,
+                })
+                .await;
+                return Ok(UserShellPoll {
+                    output: tail_output(&output, MAX_OUTPUT_BYTES),
+                    done: true,
+                    idle: false,
+                    persistent: true,
+                    exit_code: Some(exit_code),
+                    cwd: Some(cwd),
+                    command: None,
+                    error: None,
+                });
+            }
+        }
+
+        if std::time::Instant::now() >= state.deadline {
+            session.interrupt().await;
+            self.user_runs.lock().await.remove(&key);
+            let session_key = format!("{USER_SESSION_SCOPE}|{}", workdir.to_string_lossy());
+            self.sessions.lock().await.remove(&session_key);
+            session.kill();
+            session.clear_output().await;
+            let output = if state.pending_output.is_empty() {
+                text
+            } else {
+                state.pending_output
+            };
+            return Ok(UserShellPoll {
+                output: tail_output(&output, MAX_OUTPUT_BYTES),
+                done: true,
+                idle: false,
+                persistent: false,
+                exit_code: None,
+                cwd: None,
+                command: Some(state.command),
+                error: Some(format!(
+                    "timed out after {} ms; the shell was reset",
+                    state.max_ms
+                )),
+            });
+        }
+
+        let output = if state.status_sent {
+            state.pending_output.clone()
+        } else {
+            text
+        };
+        // Re-lock briefly to publish the updated state. A second poll of the
+        // same workspace is still waiting on `_poll_guard`, so it will see this
+        // version rather than a transiently missing entry.
+        let mut runs = self.user_runs.lock().await;
+        if let Some(slot) = runs.get_mut(&key) {
+            *slot = state;
+        }
+        Ok(UserShellPoll {
+            output: tail_output(&output, MAX_OUTPUT_BYTES),
+            done: false,
+            idle: false,
+            persistent: true,
+            exit_code: None,
+            cwd: None,
+            command: None,
+            error: None,
+        })
+    }
+
+    /// Send Ctrl-C to the foreground process of the pane's shell.
+    pub async fn interrupt_user_command(&self, root: &str) -> anyhow::Result<()> {
+        let workdir = canonicalize_portable(std::path::Path::new(root))?;
+        let key = format!("{USER_SESSION_SCOPE}|{}", workdir.to_string_lossy());
+        // Do not acquire: pressing stop on a workspace with no live shell must
+        // not spawn a new one just to signal it.
+        let session = self.sessions.lock().await.get(&key).cloned();
+        if let Some(session) = session {
+            session.interrupt().await;
+        }
+        Ok(())
+    }
+
+    /// Recent commands, newest last. Used by the terminal pane on first paint
+    /// so reopening the panel does not look like a brand-new shell.
+    pub async fn history(&self) -> Vec<TerminalCommand> {
+        self.history.lock().await.clone()
+    }
+
+    async fn remember(&self, record: TerminalCommand) {
+        let mut history = self.history.lock().await;
+        history.push(record);
+        if history.len() > MAX_HISTORY {
+            let excess = history.len() - MAX_HISTORY;
+            history.drain(..excess);
         }
     }
 

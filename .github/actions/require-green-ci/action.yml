@@ -1,0 +1,95 @@
+name: Require green CI for the tagged commit
+description: Fail unless every required workflow has a completed, successful push-to-main run for the current SHA.
+
+# Tag releases are cut from main, but `gh run list --commit <sha>` also returns
+# pull_request runs for the same SHA (including feature-branch PRs). Accepting
+# any `success` run therefore lets a never-landed feature branch publish a
+# release. Pin all four fields and check every required workflow explicitly.
+#
+# Requires `actions: read` on the calling job (the release preflights already
+# declare it). `validate-release.yml` is triggered on push to main as well as
+# on pull_request so that its run for the tagged SHA exists here.
+#
+# A workflow run can be `success` while some of its jobs failed (for example a
+# `continue-on-error` gate), so the matching run's jobs are fetched and checked
+# individually. Unreadable job lists and empty job lists fail closed.
+
+inputs:
+  workflows:
+    description: Comma-separated workflow file names that must all be green.
+    required: false
+    default: "ci.yml,validate-release.yml"
+
+runs:
+  using: composite
+  steps:
+    - name: Verify required workflow runs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        WORKFLOWS: ${{ inputs.workflows }}
+        TARGET_SHA: ${{ github.sha }}
+        TARGET_REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        failed=0
+        checked=0
+        IFS=',' read -ra required <<< "$WORKFLOWS"
+        for workflow in "${required[@]}"; do
+          workflow="$(printf '%s' "$workflow" | xargs)"
+          [[ -n "$workflow" ]] || continue
+          checked=$((checked + 1))
+          echo "::group::Required workflow: $workflow @ $TARGET_SHA"
+          runs="$(gh run list --repo "$TARGET_REPO" --workflow "$workflow" \
+            --commit "$TARGET_SHA" --limit 100 \
+            --json conclusion,status,event,headBranch,url,databaseId)"
+          echo "$runs"
+          match="$(printf '%s' "$runs" | jq -c '[.[] | select(
+            .event == "push" and
+            .headBranch == "main" and
+            .conclusion == "success" and
+            .status == "completed")] | .[0] // empty')"
+          if [[ -z "$match" ]]; then
+            echo "::error::No completed, successful push-to-main run of $workflow for $TARGET_SHA. Refusing to publish."
+            failed=1
+          else
+            echo "Green run: $(printf '%s' "$match" | jq -r '.url')"
+            # A green run conclusion is not enough: a `continue-on-error` job
+            # can fail without turning the run red. Inspect every job in the
+            # run and fail closed if the list cannot be read.
+            run_id="$(printf '%s' "$match" | jq -r '.databaseId // empty')"
+            if [[ -z "$run_id" ]]; then
+              echo "::error::Green run of $workflow has no databaseId; cannot verify its jobs. Refusing to publish."
+              failed=1
+            elif ! jobs="$(gh api "repos/$TARGET_REPO/actions/runs/$run_id/jobs" --paginate | jq -s '[.[].jobs[]]')"; then
+              echo "::error::Could not read jobs for $workflow run $run_id. Refusing to publish."
+              failed=1
+            else
+              job_count="$(printf '%s' "$jobs" | jq 'length')"
+              if [[ "$job_count" -eq 0 ]]; then
+                echo "::error::$workflow run $run_id reported no jobs. Refusing to publish."
+                failed=1
+              else
+                # `skipped` is legitimate for conditional jobs; anything else
+                # (including null for an unfinished job) blocks the release.
+                not_green="$(printf '%s' "$jobs" | jq -c '[.[] | select(
+                  .conclusion != "success" and .conclusion != "skipped") |
+                  {name: .name, conclusion: .conclusion}]')"
+                if [[ "$not_green" != "[]" ]]; then
+                  echo "::error::$workflow run $run_id has non-green jobs: $not_green. Refusing to publish."
+                  failed=1
+                else
+                  echo "All $job_count jobs in $workflow run $run_id are green or legitimately skipped."
+                fi
+              fi
+            fi
+          fi
+          echo "::endgroup::"
+        done
+        # An empty/whitespace input used to produce zero checks and exit 0,
+        # silently disabling the release gate. Fail closed instead.
+        if [[ "$checked" -eq 0 ]]; then
+          echo "::error::No workflow names were supplied via the 'workflows' input; refusing to treat an empty CI gate as success."
+          exit 1
+        fi
+        exit "$failed"

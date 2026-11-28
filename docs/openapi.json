@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MIX agent",
-    "version": "0.5.7"
+    "version": "0.5.8"
   },
   "paths": {
     "/health": {
@@ -3578,6 +3578,16 @@
               "type": "string",
               "title": "Key"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Limit"
+            }
           }
         ],
         "responses": {
@@ -4541,6 +4551,16 @@
             "schema": {
               "type": "string",
               "title": "Key"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Limit"
             }
           }
         ],
@@ -8496,6 +8516,11 @@
               "denied"
             ],
             "title": "Decision"
+          },
+          "acknowledge_risk": {
+            "type": "boolean",
+            "title": "Acknowledge Risk",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -10605,6 +10630,22 @@
             "type": "array",
             "maxItems": 100,
             "title": "Allowed Domains"
+          },
+          "network_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "public_web",
+                  "restricted",
+                  "none"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Mode"
           },
           "browser_enabled": {
             "type": "boolean",

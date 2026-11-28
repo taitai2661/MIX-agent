@@ -76,6 +76,7 @@ export function RightPanel({
     if (isAgentSurface) return;
     if (
       rightPanel === "changes" ||
+      rightPanel === "problems" ||
       rightPanel === "browser" ||
       rightPanel === "diff" ||
       rightPanel === "file"

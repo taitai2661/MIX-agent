@@ -87,7 +87,10 @@ async def test_workspace_check_accepts_only_fixed_checks(tmp_path, monkeypatch):
 async def test_workspace_git_checks_are_read_only(tmp_path, monkeypatch):
     git = shutil.which("git")
     if git is None:
-        pytest.skip("Git is installed in the execution image, not the test image")
+        pytest.skip(
+            "git executable not found on PATH; the read-only git checks need "
+            "it (the Docker test image installs it)"
+        )
     # Fixed argv (no shell); run off the event loop so the check does not block it.
     await asyncio.to_thread(subprocess.run, [git, "init", "-q", str(tmp_path)], check=True)  # noqa: S603
     monkeypatch.setattr(runner, "ROOT", tmp_path)

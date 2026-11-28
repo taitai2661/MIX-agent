@@ -27,7 +27,7 @@ import { cn } from "@/lib/cn";
  * genuinely has to differ, not that one of them looked nicer.
  */
 const segmentedVariants = cva(
-  "inline-flex h-row items-center gap-0.5 rounded-md border border-line/60 bg-inset p-0.5",
+  "inline-flex h-row items-center gap-0.5 rounded-md border border-line bg-inset p-0.5",
 );
 
 export const Segmented = forwardRef<

@@ -73,6 +73,13 @@ export function BrowserToolbar({
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const busyTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (busyTimer.current !== null) window.clearTimeout(busyTimer.current);
+    },
+    [],
+  );
 
   const currentUrl = browser.page.url ?? "";
   const navigating = busy || browser.navigating;
@@ -110,7 +117,11 @@ export function BrowserToolbar({
     try {
       await task();
     } finally {
-      window.setTimeout(() => setBusy(false), 400);
+      if (busyTimer.current !== null) window.clearTimeout(busyTimer.current);
+      busyTimer.current = window.setTimeout(() => {
+        busyTimer.current = null;
+        setBusy(false);
+      }, 400);
     }
   };
 
@@ -159,9 +170,10 @@ export function BrowserToolbar({
       <div
         className={cn(
           "group flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-full border px-3 transition-colors",
+          "focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15",
           editing
             ? "border-line-strong bg-surface"
-            : "border-line/70 bg-inset hover:border-line-strong",
+            : "border-line bg-inset hover:border-line-strong",
         )}
       >
         <SecurityIcon
@@ -200,8 +212,9 @@ export function BrowserToolbar({
           className="min-w-0 flex-1 bg-transparent font-mono text-xs text-fg outline-none placeholder:text-faint"
         />
         {currentUrl && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-xs"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               const url = normalizeAddress(editing ? address : currentUrl);
@@ -212,10 +225,10 @@ export function BrowserToolbar({
             }}
             title={t("システムのブラウザで開く")}
             aria-label={t("システムのブラウザで開く")}
-            className="shrink-0 rounded p-0.5 text-faint opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus-visible:opacity-100"
+            className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           >
             <ExternalLink size={12} />
-          </button>
+          </Button>
         )}
       </div>
 

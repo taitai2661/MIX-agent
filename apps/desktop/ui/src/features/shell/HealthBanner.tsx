@@ -5,7 +5,7 @@
 /// restart, or open diagnostics. This banner appears only on failure, names the
 /// problem, and offers a retry.
 
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, ShieldAlert } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { errorMessage } from "@/lib/errors";
 import { useHealth } from "@/lib/health";
@@ -14,6 +14,22 @@ import { Spinner } from "@/components/ui/spinner";
 
 export function HealthBanner() {
   const health = useHealth();
+  if (!health.isError && health.data?.safe_mode) {
+    return (
+      <div
+        role="status"
+        className="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning-soft px-4 py-1.5 text-xs text-warning"
+      >
+        <ShieldAlert size={13} aria-hidden="true" className="shrink-0" />
+        <span className="font-medium">{t("セーフモードで起動しています")}</span>
+        <span className="min-w-0 truncate text-2xs opacity-80">
+          {t(
+            "MCP・ブラウザ・スケジュール・ローカルランタイムの自動起動は無効です。設定を確認したら通常どおり起動し直してください。",
+          )}
+        </span>
+      </div>
+    );
+  }
   if (!health.isError) return null;
   const detail = errorMessage(health.error);
   return (
@@ -30,9 +46,9 @@ export function HealthBanner() {
       )}
       <span className="flex-1" />
       <Button
-        size="sm"
+        size="xs"
         variant="ghost"
-        className="h-6 shrink-0 gap-1 px-2 text-2xs text-danger hover:bg-danger/10 hover:text-danger"
+        className="shrink-0 gap-1 text-danger hover:bg-danger/10 hover:text-danger"
         disabled={health.isFetching}
         onClick={() => void health.refetch()}
       >

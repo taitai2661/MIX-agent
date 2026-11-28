@@ -23,6 +23,12 @@ def test_allowed_domains_switch_to_restricted_mode(tmp_path, monkeypatch):
     }
 
 
+def test_global_none_mode_is_expressible(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA", tmp_path)
+    path = egress_policy.write_policy(["example.com"], "none")
+    assert json.loads(path.read_text()) == {"mode": "none", "allowed_domains": ["example.com"]}
+
+
 def test_policy_write_is_atomic_and_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA", tmp_path)
     egress_policy.write_policy([])
@@ -74,3 +80,26 @@ def test_startup_reconcile_rewrites_the_policy_from_settings(tmp_path, monkeypat
     assert egress_policy.reconcile_from_db() is True
     policy = json.loads((tmp_path / "egress" / "policy.json").read_text(encoding="utf-8"))
     assert policy == {"mode": "restricted", "allowed_domains": ["example.com"]}
+
+
+def test_startup_reconcile_preserves_an_explicit_none_mode(tmp_path, monkeypatch):
+    """A restored/edited network_mode must survive service restarts."""
+    from types import SimpleNamespace
+
+    from mix_agent.db import session as db_session
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def get(self, _model, _key):
+            return SimpleNamespace(data={"allowed_domains": ["example.com"], "network_mode": "none"})
+
+    monkeypatch.setattr(db_session, "SessionLocal", FakeSession)
+    monkeypatch.setattr(egress_policy.config, "DATA", tmp_path)
+    assert egress_policy.reconcile_from_db() is True
+    policy = json.loads((tmp_path / "egress" / "policy.json").read_text(encoding="utf-8"))
+    assert policy == {"mode": "none", "allowed_domains": ["example.com"]}

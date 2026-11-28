@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import { Button } from "./button";
 
 export const Dialog = DialogPrimitive.Root;
+export const DialogTrigger = DialogPrimitive.Trigger;
 
 /**
  * Modal surface.
@@ -18,8 +19,16 @@ export const Dialog = DialogPrimitive.Root;
  */
 export const DialogContent = forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(function DialogContent({ className, children, ...props }, ref) {
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    /** The model picker is a command-palette-style surface with its own
+     *  dismiss affordances (Escape, backdrop, selecting a row), so the
+     *  top-right X would only crowd the search header. Defaults to shown. */
+    showClose?: boolean;
+  }
+>(function DialogContent(
+  { className, children, showClose = true, ...props },
+  ref,
+) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-scrim backdrop-blur-[2px] animate-fade" />
@@ -33,13 +42,15 @@ export const DialogContent = forwardRef<
         {...props}
       >
         {children}
-        <DialogPrimitive.Close
-          className="absolute top-2.5 right-2.5 text-faint transition-colors hover:text-fg"
-          title={t("閉じる")}
-          aria-label={t("閉じる")}
-        >
-          <X size={14} />
-        </DialogPrimitive.Close>
+        {showClose && (
+          <DialogPrimitive.Close
+            className="absolute top-2.5 right-2.5 text-faint transition-colors hover:text-fg"
+            title={t("閉じる")}
+            aria-label={t("閉じる")}
+          >
+            <X size={14} />
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

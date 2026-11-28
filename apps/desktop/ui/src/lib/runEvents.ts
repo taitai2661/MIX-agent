@@ -16,6 +16,19 @@ export interface ToolActivity {
   finishedAt?: string;
 }
 
+export type RiskLevel = "safe" | "elevated" | "dangerous";
+
+export interface RiskReason {
+  /** Stable id the UI can translate; `detail` is the matched command text. */
+  code: string;
+  detail: string;
+}
+
+export interface RiskAssessment {
+  level: RiskLevel;
+  reasons: RiskReason[];
+}
+
 export interface PendingApproval {
   approvalId: string | null;
   toolCallId: string;
@@ -23,6 +36,80 @@ export interface PendingApproval {
   arguments: unknown;
   /** Instant the prompt auto-denies. Absent on older backends. */
   expiresAt?: string | null;
+  /** Command-level grading. Absent on older backends or non-shell tools. */
+  risk?: RiskAssessment | null;
+}
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** A structured question the agent asked mid-Run, rendered as a card.
+///
+/// The answer is sent back through steering (`answer_question`), so replying
+/// is equivalent to typing into the composer mid-Run — it never bypasses the
+/// normal turn boundary the way an approval decision does. */
+export interface QuestionCardState {
+  questionId: string | null;
+  question: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+  /** Label of the suggested option, if the agent marked one. */
+  recommended?: string | null;
+}
+
+function parseQuestionOption(value: unknown): QuestionOption | null {
+  const raw = record(value);
+  const label = optString(raw.label);
+  if (!label || label.trim() === "") return null;
+  const description = optString(raw.description) ?? "";
+  return { label, description };
+}
+
+function parseQuestionCard(value: unknown): QuestionCardState | null {
+  const raw = record(value);
+  const question = optString(raw.question);
+  if (!question || question.trim() === "") return null;
+  const options = Array.isArray(raw.options)
+    ? raw.options
+        .map(parseQuestionOption)
+        .filter((o): o is QuestionOption => o !== null)
+    : [];
+  if (options.length === 0) return null;
+  const recommended = optString(raw.recommended) ?? null;
+  return {
+    questionId: optString(raw.question_id) ?? null,
+    question,
+    options,
+    multiSelect: raw.multi_select === true,
+    ...(recommended && options.some((o) => o.label === recommended)
+      ? { recommended }
+      : {}),
+  };
+}
+
+function parseRisk(value: unknown): RiskAssessment | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const level = raw.level;
+  if (level !== "safe" && level !== "elevated" && level !== "dangerous") {
+    return undefined;
+  }
+  const reasons = Array.isArray(raw.reasons)
+    ? raw.reasons.flatMap((reason) => {
+        if (!reason || typeof reason !== "object") return [];
+        const entry = reason as Record<string, unknown>;
+        if (typeof entry.code !== "string") return [];
+        return [
+          {
+            code: entry.code,
+            detail: typeof entry.detail === "string" ? entry.detail : "",
+          },
+        ];
+      })
+    : [];
+  return { level, reasons };
 }
 
 export interface BudgetRequest {
@@ -68,6 +155,8 @@ export interface RunTimeline {
   /** Set when the run gave up on verifying an unconfirmed change. */
   verificationFailed: string | null;
   approval: PendingApproval | null;
+  /** Structured question waiting for the user's answer, if any. */
+  question: QuestionCardState | null;
   /** Terminal error text when the Run failed, so the user sees why. */
   error: string | null;
   /** The agent's own checklist, most recent state. */
@@ -100,6 +189,7 @@ export function createTimeline(runId: string): RunTimeline {
     verification: null,
     verificationFailed: null,
     approval: null,
+    question: null,
     error: null,
     todos: [],
     contextCompactions: [],
@@ -281,17 +371,39 @@ export function applyRunEvent(
     }
     case "tool_approval_requested": {
       const expiresAt = optString(d.expires_at);
+      const risk = parseRisk(d.risk);
       next.approval = {
         approvalId: optString(d.approval_id) ?? null,
         toolCallId: optString(d.tool_call_id) ?? "",
         name: optString(d.name) ?? "tool",
         arguments: d.arguments,
         ...(expiresAt ? { expiresAt } : {}),
+        ...(risk ? { risk } : {}),
       };
+      break;
+    }
+    case "tool_approval_extended": {
+      const expiresAt = optString(d.expires_at);
+      const approvalId = optString(d.approval_id);
+      if (
+        next.approval &&
+        expiresAt &&
+        (!approvalId || next.approval.approvalId === approvalId)
+      ) {
+        next.approval = { ...next.approval, expiresAt };
+      }
       break;
     }
     case "tool_approval_resolved":
       next.approval = null;
+      break;
+    case "question_requested": {
+      const card = parseQuestionCard(d);
+      if (card) next.question = card;
+      break;
+    }
+    case "question_resolved":
+      next.question = null;
       break;
     case "budget_extension_requested":
       next.budgetRequest = {
@@ -462,4 +574,135 @@ export function describeToolCall(tool: ToolActivity): string {
     default:
       return tool.name;
   }
+}
+
+/**
+ * One row of the Trajectory timeline: a timestamped, human-readable view of
+ * a single Run event. Mirrors the backend `TrajectoryPoint`
+ * (`core/src/runs/events.rs`) so the timeline view can render live streams
+ * and persisted history through the same shape.
+ */
+export interface TrajectoryPoint {
+  sequence: number;
+  kind: string;
+  createdAt: string;
+  label: string;
+  detail: string;
+}
+
+const TRAJECTORY_DETAIL_CHARS = 160;
+
+function truncateDetail(text: string): string {
+  const clipped = [...text].slice(0, TRAJECTORY_DETAIL_CHARS).join("");
+  return [...text].length > TRAJECTORY_DETAIL_CHARS ? `${clipped}…` : clipped;
+}
+
+/** Short `(label, detail)` pair summarising one event for the timeline. */
+export function summarizeRunEvent(
+  kind: string,
+  data: unknown,
+): { label: string; detail: string } {
+  const d = record(data);
+  const field = (key: string): string => optString(d[key]) ?? "";
+  switch (kind) {
+    case "text":
+    case "reasoning":
+      return { label: kind, detail: truncateDetail(field("delta")) };
+    case "status":
+      return { label: "status", detail: field("status") };
+    case "usage":
+      return { label: "usage", detail: "token usage" };
+    case "error":
+      return { label: "error", detail: truncateDetail(field("error")) };
+    case "tool_started": {
+      const name = field("name") || "tool";
+      const args = d.arguments !== undefined ? JSON.stringify(d.arguments) : "";
+      return {
+        label: `tool_started:${name}`,
+        detail: field("tool_call_id") || truncateDetail(args),
+      };
+    }
+    case "tool_result": {
+      const name = field("name") || "tool";
+      const error = field("error");
+      return {
+        label: `tool_result:${name}`,
+        detail: error ? `error: ${truncateDetail(error)}` : "ok",
+      };
+    }
+    case "tool_denied":
+      return { label: "tool_denied", detail: field("reason") };
+    case "tool_approval_requested":
+      return { label: "tool_approval_requested", detail: field("name") };
+    case "tool_approval_extended":
+      return {
+        label: "tool_approval_extended",
+        detail: field("expires_at"),
+      };
+    case "tool_approval_resolved":
+      return { label: "tool_approval_resolved", detail: "" };
+    case "budget_extension_requested":
+      return {
+        label: "budget_extension_requested",
+        detail: truncateDetail(field("reason")),
+      };
+    case "budget_extension_resolved":
+      return { label: "budget_extension_resolved", detail: "" };
+    case "checkpoint_saved":
+      return {
+        label: "checkpoint_saved",
+        detail: field("checkpoint_id"),
+      };
+    case "stagnation_detected":
+      return {
+        label: "stagnation_detected",
+        detail: truncateDetail(field("hint")),
+      };
+    case "verification_required":
+      return {
+        label: "verification_required",
+        detail: truncateDetail(field("reason")),
+      };
+    case "verification_failed":
+      return {
+        label: "verification_failed",
+        detail: truncateDetail(field("reason")),
+      };
+    case "destructive_tool_called":
+      return { label: "destructive_tool_called", detail: field("tool") };
+    case "todo_list":
+      return { label: "todo_list", detail: "" };
+    case "context_summary": {
+      const messages = optNumber(d.messages);
+      return {
+        label: "context_summary",
+        detail: messages !== undefined ? `${messages} messages` : "",
+      };
+    }
+    case "replay_truncated": {
+      const omitted = optNumber(d.omitted);
+      return {
+        label: "replay_truncated",
+        detail: omitted !== undefined ? `${omitted} events omitted` : "",
+      };
+    }
+    default:
+      return { label: kind, detail: "" };
+  }
+}
+
+/** Fold events into trajectory order (by sequence). */
+export function buildTrajectory(events: RunEventPayload[]): TrajectoryPoint[] {
+  return [...events]
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((event) => {
+      const { label, detail } = summarizeRunEvent(event.kind, event.data);
+      return {
+        sequence: event.sequence,
+        kind: event.kind,
+        createdAt: event.created_at,
+        label,
+        detail,
+      };
+    });
 }

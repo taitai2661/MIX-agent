@@ -1,0 +1,31 @@
+name: Cache pnpm store
+description: Restore the pnpm content-addressable store, keyed on one pnpm lockfile.
+
+# Every job that runs `pnpm install --frozen-lockfile` should use this action
+# right after `pnpm/action-setup`. Without it, each job downloads the whole
+# dependency graph again; with it, the lockfile content, pnpm version, OS and
+# CPU architecture decide the key, so an unchanged combination hits the cache
+# while a changed one cannot restore an incompatible store. Keeping this local
+# makes the key identical across workflows.
+
+inputs:
+  lockfile:
+    description: Path (relative to the workspace root) of the pnpm lockfile to hash.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve pnpm store path and version
+      shell: bash
+      run: |
+        echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+        echo "PNPM_VERSION=$(pnpm --version)" >> "$GITHUB_ENV"
+
+    - name: Restore pnpm store
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-pnpm${{ env.PNPM_VERSION }}-${{ hashFiles(inputs.lockfile) }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-${{ runner.arch }}-pnpm${{ env.PNPM_VERSION }}-

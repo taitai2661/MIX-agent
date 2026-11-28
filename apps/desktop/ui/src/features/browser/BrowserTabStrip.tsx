@@ -3,6 +3,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { BrowserTabView } from "@/lib/types";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
 
 interface BrowserTabStripProps {
   tabs: BrowserTabView[];
@@ -14,12 +15,12 @@ interface BrowserTabStripProps {
 }
 
 const AVATAR_TONES = [
-  "bg-sky-500",
-  "bg-violet-500",
-  "bg-emerald-500",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-cyan-600",
+  "bg-avatar-1",
+  "bg-avatar-2",
+  "bg-avatar-3",
+  "bg-avatar-4",
+  "bg-avatar-5",
+  "bg-avatar-6",
 ];
 
 /** One deterministic letter + colour per host; no network favicon fetch.
@@ -60,7 +61,7 @@ export function BrowserTabStrip({
   onNew,
 }: BrowserTabStripProps) {
   return (
-    <div className="flex h-8 shrink-0 items-center gap-1 border-b border-line bg-inset/40 px-1.5">
+    <div className="flex h-8 shrink-0 items-center gap-1 border-b border-line bg-inset px-1.5">
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((tab) => {
           const label = tab.title?.trim() || tab.url || t("新しいタブ");
@@ -81,7 +82,7 @@ export function BrowserTabStrip({
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "grid size-3.5 shrink-0 place-items-center rounded-[3px] text-[8px] font-semibold text-white",
+                    "grid size-3.5 shrink-0 place-items-center rounded-sm text-3xs font-semibold text-avatar-fg",
                     avatar.tone,
                   )}
                 >
@@ -105,20 +106,21 @@ export function BrowserTabStrip({
               >
                 <span className="truncate">{label}</span>
               </button>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => onClose(tab.id)}
                 title={t("タブを閉じる")}
                 aria-label={t("タブを閉じる")}
                 className={cn(
-                  "shrink-0 rounded p-0.5 text-faint hover:bg-active hover:text-fg",
+                  "shrink-0",
                   tab.active
                     ? "opacity-100"
                     : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
                 )}
               >
                 <X size={10} />
-              </button>
+              </Button>
             </div>
           );
         })}

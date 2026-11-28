@@ -53,10 +53,24 @@ export default defineConfig({
           radix: [
             "@radix-ui/react-dialog",
             "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-label",
             "@radix-ui/react-popover",
+            "@radix-ui/react-separator",
             "@radix-ui/react-slot",
+            "@radix-ui/react-switch",
+            "@radix-ui/react-tabs",
+            "@radix-ui/react-tooltip",
           ],
           icons: ["lucide-react"],
+          // Tauri bridges are only needed for native operations; keep them
+          // out of the first-paint shell so the entry chunk stays under the
+          // CI bundle budget.
+          tauri: [
+            "@tauri-apps/api",
+            "@tauri-apps/plugin-notification",
+            "@tauri-apps/plugin-os",
+            "@tauri-apps/plugin-window-state",
+          ],
         },
       },
     },

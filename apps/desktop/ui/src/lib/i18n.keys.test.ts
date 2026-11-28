@@ -229,6 +229,23 @@ describe("i18n key coverage", () => {
     expect(unexpected).toEqual([]);
   });
 
+  it("keeps every dictionary value actually translated", () => {
+    // A value that still contains Japanese is a silent fallback: the English
+    // UI would show the Japanese sentence with no failing test. Product names
+    // and technical terms are fine; kana/kanji are not. If a deliberate
+    // exception is ever needed, add it here with a comment explaining why.
+    const ALLOWED_JAPANESE_VALUES = new Set<string>([]);
+    const dict = parseDictionary(dictionarySource());
+    const untranslated = [...dict.entries()]
+      .filter(
+        ([, value]) =>
+          /[\u3040-\u30ff\u3400-\u9fff]/.test(value) &&
+          !ALLOWED_JAPANESE_VALUES.has(value),
+      )
+      .map(([key, value]) => `${JSON.stringify(key)} => ${JSON.stringify(value)}`);
+    expect(untranslated).toEqual([]);
+  });
+
   it("does not register the same key twice", () => {
     const source = dictionarySource();
     const seen: string[] = [];

@@ -58,6 +58,17 @@ impl Default for Skill {
     }
 }
 
+/// One stored snapshot of a skill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRevision {
+    pub id: String,
+    /// When this snapshot was taken.
+    pub created_at: chrono::DateTime<Utc>,
+    /// The skill as it looked at that moment (`updated_at` is its own version
+    /// stamp, so the UI can distinguish "imported" from "snapshotted").
+    pub skill: Skill,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillResource {
     pub path: String,
@@ -520,28 +531,59 @@ impl SkillService {
             "source": "user",
             "updatedAt": now.to_rfc3339(),
         });
-        let existing: Option<String> =
-            sqlx::query_scalar("SELECT id FROM skills WHERE json_extract(data, '$.name') = ?")
+        let data_str = data.to_string();
+        // The SELECT, the revision snapshot and the write are one transaction.
+        // Without it two concurrent imports both saw `existing = None` and
+        // inserted duplicate rows (the name now has a UNIQUE index too).
+        let mut tx = storage.pool().begin().await?;
+        let existing: Option<(String, String)> =
+            sqlx::query_as("SELECT id, data FROM skills WHERE json_extract(data, '$.name') = ?")
                 .bind(&skill.name)
-                .fetch_optional(storage.pool())
+                .fetch_optional(&mut *tx)
                 .await?;
-        let id = existing
-            .clone()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        if existing.is_some() {
+        if let Some((id, old_json)) = existing {
+            let old: serde_json::Value = serde_json::from_str(&old_json).unwrap_or_default();
+            // Re-importing the same file is a no-op: no revision and no new
+            // timestamp. Only the content fields matter, not `updatedAt`.
+            let same = [
+                "name",
+                "description",
+                "bodyMarkdown",
+                "license",
+                "compatibility",
+                "metadata",
+                "allowedTools",
+                "resources",
+            ]
+            .iter()
+            .all(|key| old.get(*key) == data.get(*key));
+            if same {
+                tx.commit().await?;
+                return Ok(Self::from_value(&old).unwrap_or(skill));
+            }
+            // Snapshot the row being replaced before it disappears. The
+            // revision table existed but was never written, so an import
+            // overwrote the previous SKILL.md with no way back.
+            sqlx::query("INSERT INTO skill_revisions (id, owner_id, data) VALUES (?, ?, ?)")
+                .bind(Uuid::new_v4().to_string())
+                .bind(mixd_storage::records::SINGLE_USER_ID)
+                .bind(&old_json)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query("UPDATE skills SET data = ? WHERE id = ?")
-                .bind(data.to_string())
+                .bind(&data_str)
                 .bind(&id)
-                .execute(storage.pool())
+                .execute(&mut *tx)
                 .await?;
         } else {
             sqlx::query("INSERT INTO skills (id, owner_id, data) VALUES (?, ?, ?)")
-                .bind(&id)
+                .bind(Uuid::new_v4().to_string())
                 .bind(mixd_storage::records::SINGLE_USER_ID)
-                .bind(data.to_string())
-                .execute(storage.pool())
+                .bind(&data_str)
+                .execute(&mut *tx)
                 .await?;
         }
+        tx.commit().await?;
         let mut out = skill;
         out.updated_at = now;
         Ok(out)
@@ -588,11 +630,101 @@ impl SkillService {
     }
 
     pub async fn delete(storage: &mixd_storage::Storage, name: &str) -> anyhow::Result<()> {
+        // Snapshot before deleting so "delete" is recoverable through the same
+        // revision list as an overwrite.
+        if let Some(id) = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM skills WHERE json_extract(data, '$.name') = ?",
+        )
+        .bind(name)
+        .fetch_optional(storage.pool())
+        .await?
+        {
+            Self::snapshot_revision(storage, &id).await?;
+        }
         sqlx::query("DELETE FROM skills WHERE json_extract(data, '$.name') = ?")
             .bind(name)
             .execute(storage.pool())
             .await?;
         Ok(())
+    }
+
+    /// Copy one skill row into `skill_revisions`. This is deliberately
+    /// fail-fast, not best-effort: a snapshot failure aborts the write because
+    /// losing the only copy of the previous version is worse than showing the
+    /// user an error.
+    async fn snapshot_revision(
+        storage: &mixd_storage::Storage,
+        skill_id: &str,
+    ) -> anyhow::Result<()> {
+        let data: Option<String> = sqlx::query_scalar("SELECT data FROM skills WHERE id = ?")
+            .bind(skill_id)
+            .fetch_optional(storage.pool())
+            .await?;
+        let Some(data) = data else {
+            return Ok(());
+        };
+        sqlx::query("INSERT INTO skill_revisions (id, owner_id, data) VALUES (?, ?, ?)")
+            .bind(Uuid::new_v4().to_string())
+            .bind(mixd_storage::records::SINGLE_USER_ID)
+            .bind(data)
+            .execute(storage.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Prior versions of one skill, newest first.
+    pub async fn list_revisions(
+        storage: &mixd_storage::Storage,
+        name: &str,
+    ) -> anyhow::Result<Vec<SkillRevision>> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT id, data, created_at FROM skill_revisions \
+             WHERE json_extract(data, '$.name') = ? ORDER BY created_at DESC",
+        )
+        .bind(name)
+        .fetch_all(storage.pool())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, data, created_at)| {
+                let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+                let skill = Self::from_value(&value)?;
+                let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                    .ok()
+                    .map(|t| t.with_timezone(&Utc))
+                    .unwrap_or_else(Utc::now);
+                Some(SkillRevision {
+                    id,
+                    created_at,
+                    skill,
+                })
+            })
+            .collect())
+    }
+
+    /// Replace the current skill with a stored revision.
+    ///
+    /// The current version is snapshotted first, so restore is itself
+    /// reversible. The revision row is kept: restoring twice is harmless and
+    /// an author may want the same old version again.
+    pub async fn restore_revision(
+        storage: &mixd_storage::Storage,
+        name: &str,
+        revision_id: &str,
+    ) -> anyhow::Result<Skill> {
+        let data: String = sqlx::query_scalar(
+            "SELECT data FROM skill_revisions \
+             WHERE id = ? AND json_extract(data, '$.name') = ?",
+        )
+        .bind(revision_id)
+        .bind(name)
+        .fetch_optional(storage.pool())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unknown revision {revision_id} for skill {name}"))?;
+        let value: serde_json::Value = serde_json::from_str(&data)?;
+        let skill = Self::from_value(&value)
+            .ok_or_else(|| anyhow::anyhow!("revision {revision_id} is not a valid skill"))?;
+        Self::save(storage, skill).await
     }
 
     pub async fn export(storage: &mixd_storage::Storage, name: &str) -> anyhow::Result<String> {

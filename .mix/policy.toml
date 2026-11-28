@@ -1,0 +1,37 @@
+# MIX-agent ワークスペースポリシー (A5 雛形)
+#
+# 配置: このファイルをワークスペース直下の `.mix/policy.toml` に置く。
+# 仕様: docs/policy-spec.md §2。DB の permission_rules が常に本ファイルより優先される。
+# 失敗時は fail-closed (ask) のため、迷ったら ask/deny を選ぶこと。
+
+version = 1
+
+[defaults]
+# どの rule にも一致しなかった場合の決定: allow | ask | deny
+decision = "ask"
+# 監査ログの有効化。false は開発用 (警告が出る)
+audit_enabled = true
+
+# 例外規則は上から順に評価し、最初に一致したものが勝つ。
+# pattern の対象は Tool の pattern_target と同じ (files/edit はパス、terminal はコマンド、network/web は URL)。
+
+[[rules]]
+tool = "terminal"
+decision = "ask"
+scope = "workspace"
+pattern = "cargo test*"
+
+[[rules]]
+tool = "files"
+decision = "deny"
+pattern = "**/.env*"
+
+[audit]
+# 起動時にチェーン検証を行うか (既定 false: オンデマンド検証のみ)
+verify_on_startup = false
+# 保持期間 (日)。0 = 無期限
+retention_days = 0
+
+[approval]
+# 承認プロンプトの TTL (秒)。範囲外は clamp される
+ttl_secs = 86400

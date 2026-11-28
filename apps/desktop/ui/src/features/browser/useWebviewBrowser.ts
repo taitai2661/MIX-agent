@@ -104,15 +104,21 @@ export function useWebviewBrowser(workspaceId: string | null) {
     void refreshInfo();
     const id = window.setInterval(() => void refreshInfo(), 1_000);
     let unlisten: (() => void) | undefined;
+    // Registration is async (IPC). Without this flag, unmounting before the
+    // promise resolves leaves a live listener behind forever.
+    let disposed = false;
     void api
       .browserStateEvent((event) => {
+        if (disposed) return;
         if (event.workspace_id === workspaceRef.current) void refreshInfo();
       })
       .then((fn) => {
-        unlisten = fn;
+        if (disposed) fn();
+        else unlisten = fn;
       })
       .catch(() => undefined);
     return () => {
+      disposed = true;
       window.clearInterval(id);
       unlisten?.();
     };

@@ -13,9 +13,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
 use mixd_core::mode::Mode;
+use mixd_core::routing::{StepTier, TierModel};
 use mixd_core::runs::checkpoint_store::CheckpointStore;
 use mixd_core::runs::engine::{
     AutoFallback, CheckpointSnapshot, HistoryMessage, RunEngine, RunRequest, RunToolCall,
+    SteeredMessage,
 };
 use mixd_core::runs::mode_policy::AgentModePolicy;
 use mixd_core::runs::state::RunStatus;
@@ -24,6 +26,7 @@ use mixd_providers::{
     ProviderRequest, StreamBox, StreamEvent, Usage,
 };
 use mixd_storage::SecretStore;
+use mixd_tools::approval::ApprovalOutcome;
 use mixd_tools::{EgressPolicy, ToolContext, ToolRegistry};
 use uuid::Uuid;
 
@@ -299,6 +302,8 @@ impl Harness {
             user_message: "do the thing".to_string(),
             resume_from: None,
             auto_fallbacks: Vec::new(),
+            step_models: Vec::new(),
+            monthly_pressure: 0.0,
         }
     }
 }
@@ -339,6 +344,69 @@ async fn set_rule(harness: &Harness, id: &str, tool: &str, decision: &str) {
         .execute(harness.storage.pool())
         .await
         .expect("insert rule");
+}
+
+#[tokio::test]
+async fn saving_a_checkpoint_for_a_run_with_no_row_fails_instead_of_lying() {
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    let store = CheckpointStore::new(2);
+    // No `runs` row for this id: the foreign key must reject the insert and
+    // `save` must report it rather than handing back an id that was never
+    // written.
+    let run_id = Uuid::new_v4();
+    let snapshot = CheckpointSnapshot {
+        step_index: 1,
+        tool_calls: 0,
+        messages: vec![HistoryMessage {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+            tool_call_id: None,
+            name: None,
+            tool_calls: Vec::new(),
+            is_error: false,
+            native: Vec::new(),
+        }],
+    };
+    let err = store
+        .save(run_id, 1, 0, &snapshot, harness.storage.as_ref())
+        .await
+        .expect_err("a missing parent run must make the insert fail");
+    assert!(err.to_string().contains("checkpoint insert failed"));
+}
+
+#[tokio::test]
+async fn a_failed_checkpoint_is_not_announced_as_saved() {
+    // A tool-call turn keeps the loop running past the checkpoint block; a
+    // text-only turn breaks out before it.
+    let harness = Harness::new(vec![
+        tool_turn("r", "files", r#"{"action":"list","path":"."}"#),
+        text_turn("done"),
+    ])
+    .await;
+    allow_tool(&harness, "files").await;
+    let mut harness = harness;
+    let engine = Arc::get_mut(&mut harness.engine).expect("exclusive engine handle");
+    engine.policy.checkpointing = true;
+    engine.policy.checkpoint_every_steps = 1;
+    let mut rx = harness.engine.subscribe();
+    // No `runs` row for this request, so the checkpoint insert fails.
+    harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+    let mut kinds = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        kinds.push(event.kind);
+    }
+    assert!(
+        !kinds.iter().any(|kind| kind == "checkpoint_saved"),
+        "no checkpoint_saved event for a checkpoint that was never written: {kinds:?}"
+    );
+    assert!(
+        kinds.iter().any(|kind| kind == "checkpoint_failed"),
+        "the failure must be visible: {kinds:?}"
+    );
 }
 
 #[tokio::test]
@@ -398,6 +466,128 @@ async fn a_retryable_failure_before_content_falls_back_to_the_next_model() {
 }
 
 #[tokio::test]
+async fn step_routing_serves_the_turn_with_the_configured_tier_model() {
+    // Thinking always routes Strong; the tier model on p2 must serve the
+    // turn instead of the run's own p1.
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    let mut rx = harness.engine.subscribe();
+    let _drain = spawn_event_drain(&harness.engine);
+    let strong = Arc::new(ScriptedProvider::new_with_billing(
+        vec![text_turn("strong answer")],
+        mixd_providers::BillingMode::Metered,
+    ));
+    harness
+        .engine
+        .providers
+        .register("p2".to_string(), strong.clone())
+        .await;
+    let mut request = harness.request().await;
+    request.step_models = vec![TierModel {
+        tier: StepTier::Strong,
+        model_id: "strong-model".to_string(),
+        provider_id: "p2".to_string(),
+        context_window: 4096,
+        keep_alive: None,
+    }];
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.text, "strong answer");
+    assert_eq!(strong.request_count(), 1);
+    assert_eq!(
+        harness.provider.request_count(),
+        0,
+        "the tier model serves the turn, not the run's own provider"
+    );
+    assert_eq!(
+        outcome.turn_performances[0].model_id, "strong-model",
+        "per-turn stats attribute the turn to the model that served it"
+    );
+
+    // The dispatch-time event stays honest, and the change of serving model is
+    // a separate, auditable event.
+    let events: Vec<(String, serde_json::Value)> = {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push((event.kind, event.data));
+        }
+        out
+    };
+    assert_eq!(
+        events
+            .iter()
+            .find(|(kind, _)| kind == "model_selected")
+            .and_then(|(_, data)| data.get("model_id").and_then(|v| v.as_str())),
+        Some("test-model"),
+        "model_selected must keep describing dispatch"
+    );
+    assert!(
+        events.iter().any(|(kind, data)| {
+            kind == "model_switched"
+                && data.get("toModelId").and_then(|v| v.as_str()) == Some("strong-model")
+        }),
+        "a routing switch must be visible on its own event: {events:?}"
+    );
+    assert!(
+        events.iter().any(|(kind, data)| {
+            kind == "step_routing"
+                && data.get("modelId").and_then(|v| v.as_str()) == Some("strong-model")
+                && data.get("dispatchModelId").and_then(|v| v.as_str()) == Some("test-model")
+        }),
+        "step_routing must distinguish serving from dispatch model: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn budget_pressure_downgrades_the_serving_tier() {
+    // Thinking normally wants Strong. A 0.9 monthly pressure forces Local, so
+    // the locally configured tier model must serve the turn instead.
+    let harness = Harness::new(vec![text_turn("local answer")]).await;
+    let mut rx = harness.engine.subscribe();
+    let _drain = spawn_event_drain(&harness.engine);
+    let local = Arc::new(ScriptedProvider::new_with_billing(
+        vec![text_turn("local answer")],
+        mixd_providers::BillingMode::Metered,
+    ));
+    harness
+        .engine
+        .providers
+        .register("p2".to_string(), local.clone())
+        .await;
+    let mut request = harness.request().await;
+    request.monthly_pressure = 0.9;
+    request.step_models = vec![TierModel {
+        tier: StepTier::Local,
+        model_id: "local-model".to_string(),
+        provider_id: "p2".to_string(),
+        context_window: 4096,
+        keep_alive: None,
+    }];
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(outcome.text, "local answer");
+    assert_eq!(local.request_count(), 1);
+    assert_eq!(harness.provider.request_count(), 0);
+
+    let events: Vec<(String, serde_json::Value)> = {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push((event.kind, event.data));
+        }
+        out
+    };
+    assert!(
+        events.iter().any(|(kind, data)| {
+            kind == "step_routing"
+                && data.get("tier").and_then(|v| v.as_str()) == Some("local")
+                && data.get("baseTier").and_then(|v| v.as_str()) == Some("strong")
+        }),
+        "the decision must record the pressure-driven downgrade: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_failure_after_content_does_not_fall_back() {
     let harness = Harness::new(vec![vec![
         StreamEvent::TextDelta("partial".to_string()),
@@ -426,6 +616,77 @@ async fn a_failure_after_content_does_not_fall_back() {
     assert_eq!(outcome.status, RunStatus::Failed);
     assert!(outcome.auto_fallbacks.is_empty());
     assert_eq!(fallback.request_count(), 0);
+}
+
+#[tokio::test]
+async fn repeated_provider_failures_reach_the_stagnation_detector() {
+    // Every failure happens before content and switches to the next fallback,
+    // so none of them reaches `stagnation.observe` on its own. The engine must
+    // carry them into the turn that finally succeeds.
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    let mut rx = harness.engine.subscribe();
+    // MIN_SIGNALS is half the window (6); five errors plus the successful
+    // turn's Progress reaches it. p1 (the harness provider) fails too.
+    for (id, message) in [
+        ("p1", "429 rate limit exceeded"),
+        ("p2", "429 rate limit exceeded"),
+        ("p3", "429 rate limit exceeded"),
+        ("p4", "429 rate limit exceeded"),
+        ("p5", "429 rate limit exceeded"),
+        ("p6", "429 rate limit exceeded"),
+    ] {
+        harness
+            .engine
+            .providers
+            .register(
+                id.to_string(),
+                Arc::new(StreamOpenFailingProvider {
+                    name: id.to_string(),
+                    message: message.to_string(),
+                }),
+            )
+            .await;
+    }
+    let final_provider = Arc::new(ScriptedProvider::new_with_billing(
+        vec![text_turn("recovered")],
+        mixd_providers::BillingMode::Metered,
+    ));
+    harness
+        .engine
+        .providers
+        .register("p7".to_string(), final_provider.clone())
+        .await;
+
+    let mut request = harness.request().await;
+    request.auto_fallbacks = ["p2", "p3", "p4", "p5", "p6", "p7"]
+        .iter()
+        .map(|id| AutoFallback {
+            model_id: format!("{id}-model"),
+            provider_id: id.to_string(),
+            context_window: 4096,
+            keep_alive: None,
+        })
+        .collect();
+    let outcome = harness.engine.execute(request).await.expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    assert_eq!(
+        outcome.auto_fallbacks.len(),
+        6,
+        "all six failures switched provider"
+    );
+
+    let mut detected = false;
+    while let Ok(event) = rx.try_recv() {
+        if event.kind == "stagnation_detected"
+            && event.data.get("kind").and_then(|v| v.as_str()) == Some("provider_unstable")
+        {
+            detected = true;
+        }
+    }
+    assert!(
+        detected,
+        "repeated pre-content provider failures must fire ProviderUnstable"
+    );
 }
 
 #[tokio::test]
@@ -663,6 +924,8 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         user_message: "hello".to_string(),
         resume_from: None,
         auto_fallbacks: Vec::new(),
+        step_models: Vec::new(),
+        monthly_pressure: 0.0,
     };
     request.tools = std::sync::Arc::new(engine.tool_specs().await);
     let outcome = engine.execute(request).await.expect("run");
@@ -678,6 +941,191 @@ async fn a_provider_error_fails_the_run_instead_of_looping() {
         view.error.as_deref(),
         Some("upstream exploded"),
         "the provider error must be surfaced on the Run"
+    );
+}
+
+/// A provider that fails before it opens a stream represents any error raised
+/// inside `run_turn`. The error used to escape through `?` and skip every
+/// terminal path, leaving the row `running` and the per-run handles pinned.
+struct StreamOpenFailingProvider {
+    name: String,
+    message: String,
+}
+
+#[async_trait]
+impl Provider for StreamOpenFailingProvider {
+    fn id(&self) -> &String {
+        &self.name
+    }
+    fn label(&self) -> &str {
+        "stream-open-failing"
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            vision: false,
+            tool_calling: true,
+            reasoning: false,
+            streaming: true,
+        }
+    }
+    async fn stream(&self, _req: ProviderRequest) -> anyhow::Result<StreamBox> {
+        Err(anyhow::anyhow!("{}", self.message))
+    }
+}
+
+#[tokio::test]
+async fn a_turn_failure_reaches_a_terminal_state_and_releases_the_run() {
+    let harness = Harness::new(vec![text_turn("unused")]).await;
+    harness
+        .engine
+        .providers
+        .register(
+            "broken".to_string(),
+            Arc::new(StreamOpenFailingProvider {
+                name: "broken".to_string(),
+                message: "stream open failed: injected failure".to_string(),
+            }),
+        )
+        .await;
+    let _drain = spawn_event_drain(&harness.engine);
+    let mut request = harness.request().await;
+    request.provider_id = "broken".to_string();
+    request.model_id = "broken:model".to_string();
+    let run_id = request.run_id;
+    // `set_run_state` UPDATEs an existing row; insert it like a real dispatch
+    // so the terminal status can be read back.
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, conversation_id, request_key, data, status) \
+         VALUES (?, ?, ?, ?, '{}', 'queued')",
+    )
+    .bind(run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(request.conversation_id.to_string())
+    .bind(Uuid::new_v4().to_string())
+    .execute(harness.storage.pool())
+    .await
+    .expect("insert run");
+    // A pre-existing steering entry must be dropped with the run, not left in
+    // the queue for a run that will never read it.
+    let seq = harness.engine.steering_seq.fetch_add(1, Ordering::SeqCst);
+    harness
+        .engine
+        .steering
+        .lock()
+        .await
+        .entry(run_id)
+        .or_default()
+        .push(SteeredMessage {
+            seq,
+            text: "stale interjection".to_string(),
+        });
+
+    let outcome = harness
+        .engine
+        .execute(request)
+        .await
+        .expect("a turn failure is an outcome, not a propagated error");
+    assert_eq!(outcome.status, RunStatus::Failed);
+    let view = harness.engine.run_state(run_id).await.expect("run row");
+    assert_eq!(view.status, RunStatus::Failed, "the run must be terminal");
+    assert!(
+        !harness.engine.active.lock().await.contains_key(&run_id),
+        "active entry leaked after a failed turn"
+    );
+    assert!(
+        !harness.engine.steering.lock().await.contains_key(&run_id),
+        "steering entry leaked after a failed turn"
+    );
+}
+
+#[tokio::test]
+async fn a_message_queued_before_a_question_is_not_its_answer() {
+    let harness = Harness::new(vec![
+        tool_turn(
+            "q",
+            "ask_user",
+            r#"{"question":"Pick one","options":["a","b"]}"#,
+        ),
+        text_turn("answer applied"),
+    ])
+    .await;
+    allow_tool(&harness, "ask_user").await;
+
+    let mut rx = harness.engine.subscribe();
+    let events: Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = events.clone();
+    let collector = tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            seen.lock().unwrap().push((event.kind, event.data));
+        }
+    });
+
+    let request = harness.request().await;
+    let run_id = request.run_id;
+    // Queue a message *before* the question opens. It predates the question
+    // and must survive to the next turn rather than answer it.
+    let seq = harness.engine.steering_seq.fetch_add(1, Ordering::SeqCst);
+    harness
+        .engine
+        .steering
+        .lock()
+        .await
+        .entry(run_id)
+        .or_default()
+        .push(SteeredMessage {
+            seq,
+            text: "pre-existing note".to_string(),
+        });
+
+    let engine = harness.engine.clone();
+    let run = tokio::spawn(async move { engine.execute(request).await });
+    // Wait for the question to be announced, then answer it through steering.
+    let mut rx2 = harness.engine.subscribe();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let event = rx2.recv().await.expect("event stream open");
+            if event.kind == "question_requested" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("question_requested was never emitted");
+    assert!(
+        harness
+            .engine
+            .steer(run_id, "[user answer] selected: a".to_string())
+            .await,
+        "the run must still be active when the question is open"
+    );
+    let outcome = run.await.expect("join run").expect("run");
+    assert_eq!(outcome.status, RunStatus::Completed);
+    collector.abort();
+
+    let answer = outcome
+        .tool_calls
+        .iter()
+        .find(|call| call.name == "ask_user")
+        .and_then(|call| call.result.as_ref())
+        .and_then(|value| value.get("answer"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    assert!(
+        answer.contains("selected: a") && !answer.contains("pre-existing note"),
+        "the question must be answered by the post-question message, got {answer:?}"
+    );
+    let seen = events.lock().unwrap();
+    assert!(
+        seen.iter().any(|(kind, data)| {
+            kind == "steering_applied"
+                && data
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .contains("pre-existing note")
+        }),
+        "the pre-question message must be applied on the next turn, not discarded: {seen:?}"
     );
 }
 
@@ -957,7 +1405,8 @@ async fn checkpointing_trims_to_its_limit() {
         };
         store
             .save(run_id, step, 0, &snapshot, harness.storage.as_ref())
-            .await;
+            .await
+            .expect("save checkpoint");
     }
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM run_checkpoints WHERE run_id = ?")
         .bind(run_id.to_string())
@@ -1205,7 +1654,8 @@ async fn chat_mode_is_offered_no_tools() {
             || s.name == "lsp"
             || s.name == "skill"
             || s.name == "skill_resource"
-            || s.name == "agent"),
+            || s.name == "agent"
+            || s.name == "ask_user"),
         "unexpected tools advertised: {:?}",
         seen.iter().map(|s| &s.name).collect::<Vec<_>>()
     );
@@ -1366,7 +1816,7 @@ async fn a_budget_answer_for_a_run_that_is_not_pending_is_rejected() {
 }
 
 #[tokio::test]
-async fn a_budget_answer_is_delivered_to_the_engine_and_persisted() {
+async fn a_budget_answer_is_delivered_to_the_engine() {
     let harness = Harness::new(vec![text_turn("unused")]).await;
     let run_id = Uuid::new_v4();
     sqlx::query(
@@ -1400,7 +1850,9 @@ async fn a_budget_answer_is_delivered_to_the_engine_and_persisted() {
     assert_eq!(status, "running");
     let data: serde_json::Value = serde_json::from_str(&data).expect("json");
     assert_eq!(data["budgetDecision"], serde_json::json!(true));
-    assert_eq!(data["budget"]["stepLimit"], serde_json::json!(42));
+    // The UI expresses only grant/deny; the engine writes its own budget
+    // after `extend`, so the limits sent by the caller are not persisted here.
+    assert!(data.get("budget").is_none());
 
     // The same answer cannot be applied twice.
     harness
@@ -1868,6 +2320,79 @@ async fn running_the_configured_check_lets_the_run_conclude() {
 }
 
 #[tokio::test]
+async fn a_dangerous_command_overrides_an_always_allow_rule() {
+    // The security-critical upgrade lives in `dispatch_tool`: a stored allow
+    // written for `cargo test` must not silently cover `rm -rf ~`.
+    let harness = Harness::new(vec![
+        tool_turn("c1", "terminal", r#"{"command":"rm -rf ~"}"#),
+        // After the denial the model has to be able to conclude; without a
+        // text turn the scripted provider repeats the tool turn forever.
+        text_turn("stopped"),
+    ])
+    .await;
+    allow_tool(&harness, "terminal").await;
+    // The app command that normally starts a run inserts this row; the bare
+    // engine harness does not, and `tool_calls` / `approvals` have FKs to it.
+    let request = harness.request().await;
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+         VALUES (?, ?, '{}', ?, 'running', ?)",
+    )
+    .bind(request.run_id.to_string())
+    .bind(mixd_storage::records::SINGLE_USER_ID)
+    .bind(request.conversation_id.to_string())
+    .bind("test-dangerous-approval")
+    .execute(harness.storage.pool())
+    .await
+    .expect("seed run row");
+
+    // Subscribe before starting the run: a spawned task could otherwise miss
+    // the one approval event and leave the run parked for the full TTL.
+    let mut rx = harness.engine.subscribe();
+    let engine = harness.engine.clone();
+    let watcher = tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            if event.kind != "tool_approval_requested" {
+                continue;
+            }
+            let risk = event.data.get("risk").cloned();
+            let id = event
+                .data
+                .get("approval_id")
+                .and_then(|v| v.as_str())
+                .expect("approval id")
+                .to_string();
+            // Deny: the test must never actually invoke the destructive command.
+            engine
+                .executor
+                .resolve_approval_checked(&id, "terminal", ApprovalOutcome::Deny, true)
+                .await
+                .expect("resolve");
+            return risk;
+        }
+        None
+    });
+
+    let outcome = harness.engine.execute(request).await.expect("run");
+    let risk = tokio::time::timeout(std::time::Duration::from_secs(2), watcher)
+        .await
+        .ok()
+        .and_then(|result| result.ok())
+        .flatten();
+    assert!(
+        risk.as_ref()
+            .and_then(|value| value.get("level"))
+            .and_then(|value| value.as_str())
+            == Some("dangerous"),
+        "the prompt must be graded dangerous even though the rule said allow"
+    );
+    assert!(
+        outcome.tool_calls.is_empty() || outcome.tool_calls.iter().all(|call| call.error.is_some()),
+        "the denied command must not have run"
+    );
+}
+
+#[tokio::test]
 async fn no_configured_check_leaves_a_change_unencumbered() {
     let harness = Harness::new(vec![
         tool_turn(
@@ -2103,52 +2628,49 @@ async fn an_approved_plan_lifts_plan_mode_for_the_next_turn() {
 /// refused, because the model is working from stale content.
 #[tokio::test]
 async fn an_edit_to_a_file_changed_after_the_read_is_refused() {
-    // Two full scripts: the `echo extra >> a.txt` dispatch goes through a
-    // persistent shell, and the first ConPTY spawn on a cold Windows runner
-    // can exceed its timeout (leaving a.txt unmodified, so the edit
-    // legitimately succeeds). The retry replays the same mutation against a
-    // warm shell; a genuinely broken staleness check still fails it.
-    let script = || {
-        vec![
-            tool_turn("r", "files", r#"{"action":"read","path":"a.txt"}"#),
-            tool_turn("t", "terminal", r#"{"command":"echo extra >> a.txt"}"#),
-            tool_turn(
-                "e",
-                "edit",
-                r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
-            ),
-            text_turn("done"),
-        ]
-    };
-    let harness = Harness::new([script(), script()].concat()).await;
-    allow_tool(&harness, "terminal").await;
+    // The intervening mutation is a `files.write`, not a shell redirection:
+    // no ConPTY spawn, no cold-runner timeout, so a single deterministic run
+    // exercises the staleness check with no retry or panic loop.
+    let harness = Harness::new(vec![
+        tool_turn("r", "files", r#"{"action":"read","path":"a.txt"}"#),
+        tool_turn(
+            "w",
+            "files",
+            r#"{"action":"write","path":"a.txt","content":"before\nextra\n"}"#,
+        ),
+        tool_turn(
+            "e",
+            "edit",
+            r#"{"path":"a.txt","old_string":"before","new_string":"after"}"#,
+        ),
+        text_turn("done"),
+    ])
+    .await;
+    allow_tool(&harness, "files").await;
     allow_tool(&harness, "edit").await;
     let _drain = spawn_event_drain(&harness.engine);
     std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
 
-    for _ in 0..2 {
-        let request = harness.request().await;
-        warm_persistent_shell(&harness, request.run_id, request.workspace_id).await;
-        let outcome = harness.engine.execute(request).await.expect("run");
-        let Some(edit) = outcome.tool_calls.iter().find(|call| call.name == "edit") else {
-            // Cold ConPTY spawn can time out the terminal turn and abort the
-            // run before the edit turn; retry against the now-warm shell.
-            std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
-            continue;
-        };
-        let error = edit.error.as_deref().unwrap_or_default();
-        if error.contains("changed on disk") {
-            let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
-            assert!(
-                text.contains("before"),
-                "the edit must not have applied: {text}"
-            );
-            return;
-        }
-        // Reset the workspace so the retry replays the same mutation.
-        std::fs::write(harness.workspace.join("a.txt"), "before\n").unwrap();
-    }
-    panic!("the stale edit must be refused with a readable reason");
+    let outcome = harness
+        .engine
+        .execute(harness.request().await)
+        .await
+        .expect("run");
+    let edit = outcome
+        .tool_calls
+        .iter()
+        .find(|call| call.name == "edit")
+        .expect("the edit turn must have run");
+    let error = edit.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("changed on disk"),
+        "the edit must be refused with a readable reason, got {error:?}"
+    );
+    let text = std::fs::read_to_string(harness.workspace.join("a.txt")).unwrap();
+    assert!(
+        text.contains("before") && !text.contains("after"),
+        "the stale edit must not have applied: {text}"
+    );
 }
 
 /// A malformed argument blob is reported as such instead of being dispatched

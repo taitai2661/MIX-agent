@@ -56,7 +56,7 @@ export const MentionPopover = memo(function MentionPopover({
   return (
     <div
       ref={containerRef}
-      className="absolute bottom-full left-4 z-40 mb-2 max-h-60 w-80 overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-scale"
+      className="absolute bottom-full left-4 z-40 mb-2 max-h-60 w-80 overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade"
       role="listbox"
       aria-label={t("ファイルメンション")}
     >

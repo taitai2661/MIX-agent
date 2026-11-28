@@ -285,8 +285,12 @@ def _process_pending_tools(db, run, snapshot) -> list:
     prepared = []
     waiting_for_approval = False
     attempt_counts = completed_tool_attempts(db, run.id)
+    # `registry()` reads the whole tool table, so it is resolved once instead of
+    # once per pending call: a run with a dozen pending calls used to issue a
+    # dozen identical SELECTs on every engine iteration.
+    available = registry(db, run.owner_id)
     for call in calls:
-        current = registry(db, run.owner_id).get(call.data["tool_id"])
+        current = available.get(call.data["tool_id"])
         result = None
         if not current or fingerprint(current) != call.data["tool_version"]:
             result = {

@@ -1,12 +1,19 @@
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 
-ROOT = Path("/tmp/mix-tests")
+# A unique root per pytest process avoids leaking keys/data between concurrent
+# or repeated runs; the session fixture below removes it at the end.
+ROOT = Path(tempfile.mkdtemp(prefix="mix-tests-"))
 os.environ["MIX_DATA"] = str(ROOT)
 os.environ["MIX_KEYS"] = str(ROOT / "keys")
-os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://mix@postgres-test/mix")
+# Never inherit DATABASE_URL from the developer shell: the `database` fixture
+# below drops and recreates every table, so an exported staging/production URL
+# would wipe a real database. Tests always use the disposable test service.
+os.environ["DATABASE_URL"] = "postgresql+psycopg://mix@postgres-test/mix"
 os.environ["PUBLIC_ORIGIN"] = "http://testserver"
 # Point the models.dev catalog at a path that never exists so no test reaches
 # the network; individual tests override the lookup itself when they need one.
@@ -25,6 +32,12 @@ from mix_agent.main import app
 #   must NOT take these fixtures — they run without Docker (see CI
 #   `docker-backend` vs host-only unit runs). If this file gains more than
 #   fixtures (helpers, factories), move them to tests/helpers/.
+@pytest.fixture(scope="session", autouse=True)
+def _clean_test_root():
+    yield
+    shutil.rmtree(ROOT, ignore_errors=True)
+
+
 @pytest.fixture
 def database():
     # Only tests that exercise the API (client/signed) require PostgreSQL;

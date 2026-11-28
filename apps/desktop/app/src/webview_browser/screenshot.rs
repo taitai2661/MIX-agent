@@ -89,6 +89,7 @@ pub async fn capture(webview: &tauri::Webview<tauri::Wry>) -> anyhow::Result<Vec
 #[cfg(not(target_os = "macos"))]
 pub async fn capture(_webview: &tauri::Webview<tauri::Wry>) -> anyhow::Result<Vec<u8>> {
     anyhow::bail!(
-        "native screenshots are not implemented on this platform yet; the macOS build uses WKWebView.takeSnapshot"
+        "screenshot_unsupported_on_this_platform: native screenshots are macOS-only for now \
+         (WKWebView.takeSnapshot); Windows (WebView2 CapturePreview) and Linux (WebKitGTK snapshot) adapters are planned"
     )
 }

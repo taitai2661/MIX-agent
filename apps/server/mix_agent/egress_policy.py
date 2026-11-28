@@ -18,14 +18,20 @@ from mix_agent.api.error_codes import APIError
 LOGGER = logging.getLogger(__name__)
 
 
-def write_policy(domains) -> Path:
+def write_policy(domains, mode=None) -> Path:
     """Write ``{mode, allowed_domains}`` atomically and return the path.
 
     An empty allow-list keeps the historical "any public host" behaviour, but it
     is now recorded as ``mode: public_web`` rather than inferred from the empty
     list. A single entry switches the proxy to exact-match ``restricted``.
+    ``mode="none"`` can be passed explicitly by settings to deny all egress;
+    the proxy still treats it as authoritative even when domains are present.
     """
     domains = [str(domain) for domain in domains]
+    if mode is None:
+        mode = "restricted" if domains else "public_web"
+    if mode not in ("public_web", "restricted", "none"):
+        raise ValueError("Invalid egress mode")
     directory = config.DATA / "egress"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / "policy.json"
@@ -49,10 +55,7 @@ def write_policy(domains) -> Path:
         os.chmod(temp, 0o644)
         with handle:
             json.dump(
-                {
-                    "mode": "restricted" if domains else "public_web",
-                    "allowed_domains": domains,
-                },
+                {"mode": mode, "allowed_domains": domains},
                 handle,
             )
             handle.flush()
@@ -63,19 +66,19 @@ def write_policy(domains) -> Path:
     return target
 
 
-def write_policy_or_503(domains) -> Path:
+def write_policy_or_503(domains, mode=None) -> Path:
     """Write the policy, translating a storage failure into an API error.
 
     The settings row is already committed at this point; reporting the failure
     is safer than claiming success while container egress stays stale.
     """
     try:
-        return write_policy(domains)
-    except OSError as exc:
+        return write_policy(domains) if mode is None else write_policy(domains, mode)
+    except (OSError, ValueError) as exc:
         raise APIError(503, "egress.policy_write_failed") from exc
 
 
-def write_policy_best_effort(domains) -> bool:
+def write_policy_best_effort(domains, mode=None) -> bool:
     """Write the policy without raising when the durable state is already saved.
 
     A restore commits the database before this runs. A failed file write must
@@ -84,8 +87,11 @@ def write_policy_best_effort(domains) -> bool:
     the file from the database.
     """
     try:
-        write_policy(domains)
-    except OSError:
+        if mode is None:
+            write_policy(domains)
+        else:
+            write_policy(domains, mode)
+    except (OSError, ValueError):
         LOGGER.exception("egress policy could not be written; it will be reconciled on the next start")
         return False
     return True
@@ -107,7 +113,7 @@ def reconcile_from_db() -> bool:
             row = db.get(Settings, "settings")
             if row is None:
                 return False
-            return write_policy_best_effort(row.data.get("allowed_domains", []))
+            return write_policy_best_effort(row.data.get("allowed_domains", []), row.data.get("network_mode"))
     except Exception:  # noqa: BLE001 - startup must not fail because policy repair failed
         LOGGER.exception("could not reconcile the egress policy from settings")
         return False

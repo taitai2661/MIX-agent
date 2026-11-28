@@ -93,6 +93,8 @@ WebView に流れます。`local_runtime_snapshot()` は画面再表示時の補
 | `PATCH /conversations/{key}` | `conversations::rename_conversation()` | 1 |
 | `POST /conversations/{key}/messages` | `conversations::send_message()` | 1 |
 | `GET /conversations/{key}/messages` | `conversations::list_messages()` | 1 |
+| `GET /conversations/{key}/tool-calls` | `conversations::list_conversation_tool_calls()`（引数・結果・エラーを Rust 側で redact、最新 2000 件） | 13 |
+| `POST /messages/{key}/feedback` | `auto::set_message_feedback()` | 11 |
 | `DELETE /conversations/{key}` | `conversations::delete_conversation()` | 1 |
 | `GET /conversations/{key}/markdown` | `conversations::export_markdown()` | 5 |
 | `PATCH /conversations/{key}/state` (`project_id`) | `conversations::set_conversation_project()` | 5 |
@@ -122,6 +124,8 @@ Desktop 版は SSE ではなく `app::RunEvent` を `emit` で配信します。
 | Docker 版 | Desktop 版 | Phase |
 | --- | --- | --- |
 | `POST /approvals/{key}/decision` | `approvals::decide_approval()` | 2 |
+| `POST /approvals/{key}/extend` | `approvals::extend_approval()` | 13 |
+| Docker 版に相当なし（質問への回答） | `approvals::answer_question()` | 6 |
 | `GET /approvals` | `tools::list_pending_approvals()` | 2 |
 
 ## Tools / 権限
@@ -197,6 +201,8 @@ Docker 版の Playwright Chromium と `browser_*` ツールは別系統として
 | `DELETE /skills/{key}` | `skills::delete_skill()` | 5 |
 | `GET /skills/{key}/resources` | `skills::list_skill_resources()` | 5 |
 | `GET /skills/{key}/resources/{path}` | `skills::read_skill_resource()` | 5 |
+| `GET /skills/{key}/revisions` | `skills::list_skill_revisions()` | 13 |
+| `POST /skills/{key}/restore/{revision}` | `skills::restore_skill_revision()` | 13 |
 
 両エディションとも `SKILL.md` の `license` / `compatibility` / `metadata` /
 `allowed-tools` を保存・エクスポートし、`scripts/` / `references/` / `assets/`
@@ -300,11 +306,10 @@ Desktop 版に意図的に対応が無いもの。`docs/openapi.json` に存在�
 | `/setup`, `/setup/admin` | 初回管理者作成が不要 |
 | `/notifications/*`, `/push/*`, `/push-sw.js` | Desktop は OS ローカル通知のみ（`app/src/push.rs`）。Web Push は無い |
 | `/conversation-folders/*` | 未実装 |
-| `/conversations/{key}/restore`, `/conversations/{key}/tool-calls` | 会話の復元と Tool 実行履歴一覧は未実装 |
+| `/conversations/{key}/restore` | 会話は物理削除のため復元は未実装 |
 | `/mcp/registry/*`, `/mcp/oauth/client-metadata.json` | MCP パッケージレジストリの参照・導入は未実装（接続設定の編集のみ） |
 | `/mcp/connections/{key}/{reinstall,uninstall,update}` | MCP パッケージのライフサイクル操作は未実装 |
 | `/runs/{key}/browser-manual`, `/browser-pause`, `/browser-return` | Run を停止する pause / return は未実装。設定画面のライブ画面から `click_at` / `type_active` / `press` は実行できる |
 | `/settings/statistics`, `/settings/usage` | 未実装 |
-| `/skills/{key}/revisions`, `/skills/{key}/restore/{revision}`, `/skills/import/archive`, `/skills/import/directory` | Skill の revision 履歴と Server ディレクトリ取り込みは未実装（Memory には revision がある） |
-| `/messages/{key}/feedback` | 未実装 |
+| `/skills/import/archive`, `/skills/import/directory` | Desktop の `import_skill` が zip / directory を取り込む（経路が異なる） |
 | `/artifacts/*`, `/runs/{key}/browser-frames*` | Artifact / Browser frame の配信は未実装（Browser のフレームは Desktop 側で直接取得） |

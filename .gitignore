@@ -20,7 +20,9 @@ out/
 *.pfx
 .env
 .env.local
-.env.*.local
+.env.*
+!.env.example
+.cache/
 test-results/
 playwright-report/
 .DS_Store

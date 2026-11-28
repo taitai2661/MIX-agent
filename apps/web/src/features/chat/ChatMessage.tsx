@@ -6,12 +6,18 @@ import { CopyButton } from "@/components/copy-button";
 import { Pencil, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { memo } from "react";
 
+import { FALLBACK_ACTIONS, useChatActionsContext } from "./ChatActionsContext";
 import { ArtifactCard, type ChatArtifact } from "./ArtifactCard";
 import { BrowserPanel } from "./BrowserPanel";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { RunActivity, type ToolCallHistory } from "./RunActivity";
 import { TodoPane } from "./TodoPane";
-import type { ApprovalDecision, ConversationRun, Feedback, Run } from "./types";
+import type {
+  ApprovalDecisionHandler,
+  ConversationRun,
+  Feedback,
+  Run,
+} from "./types";
 
 export type ChatMessageProps = {
   message: Row;
@@ -36,20 +42,19 @@ export type ChatMessageProps = {
   /** The final assistant turn can be regenerated without deleting later work. */
   isLastAssistant?: boolean;
   onRegenerate?: () => void;
-  onEditChange: (value: string) => void;
-  onEditCancel: () => void;
-  onEditSave: (message: Row) => void;
-  onEditStart: (message: Row) => void;
-  onRate: (
+  /** Callbacks come from ChatActionsContext by default. Explicit props are
+   *  kept for isolated rendering (unit tests, storybook) and take precedence. */
+  onEditChange?: (value: string) => void;
+  onEditCancel?: () => void;
+  onEditSave?: (message: Row) => void;
+  onEditStart?: (message: Row) => void;
+  onRate?: (
     messageId: string,
     current: Feedback,
     value: Exclude<Feedback, null>,
   ) => void;
-  onApproval: (
-    approvalId: string,
-    decision: ApprovalDecision,
-  ) => void | Promise<void>;
-  onBrowserChange: (browserRunId: string) => void;
+  onApproval?: ApprovalDecisionHandler;
+  onBrowserChange?: (browserRunId: string) => void;
 };
 
 /** One transcript row: context summary, message body, tools, todos, browser. */
@@ -79,6 +84,14 @@ function ChatMessageImpl({
   onApproval,
   onBrowserChange,
 }: ChatMessageProps) {
+  const ctx = useChatActionsContext() ?? FALLBACK_ACTIONS;
+  const changeEdit = onEditChange ?? ctx.onEditChange;
+  const cancelEdit = onEditCancel ?? ctx.onEditCancel;
+  const saveEditMsg = onEditSave ?? ctx.onEditSave;
+  const startEdit = onEditStart ?? ctx.onEditStart;
+  const rate = onRate ?? ctx.onRate;
+  const decideApproval = onApproval ?? ctx.onApproval;
+  const changeBrowser = onBrowserChange ?? ctx.onBrowserChange;
   const m = message;
   const role = typeof m.data.role === "string" ? m.data.role : "";
   const isUser = role === "user";
@@ -145,15 +158,15 @@ function ChatMessageImpl({
               aria-label={t("メッセージを編集")}
               value={editText}
               autoFocus
-              onChange={(e) => onEditChange(e.target.value)}
+              onChange={(e) => changeEdit(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   e.preventDefault();
-                  onEditCancel();
+                  cancelEdit();
                 }
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
-                  onEditSave(m);
+                  saveEditMsg(m);
                 }
               }}
             />
@@ -165,14 +178,14 @@ function ChatMessageImpl({
               <Button
                 type="button"
                 variant="ghost"
-                onClick={onEditCancel}
+                onClick={cancelEdit}
                 disabled={savingEdit}
               >
                 {t("キャンセル")}
               </Button>
               <Button
                 type="button"
-                onClick={() => onEditSave(m)}
+                onClick={() => saveEditMsg(m)}
                 disabled={savingEdit || !editText.trim()}
               >
                 {t("保存")}
@@ -191,7 +204,7 @@ function ChatMessageImpl({
             aria-label={t("メッセージを編集")}
             title={t("メッセージを編集")}
             disabled={editDisabled}
-            onClick={() => onEditStart(m)}
+            onClick={() => startEdit(m)}
           >
             <Pencil size={12} /> {t("編集")}
           </button>
@@ -293,14 +306,14 @@ function ChatMessageImpl({
               )}
               <button
                 className={m.data.feedback === "up" ? "selected" : ""}
-                onClick={() => onRate(m.id, m.data.feedback, "up")}
+                onClick={() => rate(m.id, m.data.feedback, "up")}
                 aria-label={t("良い回答")}
               >
                 <ThumbsUp size={14} />
               </button>
               <button
                 className={m.data.feedback === "down" ? "selected" : ""}
-                onClick={() => onRate(m.id, m.data.feedback, "down")}
+                onClick={() => rate(m.id, m.data.feedback, "down")}
                 aria-label={t("良くない回答")}
               >
                 <ThumbsDown size={14} />
@@ -314,7 +327,7 @@ function ChatMessageImpl({
           running={runningHere}
           approvals={run?.approvals}
           calls={mergedCalls}
-          onApproval={onApproval}
+          onApproval={decideApproval}
         />
       )}
       {isUser && showTodos && <TodoPane items={todos} />}
@@ -324,7 +337,7 @@ function ChatMessageImpl({
             key={r.id}
             runId={r.id}
             run={r.id === runId ? run : undefined}
-            onChange={() => onBrowserChange(r.id)}
+            onChange={() => changeBrowser(r.id)}
           />
         ))}
     </div>

@@ -6,7 +6,7 @@
 /// / `startRun` drop pending work.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRunEvents } from "./runStore";
+import { appendBounded, useRunEvents } from "./runStore";
 import { useUi } from "./ui";
 import type { RunEventPayload } from "./api";
 
@@ -138,5 +138,29 @@ describe("useRunEvents flush timer", () => {
     vi.advanceTimersByTime(1000);
     expect(useRunEvents.getState().timeline?.text).toBe("");
     expect(useRunEvents.getState().liveRunId).toBe("run-2");
+  });
+
+  it("live entries keep raw events for the trajectory view", () => {
+    useRunEvents.getState().startRun("run-1", "conv-1");
+    useRunEvents.getState().push(event("text", { delta: "hi" }));
+    useRunEvents.getState().push(event("status", { status: "running" }));
+    vi.advanceTimersByTime(1000);
+    const entry = useRunEvents.getState().byConversation["conv-1"];
+    expect(entry?.events?.map((e) => e.kind)).toEqual(["text", "status"]);
+  });
+});
+
+describe("appendBounded", () => {
+  const at = (sequence: number): RunEventPayload =>
+    event("text", { delta: `${sequence}` }, "run-1", sequence);
+
+  it("passes short buffers through", () => {
+    expect(appendBounded([at(1)], [at(2)], 10)).toHaveLength(2);
+  });
+
+  it("keeps the head and the tail over the cap", () => {
+    const current = [1, 2, 3, 4, 5].map(at);
+    const merged = appendBounded(current, [at(6), at(7)], 6);
+    expect(merged.map((e) => e.sequence)).toEqual([1, 2, 3, 5, 6, 7]);
   });
 });

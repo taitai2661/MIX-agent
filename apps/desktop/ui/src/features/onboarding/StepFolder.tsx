@@ -69,7 +69,7 @@ export function StepFolder({
   return (
     <div className="flex flex-col gap-5">
       {existing ? (
-        <div className="flex items-center gap-3 rounded-xl border border-line bg-inset/50 p-3.5">
+        <div className="flex items-center gap-3 rounded-xl border border-line bg-inset p-3.5">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
             <Folder size={16} aria-hidden="true" />
           </span>
@@ -89,7 +89,7 @@ export function StepFolder({
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-line-strong/70 bg-inset/30 px-5 py-7 text-center">
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-line-strong bg-inset px-5 py-7 text-center">
             <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
               <Folder size={20} aria-hidden="true" />
             </span>

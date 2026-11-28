@@ -280,7 +280,7 @@ export function DiagnosticsPane() {
               ) : recentLogs.isError ? (
                 <ErrorAlert error={recentLogs.error} />
               ) : (
-                <pre className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded bg-inset p-2 font-mono text-2xs text-muted">
+                <pre className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md bg-inset p-2 font-mono text-2xs text-muted">
                   {recentLogs.data || t("ログはありません")}
                 </pre>
               )}

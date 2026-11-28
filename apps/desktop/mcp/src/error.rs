@@ -37,6 +37,17 @@ pub enum McpError {
     #[error("SSE stream ended without a JSON-RPC response")]
     SseEnded,
 
+    /// A server streamed bytes with no newline long enough that the line buffer
+    /// passed [`crate::host::MAX_SSE_BUFFER_BYTES`]. Typed so callers can tell a
+    /// misbehaving peer from a genuine protocol/timeout failure.
+    #[error("MCP SSE line exceeded {0} bytes; the server is not framing events")]
+    SseBufferOverflow(usize),
+
+    /// A configured streamable-HTTP endpoint (or a discovered OAuth URL)
+    /// resolved to a private / link-local / otherwise forbidden address.
+    #[error("refusing MCP endpoint {0}: private or forbidden IP")]
+    PrivateEndpoint(String),
+
     #[error("stdio needs a command")]
     MissingCommand,
 

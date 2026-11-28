@@ -5,7 +5,6 @@
 > 定義されていることを CI（`.github/workflows/ci.yml` の `memory-parity`）で検査する。
 >
 > エディション固有の実装メモ・ファイルパスは**ここに書かない**。
-> ロードマップと実装対応表はリポジトリルートの `docs/memory-roadmap.md` を参照。
 
 ---
 

@@ -21,6 +21,7 @@ Usage::
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -93,11 +94,42 @@ def py_string(name: str, py: dict[str, str]) -> str:
     return unquote(value)
 
 
+def arithmetic_int(expression: str) -> int:
+    """Evaluate integer arithmetic from repo sources without ``eval``.
+
+    Only integer literals, ``+ - * //`` and unary ``+ -`` are accepted; names,
+    calls, attributes and every other Python construct are rejected.
+    """
+    try:
+        node = ast.parse(expression, mode="eval").body
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f"invalid arithmetic expression {expression!r}") from exc
+
+    def visit(item: ast.AST) -> int:
+        if isinstance(item, ast.Constant) and type(item.value) is int:
+            return item.value
+        if isinstance(item, ast.BinOp) and isinstance(item.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)):
+            left, right = visit(item.left), visit(item.right)
+            if isinstance(item.op, ast.Add):
+                return left + right
+            if isinstance(item.op, ast.Sub):
+                return left - right
+            if isinstance(item.op, ast.Mult):
+                return left * right
+            return left // right
+        if isinstance(item, ast.UnaryOp) and isinstance(item.op, (ast.UAdd, ast.USub)):
+            operand = visit(item.operand)
+            return operand if isinstance(item.op, ast.UAdd) else -operand
+        raise ValueError(f"disallowed expression node: {type(item).__name__}")
+
+    return visit(node)
+
+
 def eval_int(value: str) -> int:
     expression = value.replace("_", "")
     expression = re.sub(r"^Duration::from_secs\((.+)\)$", r"\1", expression)
     try:
-        return int(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
+        return arithmetic_int(expression)
     except Exception:  # noqa: BLE001 - any unparseable constant is a drift failure
         fail(f"cannot evaluate integer constant {value!r}")
 
@@ -137,15 +169,19 @@ def check_login_ttl() -> None:
             f"Python={eval_int(py['DEVICE_TTL_SECONDS'])}"
         )
 
-    match = re.search(r"\.max\((\d+)\)", read(RUST_AUTH))
-    if not match:
-        fail("cannot find the Rust device poll floor (.max(N))")
+    # The first `.max(N)` in auth.rs is `v.max(0.0)` in JWT parsing (not even
+    # digits) and other `.max` calls can be added anywhere. Read the floor from
+    # the one statement that implements it: device_interval's `match ... .max(N)`.
+    interval = re.search(r"fn\s+device_interval\b[^{]*\{(.*?)\n\}", read(RUST_AUTH), re.S)
+    floor = re.search(r"\.max\(\s*(\d+)\s*\)", interval.group(1)) if interval else None
+    if not floor:
+        fail("cannot find the Rust device poll floor (device_interval .max(N))")
     if "LOGIN_POLL_FLOOR_SECONDS" not in py:
         fail("missing Python LOGIN_POLL_FLOOR_SECONDS")
-    if int(match.group(1)) != eval_int(py["LOGIN_POLL_FLOOR_SECONDS"]):
+    if int(floor.group(1)) != eval_int(py["LOGIN_POLL_FLOOR_SECONDS"]):
         fail(
             "device poll floor drift: "
-            f"Rust={match.group(1)} Python={eval_int(py['LOGIN_POLL_FLOOR_SECONDS'])}"
+            f"Rust={floor.group(1)} Python={eval_int(py['LOGIN_POLL_FLOOR_SECONDS'])}"
         )
 
 
@@ -168,16 +204,19 @@ def check_windows() -> None:
 
 def check_refresh_codes() -> None:
     py_source = read(PY_CHATGPT)
-    match = re.search(r"refresh_token_invalidated.*?\n\s*\}", py_source, re.S)
-    codes = set(re.findall(r'"(refresh_token_[a-z_]+|invalid_grant)"', py_source))
+    match = re.search(r"code in\s*\{([^}]*)\}", py_source, re.S)
+    if match is None or "refresh_token_invalidated" not in match.group(1):
+        fail("cannot find the Python refresh-token error set")
+    # Only the error-set block defines the classification; other refresh codes
+    # elsewhere in the file (log messages, unrelated error names) are not part
+    # of the contract being compared with Rust.
+    codes = set(re.findall(r'"(refresh_token_[a-z_]+|invalid_grant)"', match.group(1)))
     if not codes:
         fail("cannot find OAuth refresh error codes in chatgpt.py")
     rust_source = read(RUST_AUTH)
     missing = sorted(code for code in codes if code not in rust_source)
     if missing:
         fail(f"Rust refresh classification is missing: {', '.join(missing)}")
-    if match is None:
-        fail("cannot find the Python refresh-token error set")
 
 
 def main() -> None:

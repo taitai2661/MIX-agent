@@ -6,11 +6,18 @@ import { ActivityPanel } from "@/features/chat/ActivityPanel";
 import { UsagePanel } from "@/features/chat/UsagePanel";
 import { DiffPanel } from "@/features/chat/DiffView";
 import { ChangesPanel, FilePreviewPanel } from "@/features/files/ChangesPanel";
+import { ProblemsPanel } from "@/features/files/ProblemsPanel";
 import { Spinner } from "@/components/ui/spinner";
 
 const BrowserPanel = lazy(() =>
   import("@/features/browser/BrowserPanel").then((m) => ({
     default: m.BrowserPanel,
+  })),
+);
+
+const TerminalPane = lazy(() =>
+  import("@/features/terminal/TerminalPane").then((m) => ({
+    default: m.TerminalPane,
   })),
 );
 
@@ -45,9 +52,21 @@ export function RightPanelBody({
     >
       {resolved === "diff" && isAgentSurface && <DiffPanel />}
       {resolved === "changes" && isAgentSurface && <ChangesPanel embedded />}
+      {resolved === "problems" && isAgentSurface && <ProblemsPanel />}
       {resolved === "file" && isAgentSurface && <FilePreviewPanel />}
       {resolved === "activity" && <ActivityPanel embedded />}
       {resolved === "usage" && <UsagePanel embedded />}
+      {resolved === "terminal" && isAgentSurface && (
+        <Suspense
+          fallback={
+            <div className="flex flex-1 items-center justify-center">
+              <Spinner size={14} label={t("読み込み中…")} />
+            </div>
+          }
+        >
+          <TerminalPane />
+        </Suspense>
+      )}
       {resolved === "browser" && isAgentSurface && (
         <div className="flex min-h-0 flex-1 flex-col">
           <Suspense

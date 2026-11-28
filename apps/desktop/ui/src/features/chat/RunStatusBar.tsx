@@ -123,7 +123,7 @@ export const RunStatusBar = memo(function RunStatusBar({
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center gap-2 border-t border-line bg-surface/70 px-4 py-1.5",
+        "flex shrink-0 items-center gap-2 border-t border-line bg-surface px-4 py-1.5",
         "text-xs text-muted backdrop-blur-sm",
         (waitingApproval || budgetPending) && "bg-warning-soft text-warning",
       )}
@@ -152,9 +152,8 @@ export const RunStatusBar = memo(function RunStatusBar({
       <Activity size={12} className="shrink-0 text-faint" aria-hidden="true" />
       {waitingApproval && (
         <Button
-          size="sm"
+          size="xs"
           variant="default"
-          className="h-6 px-2 text-2xs"
           onClick={() => setApprovalsOpen(true)}
         >
           <ShieldAlert size={11} aria-hidden="true" />

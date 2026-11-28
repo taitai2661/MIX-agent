@@ -13,6 +13,7 @@ from mix_agent.api.common import (
     own,
     public,
 )
+from mix_agent.api.helpers import pagination
 from mix_agent.api.schemas import (
     ConversationMessagesView,
     ConversationStateInput,
@@ -23,7 +24,6 @@ from mix_agent.auth.security import (
     read_secret,
 )
 from mix_agent.db.models import (
-    Approval,
     Conversation,
     ConversationFolder,
     Feedback,
@@ -265,15 +265,12 @@ def export_conversation_markdown(
 
 
 @router.get("/conversations/{key}/messages", response_model=ConversationMessagesView)
-def messages(key: str, ctx=Depends(context)):
+def messages(key: str, limit: int = 0, ctx=Depends(context)):
     db, s = ctx
     conversation = own(db, Conversation, key, s.owner_id)
-    rows = [
-        public(r)
-        for r in db.scalars(
-            select(Message).where(Message.conversation_id == key).order_by(Message.created_at)
-        )
-    ]
+    # The newest page is what a caller renders; `limit` asks for fewer.
+    cap = pagination.page_cap(limit, pagination.MESSAGE_PAGE_LIMIT)
+    rows = [public(r) for r in pagination.conversation_messages(db, key, cap)]
     message_ids = [row["id"] for row in rows]
     feedback = {
         item.message_id: item.data.get("value")
@@ -291,7 +288,19 @@ def messages(key: str, ctx=Depends(context)):
     for row in rows:
         if row["id"] in feedback:
             row["data"]["feedback"] = feedback[row["id"]]
-    run_rows = list(db.scalars(select(Run).where(Run.conversation_id == key).order_by(Run.created_at)))
+    # Pair runs with the same *newest* page the messages came from. Reading the
+    # oldest runs here left long conversations with a transcript whose runs
+    # were all older than the first displayed user turn, so no run could be
+    # matched to a message and its status was never shown.
+    run_rows = list(
+        db.scalars(
+            select(Run)
+            .where(Run.conversation_id == key)
+            .order_by(Run.created_at.desc(), Run.id.desc())
+            .limit(cap)
+        )
+    )
+    run_rows.reverse()
     user_turns = [
         {"id": row["id"], "created_at": datetime.fromisoformat(row["created_at"])}
         for row in rows
@@ -351,24 +360,14 @@ def _redact_tool_result(value):
 
 
 @router.get("/conversations/{key}/tool-calls", response_model=list[ToolCallHistoryView])
-def conversation_tool_calls(key: str, ctx=Depends(context)):
+def conversation_tool_calls(key: str, limit: int = 0, ctx=Depends(context)):
     db, s = ctx
     own(db, Conversation, key, s.owner_id)
-    runs = list(db.scalars(select(Run).where(Run.conversation_id == key).order_by(Run.created_at)))
-    run_map = {run.id: run for run in runs}
-    approvals = (
-        {
-            approval.tool_call_id: approval
-            for approval in db.scalars(select(Approval).where(Approval.run_id.in_(run_map)))
-        }
-        if run_map
-        else {}
-    )
-    calls = (
-        list(db.scalars(select(ToolCall).where(ToolCall.run_id.in_(run_map)).order_by(ToolCall.created_at)))
-        if run_map
-        else []
-    )
+    cap = pagination.page_cap(limit, pagination.TOOL_CALL_PAGE_LIMIT)
+    calls = pagination.conversation_tool_calls(db, key, cap)
+    needed_runs = {call.run_id for call in calls}
+    run_map = pagination.runs_for_tool_calls(db, needed_runs)
+    approvals = pagination.approvals_for_tool_calls(db, needed_runs)
     result = []
     for call in calls:
         run = run_map[call.run_id]

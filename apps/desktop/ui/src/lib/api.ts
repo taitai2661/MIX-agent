@@ -38,6 +38,7 @@ import type {
   MemoryView,
   MessageSearchHit,
   MessageView,
+  MessageFeedbackValue,
   ModelView,
   PendingApprovalView,
   PermissionRuleView,
@@ -46,6 +47,7 @@ import type {
   ProviderView,
   QuotaSnapshot,
   RunEventView,
+  RunEventSearchHit,
   RunView,
   ScheduleJobView,
   SendMessageOutput,
@@ -53,8 +55,14 @@ import type {
   SpotlightStatus,
   SpotlightTarget,
   SkillResourceView,
+  SkillRevisionView,
   SkillView,
+  ToolCallHistoryPage,
+  TerminalCommandView,
+  ToolResultView,
   ToolView,
+  UserShellPoll,
+  UserShellStart,
   UpdateInfo,
 } from "./types";
 
@@ -66,6 +74,9 @@ export interface PickerFilter {
 
 export const api = {
   health: () => invoke<HealthReport>("health"),
+
+  /** Open another application window (shared backend, independent UI state). */
+  newWindow: () => invoke<void>("new_window"),
 
   listProviders: () => invoke<ProviderView[]>("list_providers"),
   providerPresets: () => invoke<ProviderPresetView[]>("provider_presets"),
@@ -147,7 +158,7 @@ export const api = {
     invoke<ModelView>("verify_tools", { modelId }),
   setModelAuto: (modelId: string, auto: boolean) =>
     invoke<ModelView>("set_model_auto", { modelId, auto }),
-  setMessageFeedback: (messageId: string, value: string | null) =>
+  setMessageFeedback: (messageId: string, value: MessageFeedbackValue | null) =>
     invoke<string | null>("set_message_feedback", { messageId, value }),
 
   getSandboxStatus: () => invoke<SandboxStatus>("sandbox_status"),
@@ -213,14 +224,30 @@ export const api = {
     mode: string | null;
     reasoning: string | null;
   }) => invoke<SendMessageOutput>("edit_message", { input }),
+  listConversationToolCalls: (conversationId: string) =>
+    invoke<ToolCallHistoryPage>("list_conversation_tool_calls", {
+      conversationId,
+    }),
   listMessages: (conversationId: string, limit?: number, before?: number) =>
     invoke<MessageView[]>("list_messages", {
       conversationId,
       limit: limit ?? null,
       before: before ?? null,
     }),
-  searchMessages: (query: string, limit?: number) =>
+  searchMessages: (
+    query: string,
+    limit?: number,
+    options?: { conversationId?: string | null; role?: string | null },
+  ) =>
     invoke<MessageSearchHit[]>("search_messages", {
+      query,
+      limit: limit ?? null,
+      conversationId: options?.conversationId ?? null,
+      role: options?.role ?? null,
+    }),
+  /** Full-text search over the run-event log (tool args, text, errors). */
+  searchRunEvents: (query: string, limit?: number) =>
+    invoke<RunEventSearchHit[]>("search_run_events", {
       query,
       limit: limit ?? null,
     }),
@@ -238,12 +265,23 @@ export const api = {
   // text as a normal new turn instead.
   steerRun: (runId: string, content: string) =>
     invoke<boolean>("steer_run", { runId, content }),
+  /** Messages waiting for the next turn of an active Run (in-memory queue). */
+  listSteering: (runId: string) =>
+    invoke<SteeringMessageView[]>("list_steering", { runId }),
+  updateSteering: (runId: string, seq: number, content: string) =>
+    invoke<boolean>("update_steering", { runId, seq, content }),
+  removeSteering: (runId: string, seq: number) =>
+    invoke<boolean>("remove_steering", { runId, seq }),
   /** Restores files the Run changed via edit/files; returns the count. */
   revertRun: (runId: string) => invoke<number>("revert_run", { runId }),
   revertRunWorkspace: (runId: string) =>
     invoke<number>("revert_run_workspace", { runId }),
   runWorkspaceChanges: (runId: string) =>
     invoke<WorkspaceChanges>("run_workspace_changes", { runId }),
+
+  /** Revert only the selected files, leaving the rest of the Run's changes. */
+  revertRunWorkspacePaths: (runId: string, paths: string[]) =>
+    invoke<number>("revert_run_workspace_paths", { runId, paths }),
   getRun: (id: string) => invoke<RunView>("get_run", { id }),
   listRuns: (conversationId: string) =>
     invoke<RunView[]>("list_runs", { conversationId }),
@@ -252,6 +290,15 @@ export const api = {
   listActiveRuns: () => invoke<ActiveRunView[]>("list_active_runs"),
   listRunEvents: (runId: string) =>
     invoke<RunEventView[]>("list_run_events", { runId }),
+  /** Export one run's event log as JSONL (one object per line). */
+  exportRunEventsJsonl: (runId: string) =>
+    invoke<string>("export_run_events_jsonl", { runId }),
+  /** Render one run's event log as a Markdown transcript. */
+  exportRunMarkdown: (runId: string) =>
+    invoke<string>("export_run_markdown", { runId }),
+  /** Import a JSONL dump file back into the run's event log. */
+  importRunEventsFile: (runId: string, path: string) =>
+    invoke<number>("import_run_events_file", { runId, path }),
   listCheckpoints: (id: string) =>
     invoke<CheckpointView[]>("list_checkpoints", { id }),
   replayRunEvents: (id: string) => invoke<void>("replay_run_events", { id }),
@@ -285,7 +332,47 @@ export const api = {
     grant: boolean;
     remember: boolean;
     rememberSession?: boolean;
+    /** Required by the backend for a `dangerous` command. */
+    acknowledgeRisk?: boolean;
   }) => invoke<void>("decide_approval", { input }),
+  /** Push a pending prompt's deadline out. The backend bounds `seconds`
+   *  (60 s .. 24 h) and only accepts an id that is still pending. */
+  extendApproval: (input: { id: string; seconds: number }) =>
+    invoke<{ expires_at: string }>("extend_approval", { input }),
+  /** Answer a structured question card. Resolves `false` (like `steerRun`)
+   *  when the Run already finished, so the caller can resend the text as a
+   *  normal turn instead of dropping it. */
+  answerQuestion: (input: {
+    runId: string;
+    questionId?: string | null;
+    selected: string[];
+    freeText?: string | null;
+  }) => invoke<boolean>("answer_question", { input }),
+
+  runShellCommand: (input: {
+    root: string;
+    command: string;
+    /** Snake_case matches the Rust `ShellRunInput` field. */
+    max_wall_clock_ms?: number;
+  }) => invoke<TerminalCommandView>("run_shell_command", { input }),
+
+  /** Start a command without waiting; poll `pollShellCommand` for output. */
+  startShellCommand: (input: {
+    root: string;
+    command: string;
+    max_wall_clock_ms?: number;
+  }) => invoke<UserShellStart>("start_shell_command", { input }),
+
+  pollShellCommand: (root: string) =>
+    invoke<UserShellPoll>("poll_shell_command", { root }),
+
+  interruptShellCommand: (root: string) =>
+    invoke<void>("interrupt_shell_command", { root }),
+
+  sendShellInput: (input: { root: string; input: string; wait_ms?: number }) =>
+    invoke<ToolResultView>("send_shell_input", { input }),
+
+  shellHistory: () => invoke<TerminalCommandView[]>("shell_history"),
 
   listMcpConnections: () => invoke<McpConnectionView[]>("list_connections"),
   createMcpConnection: (input: {
@@ -411,6 +498,10 @@ export const api = {
   exportSkill: (name: string, asZip: boolean) =>
     invoke<string>("export_skill", { name, asZip }),
   deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
+  skillRevisions: (name: string) =>
+    invoke<SkillRevisionView[]>("list_skill_revisions", { name }),
+  restoreSkillRevision: (name: string, revisionId: string) =>
+    invoke<SkillView>("restore_skill_revision", { name, revisionId }),
   skillResources: (name: string) =>
     invoke<SkillResourceView[]>("list_skill_resources", { name }),
   readSkillResource: (name: string, path: string) =>
@@ -468,6 +559,21 @@ export const api = {
     invoke<void>("git_restore", { rootPath, path, staged }),
   gitStage: (rootPath: string, path: string, unstage: boolean = false) =>
     invoke<void>("git_stage", { rootPath, path, unstage }),
+  /** Commit what is currently staged. Returns git's stdout summary. */
+  gitCommit: (rootPath: string, message: string) =>
+    invoke<string>("git_commit", { rootPath, message }),
+  /** Apply one hunk (or reverse it) through `git apply`. */
+  gitApplyPatch: (
+    rootPath: string,
+    patch: string,
+    options: { reverse?: boolean; cached?: boolean } = {},
+  ) =>
+    invoke<void>("git_apply_patch", {
+      rootPath,
+      patch,
+      reverse: options.reverse ?? false,
+      cached: options.cached ?? false,
+    }),
 
   listScheduleJobs: () => invoke<ScheduleJobView[]>("list_jobs"),
   createScheduleJob: (input: {
@@ -605,6 +711,11 @@ export const api = {
   pendingUpdate: () => invoke<UpdateInfo | null>("pending_update"),
   installUpdateNow: () => invoke<void>("install_update_now"),
 };
+
+export interface SteeringMessageView {
+  seq: number;
+  content: string;
+}
 
 export interface RunEventPayload {
   run_id: string;

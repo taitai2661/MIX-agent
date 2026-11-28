@@ -72,7 +72,7 @@ export function ActiveRunsIndicator() {
           aria-label={tf("{count} 件実行中", { count: runs.length })}
         >
           <Activity size={13} className="text-brand" aria-hidden="true" />
-          <span className="absolute -top-0.5 -right-1 rounded-full bg-brand px-1 text-[9px] font-semibold leading-3 text-on-solid tabular-nums">
+          <span className="absolute -top-0.5 -right-1 rounded-full bg-brand px-1 text-3xs font-semibold leading-none text-on-solid tabular-nums">
             {runs.length}
           </span>
         </Button>

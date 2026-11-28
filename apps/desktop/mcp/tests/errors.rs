@@ -27,6 +27,14 @@ fn each_variant_renders_its_legacy_message() {
             McpError::SseEnded,
             "SSE stream ended without a JSON-RPC response",
         ),
+        (
+            McpError::SseBufferOverflow(1024),
+            "MCP SSE line exceeded 1024 bytes; the server is not framing events",
+        ),
+        (
+            McpError::PrivateEndpoint("127.0.0.1".into()),
+            "refusing MCP endpoint 127.0.0.1: private or forbidden IP",
+        ),
         (McpError::MissingCommand, "stdio needs a command"),
         (
             McpError::SpawnFailed("npx".into(), "nope".into()),

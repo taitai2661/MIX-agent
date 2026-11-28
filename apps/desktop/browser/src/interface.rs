@@ -242,17 +242,66 @@ pub fn desktop_agent_actions() -> Vec<String> {
 /// `evaluate` runs with the page's ambient authority (cookies, intranet
 /// access), so a model-supplied `fetch("http://169.254.169.254/")` inside an
 /// otherwise innocent probe is the same SSRF as a `navigate` there — only
-/// laundered through JS. The substring gate below is deliberately narrow
-/// (exact `fetch(`, `XMLHttpRequest`, `WebSocket(`, `EventSource(` tokens) to
-/// avoid breaking legitimate DOM reads while closing the obvious hole.
+/// laundered through JS.
 ///
-/// A substring gate cannot stop `eval("fe"+"tch")` or a redirect chain, so it
-/// is only the first layer. The durable check lives in
-/// the browser backend: every page target gets
+/// The gate is fail-closed on purpose: *any* network-reaching or
+/// evaluation-shaping token is refused, even at the cost of rejecting a
+/// creative-but-benign probe (the model can use `web_fetch` for network
+/// reads and plain DOM expressions for probes). Capability tokens are matched
+/// as whole identifiers (case-insensitively), so a call or property access
+/// such as `fetch(`, `window.fetch` or `fetch.bind(...)` is still refused while
+/// innocent words that merely contain the token (`fetching`, `prefetch`,
+/// `fetchData`) are not. That is a false-positive reduction only — the token
+/// itself remains blocked in every capability shape. Other checks cover the
+/// standard obfuscations:
+/// - direct tokens (`fetch(`, `XMLHttpRequest`, `WebSocket(`, `EventSource(`,
+///   `sendBeacon`, `importScripts(`),
+/// - dynamic-code shaping (`eval(`, `Function(`, `import(`) that would let a
+///   script build a forbidden token at runtime (`eval("fe"+"tch(...)")`),
+/// - quoted property access (`["fetch"]`, `['fetch']`, `["xmlhttprequest"]`)
+///   that reaches the same capability without the call token,
+/// - URL literals pointing at local/private targets (`http://127.․`,
+///   `localhost`, `169.254`, `file:`, …) so an `evaluate` that steers the
+///   page (`location.href = "http://127.0.0.1/…"`) cannot bypass the
+///   `navigate` gate, which only sees the `navigate` action.
+///
+/// A substring gate still cannot stop every shape (split-string
+/// construction, redirect chains), so it stays the first layer. The durable
+/// check lives in the browser backend: every page target gets
 /// `Fetch` request interception, which resolves the host and refuses private /
 /// link-local answers before the engine dials. This function stays as a cheap
 /// early rejection that produces a useful tool error instead of a failed page
 /// load.
+/// Case-insensitive search for `token` as a whole JS identifier.
+///
+/// The network tokens are capabilities only when they stand alone: `fetch(`,
+/// `window.fetch`, `fetch.bind(...)`, ``fetch`...` `` etc. Requiring identifier
+/// boundaries around the token refuses every one of those call / member-access
+/// shapes, while a larger word such as `fetching` or `prefetch` is not the
+/// capability and is allowed. Quoted access (`window["fetch"]`) is checked
+/// separately below, so narrowing this match does not open that bypass.
+fn contains_capability_token(lowered: &str, token: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut from = 0;
+    while let Some(offset) = lowered[from..].find(token) {
+        let start = from + offset;
+        let end = start + token.len();
+        let before_ok = start == 0
+            || lowered[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_ident(c));
+        let after_ok =
+            end == lowered.len() || lowered[end..].chars().next().is_none_or(|c| !is_ident(c));
+        if before_ok && after_ok {
+            return true;
+        }
+        // Skip past this occurrence; tokens never overlap themselves.
+        from = end;
+    }
+    false
+}
+
 pub fn validate_evaluate_script(script: &str) -> anyhow::Result<()> {
     if script.trim().is_empty() {
         anyhow::bail!("evaluate script must not be empty");
@@ -264,10 +313,94 @@ pub fn validate_evaluate_script(script: &str) -> anyhow::Result<()> {
             MAX_EVALUATE_SCRIPT_BYTES
         );
     }
-    for token in ["fetch(", "XMLHttpRequest", "WebSocket(", "EventSource("] {
-        if script.contains(token) {
+    // Lowercase once: `Fetch(`, `FETCH(`, `fEtCh(` are the same capability.
+    let lowered = script.to_lowercase();
+    // Network capabilities. A bare identifier boundary (not a raw substring)
+    // keeps `.fetch(`, `window.fetch`, `fetch.bind(...)` and ``fetch`...```
+    // blocked while letting `fetching` / `prefetch` probes through.
+    for token in [
+        "fetch",
+        "xmlhttprequest",
+        "websocket",
+        "eventsource",
+        "sendbeacon",
+        "importscripts",
+        "webtransport",
+        "rtcpeerconnection",
+    ] {
+        if contains_capability_token(&lowered, token) {
             anyhow::bail!(
                 "evaluate script reaches the network via `{token}`; use the web_fetch tool instead"
+            );
+        }
+    }
+    // Dynamic-code shaping that would let the script assemble a forbidden
+    // token at runtime (`eval("fe" + "tch(...)")`, `Function("fetch(...)")`,
+    // `import("…")`). Case-sensitive for `Function`/`import` so the
+    // lowercase `function` keyword and ordinary prose keep working; `eval`
+    // is matched case-insensitively because no DOM probe needs it. Spaced
+    // forms (`eval (…`, `import (…)`) are valid JS and gated the same way.
+    for token in ["Function(", "Function (", "import(", "import ("] {
+        if script.contains(token) {
+            anyhow::bail!(
+                "evaluate script builds code at runtime via `{token}`; use a plain DOM expression instead"
+            );
+        }
+    }
+    if lowered.contains("eval(") || lowered.contains("eval (") {
+        anyhow::bail!(
+            "evaluate script builds code at runtime via `eval`; use a plain DOM expression instead"
+        );
+    }
+    // Quoted property access reaches the same capability without the call
+    // token (`window["fetch"](…)`, `globalThis['xmlhttprequest']`).
+    for token in [
+        "\"fetch\"",
+        "'fetch'",
+        "\"xmlhttprequest\"",
+        "'xmlhttprequest'",
+    ] {
+        if lowered.contains(token) {
+            anyhow::bail!(
+                "evaluate script reaches the network via `{token}`; use the web_fetch tool instead"
+            );
+        }
+    }
+    // Local/private URL literals: `evaluate` can steer the page
+    // (`location.href = "http://127.0.0.1:8000/…"`) without going through the
+    // `navigate` gate, and `fetch` to a literal local URL is SSRF even when
+    // the call token is hidden. Matched as substrings so every spelling
+    // (`http://127.0.0.1`, `//localhost:3000`, `"169.254.169.254"`) is caught.
+    // Bare `10.` / `file:` are deliberately *not* matched: `10.5` is a
+    // plausible number in a probe and `profile:` contains `file:` — those two
+    // only count in URL-authority form (`//10.`, `file://`).
+    for token in [
+        "127.",
+        "localhost",
+        "169.254.",
+        "192.168.",
+        "://10.",
+        "//10.",
+        "::1",
+        "metadata.google",
+        "file://",
+        "javascript:",
+        "data:text/html",
+    ] {
+        if lowered.contains(token) {
+            anyhow::bail!(
+                "evaluate script targets a local/private resource via `{token}`; that destination is not reachable from evaluate"
+            );
+        }
+    }
+    // `172.16.0.0/12` (172.16.–172.31.) is the remaining RFC1918 range; the
+    // bare `172.` prefix would false-positive on ordinary numbers, so scan
+    // the three-digit second octets explicitly.
+    for octet in 16..=31 {
+        let token = format!("172.{octet}.");
+        if lowered.contains(&token) {
+            anyhow::bail!(
+                "evaluate script targets a local/private resource via `{token}`; that destination is not reachable from evaluate"
             );
         }
     }
@@ -641,12 +774,48 @@ mod tests {
             "new XMLHttpRequest()",
             "new WebSocket('ws://example.com/')",
             "new EventSource('/events')",
+            // Case and member-expression obfuscations of the same capability.
+            "Fetch('https://example.com/')",
+            "window.fetch('/api')",
+            "globalThis.fetch.bind(globalThis)",
+            "navigator.sendBeacon('/log', data)",
+            "new WebTransport('https://example.com/')",
+            // Dynamic-code shaping that assembles a forbidden token at runtime.
+            "eval(\"fe\" + \"tch('https://example.com/')\")",
+            "Function('fetch(\"https://example.com/\")')()",
+            "import('https://example.com/module.js')",
+            "window[\"fetch\"]('/api')",
+            // Local/private steering that bypasses the `navigate` gate
+            // (`evaluate` never passes through it).
+            "location.href = 'http://127.0.0.1:8000/admin'",
+            "location.href = 'http://localhost:3000/'",
+            "location.href = 'http://10.0.0.5/'",
+            "location.href = 'http://192.168.1.1/'",
+            "location.href = 'http://172.16.0.2/'",
+            "location.href = 'http://[::1]:5173/'",
+            "location.href = 'file:///etc/passwd'",
+            "location.href = 'javascript:alert(1)'",
         ] {
             assert!(
                 validate_evaluate_script(script).is_err(),
                 "{script} must be blocked"
             );
         }
-        assert!(validate_evaluate_script("document.querySelector('#a').textContent").is_ok());
+        for script in [
+            "document.querySelector('#a').textContent",
+            "document.title",
+            "window.__ready === true",
+            "document.querySelectorAll('.item').length",
+            // Words that merely *contain* a network token are not the
+            // capability: match at identifier boundaries, not substrings.
+            "const rows = await prefetchCache();",
+            "document.body.innerText.includes('fetching')",
+            "fetchDataFromCache(3)",
+        ] {
+            assert!(
+                validate_evaluate_script(script).is_ok(),
+                "{script} must be allowed"
+            );
+        }
     }
 }

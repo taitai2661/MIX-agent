@@ -2,7 +2,7 @@
 //! prompt. This is the Desktop counterpart of the Docker edition's
 //! `mix_agent/context/retrievers.py`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,6 +62,21 @@ const MAX_CHUNKS_PER_DOC: usize = 2;
 const KNOWLEDGE_ITEM_CHAR_LIMIT: usize = 1200;
 /// Overall budget for the rendered retrieved-context block.
 const MAX_BLOCK_CHARS: usize = 8000;
+/// Above this many rows the un-indexed full scan is skipped: a short/CJK query
+/// in a big store must not parse every memory's JSON on every turn. Skipping is
+/// reported to the caller through [`RetrievedBlock::degraded`] — silently
+/// returning an empty block would look like "no memories" to the user.
+const FULL_SCAN_MAX_ROWS: i64 = 2000;
+/// Bound the number of `LIKE` clauses a short query can add.
+const MAX_LEXICAL_TERMS: usize = 12;
+/// Hard bound on rows the un-indexed lexical fallback may stream. The old code
+/// materialised every matching row with `fetch_all`; bounded streaming keeps
+/// both peak memory and per-turn work predictable.
+const MAX_LEXICAL_CANDIDATES: i64 = 2000;
+/// Embedding-only rows cannot be found by a lexical `LIKE`. They get a separate
+/// bounded query instead of an unbounded `OR json_extract(...) IS NOT NULL`
+/// that pulled the entire embedded table into every CJK recall.
+const MAX_VECTOR_CANDIDATES: i64 = 256;
 /// Recency halves its lookahead every `180` days (spec §5.1).
 const RECENCY_DECAY_DAYS: f64 = 180.0;
 
@@ -77,6 +92,14 @@ pub struct RetrievedBlock {
     /// one stored before Phase 4 — reads back as `None` rather than failing.
     #[serde(default)]
     pub debug: Option<RetrievalDebug>,
+    /// `true` when recall was incomplete because an un-indexed full scan was
+    /// skipped on a large store ([`FULL_SCAN_MAX_ROWS`]). The caller must surface
+    /// this: an empty block caused by a *skipped* scan is not the same as an
+    /// empty store, and treating it as the latter hides a real capability loss
+    /// from the user (notably for CJK queries, which the trigram index cannot
+    /// serve). `#[serde(default)]` keeps older stored blocks loadable.
+    #[serde(default)]
+    pub degraded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -749,22 +772,134 @@ fn score_memory_row(
     })
 }
 
+/// SQL that narrows the un-indexed fallback to rows worth scoring.
+///
+/// CJK unigrams/bigrams and short Latin words have no trigram entry, but they
+/// are still ordinary substrings of a Memory's JSON. Letting SQLite do the
+/// `LIKE` filter avoids deserialising every row in Rust. The row count is
+/// bounded — the caller streams the result instead of materialising it — so a
+/// short query that matches half the store cannot blow up a single turn.
+///
+/// The numeric `LIMIT` is a compile-time constant, never user input, so it is
+/// safe to inline and keeps every bind a `String` for [`score_candidates`].
+fn lexical_candidate_query(terms: &QueryTerms, predicate: &str) -> (String, Vec<String>) {
+    let mut clauses = Vec::new();
+    let mut binds = Vec::new();
+    for term in terms.0.iter().take(MAX_LEXICAL_TERMS) {
+        let escaped = term
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        clauses.push("data LIKE ? ESCAPE '\\'".to_string());
+        binds.push(format!("%{escaped}%"));
+    }
+    let sql = format!(
+        "SELECT id, data, role, scope, updated_at FROM memories \
+         WHERE {predicate} AND ({}) LIMIT {MAX_LEXICAL_CANDIDATES}",
+        clauses.join(" OR ")
+    );
+    (sql, binds)
+}
+
+/// Embedding-only candidates are a *separate*, bounded query. A vector match
+/// needs no lexical overlap (spec §5.2), but OR-ing
+/// `json_extract(data, '$.embedding') IS NOT NULL` into the lexical query used
+/// to pull every embedded row into every CJK recall — the exact full-scan cost
+/// this path was meant to avoid. Filtering on `embedding_model` also mirrors
+/// [`vector_for_pair`]'s compatibility check in SQL, so rows that could never
+/// contribute a vector term are not even read.
+fn vector_candidate_query(predicate: &str) -> String {
+    format!(
+        "SELECT id, data, role, scope, updated_at FROM memories \
+         WHERE {predicate} \
+           AND json_extract(data, '$.embedding_model') = ? \
+         LIMIT {MAX_VECTOR_CANDIDATES}"
+    )
+}
+
+/// Stream one bounded candidate query, scoring rows as they arrive.
+///
+/// Errors propagate with `?`: swallowing a DB failure here used to look like
+/// "no lexical candidates", which silently fell through to the full scan (or
+/// to an empty result) and made real failures invisible.
+#[allow(clippy::too_many_arguments)]
+async fn score_candidates(
+    storage: &Storage,
+    sql: &str,
+    binds: &[String],
+    terms: &QueryTerms,
+    query_embedding: Option<&QueryEmbedding>,
+    now: chrono::DateTime<Utc>,
+    exclude: Option<&str>,
+    seen: &mut HashSet<String>,
+    scored: &mut Vec<ScoredHit>,
+) -> anyhow::Result<()> {
+    use futures_util::TryStreamExt as _;
+    use sqlx::Row as _;
+
+    let mut query = sqlx::query(sql);
+    for bind in binds {
+        query = query.bind(bind);
+    }
+    let mut rows = query.fetch(storage.pool());
+    while let Some(row) = rows.try_next().await? {
+        let id: String = row.try_get("id").unwrap_or_default();
+        let Ok(raw) = row.try_get::<String, _>("data") else {
+            continue;
+        };
+        // A row can match both the lexical and the vector query. Score it once.
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let role = row
+            .try_get::<String, _>("role")
+            .unwrap_or_else(|_| "fact".into());
+        let scope = row
+            .try_get::<String, _>("scope")
+            .unwrap_or_else(|_| "user".into());
+        let updated_at = row.try_get::<String, _>("updated_at").unwrap_or_default();
+        if let Some(hit) = score_memory_row(
+            terms,
+            query_embedding,
+            now,
+            exclude,
+            id,
+            &raw,
+            role,
+            scope,
+            &updated_at,
+        ) {
+            scored.push(hit);
+        }
+    }
+    Ok(())
+}
+
+/// Score a recall's candidates.
+///
+/// Returns the ranked hits and a `degraded` flag: `true` means the last-resort
+/// full scan was skipped on a large store, so an empty result is *not* evidence
+/// that the store has nothing relevant. Callers must surface that distinction.
+#[allow(clippy::too_many_arguments)]
 async fn score_rows(
     storage: &Storage,
     terms: &QueryTerms,
     query_embedding: Option<&QueryEmbedding>,
     exclude: Option<&str>,
     fts: Option<&str>,
-) -> anyhow::Result<Vec<ScoredHit>> {
-    use futures_util::TryStreamExt;
-    use sqlx::Row;
+) -> anyhow::Result<(Vec<ScoredHit>, bool)> {
+    use futures_util::TryStreamExt as _;
+    use sqlx::Row as _;
     let now = Utc::now();
     let predicate = crate::memory::retrievable_predicate();
     let mut scored: Vec<ScoredHit> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut degraded = false;
 
     // When the query is indexable, let SQLite narrow the candidate set before
     // Rust parses any JSON. The scorer below is unchanged, so this only
-    // changes which rows are read — not how they rank.
+    // changes which rows are read — not how they rank. A DB error is fatal:
+    // silently falling back would hide a broken FTS index from the user.
     if let Some(fts) = fts {
         let query = format!(
             "SELECT m.id, m.data, m.role, m.scope, m.updated_at \
@@ -778,9 +913,9 @@ async fn score_rows(
             .bind(fts)
             .bind(exclude)
             .fetch_all(storage.pool())
-            .await
-            .unwrap_or_default();
+            .await?;
         for (id, raw, role, scope, updated_at) in rows {
+            seen.insert(id.clone());
             if let Some(hit) = score_memory_row(
                 terms,
                 query_embedding,
@@ -797,33 +932,80 @@ async fn score_rows(
         }
     }
 
-    // Short/CJK queries (the trigram index cannot represent their tokens) and
-    // an empty index fall back to the streaming scan. Streamed, not
-    // `fetch_all`-ed: a large Memory table must not be materialised in full
-    // alongside the scored hits.
+    // Short/CJK queries (the trigram index cannot represent their tokens) fall
+    // back to a bounded, substring-narrowed query that is *streamed*, not
+    // materialised. Embedding-only rows get their own bounded query: a vector
+    // match needs no lexical overlap (spec §5.2), but including every embedded
+    // row in the lexical `OR` was the very full-scan cost this path avoids.
     if scored.is_empty() {
-        let query =
-            format!("SELECT id, data, role, scope, updated_at FROM memories WHERE {predicate}");
-        let mut rows = sqlx::query(&query).fetch(storage.pool());
-        while let Some(row) = rows.try_next().await? {
-            let id: String = row.try_get("id").unwrap_or_default();
-            let Ok(raw) = row.try_get::<String, _>("data") else {
-                continue;
-            };
-            if let Some(hit) = score_memory_row(
+        if !terms.is_empty() {
+            let (sql, binds) = lexical_candidate_query(terms, &predicate);
+            score_candidates(
+                storage,
+                &sql,
+                &binds,
                 terms,
                 query_embedding,
                 now,
                 exclude,
-                id,
-                &raw,
-                row.try_get::<String, _>("role")
-                    .unwrap_or_else(|_| "fact".into()),
-                row.try_get::<String, _>("scope")
-                    .unwrap_or_else(|_| "user".into()),
-                &row.try_get::<String, _>("updated_at").unwrap_or_default(),
-            ) {
-                scored.push(hit);
+                &mut seen,
+                &mut scored,
+            )
+            .await?;
+        }
+        if let Some(embedding) = query_embedding {
+            let sql = vector_candidate_query(&predicate);
+            score_candidates(
+                storage,
+                &sql,
+                std::slice::from_ref(&embedding.model),
+                terms,
+                query_embedding,
+                now,
+                exclude,
+                &mut seen,
+                &mut scored,
+            )
+            .await?;
+        }
+    }
+
+    // Last resort: the full streaming scan. Only for small stores; above the
+    // threshold the cost is audible and the caller is *told* via `degraded`
+    // instead of quietly returning an empty block that looks like "no memories".
+    if scored.is_empty() {
+        let count: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM memories WHERE {predicate}"))
+                .fetch_one(storage.pool())
+                .await?;
+        if count > FULL_SCAN_MAX_ROWS {
+            tracing::warn!(%count, limit = FULL_SCAN_MAX_ROWS,
+                "memory recall skipped an unindexed full-table scan on a large store");
+            degraded = true;
+        } else {
+            let query =
+                format!("SELECT id, data, role, scope, updated_at FROM memories WHERE {predicate}");
+            let mut rows = sqlx::query(&query).fetch(storage.pool());
+            while let Some(row) = rows.try_next().await? {
+                let id: String = row.try_get("id").unwrap_or_default();
+                let Ok(raw) = row.try_get::<String, _>("data") else {
+                    continue;
+                };
+                if let Some(hit) = score_memory_row(
+                    terms,
+                    query_embedding,
+                    now,
+                    exclude,
+                    id,
+                    &raw,
+                    row.try_get::<String, _>("role")
+                        .unwrap_or_else(|_| "fact".into()),
+                    row.try_get::<String, _>("scope")
+                        .unwrap_or_else(|_| "user".into()),
+                    &row.try_get::<String, _>("updated_at").unwrap_or_default(),
+                ) {
+                    scored.push(hit);
+                }
             }
         }
     }
@@ -836,13 +1018,15 @@ async fn score_rows(
             // Spec §5.2: ties go to the more recently updated row.
             .then_with(|| b.updated_at.cmp(&a.updated_at))
     });
-    Ok(scored)
+    Ok((scored, degraded))
 }
 
 /// One recall: the hits, plus the keys that explain how they were chosen.
 struct Retrieved {
     hits: Vec<MemoryHit>,
     debug: RetrievalDebug,
+    /// The last-resort full scan was skipped (see [`score_rows`]).
+    degraded: bool,
 }
 
 /// Score, cap, optionally activate, then walk §4's one hop out of what the
@@ -857,7 +1041,7 @@ async fn retrieve_with(
 ) -> anyhow::Result<Retrieved> {
     // Spec §2 `result_limit_max`: a caller asking for 500 memories gets 30.
     let limit = limit.min(RESULT_LIMIT_MAX);
-    let mut scored = score_rows(storage, terms, query_embedding, None, fts).await?;
+    let (mut scored, degraded) = score_rows(storage, terms, query_embedding, None, fts).await?;
     scored.truncate(limit);
     let seeds: Vec<MemoryHit> = scored.into_iter().map(|entry| entry.hit).collect();
     let seed_ids: Vec<String> = seeds.iter().map(|hit| hit.id.clone()).collect();
@@ -904,7 +1088,11 @@ async fn retrieve_with(
     let mut hits = seeds;
     hits.extend(expansion.added);
     debug.memory_ids = hits.iter().map(|hit| hit.id.clone()).collect();
-    Ok(Retrieved { hits, debug })
+    Ok(Retrieved {
+        hits,
+        debug,
+        degraded,
+    })
 }
 
 async fn retrieve_memories_with(
@@ -958,7 +1146,11 @@ pub(crate) async fn suggest_targets(
     exclude_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<MemoryHit>> {
-    let mut scored = score_rows(storage, terms, None, Some(exclude_id), None).await?;
+    // Link suggestions do not surface a degraded scan to the user; the low
+    // score gate already discards noise from a partial candidate set.
+    let mut scored = score_rows(storage, terms, None, Some(exclude_id), None)
+        .await?
+        .0;
     scored.truncate(limit);
     Ok(scored.into_iter().map(|entry| entry.hit).collect())
 }
@@ -1091,8 +1283,7 @@ async fn retrieve_knowledge_with(
         )
         .bind(fts)
         .fetch_all(storage.pool())
-        .await
-        .unwrap_or_default();
+        .await?;
         for (id, raw) in rows {
             if let Some(hit) = score_knowledge_row(terms, &id, &raw) {
                 scored.push(hit);
@@ -1201,12 +1392,48 @@ pub async fn retrieve_all(storage: &Storage, query: &str) -> anyhow::Result<Retr
         memories: memories.hits,
         knowledge,
         debug: Some(memories.debug),
+        degraded: memories.degraded,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cjk_queries_produce_unigrams_and_bigrams() {
+        let terms = QueryTerms::new("改善点");
+        assert!(
+            terms.0.iter().any(|t| t == "改"),
+            "a one-character term should be present: {:?}",
+            terms.0
+        );
+        assert!(
+            terms.0.iter().any(|t| t == "改善"),
+            "the bigram should be present: {:?}",
+            terms.0
+        );
+        assert!(
+            terms.0.iter().any(|t| t == "善点"),
+            "the second bigram should be present: {:?}",
+            terms.0
+        );
+    }
+
+    #[test]
+    fn lexical_candidates_escape_wildcards_and_are_bounded() {
+        let (sql, binds) = lexical_candidate_query(&QueryTerms::new("a_b 50%"), "1 = 1");
+        assert!(sql.contains("ESCAPE"));
+        assert!(sql.contains(&format!("LIMIT {MAX_LEXICAL_CANDIDATES}")));
+        assert!(binds.iter().any(|b| b.contains("\\_")));
+        assert!(binds.iter().any(|b| b.contains("\\%")));
+        // Embedding rows are a separate, bounded query now, not an unbounded
+        // OR on the main lexical scan.
+        assert!(!sql.contains("embedding"));
+        let vector_sql = vector_candidate_query("1 = 1");
+        assert!(vector_sql.contains("$.embedding_model"));
+        assert!(vector_sql.contains(&format!("LIMIT {MAX_VECTOR_CANDIDATES}")));
+    }
 
     #[test]
     fn score_is_normalised() {
@@ -1253,6 +1480,7 @@ mod tests {
             }],
             knowledge: Vec::new(),
             debug: None,
+            degraded: false,
         };
         let msg = block.to_message().expect("message");
         assert!(msg.content.contains("Prefers Rust"));
@@ -1373,6 +1601,7 @@ mod tests {
                 score: 1.0,
             }],
             debug: None,
+            degraded: false,
         };
         let rendered = block.to_message().expect("message").content;
         let memory_line = rendered

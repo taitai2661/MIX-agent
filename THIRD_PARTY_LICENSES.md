@@ -6,7 +6,7 @@ This document lists third-party software components and dependencies used by MIX
 
 - **Rust Dependencies**: 741 crates
 - **Python Dependencies**: 82 packages
-- **Node.js / Web Dependencies**: 48 packages
+- **Node.js / Web Dependencies**: 50 packages
 
 ## 2. Special Notices & Disclosures
 
@@ -94,7 +94,7 @@ This document lists third-party software components and dependencies used by MIX
 | `rpds-py` | `2026.6.3` | Python |
 | `ruff` | `0.16.5` | Python |
 | `sniffio` | `1.3.1` | Python |
-| `soupsieve` | `2.9.2` | Python |
+| `soupsieve` | `4.1.3` | Python |
 | `sqlalchemy` | `2.0.52` | Python |
 | `sse-starlette` | `3.4.8` | Python |
 | `starlette` | `1.6.0` | Python |
@@ -111,56 +111,61 @@ This document lists third-party software components and dependencies used by MIX
 
 ## 4. Web & Desktop UI Dependencies
 
+Versions are resolved from the workspace lockfiles, not the semver ranges in `package.json`.
+Where a package resolves to different versions in different workspaces, all are listed.
+
 | Package | Version | Ecosystem |
 | :--- | :--- | :--- |
-| `@eslint/js` | `^9.39.5` | npm |
-| `@playwright/test` | `^1.51.0` | npm |
-| `@radix-ui/react-dialog` | `^1.1.23` | npm |
-| `@radix-ui/react-dropdown-menu` | `^2.1.24` | npm |
-| `@radix-ui/react-label` | `^2.1.15` | npm |
-| `@radix-ui/react-popover` | `^1.1.23` | npm |
-| `@radix-ui/react-separator` | `^1.1.15` | npm |
-| `@radix-ui/react-slot` | `^1.2.3` | npm |
-| `@radix-ui/react-switch` | `^1.3.7` | npm |
-| `@radix-ui/react-tabs` | `^1.1.21` | npm |
-| `@radix-ui/react-tooltip` | `^1.2.16` | npm |
-| `@tailwindcss/vite` | `^4.1.7` | npm |
-| `@tanstack/react-query` | `^5.80.0` | npm |
-| `@tanstack/react-virtual` | `^3.14.25` | npm |
-| `@tauri-apps/api` | `^2.1.1` | npm |
-| `@tauri-apps/plugin-notification` | `^2.0.1` | npm |
-| `@tauri-apps/plugin-os` | `^2.0.0` | npm |
-| `@tauri-apps/plugin-window-state` | `^2.0.1` | npm |
-| `@testing-library/jest-dom` | `^7.0.1` | npm |
-| `@testing-library/react` | `^16.3.3` | npm |
-| `@testing-library/user-event` | `^14.6.7` | npm |
-| `@types/node` | `^22.10.0` | npm |
-| `@types/react` | `^19.1.0` | npm |
-| `@types/react-dom` | `^19.1.0` | npm |
-| `@vitejs/plugin-react` | `^4.4.1` | npm |
-| `@vitest/coverage-v8` | `^3.2.7` | npm |
-| `class-variance-authority` | `^0.7.1` | npm |
-| `clsx` | `^2.1.1` | npm |
-| `eslint` | `^9.39.5` | npm |
-| `eslint-plugin-jsx-a11y` | `^6.10.2` | npm |
-| `eslint-plugin-react-hooks` | `^5.2.0` | npm |
-| `jsdom` | `30.1.3` | npm |
-| `lucide-react` | `^0.511.0` | npm |
-| `openapi-typescript` | `^7.8.0` | npm |
+| `@eslint/js` | `9.39.5` | npm |
+| `@playwright/test` | `1.62.1` | npm |
+| `@radix-ui/react-dialog` | `1.1.23` | npm |
+| `@radix-ui/react-dropdown-menu` | `2.1.24` | npm |
+| `@radix-ui/react-label` | `2.1.15` | npm |
+| `@radix-ui/react-popover` | `1.1.23` | npm |
+| `@radix-ui/react-separator` | `1.1.15` | npm |
+| `@radix-ui/react-slot` | `1.3.3` | npm |
+| `@radix-ui/react-switch` | `1.3.7` | npm |
+| `@radix-ui/react-tabs` | `1.1.21` | npm |
+| `@radix-ui/react-tooltip` | `1.2.16` | npm |
+| `@tailwindcss/vite` | `4.3.3` | npm |
+| `@tanstack/react-query` | `5.102.8, 5.104.0` | npm |
+| `@tanstack/react-virtual` | `3.14.25` | npm |
+| `@tauri-apps/api` | `2.12.0` | npm |
+| `@tauri-apps/cli` | `2.12.1, 2.12.4` | npm |
+| `@tauri-apps/plugin-notification` | `2.5.0` | npm |
+| `@tauri-apps/plugin-os` | `2.4.0` | npm |
+| `@tauri-apps/plugin-window-state` | `2.5.0` | npm |
+| `@testing-library/jest-dom` | `7.0.1` | npm |
+| `@testing-library/react` | `16.3.3` | npm |
+| `@testing-library/user-event` | `14.6.7` | npm |
+| `@types/node` | `22.20.4` | npm |
+| `@types/react` | `19.2.18, 19.3.0` | npm |
+| `@types/react-dom` | `19.2.5, 19.3.0` | npm |
+| `@vitejs/plugin-react` | `4.7.0` | npm |
+| `@vitest/coverage-v8` | `3.2.7` | npm |
+| `axe-core` | `4.14.0` | npm |
+| `class-variance-authority` | `0.7.1` | npm |
+| `clsx` | `2.1.1` | npm |
+| `eslint` | `9.39.5` | npm |
+| `eslint-plugin-jsx-a11y` | `6.10.2` | npm |
+| `eslint-plugin-react-hooks` | `5.2.0` | npm |
+| `jsdom` | `30.1.1, 30.1.3` | npm |
+| `lucide-react` | `0.511.0` | npm |
+| `openapi-typescript` | `7.13.0` | npm |
 | `prettier` | `3.5.3` | npm |
-| `react` | `^19.1.0` | npm |
-| `react-dom` | `^19.1.0` | npm |
-| `react-markdown` | `^10.1.0` | npm |
-| `react-router-dom` | `^7.6.0` | npm |
+| `react` | `19.2.8, 19.3.0` | npm |
+| `react-dom` | `19.2.8, 19.3.0` | npm |
+| `react-markdown` | `10.1.0` | npm |
+| `react-router-dom` | `7.18.3` | npm |
 | `remark-breaks` | `4.0.0` | npm |
-| `remark-gfm` | `^4.0.1` | npm |
-| `tailwind-merge` | `^3.2.0` | npm |
-| `tailwindcss` | `^4.1.7` | npm |
-| `typescript` | `~5.8.3` | npm |
-| `typescript-eslint` | `^8.72.1` | npm |
-| `vite` | `^6.3.5` | npm |
-| `vitest` | `^3.1.4` | npm |
-| `zustand` | `^4.5.4` | npm |
+| `remark-gfm` | `4.0.1` | npm |
+| `tailwind-merge` | `3.6.0, 3.7.0` | npm |
+| `tailwindcss` | `4.3.3` | npm |
+| `typescript` | `5.8.3` | npm |
+| `typescript-eslint` | `8.70.1, 8.72.1` | npm |
+| `vite` | `6.4.3` | npm |
+| `vitest` | `3.2.7` | npm |
+| `zustand` | `4.5.7` | npm |
 
 ## 5. Desktop Rust Crates (Summary)
 
@@ -265,7 +270,7 @@ Total: 741 crates compiled into Desktop binaries.
 | `const-oid` | `0.10.2` | Rust |
 | `const-random` | `0.1.18` | Rust |
 | `const-random-macro` | `0.1.16` | Rust |
-| `cookie` | `0.18.2` | Rust |
+| `cookie` | `0.18.3` | Rust |
 | `core_detect` | `1.0.0` | Rust |
 | `core-foundation` | `0.9.4` | Rust |
 | `core-foundation` | `0.10.1` | Rust |
@@ -350,7 +355,7 @@ Total: 741 crates compiled into Desktop binaries.
 | `foreign-types` | `0.5.0` | Rust |
 | `foreign-types-macros` | `0.2.4` | Rust |
 | `foreign-types-shared` | `0.3.1` | Rust |
-| `form_urlencoded` | `1.2.2` | Rust |
+| `form_urlencoded` | `1.2.3` | Rust |
 | `futures` | `0.3.34` | Rust |
 | `futures-channel` | `0.3.34` | Rust |
 | `futures-core` | `0.3.34` | Rust |
@@ -577,8 +582,8 @@ Total: 741 crates compiled into Desktop binaries.
 | `proc-macro2` | `1.0.107` | Rust |
 | `quick-xml` | `0.42.0` | Rust |
 | `quinn` | `0.11.12` | Rust |
-| `quinn-proto` | `0.11.18` | Rust |
-| `quinn-udp` | `0.5.15` | Rust |
+| `quinn-proto` | `0.11.19` | Rust |
+| `quinn-udp` | `0.5.16` | Rust |
 | `quote` | `1.0.47` | Rust |
 | `r-efi` | `5.3.0` | Rust |
 | `r-efi` | `6.0.0` | Rust |
@@ -775,7 +780,7 @@ Total: 741 crates compiled into Desktop binaries.
 | `universal-hash` | `0.5.1` | Rust |
 | `unsafe-libyaml` | `0.2.11` | Rust |
 | `untrusted` | `0.9.0` | Rust |
-| `url` | `2.5.8` | Rust |
+| `url` | `2.5.9` | Rust |
 | `urlpattern` | `0.6.0` | Rust |
 | `utf8_iter` | `1.0.4` | Rust |
 | `utf8parse` | `0.2.2` | Rust |

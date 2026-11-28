@@ -32,6 +32,40 @@ import type { SlashCommand } from "./SlashCommandPopover";
 import { useAttachments } from "./useAttachments";
 import { useVoiceInput } from "./useVoiceInput";
 
+/**
+ * Collect pasted images synchronously, while the paste event is still being
+ * dispatched. `preventDefault()` is only effective inside that same tick, so
+ * the caller must be able to decide before any async file reading starts.
+ * `clipboardData.files` covers Explorer/Finder drops; a screenshot copied with
+ * PrintScreen / Cmd-Shift-Ctrl-4 usually arrives only as an `items` entry with
+ * an empty `files` list, hence both sources are read and de-duplicated.
+ */
+export function collectPasteImages(e: {
+  clipboardData?: DataTransfer | null;
+}): File[] {
+  const dt = e.clipboardData;
+  if (!dt) return [];
+  const fromFiles = [...(dt.files ?? [])].filter((f) =>
+    f.type.startsWith("image/"),
+  );
+  const fromItems: File[] = [];
+  if (typeof dt.items !== "undefined") {
+    for (const item of [...dt.items]) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) fromItems.push(f);
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return [...fromFiles, ...fromItems].filter((f) => {
+    const key = `${f.name}:${f.size}:${f.lastModified}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 interface UseComposerStateArgs {
   setMode: (mode: ComposerMode) => void;
   allowedModes?: ReadonlyArray<ComposerMode>;
@@ -41,6 +75,7 @@ interface UseComposerStateArgs {
   sendShortcut: SendShortcut;
   busy: boolean;
   modelId: string;
+  setModelId: (id: string) => void;
   selectedModel: ModelView | undefined;
   staleModel: boolean;
   onSend: ComposerProps["onSend"];
@@ -85,6 +120,11 @@ export interface ComposerState {
   onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   hasImage: boolean;
   visionWarning: boolean;
+  /** Auto switched to the `auto` pseudo-model because the explicit pick has
+   *  no vision. Shown as a badge so the switch is not silent. */
+  autoVisionActive: boolean;
+  screenshotAvailable: boolean;
+  captureScreenshot: () => Promise<void>;
   sendDisabledReason: string | null;
   canSend: boolean;
   listening: boolean;
@@ -100,6 +140,7 @@ export function useComposerState({
   sendShortcut,
   busy,
   modelId,
+  setModelId,
   selectedModel,
   staleModel,
   onSend,
@@ -112,6 +153,8 @@ export function useComposerState({
     attaching,
     addImageFiles,
     onAttach,
+    captureScreenshot: captureScreenshotInner,
+    screenshotAvailable,
     removeAttachment,
     removeAttachments,
     clearAttachments,
@@ -131,9 +174,10 @@ export function useComposerState({
   draftRef.current = draft;
   // Set while the first send of a brand-new thread is in flight. The chat pane
   // creates the conversation before the request resolves, so `draftKey` flips
-  // from "none" to the new id mid-send. That is not a user thread switch: the
-  // sent text must be cleared from the "none" slot, and anything typed while
-  // waiting has to survive into the new thread instead of being saved behind.
+  // from `new:<surface>` (or "none" in tests) to the new id mid-send. That is
+  // not a user thread switch: the sent text must be cleared from the new-thread
+  // slot, and anything typed while waiting has to survive into the new thread
+  // instead of being saved behind.
   const pendingAdoptionRef = useRef<string | null>(null);
   const lastSentTextRef = useRef<string | null>(null);
 
@@ -300,6 +344,10 @@ export function useComposerState({
     [addImageFiles],
   );
 
+  const captureScreenshot = useCallback(async () => {
+    await captureScreenshotInner();
+  }, [captureScreenshotInner]);
+
   // Draft persistence: one slot per conversation, via `lib/drafts.ts`
   // (best-effort, timestamped, expires after 30 days). Switching threads used
   // to either drop the draft or leak it into the next thread. The ref dance
@@ -421,8 +469,60 @@ export function useComposerState({
 
   const isAutoModel = modelId === "auto";
   const hasImage = attachments.some((a) => a.mime_type.startsWith("image/"));
+  // Auto vision自動切替: 画像が付いたのに明示モデルがVisionなしなら `auto`
+  // に寄せる (`auto` は has_image 時にVision候補だけから選ぶ)。手動で戻した
+  // 意思は尊重するため、戻した後はそのスレッドでは再切替しない。添付が全部
+  // 外れたら元のモデルに戻してバッジを消す。
+  const [autoVisionActive, setAutoVisionActive] = useState(false);
+  const prevModelIdRef = useRef<string | null>(null);
+  const autoOptOutRef = useRef(false);
+  // Opt-out detection MUST be declared before the auto-switch effect below.
+  // React runs effects in declaration order against the same render snapshot:
+  // when the user manually leaves `auto`, the auto-switch effect would still
+  // see `autoOptOutRef.current === false` and call setModelId("auto") if it ran
+  // first, reverting the user's pick before this flag was ever set. Any manual
+  // pick counts (not just a non-vision one) — otherwise removing the image
+  // would restore an older model over a vision-capable model the user chose.
+  useEffect(() => {
+    if (autoVisionActive && hasImage && !isAutoModel && selectedModel) {
+      autoOptOutRef.current = true;
+      setAutoVisionActive(false);
+      prevModelIdRef.current = null;
+    }
+  }, [autoVisionActive, hasImage, isAutoModel, selectedModel]);
+  useEffect(() => {
+    if (!hasImage) {
+      autoOptOutRef.current = false;
+      if (autoVisionActive && prevModelIdRef.current) {
+        const restore = prevModelIdRef.current;
+        prevModelIdRef.current = null;
+        setAutoVisionActive(false);
+        setModelId(restore);
+      } else if (autoVisionActive) {
+        setAutoVisionActive(false);
+        prevModelIdRef.current = null;
+      }
+      return;
+    }
+    if (
+      !isAutoModel &&
+      selectedModel &&
+      !selectedModel.supports_vision &&
+      !autoOptOutRef.current
+    ) {
+      if (prevModelIdRef.current == null) prevModelIdRef.current = modelId;
+      setAutoVisionActive(true);
+      setModelId("auto");
+    }
+    // Deliberately keyed on the attachment/model snapshot: setModelId is
+    // stable from context, and re-running on every draft keystroke would
+    // fight a manual switch-back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasImage, isAutoModel, selectedModel]);
   // Auto resolves to a vision-capable model when an image is attached, so the
   // warning only applies to an explicitly picked model without vision.
+  // 自動切替が効いた直後は isAuto なので警告は出ない。手動で戻した場合は
+  // autoVisionActive が落ちているため警告が復活する。
   const visionWarning =
     hasImage &&
     !isAutoModel &&
@@ -476,7 +576,13 @@ export function useComposerState({
     // in flight is not part of this send and must not be cleared with it.
     const sentAttachments = attachments;
     lastSentTextRef.current = trimmed;
-    if (sendKey === "none") pendingAdoptionRef.current = sendKey;
+    // The production draft key is `activeConversationId ?? new:${surface}`;
+    // "none" only exists in tests. Match the real sentinel too, otherwise the
+    // first send is treated as a thread switch and clears newly added
+    // attachments / typed text while the request is in flight.
+    if (sendKey === "none" || sendKey?.startsWith("new:")) {
+      pendingAdoptionRef.current = sendKey;
+    }
     const pending = onSend(trimmed, sentAttachments, {
       temporaryMode,
       allowTools,
@@ -685,10 +791,13 @@ export function useComposerState({
     onSelectSlashCommand,
     onInsertMention,
     handleDropFiles,
+    captureScreenshot,
+    screenshotAvailable,
     onSubmit: submit,
     onKeyDown,
     hasImage,
     visionWarning,
+    autoVisionActive,
     sendDisabledReason,
     canSend,
     listening,

@@ -8,6 +8,7 @@ for directory in (
     "/execution-token",
     "/mcp-token",
     "/manager-token",
+    "/mcp-workload-token",
     "/browser-token",
     "/browser-provisioner-token",
     "/browser-data",
@@ -26,6 +27,7 @@ for filename, binary in (
     ("/execution-token/execution.token", False),
     ("/mcp-token/mcp.token", False),
     ("/manager-token/manager.token", False),
+    ("/mcp-workload-token/mcp-workload.token", False),
     ("/browser-token/browser.token", False),
     ("/browser-provisioner-token/browser-provisioner.token", False),
 ):

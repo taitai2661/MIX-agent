@@ -70,7 +70,7 @@ export function ErrorBox({
               <span>{expanded ? t("詳細を折りたたむ") : t("詳細を表示")}</span>
             </button>
             {expanded && (
-              <pre className="mt-1.5 max-h-48 overflow-auto rounded bg-inset/80 p-2 font-mono text-2xs text-muted whitespace-pre-wrap break-all border border-line/40">
+              <pre className="mt-1.5 max-h-48 overflow-auto rounded-md bg-inset p-2 font-mono text-2xs text-muted whitespace-pre-wrap break-all border border-line">
                 {message}
               </pre>
             )}
@@ -131,7 +131,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong/60 bg-surface/50 px-6 py-10 text-center",
+        "flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong bg-surface/50 px-6 py-10 text-center",
         className,
       )}
     >

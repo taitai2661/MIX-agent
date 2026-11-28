@@ -2349,6 +2349,11 @@ export interface components {
              * @enum {string}
              */
             decision: "once" | "always" | "denied";
+            /**
+             * Acknowledge Risk
+             * @default false
+             */
+            acknowledge_risk: boolean;
         };
         /** DiagnosticsFailureView */
         DiagnosticsFailureView: {
@@ -3153,6 +3158,8 @@ export interface components {
             web_search_backend: "ddgs" | "brave" | "tavily" | "exa" | "serper" | "searxng";
             /** Allowed Domains */
             allowed_domains?: string[];
+            /** Network Mode */
+            network_mode?: ("public_web" | "restricted" | "none") | null;
             /**
              * Browser Enabled
              * @default true
@@ -6658,7 +6665,9 @@ export interface operations {
     };
     messages_api_v1_conversations__key__messages_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+            };
             header?: never;
             path: {
                 key: string;
@@ -7429,7 +7438,9 @@ export interface operations {
     };
     conversation_tool_calls_api_v1_conversations__key__tool_calls_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+            };
             header?: never;
             path: {
                 key: string;

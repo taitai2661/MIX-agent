@@ -289,64 +289,266 @@ pub fn stop() -> String {
     wrap("window.stop(); return true;")
 }
 
-/// Best-effort subresource guard. This is not a replacement for a network
-/// proxy: it covers fetch/XHR/WebSocket/EventSource/beacon, not images, CSS,
-/// iframes or workers. The navigation gate in Rust is authoritative for
-/// top-level documents.
+/// Best-effort subresource guard injected into the untrusted page.
+///
+/// This is NOT a security boundary and NOT a replacement for a network proxy.
+/// It patches the JavaScript network/load sinks we can see (fetch, XHR,
+/// WebSocket, EventSource, beacon, worker registration, URL-bearing element
+/// attributes, `setAttribute`, CSS `url()`/`insertRule`, plus a mutation pass
+/// for DOM-created subresources) and makes the replacements non-configurable
+/// where the engine allows it. A page that captured an original before this
+/// script ran, defined an own property on an element, or navigates through a
+/// sink we missed can still make a request; none of that is prevented here.
+///
+/// The Rust `on_navigation` gate (`host.rs`) is the authoritative check for
+/// **top-level** documents only — wry does not expose a subresource request
+/// hook, so there is nothing to wire at the WebView level. Loopback blocking
+/// for subresources therefore relies on this shim and must be treated as a
+/// speed bump, not a guarantee.
 pub fn egress_guard(allow_local: bool) -> String {
-    format!(
-        r#"
-        (() => {{
-          const allowLocal = {allow_local};
-          const isPrivate = (host) => {{
-            if (!host) return false;
-            const h = host.toLowerCase();
-            if (h === 'localhost' || h.endsWith('.localhost')) return true;
-            if (h === '127.0.0.1' || h === '0.0.0.0' || h === '[::1]' || h === '::1') return true;
-            if (h === '169.254.169.254' || h.startsWith('169.254.')) return true;
-            if (/^10\./.test(h) || /^192\.168\./.test(h)) return true;
-            if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-            return false;
-          }};
-          const allowed = (url) => {{
-            try {{
-              const u = new URL(url, location.href);
-              if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
-              return allowLocal || !isPrivate(u.hostname);
-            }} catch (_) {{ return true; }}
-          }};
-          const fail = () => Promise.reject(new TypeError('blocked by MIX egress policy'));
-          if (window.fetch) {{
-            const original = window.fetch;
-            window.fetch = function(input, init) {{
-              const url = typeof input === 'string' ? input : (input && input.url) || '';
-              return allowed(url) ? original.call(this, input, init) : fail();
-            }};
-          }}
-          if (window.XMLHttpRequest) {{
-            const open = XMLHttpRequest.prototype.open;
-            XMLHttpRequest.prototype.open = function(method, url, ...rest) {{
-              if (!allowed(String(url))) throw new TypeError('blocked by MIX egress policy');
-              return open.call(this, method, url, ...rest);
-            }};
-          }}
-          for (const name of ['WebSocket', 'EventSource']) {{
-            const Original = window[name];
-            if (!Original) continue;
-            window[name] = class extends Original {{
-              constructor(url, ...rest) {{
-                if (!allowed(String(url))) throw new TypeError('blocked by MIX egress policy');
-                super(url, ...rest);
-              }}
-            }};
-          }}
-          if (navigator.sendBeacon) {{
-            const beacon = navigator.sendBeacon.bind(navigator);
-            navigator.sendBeacon = (url, data) => allowed(String(url)) ? beacon(url, data) : false;
-          }}
-        }})();
-        "#,
-        allow_local = if allow_local { "true" } else { "false" }
+    // A sentinel replacement keeps the large script readable: `format!` would
+    // require doubling every JS brace.
+    const SHIM: &str = r#"(() => {
+      const initial = __MIX_ALLOW_LOCAL__;
+      // `set_allow_local` re-evaluates this snippet on live tabs. Wrappers are
+      // installed once; a later call only flips the shared flag.
+      if (window.__mixEgressGuard) {
+        window.__mixEgressGuard.allowLocal = initial;
+        return;
+      }
+      const guard = { allowLocal: initial };
+      try {
+        Object.defineProperty(window, '__mixEgressGuard', {
+          value: guard, writable: false, configurable: false,
+        });
+      } catch (_) {
+        window.__mixEgressGuard = guard;
+      }
+
+      // Keep this list in sync with `mixd_browser::is_forbidden_ip` where
+      // possible; it is deliberately conservative (blocks link-local and
+      // .local/.internal) because a false positive only breaks a subresource.
+      const isPrivate = (host) => {
+        if (!host) return false;
+        const h = String(host).toLowerCase();
+        if (h === 'localhost' || h.endsWith('.localhost')) return true;
+        if (h === '127.0.0.1' || h === '0.0.0.0' || h === '[::1]' || h === '::1') return true;
+        if (h === '::ffff:127.0.0.1' || h === '0:0:0:0:0:0:0:1') return true;
+        if (h === '169.254.169.254' || h.startsWith('169.254.')) return true;
+        if (/^10\./.test(h) || /^192\.168\./.test(h)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+        if (h.endsWith('.local') || h.endsWith('.internal')) return true;
+        return false;
+      };
+      const allowed = (raw) => {
+        try {
+          const u = new URL(String(raw), location.href);
+          // data:, blob:, about: etc. do not open a network connection here.
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+          return guard.allowLocal || !isPrivate(u.hostname);
+        } catch (_) {
+          // Fail closed: an unexpected parse error must not turn into a
+          // permission to open a network connection.
+          return false;
+        }
+      };
+      const reason = 'blocked by MIX egress policy';
+      const fail = () => Promise.reject(new TypeError(reason));
+      const deny = () => { throw new TypeError(reason); };
+      const cssBlocked = (text) => {
+        const re = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;
+        let match;
+        while ((match = re.exec(String(text)))) {
+          if (!allowed(match[2])) return true;
+        }
+        return false;
+      };
+      // Inspect an HTML string *before* the parser can start fetching the
+      // subresources it contains. The MutationObserver below is reactive: by
+      // the time it removes a blocked attribute, `<img src=…>` may already
+      // have hit the network.
+      const htmlBlocked = (html) => {
+        const text = String(html);
+        if (cssBlocked(text)) return true;
+        const re = /(?:src|href|srcset|data|poster|formaction|action|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+        let match;
+        while ((match = re.exec(text))) {
+          const value = match[1] !== undefined ? match[1]
+            : (match[2] !== undefined ? match[2] : (match[3] || ''));
+          if (!allowed(value)) return true;
+        }
+        return false;
+      };
+
+      // Non-configurable own properties resist the common `window.fetch = f`
+      // tamper. This is not bulletproof: a captured original still works.
+      const install = (obj, name, value) => {
+        try {
+          const current = Object.getOwnPropertyDescriptor(obj, name);
+          if (current && !current.configurable) return;
+          Object.defineProperty(obj, name, {
+            value, writable: false, configurable: false,
+            enumerable: current ? current.enumerable : true,
+          });
+        } catch (_) {
+          try { obj[name] = value; } catch (_) {}
+        }
+      };
+
+      // Explicit network APIs.
+      if (window.fetch) {
+        const original = window.fetch;
+        install(window, 'fetch', function(input, init) {
+          const url = typeof input === 'string' ? input : (input && input.url) || '';
+          return allowed(url) ? original.call(this, input, init) : fail();
+        });
+      }
+      if (window.XMLHttpRequest) {
+        const open = XMLHttpRequest.prototype.open;
+        install(XMLHttpRequest.prototype, 'open', function(method, url, ...rest) {
+          if (!allowed(String(url))) return deny();
+          return open.call(this, method, url, ...rest);
+        });
+      }
+      for (const name of ['WebSocket', 'EventSource', 'Worker', 'SharedWorker']) {
+        const Original = window[name];
+        if (!Original) continue;
+        install(window, name, class extends Original {
+          constructor(url, ...rest) {
+            if (!allowed(String(url))) throw new TypeError(reason);
+            super(url, ...rest);
+          }
+        });
+      }
+      if (navigator.serviceWorker && navigator.serviceWorker.register) {
+        const register = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+        install(navigator.serviceWorker, 'register', (url, ...rest) =>
+          allowed(String(url)) ? register(url, ...rest) : fail());
+      }
+      if (navigator.sendBeacon) {
+        const beacon = navigator.sendBeacon.bind(navigator);
+        install(navigator, 'sendBeacon', (url, data) =>
+          allowed(String(url)) ? beacon(url, data) : false);
+      }
+
+      // Subresources that never touch fetch: <img>, <iframe>, <link>,
+      // <script>, <video poster>, <object data>, form actions, ...
+      const URL_ATTRS = ['src', 'href', 'srcset', 'data', 'poster', 'formaction', 'action', 'xlink:href'];
+      const guardSetter = (proto, name) => {
+        try {
+          const desc = Object.getOwnPropertyDescriptor(proto, name);
+          if (!desc || !desc.set || !desc.configurable) return;
+          Object.defineProperty(proto, name, {
+            get: desc.get,
+            set: function(value) {
+              if (!allowed(value)) return;
+              desc.set.call(this, value);
+            },
+            configurable: false,
+            enumerable: desc.enumerable,
+          });
+        } catch (_) {}
+      };
+      for (const [ctor, props] of [
+        ['HTMLImageElement', ['src', 'srcset']],
+        ['HTMLIFrameElement', ['src']],
+        ['HTMLFrameElement', ['src']],
+        ['HTMLLinkElement', ['href']],
+        ['HTMLScriptElement', ['src']],
+        ['HTMLMediaElement', ['src', 'poster']],
+        ['HTMLSourceElement', ['src', 'srcset']],
+        ['HTMLTrackElement', ['src']],
+        ['HTMLObjectElement', ['data']],
+        ['HTMLEmbedElement', ['src']],
+        ['HTMLInputElement', ['src', 'formaction']],
+        ['HTMLButtonElement', ['formaction']],
+        ['HTMLFormElement', ['action']],
+      ]) {
+        const proto = window[ctor] && window[ctor].prototype;
+        if (!proto) continue;
+        for (const prop of props) guardSetter(proto, prop);
+      }
+      if (window.Element && Element.prototype.setAttribute) {
+        const setAttribute = Element.prototype.setAttribute;
+        install(Element.prototype, 'setAttribute', function(name, value) {
+          const key = String(name).toLowerCase().replace(/^.*:/, '');
+          if (URL_ATTRS.includes(key) && !allowed(value)) return;
+          if (key === 'style' && cssBlocked(value)) return;
+          return setAttribute.call(this, name, value);
+        });
+        const setAttributeNS = Element.prototype.setAttributeNS;
+        if (setAttributeNS) {
+          install(Element.prototype, 'setAttributeNS', function(ns, name, value) {
+            const key = String(name).toLowerCase().replace(/^.*:/, '');
+            if (URL_ATTRS.includes(key) && !allowed(value)) return;
+            return setAttributeNS.call(this, ns, name, value);
+          });
+        }
+      }
+      // Filter markup before it is parsed. Without these, innerHTML / JSX
+      // injection of `<img src="http://169.254.169.254/…">` could fire a
+      // request before the reactive attribute scanner noticed the node.
+      if (window.Element && Element.prototype) {
+        for (const name of ['innerHTML', 'outerHTML']) {
+          const desc = Object.getOwnPropertyDescriptor(Element.prototype, name);
+          if (!desc || !desc.set || !desc.configurable) continue;
+          Object.defineProperty(Element.prototype, name, {
+            get: desc.get,
+            set: function(value) {
+              if (htmlBlocked(value)) return;
+              desc.set.call(this, value);
+            },
+            configurable: false,
+            enumerable: desc.enumerable,
+          });
+        }
+        if (Element.prototype.insertAdjacentHTML) {
+          const insert = Element.prototype.insertAdjacentHTML;
+          install(Element.prototype, 'insertAdjacentHTML', function(position, html) {
+            if (htmlBlocked(html)) return;
+            return insert.call(this, position, html);
+          });
+        }
+      }
+      if (window.CSSStyleSheet && CSSStyleSheet.prototype.insertRule) {
+        const insertRule = CSSStyleSheet.prototype.insertRule;
+        install(CSSStyleSheet.prototype, 'insertRule', function(rule, index) {
+          if (cssBlocked(rule)) return 0;
+          return insertRule.call(this, rule, index);
+        });
+      }
+
+      // innerHTML/createElement paths the setters above never see. Reactive by
+      // necessity: it removes a blocked attribute after the node is inserted.
+      try {
+        const seen = new WeakSet();
+        const scan = (node) => {
+          if (!node || seen.has(node)) return;
+          seen.add(node);
+          if (node.nodeType === 1) {
+            for (const attr of Array.from(node.attributes || [])) {
+              const key = attr.name.toLowerCase().replace(/^.*:/, '');
+              if (URL_ATTRS.includes(key) && !allowed(attr.value)) {
+                try { node.removeAttribute(attr.name); } catch (_) {}
+              }
+            }
+            if (node.tagName === 'STYLE' && cssBlocked(node.textContent || '')) {
+              try { node.textContent = ''; } catch (_) {}
+            }
+          }
+          for (const child of Array.from(node.children || [])) scan(child);
+        };
+        new MutationObserver((records) => {
+          for (const record of records) {
+            for (const added of record.addedNodes) scan(added);
+            if (record.target) scan(record.target);
+          }
+        }).observe(document, { childList: true, subtree: true, attributes: true });
+      } catch (_) {}
+    })();"#;
+    SHIM.replace(
+        "__MIX_ALLOW_LOCAL__",
+        if allow_local { "true" } else { "false" },
     )
 }
 
@@ -355,9 +557,30 @@ pub fn egress_guard(allow_local: bool) -> String {
 /// Wry serialises the JavaScript result as JSON. Our snippets return a JSON
 /// *string*, so the callback normally carries a quoted string and needs one
 /// more parse.
+/// Describe an unparsable JS result without echoing its contents.
+///
+/// `eval_with_callback` returns whatever the page last wrote, which can include
+/// bearer tokens, form values or other secrets. The old error embedded the raw
+/// string in logs; keep only structural metadata so a parse failure is still
+/// diagnosable without copying page data into the log.
+fn summarize_raw_result(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    let shape = if trimmed.starts_with('{') {
+        "object-like"
+    } else if trimmed.starts_with('[') {
+        "array-like"
+    } else if trimmed.starts_with('"') {
+        "string-like"
+    } else {
+        "unrecognised"
+    };
+    format!("{} bytes, {shape}", raw.len())
+}
+
 pub fn parse_result(raw: &str) -> anyhow::Result<Value> {
-    let first: Value = serde_json::from_str(raw)
-        .map_err(|err| anyhow::anyhow!("invalid JS result: {err}; raw={raw}"))?;
+    let first: Value = serde_json::from_str(raw).map_err(|err| {
+        anyhow::anyhow!("invalid JS result: {err}; {}", summarize_raw_result(raw))
+    })?;
     let value = match first {
         Value::String(inner) => {
             let trimmed = inner.trim_start();
@@ -418,5 +641,39 @@ mod tests {
         assert!(valid.contains("data-mix-ref"));
         assert!(valid.contains("r12"));
         assert_eq!(element_expr("", Some("../../x")), "null");
+    }
+
+    #[test]
+    fn the_egress_shim_covers_subresources_and_substitutes_the_toggle() {
+        let shim = egress_guard(false);
+        assert!(shim.contains("const initial = false;"));
+        assert!(!shim.contains("__MIX_ALLOW_LOCAL__"));
+        for sink in [
+            "HTMLImageElement",
+            "HTMLIFrameElement",
+            "HTMLLinkElement",
+            "Worker",
+            "SharedWorker",
+            "CSSStyleSheet",
+            "setAttribute",
+            "MutationObserver",
+            "htmlBlocked",
+            "innerHTML",
+            "insertAdjacentHTML",
+            "sendBeacon",
+            "EventSource",
+            "serviceWorker",
+        ] {
+            assert!(shim.contains(sink), "guard missed {sink}");
+        }
+        assert!(egress_guard(true).contains("const initial = true;"));
+    }
+
+    #[test]
+    fn a_parse_failure_summarises_without_echoing_page_secrets() {
+        let error = parse_result("Bearer super-secret-token, not JSON").unwrap_err();
+        let message = error.to_string();
+        assert!(!message.contains("super-secret"), "{message}");
+        assert!(message.contains("bytes"), "{message}");
     }
 }

@@ -664,8 +664,10 @@ pub async fn suggest_links(
     if memory_ids.is_empty() {
         return Ok(0);
     }
-    let mut created = 0usize;
-    let mut tx = storage.pool().begin().await?;
+    // Read phase: no transaction. `suggest_targets` reads the whole memory
+    // table; holding a write tx across those reads locked the database for
+    // every other run for the duration of the scan.
+    let mut proposals: Vec<(String, String)> = Vec::new();
     for memory_id in memory_ids {
         let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT json_extract(data, '$.title'), json_extract(data, '$.content') \
@@ -673,7 +675,7 @@ pub async fn suggest_links(
         )
         .bind(memory_id)
         .bind(mixd_storage::records::SINGLE_USER_ID)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(storage.pool())
         .await?;
         let Some((title, content)) = row else {
             continue;
@@ -687,17 +689,46 @@ pub async fn suggest_links(
             continue;
         }
         for hit in suggest_targets(storage, &terms, memory_id, LINK_SUGGEST_LIMIT).await? {
-            let (_, is_new) = upsert_link(
-                &mut tx,
-                memory_id,
-                &hit.id,
-                "relates_to",
-                LINK_DEFAULT_WEIGHT,
-                false,
-            )
-            .await?;
-            created += usize::from(is_new);
+            proposals.push((memory_id.clone(), hit.id));
         }
+    }
+
+    // Write phase: the short transaction only contains the upserts.
+    if proposals.is_empty() {
+        return Ok(0);
+    }
+    let mut created = 0usize;
+    let mut tx = storage.pool().begin().await?;
+    for (source, target) in proposals {
+        // The read phase ran without a transaction so it could not lock the
+        // database for every other run. A memory may therefore have been
+        // deleted between suggesting a link and writing it. Re-check both
+        // endpoints *inside* the write transaction (the same snapshot the
+        // upsert will use) so a stale proposal is skipped instead of failing
+        // the foreign key and rolling back the whole batch.
+        let present: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM memories \
+             WHERE owner_id = ? AND id IN (?, ?)",
+        )
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(&source)
+        .bind(&target)
+        .fetch_one(&mut *tx)
+        .await?;
+        if present.0 < 2 {
+            tracing::debug!(%source, %target, "link proposal skipped: an endpoint was deleted");
+            continue;
+        }
+        let (_, is_new) = upsert_link(
+            &mut tx,
+            &source,
+            &target,
+            "relates_to",
+            LINK_DEFAULT_WEIGHT,
+            false,
+        )
+        .await?;
+        created += usize::from(is_new);
     }
     tx.commit().await?;
     Ok(created)

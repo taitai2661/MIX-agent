@@ -871,6 +871,21 @@ svg {
   flex: 1;
   min-height: 0;
 }
+.show-older-messages {
+  display: block;
+  margin: 0 auto 16px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.show-older-messages:hover {
+  background: var(--hover);
+  color: var(--text);
+}
 .scroll-to-bottom {
   position: absolute;
   z-index: 5;
@@ -4047,6 +4062,23 @@ body {
 }
 .run-step-approval-label {
   font-weight: 600;
+}
+.run-step-approval-warning {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  color: var(--danger);
+}
+.run-step-approval-ack {
+  display: flex;
+  flex-basis: 100%;
+  align-items: flex-start;
+  gap: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.run-step-approval-ack input {
+  margin-top: 1px;
+  accent-color: var(--danger);
 }
 .run-step-approval button {
   padding: 4px 8px;

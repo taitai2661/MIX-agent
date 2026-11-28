@@ -7,8 +7,11 @@ description: Cache and pre-download the NSIS and WiX toolchains that Tauri fetch
 # step. Restore the tool cache and fetch anything missing with retries before
 # the build starts, so a transient download error cannot discard the compile.
 #
-# The versions and hashes below mirror tauri-bundler 2.12.x. Keep them in sync
-# when the Tauri CLI is upgraded (the cache key changes with them).
+# The versions and hashes below mirror tauri-bundler 2.12.x. They are pinned by
+# hand: apps/desktop declares `@tauri-apps/cli` with a caret (`^2.12.1`), so a
+# dependency refresh can move the bundler to different helper versions with no
+# change in our manifests. Keep these URLs, hashes and the cache key in sync
+# manually whenever the Tauri CLI / bundler is upgraded.
 
 runs:
   using: composite
@@ -27,6 +30,8 @@ runs:
     - name: Download missing bundle tools
       shell: pwsh
       env:
+        # Hardcoded because the caret-pinned Tauri CLI does not expose these
+        # helper versions in our manifests; sync by hand (see header comment).
         NSIS_URL: https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip
         NSIS_SHA1: EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D
         NSIS_UTILS_URL: https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll
@@ -88,8 +93,16 @@ runs:
           $staging = Join-Path $env:RUNNER_TEMP "nsis-staging"
           Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -Path $nsisZip -DestinationPath $staging -Force
+          # The archive's top-level folder is versioned by tauri-bundler; do not
+          # assume it is literally `nsis-3.11`. Discover what was extracted.
+          $extracted = @(Get-ChildItem -Path $staging -Directory)
+          $named = @($extracted | Where-Object { $_.Name -match '^nsis-' })
+          if ($named.Count -eq 1) { $extracted = $named }
+          if ($extracted.Count -ne 1) {
+            throw "Expected one extracted NSIS directory in $staging, found $($extracted.Count): $($extracted.Name -join ', ')"
+          }
           if (Test-Path $nsisDir) { Remove-Item $nsisDir -Recurse -Force }
-          Move-Item (Join-Path $staging "nsis-3.11") $nsisDir
+          Move-Item $extracted[0].FullName $nsisDir
         }
 
         # tauri-bundler verifies this plugin's SHA-1 on every build, so a stale

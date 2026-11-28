@@ -714,20 +714,20 @@ function Welcome({
         )}
       </div>
       <div className="flex flex-col gap-3">
-        <p className="text-2xs font-bold tracking-[0.22em] text-brand uppercase">
+        <p className="text-2xs font-semibold tracking-[0.16em] text-brand uppercase">
           MIX-AGENT
         </p>
         {welcome ? (
-          <h2 className="mx-auto max-w-[38rem] text-[22px] leading-[1.5] font-semibold tracking-tight text-balance text-fg sm:text-[28px] sm:leading-[1.55]">
+          <h2 className="mx-auto max-w-[38rem] text-display-sm font-semibold tracking-tight text-balance text-fg sm:text-display">
             {welcomeTitle(welcome)}
           </h2>
         ) : (
-          <h2 className="text-[28px] font-semibold tracking-tight text-fg">
+          <h2 className="text-display font-semibold tracking-tight text-fg">
             MIX-AGENT
           </h2>
         )}
         {welcome && (
-          <p className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-1.5 text-[13px] text-faint">
+          <p className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-1.5 text-xs text-faint">
             <ShieldCheck size={14} aria-hidden="true" />
             {welcomeNote(welcome)}
           </p>

@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 /// Menu event ids, mirrored by the frontend router.
 pub const EVT_NEW_CHAT: &str = "menu://new-chat";
+pub const EVT_NEW_WINDOW: &str = "menu://new-window";
 pub const EVT_OPEN_SETTINGS: &str = "menu://settings";
 pub const EVT_BACKUP: &str = "menu://backup";
 pub const EVT_DIAGNOSTICS: &str = "menu://diagnostics";
@@ -39,6 +40,16 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<
         EVT_NEW_CHAT,
         if ja { "新規チャット" } else { "New Chat" },
         Some("CmdOrCtrl+N"),
+    )?;
+    let new_window = item(
+        app,
+        EVT_NEW_WINDOW,
+        if ja {
+            "新しいウィンドウ"
+        } else {
+            "New Window"
+        },
+        Some("CmdOrCtrl+Shift+N"),
     )?;
     let settings = item(
         app,
@@ -85,14 +96,22 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, language: &str) -> tauri::Result<
         app,
         file_label,
         true,
-        &[&new_chat, &sep()?, &backup, &sep()?, &quit],
+        &[&new_chat, &new_window, &sep()?, &backup, &sep()?, &quit],
     )?;
     #[cfg(not(target_os = "macos"))]
     let file = Submenu::with_items(
         app,
         file_label,
         true,
-        &[&new_chat, &settings, &sep()?, &backup, &sep()?, &quit],
+        &[
+            &new_chat,
+            &new_window,
+            &settings,
+            &sep()?,
+            &backup,
+            &sep()?,
+            &quit,
+        ],
     )?;
 
     let edit = Submenu::with_items(
@@ -168,6 +187,15 @@ fn forward_activations<R: Runtime>(app: &AppHandle<R>) {
         let id: &str = event.id().as_ref();
         if !id.starts_with("menu://") {
             // The tray menu's ids belong to `tray::install`.
+            return;
+        }
+        // A new window is native state, not a UI route: handle it here rather
+        // than making every window listen for an event whose only effect is
+        // to create another listener.
+        if id == EVT_NEW_WINDOW {
+            if let Err(err) = crate::window::open(handle) {
+                tracing::warn!(%err, "could not open a new window from the menu");
+            }
             return;
         }
         if let Err(err) = handle.emit(id, ()) {

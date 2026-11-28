@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Pencil, Pin, PinOff } from "lucide-react";
 
+import { ChatActionsProvider, type ChatActions } from "./ChatActionsContext";
 import { ChatComposer } from "./ChatComposer";
 import { ChatTranscript } from "./ChatTranscript";
 import { ChatWelcome } from "./ChatWelcome";
@@ -232,7 +233,9 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   const active = Boolean(
     run.data && ACTIVE_RUN_STATUSES.includes(run.data.status as RunStatus),
   );
-  const live = liveToolCalls(events, runId);
+  // Streamed frames re-render Chat often; recomputing the live tool list on
+  // every frame defeated memo(ChatMessage) downstream via a fresh array.
+  const live = useMemo(() => liveToolCalls(events, runId), [events, runId]);
   // Precompute run → message once; the old render did a nested filter/find for
   // every message on every streamed frame (O(n²) on long chats).
   const callsByMessage = useMemo(() => {
@@ -323,13 +326,20 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   function handleApproval(
     approvalId: string,
     decision: ApprovalDecision,
+    acknowledgeRisk?: boolean,
   ): Promise<void> {
+    // The server rejects a grant for a risky approval unless it carries the
+    // explicit acknowledgement the card's checkbox represents. Sending the
+    // flag unconditionally would change the payload for ordinary decisions,
+    // so only risky grants add it.
+    const body: { decision: ApprovalDecision; acknowledgeRisk?: true } = {
+      decision,
+    };
+    if (acknowledgeRisk) body.acknowledgeRisk = true;
     return api(
       "/approvals/" + encodeURIComponent(approvalId) + "/decision",
       "POST",
-      {
-        decision,
-      },
+      body,
     )
       .then(() => {
         void qc.invalidateQueries({ queryKey: ["tool-calls", id] });
@@ -377,6 +387,44 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
   function handleBudgetResolved() {
     void qc.invalidateQueries({ queryKey: ["run", runId] });
   }
+  // One bundle for every callback the transcript/composer chain needs. The
+  // implementation is refreshed on every render via the ref, while the object
+  // handed to context/memoized children keeps a stable identity — a fresh
+  // callback per streamed frame defeated memo(ChatMessage) for the whole
+  // history. Delegating through the ref also avoids long dependency arrays for
+  // handlers such as `send` that close over most of this component's state.
+  const actionsRef = useRef<ChatActions>(null!);
+  actionsRef.current = {
+    onEditChange: setEditText,
+    onEditCancel: cancelEdit,
+    onEditSave: (message) => void saveEdit(message),
+    onEditStart: startEdit,
+    onRate: rate,
+    onApproval: handleApproval,
+    onBrowserChange: handleBrowserChange,
+    onRetryRun: () => void retryLastRun(),
+    onError: setError,
+    onResumed: handleResumed,
+    onBudgetResolved: handleBudgetResolved,
+  };
+  const actions = useMemo<ChatActions>(
+    () => ({
+      onEditChange: (value) => actionsRef.current.onEditChange(value),
+      onEditCancel: () => actionsRef.current.onEditCancel(),
+      onEditSave: (message) => actionsRef.current.onEditSave(message),
+      onEditStart: (message) => actionsRef.current.onEditStart(message),
+      onRate: (id, current, value) =>
+        actionsRef.current.onRate(id, current, value),
+      onApproval: (id, decision, acknowledgeRisk) =>
+        actionsRef.current.onApproval(id, decision, acknowledgeRisk),
+      onBrowserChange: (id) => actionsRef.current.onBrowserChange(id),
+      onRetryRun: () => actionsRef.current.onRetryRun(),
+      onError: (error) => actionsRef.current.onError(error),
+      onResumed: () => actionsRef.current.onResumed(),
+      onBudgetResolved: () => actionsRef.current.onBudgetResolved(),
+    }),
+    [],
+  );
   const conversationTitle = (() => {
     const stored = String(currentConversation?.data.title || "").trim();
     if (stored) return stored;
@@ -479,97 +527,88 @@ export function Chat({ workspace }: { workspace: WorkspaceSnapshot | null }) {
       )}
       <div className="chat-body">
         <div className="conversation">
-          {showSkeleton || showWelcome ? (
-            <ChatWelcome
-              loading={showSkeleton}
-              welcome={showWelcome ? welcome : null}
-              onPickSuggestion={pickSuggestion}
-            />
-          ) : (
-            <ChatTranscript
+          <ChatActionsProvider actions={actions}>
+            {showSkeleton || showWelcome ? (
+              <ChatWelcome
+                loading={showSkeleton}
+                welcome={showWelcome ? welcome : null}
+                onPickSuggestion={pickSuggestion}
+              />
+            ) : (
+              <ChatTranscript
+                conversationId={id}
+                messages={history.data?.messages}
+                runs={history.data?.runs}
+                todos={history.data?.todos}
+                allToolCalls={toolHistory.data}
+                callsByMessage={callsByMessage}
+                liveCalls={live}
+                currentRunMessageId={currentRunMessageId}
+                latestUserMessageId={latestUserMessageId}
+                active={active}
+                runId={runId}
+                run={run.data}
+                streamText={streamText}
+                reasoning={reasoning}
+                fetchedAt={run.dataUpdatedAt}
+                editingId={editingId}
+                editText={editText}
+                savingEdit={savingEdit}
+                editDisabled={active || busy}
+                canRetry={!!lastUserMessage}
+              />
+            )}
+            <ChatComposer
+              text={text}
+              onTextChange={setText}
+              onSubmit={send}
+              textareaRef={composer}
+              attachments={attachments}
+              onRemoveAttachment={(attachment) =>
+                setAttachments((xs) => xs.filter((x) => x !== attachment))
+              }
+              onAttach={attach}
+              uploading={uploading}
+              models={models.data}
+              agents={agents.data}
+              projects={projects.data}
+              tools={tools.data}
+              permissionRules={permissionRules.data}
+              model={model}
+              onModelChange={setModel}
+              mode={mode}
+              onModeChange={handleModeChange}
+              researchMode={researchMode}
+              onResearchModeChange={handleResearchModeChange}
+              agent={agent}
+              onAgentChange={handleAgentChange}
+              selectedProject={selectedProject}
+              onSelectedProjectChange={setSelectedProject}
               conversationId={id}
-              messages={history.data?.messages}
-              runs={history.data?.runs}
-              todos={history.data?.todos}
-              allToolCalls={toolHistory.data}
-              callsByMessage={callsByMessage}
-              liveCalls={live}
-              currentRunMessageId={currentRunMessageId}
-              latestUserMessageId={latestUserMessageId}
+              temporaryMode={temporaryMode}
+              onTemporaryModeChange={handleTemporaryModeChange}
+              allowTools={allowTools}
+              onAllowToolsChange={setAllowTools}
               active={active}
-              runId={runId}
+              busy={busy}
+              needsProviderSetup={needsProviderSetup}
+              hasNoProviders={hasNoProviders}
+              pageError={
+                error ||
+                history.error ||
+                models.error ||
+                providers.error ||
+                tools.error ||
+                permissionRules.error ||
+                settings.error
+              }
+              onRetry={sendFailed ? () => void send() : retryRequest}
+              retryLabel={sendFailed ? t("再送信") : undefined}
+              onConnectProvider={() => navigate("/settings/providers")}
+              onStop={stopRun}
               run={run.data}
-              streamText={streamText}
-              reasoning={reasoning}
-              fetchedAt={run.dataUpdatedAt}
-              editingId={editingId}
-              editText={editText}
-              savingEdit={savingEdit}
-              editDisabled={active || busy}
-              canRetry={!!lastUserMessage}
-              onEditChange={setEditText}
-              onEditCancel={cancelEdit}
-              onEditSave={(message) => void saveEdit(message)}
-              onEditStart={startEdit}
-              onRate={rate}
-              onApproval={handleApproval}
-              onBrowserChange={handleBrowserChange}
-              onRetryRun={() => void retryLastRun()}
-              onError={setError}
-              onResumed={handleResumed}
-              onBudgetResolved={handleBudgetResolved}
             />
-          )}
-          <ChatComposer
-            text={text}
-            onTextChange={setText}
-            onSubmit={send}
-            textareaRef={composer}
-            attachments={attachments}
-            onRemoveAttachment={(attachment) =>
-              setAttachments((xs) => xs.filter((x) => x !== attachment))
-            }
-            onAttach={attach}
-            uploading={uploading}
-            models={models.data}
-            agents={agents.data}
-            projects={projects.data}
-            tools={tools.data}
-            permissionRules={permissionRules.data}
-            model={model}
-            onModelChange={setModel}
-            mode={mode}
-            onModeChange={handleModeChange}
-            researchMode={researchMode}
-            onResearchModeChange={handleResearchModeChange}
-            agent={agent}
-            onAgentChange={handleAgentChange}
-            selectedProject={selectedProject}
-            onSelectedProjectChange={setSelectedProject}
-            conversationId={id}
-            temporaryMode={temporaryMode}
-            onTemporaryModeChange={handleTemporaryModeChange}
-            allowTools={allowTools}
-            onAllowToolsChange={setAllowTools}
-            active={active}
-            busy={busy}
-            needsProviderSetup={needsProviderSetup}
-            hasNoProviders={hasNoProviders}
-            pageError={
-              error ||
-              history.error ||
-              models.error ||
-              providers.error ||
-              tools.error ||
-              permissionRules.error ||
-              settings.error
-            }
-            onRetry={sendFailed ? () => void send() : retryRequest}
-            retryLabel={sendFailed ? t("再送信") : undefined}
-            onConnectProvider={() => navigate("/settings/providers")}
-            onStop={stopRun}
-            run={run.data}
-          />
+          </ChatActionsProvider>
         </div>
       </div>
       {renameOpen && (

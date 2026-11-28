@@ -40,3 +40,22 @@ pub struct Approval {
     pub remember: bool,
     pub expires: DateTime<Utc>,
 }
+
+/// One row of the append-only `audit_log` table (A5).
+///
+/// Re-exported here for ergonomic imports; the canonical type used by the
+/// writer/verifier is [`crate::audit::AuditEntry`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLogEntry {
+    pub seq: i64,
+    pub id: String,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub approval_id: Option<String>,
+    pub tool_name: String,
+    pub arguments: Value,
+    pub decision: String,
+    pub prev_hash: String,
+    pub entry_hash: String,
+    pub created_at: DateTime<Utc>,
+}

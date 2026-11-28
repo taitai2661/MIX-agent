@@ -3,6 +3,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { api, listenRunEvents } from "@/lib/api";
+import {
+  consumeNotificationTarget,
+  notifyWithTarget,
+} from "@/lib/notifications";
 import { conversationForRun, useRunEvents } from "@/lib/runStore";
 import { isTerminal } from "@/lib/runEvents";
 import {
@@ -12,7 +16,7 @@ import {
 import { surfaceForMode, useUi, type SettingsTab, type View } from "@/lib/ui";
 import { t } from "@/lib/i18n";
 import { recordUxEvent } from "@/lib/uxEvents";
-import type { SpotlightTarget } from "@/lib/types";
+import type { ConversationSummary, SpotlightTarget } from "@/lib/types";
 
 /** Read the browser tool's optional presentation hint.
  *
@@ -134,6 +138,11 @@ export function useShellEvents(handlers: {
   useEffect(() => {
     let active = true;
     const offs: Array<() => void> = [];
+    const clearTimers = new Set<number>();
+    // One notification per approval / completed run, even though the event
+    // stream can replay the same terminal status after a reconnect.
+    const notifiedApprovals = new Set<string>();
+    const notifiedRuns = new Set<string>();
     const track = (p: Promise<() => void>) => {
       p.then((un) => (active ? offs.push(un) : un()));
     };
@@ -179,11 +188,32 @@ export function useShellEvents(handlers: {
         // re-read on a timer.
         if (
           evt.kind === "tool_approval_requested" ||
-          evt.kind === "tool_approval_resolved"
+          evt.kind === "tool_approval_resolved" ||
+          // Another window extended the deadline. The mutation in the window
+          // that clicked "+5分" updates its own view, but the approval inbox
+          // otherwise kept the old countdown until its 4s poll.
+          evt.kind === "tool_approval_extended"
         ) {
           void queryClient.invalidateQueries({
             queryKey: PENDING_APPROVALS_QUERY_KEY,
           });
+          if (
+            evt.kind === "tool_approval_requested" &&
+            (document.visibilityState !== "visible" || !document.hasFocus())
+          ) {
+            const conversationId = conversationForRun(evt.run_id);
+            const approvalId =
+              (evt.data as { approval_id?: unknown })?.approval_id ?? evt.run_id;
+            const key = `${evt.run_id}:${String(approvalId)}`;
+            if (conversationId && !notifiedApprovals.has(key)) {
+              notifiedApprovals.add(key);
+              void notifyWithTarget({
+                title: "MIX-agent",
+                body: t("承認待ちの操作があります"),
+                target: { kind: "approval", conversationId },
+              });
+            }
+          }
         }
         // A run can finish while the user is reading another thread. The chat
         // pane only watches the active conversation, so without this its
@@ -203,10 +233,27 @@ export function useShellEvents(handlers: {
               void queryClient.invalidateQueries({
                 queryKey: CONVERSATIONS_QUERY_KEY,
               });
+              if (
+                (document.visibilityState !== "visible" ||
+                  !document.hasFocus()) &&
+                !notifiedRuns.has(evt.run_id)
+              ) {
+                notifiedRuns.add(evt.run_id);
+                void notifyWithTarget({
+                  title: "MIX-agent",
+                  body:
+                    status === "failed"
+                      ? t("実行が失敗しました")
+                      : t("実行が完了しました"),
+                  target: { kind: "thread", conversationId },
+                });
+              }
             }
-            window.setTimeout(() => {
+            const timer = window.setTimeout(() => {
+              clearTimers.delete(timer);
               useRunEvents.getState().clearRun(evt.run_id);
             }, 1500);
+            clearTimers.add(timer);
           }
         }
       }),
@@ -300,10 +347,34 @@ export function useShellEvents(handlers: {
         // Older builds without the command simply never produce a target.
       });
 
+    // Clicking a desktop notification focuses the window; the plugin exposes
+    // no click event on desktop, so the focus that follows is the signal.
+    // `consumeNotificationTarget` only returns a destination recorded within
+    // the last two minutes, and clears it so a later focus cannot replay it.
+    const onFocus = () => {
+      const target = consumeNotificationTarget();
+      if (!target) return;
+      const state = useUi.getState();
+      const cached = queryClient.getQueryData<{
+        pages: { items: ConversationSummary[] }[];
+      }>(CONVERSATIONS_QUERY_KEY);
+      const mode = cached?.pages
+        .flatMap((page) => page.items)
+        .find((conversation) => conversation.id === target.conversationId)?.mode;
+      state.setView("chat");
+      state.setConversationId(target.conversationId);
+      if (mode) state.setSurface(surfaceForMode(mode));
+      if (target.kind === "approval") state.setApprovalsOpen(true);
+    };
+    window.addEventListener("focus", onFocus);
+
     return () => {
       active = false;
       offs.forEach((un) => un());
+      clearTimers.forEach((id) => window.clearTimeout(id));
+      clearTimers.clear();
       window.removeEventListener("mix:new-thread", onNewThread);
+      window.removeEventListener("focus", onFocus);
     };
   }, [pushEvent, queryClient]);
 }
@@ -383,9 +454,8 @@ export function useAppShortcuts(enabled = true) {
         return;
       }
 
-      // Save is handled by the Settings pane itself; suppressing the WebView's
-      // own Save dialog here keeps ⌘S from doing something surprising on every
-      // other screen.
+      // Settings save automatically, so ⌘S has nothing to trigger. Swallow it
+      // anyway so the WebView's own "Save page" dialog never opens.
       if (isMod && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
         return;

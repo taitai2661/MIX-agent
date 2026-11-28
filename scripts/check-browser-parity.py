@@ -26,6 +26,7 @@ Usage::
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -98,6 +99,37 @@ LIMIT_CONSTS = {
 }
 
 
+def arithmetic_int(expression: str) -> int:
+    """Integer arithmetic from an untrusted source, without ``eval``.
+
+    Only integer literals, ``+ - * //`` and unary ``+ -`` are accepted; names,
+    calls, attributes and every other Python construct are rejected.
+    """
+    try:
+        node = ast.parse(expression, mode="eval").body
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f"invalid arithmetic expression {expression!r}") from exc
+
+    def visit(item: ast.AST) -> int:
+        if isinstance(item, ast.Constant) and type(item.value) is int:
+            return item.value
+        if isinstance(item, ast.BinOp) and isinstance(item.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)):
+            left, right = visit(item.left), visit(item.right)
+            if isinstance(item.op, ast.Add):
+                return left + right
+            if isinstance(item.op, ast.Sub):
+                return left - right
+            if isinstance(item.op, ast.Mult):
+                return left * right
+            return left // right
+        if isinstance(item, ast.UnaryOp) and isinstance(item.op, (ast.UAdd, ast.USub)):
+            operand = visit(item.operand)
+            return operand if isinstance(item.op, ast.UAdd) else -operand
+        raise ValueError(f"disallowed expression node: {type(item).__name__}")
+
+    return visit(node)
+
+
 def check_limits(limits: dict) -> None:
     source = DESKTOP_ENUM.read_text(encoding="utf-8")
     for key, name in LIMIT_CONSTS.items():
@@ -106,7 +138,7 @@ def check_limits(limits: dict) -> None:
             fail(f"cannot find Rust constant {name} in interface.rs")
         expression = match.group(1).replace("_", "")
         try:
-            value = int(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
+            value = arithmetic_int(expression)
         except Exception:  # noqa: BLE001 - any unparseable constant is a drift failure
             fail(f"cannot evaluate {name} = {expression!r}")
         if limits.get(key) != value:

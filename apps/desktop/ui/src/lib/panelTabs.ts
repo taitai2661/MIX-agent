@@ -1,7 +1,13 @@
 import type { RightPanel } from "./ui";
 
 /** Panels that participate in the right-panel tab strip. */
-export type RightPanelTab = "activity" | "usage" | "changes" | "browser";
+export type RightPanelTab =
+  | "activity"
+  | "usage"
+  | "changes"
+  | "problems"
+  | "browser"
+  | "terminal";
 
 export interface RightPanelTabDefinition {
   value: RightPanelTab;
@@ -22,7 +28,9 @@ export const RIGHT_PANEL_TABS: readonly RightPanelTabDefinition[] = [
   { value: "activity", label: "アクティビティ" },
   { value: "usage", label: "使用状況" },
   { value: "changes", label: "変更", agentOnly: true },
+  { value: "problems", label: "問題", agentOnly: true },
   { value: "browser", label: "ブラウザ", agentOnly: true },
+  { value: "terminal", label: "ターミナル", agentOnly: true },
 ];
 
 const TAB_VALUES = new Set<string>(RIGHT_PANEL_TABS.map((tab) => tab.value));

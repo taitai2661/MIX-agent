@@ -1,8 +1,6 @@
-from deploy.egress.proxy import host_allowed, host_permitted, resolve_policy
+import json
 
-
-def test_empty_domain_policy_allows_public_hosts():
-    assert host_allowed("example.com", [])
+from deploy.egress.proxy import host_permitted, load_policy, resolve_policy
 
 
 def test_host_permitted_follows_the_resolved_mode():
@@ -44,9 +42,9 @@ def test_domains_are_normalised():
 
 
 def test_domain_policy_requires_exact_match():
-    assert host_allowed("example.com", ["example.com"])
-    assert not host_allowed("sub.example.com", ["example.com"])
-    assert not host_allowed("other.example.com", ["example.com"])
+    assert host_permitted("restricted", "example.com", ["example.com"])
+    assert not host_permitted("restricted", "sub.example.com", ["example.com"])
+    assert not host_permitted("restricted", "other.example.com", ["example.com"])
 
 
 def test_load_policy_fails_closed_for_absent_required_file(tmp_path):
@@ -75,6 +73,18 @@ def test_load_policy_parses_valid_file(tmp_path):
     policy = tmp_path / "policy.json"
     policy.write_text('{"allowed_domains": ["example.com"]}')
     assert load_policy(policy) == {"allowed_domains": ["example.com"]}
+
+
+def test_settings_none_mode_denies_every_host_at_the_proxy(tmp_path, monkeypatch):
+    """End-to-end: settings mode -> policy.json -> proxy decision."""
+    from mix_agent import config, egress_policy
+
+    monkeypatch.setattr(config, "DATA", tmp_path)
+    path = egress_policy.write_policy(["example.com"], "none")
+    assert json.loads(path.read_text()) == {"mode": "none", "allowed_domains": ["example.com"]}
+    resolved = resolve_policy(load_policy(path))
+    assert resolved[0] == "none"
+    assert not host_permitted(resolved[0], "example.com", resolved[1])
 
 
 def test_proxy_idle_timeout_default_is_bounded_and_configurable():

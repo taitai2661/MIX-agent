@@ -6,7 +6,15 @@
 /// (Container queries used to hide the mode label / project picker below
 /// 18–24rem, which flickered the whole row during every panel drag.)
 
-import { ArrowUp, AtSign, Check, Mic, Paperclip, Square } from "lucide-react";
+import {
+  ArrowUp,
+  AtSign,
+  Camera,
+  Check,
+  Mic,
+  Paperclip,
+  Square,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { chord } from "@/lib/platform";
@@ -47,6 +55,11 @@ interface ComposerToolbarProps {
   attachmentCount: number;
   attaching: boolean;
   onAttach: () => void | Promise<void>;
+  onScreenshot?: () => void | Promise<void>;
+  /** False when `getDisplayMedia` is unavailable: the button hides its
+   *  affordance instead of failing on click (Tauri WebView without screen
+   *  capture support). */
+  screenshotAvailable?: boolean;
   /** Inserts `@` at the caret and opens the mention popover. */
   onInsertMention: () => void;
   /** Root of the active project; disables the mention button when absent. */
@@ -84,6 +97,8 @@ export function ComposerToolbar({
   attachmentCount,
   attaching,
   onAttach,
+  onScreenshot,
+  screenshotAvailable = false,
   onInsertMention,
   rootPath,
   temporaryMode,
@@ -125,6 +140,28 @@ export function ComposerToolbar({
       >
         {attaching ? <Spinner size={18} /> : <Paperclip size={18} />}
       </Button>
+
+      {onScreenshot && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => void onScreenshot()}
+          disabled={
+            !screenshotAvailable ||
+            attaching ||
+            attachmentCount >= MAX_ATTACHMENTS
+          }
+          title={
+            screenshotAvailable
+              ? `${t("スクショを撮って添付")} — ${t("共有する画面を選択")}`
+              : t("この環境では画面キャプチャに対応していません")
+          }
+          aria-label={t("スクショを撮って添付")}
+          className="shrink-0 rounded-full"
+        >
+          <Camera size={18} />
+        </Button>
+      )}
 
       <Button
         variant="ghost"

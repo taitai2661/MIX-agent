@@ -1,4 +1,12 @@
 //! SQLite-backed storage layer.
+//!
+//! Data-at-rest guarantee (today): **none for the database itself**. The
+//! `mix-agent.db` file and its `VACUUM INTO` snapshots are plain SQLite
+//! protected only by owner-only file permissions. Secret values are encrypted
+//! separately by [`crate::secrets::SecretStore`], and exportable backups made
+//! by [`crate::backup`] are encrypted, but neither protects the live DB. A
+//! startup warning is emitted in [`Storage::open`]; SQLCipher would require a
+//! new system dependency plus a migration path for existing databases.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -16,7 +24,7 @@ const SEARCH_SCHEMA: &str = include_str!("migrations/0002_search.sql");
 /// Current schema version, tracked via `PRAGMA user_version`.
 /// Bump when adding a new `migrations/00NN_*.sql` step and extend
 /// `run_schema` with the corresponding branch.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 9;
 
 /// Conversation pagination index (schema version 3).
 const CONVERSATION_PAGE_SCHEMA: &str = include_str!("migrations/0003_conversation_page.sql");
@@ -26,6 +34,12 @@ const MEMORY_SEARCH_SCHEMA: &str = include_str!("migrations/0004_memory_search.s
 const SPOTLIGHT_SCHEMA: &str = include_str!("migrations/0005_spotlight.sql");
 /// Auto routing EWMA statistics and feedback indexes (schema version 6).
 const AUTO_STATS_SCHEMA: &str = include_str!("migrations/0006_auto_stats.sql");
+/// Run event full-text index for the Trajectory timeline search (schema version 7).
+const RUN_EVENTS_SEARCH_SCHEMA: &str = include_str!("migrations/0007_run_events_search.sql");
+/// Append-only audit log with a prev_hash chain (schema version 8, A5).
+const AUDIT_LOG_SCHEMA: &str = include_str!("migrations/0008_audit_log.sql");
+/// Unique skill name index plus legacy duplicate cleanup (schema version 9).
+const SKILLS_UNIQUE_SCHEMA: &str = include_str!("migrations/0009_skills_unique.sql");
 
 /// Virtual (generated) columns added by schema version 2.
 ///
@@ -137,10 +151,16 @@ impl Storage {
         let storage = Self { pool, data_dir };
         // NOTE: at-rest encryption is not yet wired — `SecretStore::ensure_db_key`
         // stages the key in the OS Keychain, but the SQLite connection above
-        // does not apply it (no SQLCipher passphrase). The database file is
-        // therefore plaintext; 0o600 permissions below are the only current
-        // protection. Wire the passphrase before claiming encryption.
-        tracing::warn!("database at-rest encryption is not yet wired; key is staged in Keychain");
+        // does not apply it (no SQLCipher passphrase). The database file and
+        // its snapshots are plaintext; 0o600 permissions below are the only
+        // current protection. Wire the passphrase before claiming encryption.
+        tracing::warn!(
+            target: "startup",
+            path = %db_path.display(),
+            "storage: database opened WITHOUT at-rest encryption (plain SQLite + WAL); \
+             conversations, audit rows and VACUUM snapshots are protected only by OS file permissions. \
+             Encrypted export backups are a separate feature and do not encrypt the live database"
+        );
         let schema_started = std::time::Instant::now();
         storage.run_schema().await?;
         tracing::info!(
@@ -318,6 +338,29 @@ impl Storage {
                 .execute(&mut *conn)
                 .await
                 .context("applying schema 0006_auto_stats")?;
+            // Same idempotency contract: the table, the backfill guard and
+            // the three triggers are all `IF NOT EXISTS`.
+            if !run_events_search_is_current(&mut conn).await? {
+                sqlx::raw_sql(RUN_EVENTS_SEARCH_SCHEMA)
+                    .execute(&mut *conn)
+                    .await
+                    .context("applying schema 0007_run_events_search")?;
+            }
+            // Append-only audit log (A5). Every statement is
+            // `CREATE ... IF NOT EXISTS`, so replaying the step is safe.
+            if !audit_log_is_current(&mut conn).await? {
+                sqlx::raw_sql(AUDIT_LOG_SCHEMA)
+                    .execute(&mut *conn)
+                    .await
+                    .context("applying schema 0008_audit_log")?;
+            }
+            // Replaying the dedupe is a no-op once the index exists, so this
+            // step runs unconditionally (like 0003) and repairs databases
+            // written before the invariant was enforced.
+            sqlx::raw_sql(SKILLS_UNIQUE_SCHEMA)
+                .execute(&mut *conn)
+                .await
+                .context("applying schema 0009_skills_unique")?;
             // Only ever raise the stamp. Lowering it would invite a build from
             // the lineage that wrote the higher number to replay its own
             // (non-idempotent) backfills on the next launch.
@@ -456,6 +499,39 @@ async fn memory_search_is_current(conn: &mut SqliteConnection) -> anyhow::Result
     Ok(true)
 }
 
+/// Is schema version 8 (the append-only audit log and its guards) applied?
+async fn audit_log_is_current(conn: &mut SqliteConnection) -> anyhow::Result<bool> {
+    if !table_exists(conn, "audit_log").await?
+        || !table_exists(conn, "audit_log_archive").await?
+        || !table_exists(conn, "audit_log_head").await?
+    {
+        return Ok(false);
+    }
+    for name in ["audit_log_no_update", "audit_log_no_delete"] {
+        if !object_exists(conn, "trigger", name).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Is schema version 7 (the run-event FTS table and its triggers) applied?
+async fn run_events_search_is_current(conn: &mut SqliteConnection) -> anyhow::Result<bool> {
+    if !table_exists(conn, "run_events_search").await? {
+        return Ok(false);
+    }
+    for name in [
+        "run_events_search_ai",
+        "run_events_search_au",
+        "run_events_search_ad",
+    ] {
+        if !object_exists(conn, "trigger", name).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Add whichever generated columns version 2 is still missing. Idempotent:
 /// each column is probed first because SQLite lacks `ADD COLUMN IF NOT EXISTS`.
 async fn ensure_search_columns(conn: &mut SqliteConnection) -> anyhow::Result<()> {
@@ -489,14 +565,21 @@ async fn schema_is_current(conn: &mut SqliteConnection) -> anyhow::Result<bool> 
     if !table_exists(conn, "auto_model_stats").await? {
         return Ok(false);
     }
+    if !run_events_search_is_current(conn).await? {
+        return Ok(false);
+    }
+    if !audit_log_is_current(conn).await? {
+        return Ok(false);
+    }
     let index: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master \
-         WHERE type = 'index' AND name = 'conversations_updated_id_idx'",
+         WHERE type = 'index' AND name IN \
+         ('conversations_updated_id_idx', 'skills_name_unique_idx')",
     )
     .fetch_one(&mut *conn)
     .await
-    .context("checking for the conversation pagination index")?;
-    Ok(index > 0)
+    .context("checking for the conversation/skills indexes")?;
+    Ok(index == 2)
 }
 
 fn split_statements(schema: &str) -> Vec<String> {
@@ -610,6 +693,10 @@ async fn migration_is_pending(db_path: &Path) -> bool {
 }
 
 /// Snapshot the live database with `VACUUM INTO`. Returns whether it landed.
+///
+/// The snapshot is a byte-for-byte plain SQLite copy of an unencrypted
+/// database — it is NOT an encrypted backup (those are created by
+/// [`crate::backup`] with Argon2id + AES-GCM).
 async fn snapshot_database(data_dir: &Path, pool: &DbPool) -> bool {
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let dest = data_dir.join(format!("mix-agent.db.backup-{ts}"));
@@ -982,10 +1069,11 @@ mod upgrade_tests {
             .fetch_one(storage.pool())
             .await
             .unwrap();
-        // Repaired to the objects this build needs, never lowered to 3: a
-        // build from the lineage that wrote 6 would otherwise replay its own
+        // Repaired to the objects this build needs and stamped forward to
+        // this build's version, never lowered: an older build gates on its
+        // own object checks, so a higher stamp cannot make it replay its own
         // backfills on the next launch.
-        assert_eq!(version, 6);
+        assert_eq!(version, SCHEMA_VERSION);
 
         // The exact shape the thread sidebar uses.
         let rows: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -1014,7 +1102,7 @@ mod upgrade_tests {
             .fetch_one(reopened.pool())
             .await
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, SCHEMA_VERSION);
         drop(reopened);
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -1042,6 +1130,43 @@ mod upgrade_tests {
         .await
         .unwrap();
         assert_eq!(count, 1);
+        drop(storage);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// Version 7 adds the run-event FTS index behind the Trajectory timeline
+    /// search. Opening an older database must backfill existing events, and
+    /// the triggers must keep newly inserted events searchable.
+    #[tokio::test]
+    async fn run_events_search_is_backfilled_and_live() {
+        let dir = std::env::temp_dir().join(format!("mixd-runesearch-{}", uuid::Uuid::new_v4()));
+        let storage = Storage::open(&dir).await.expect("open");
+        sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES ('c1','local','{}')")
+            .execute(storage.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+             VALUES ('r1','local','{}','c1','completed','k1')",
+        )
+        .execute(storage.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO run_events (id, run_id, sequence, kind, data) \
+             VALUES ('e1','r1',1,'tool_started','{\"name\":\"terminal\",\"arguments\":{\"command\":\"cargo test\"}}')",
+        )
+        .execute(storage.pool())
+        .await
+        .unwrap();
+        let hits: Vec<(String,)> = sqlx::query_as(
+            "SELECT run_id FROM run_events_search WHERE run_events_search MATCH '\"cargo\"'",
+        )
+        .fetch_all(storage.pool())
+        .await
+        .expect("trigger-indexed event");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, "r1");
         drop(storage);
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }

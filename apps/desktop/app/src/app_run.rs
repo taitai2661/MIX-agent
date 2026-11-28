@@ -31,10 +31,14 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let app_handle = app.handle().clone();
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::env::temp_dir().join("mix-agent"));
+            // `cli::data_dir()` is the single source of truth for the GUI, the
+            // `serve` bridge and the delegate-worktree pruner. Pass Tauri's
+            // resolver result to `verify_data_dir` so a silently split data
+            // directory becomes a startup error instead of two DB files (which
+            // would make `serve.lock` invisible and break approval ownership).
+            let tauri_data_dir = app.path().app_data_dir().ok();
+            let data_dir = crate::cli::verify_data_dir(tauri_data_dir.as_deref())
+                .map_err(Box::<dyn std::error::Error>::from)?;
             // Use Tauri's global async runtime rather than a throwaway one: MCP
             // stdio sessions spawn long-lived reader tasks, and those tasks
             // would be torn down when a local runtime is dropped at the end of
@@ -118,7 +122,9 @@ pub fn run() {
                 managed.engine.clone(),
                 managed.spotlight.clone(),
             );
-            spotlight::install(&app_handle, managed.spotlight.clone());
+            if !crate::safe_mode() {
+                spotlight::install(&app_handle, managed.spotlight.clone());
+            }
             // Language servers and other subprocess-holding tools release
             // themselves after ten idle minutes. The sweep is deliberately
             // low-frequency: it is housekeeping, not a request.
@@ -133,14 +139,21 @@ pub fn run() {
                     }
                 });
             }
-            // Local runtimes start in the background: a scan or an auto-start
-            // must never delay the first paint of the shell.
-            let local_runtime = managed.local_runtime.clone();
-            tauri::async_runtime::spawn(async move {
-                local_runtime.startup().await;
-            });
-            deep_link::install(&app_handle);
-            scheduler::install(&app_handle);
+            // Safe mode deliberately keeps the app quiet: no managed runtime
+            // auto-start, no Spotlight indexing, no scheduled jobs and no
+            // background quick-input shortcut. The user is here to recover.
+            if crate::safe_mode() {
+                tracing::warn!("safe mode: startup integrations are disabled");
+            } else {
+                // Local runtimes start in the background: a scan or an
+                // auto-start must never delay the first paint of the shell.
+                let local_runtime = managed.local_runtime.clone();
+                tauri::async_runtime::spawn(async move {
+                    local_runtime.startup().await;
+                });
+                deep_link::install(&app_handle);
+                scheduler::install(&app_handle);
+            }
             // Native chrome follows the same language as the WebView. Reading
             // the stored settings is one synchronous SQLite read during setup;
             // it is cheaper than shipping an English menu to a Japanese app.
@@ -200,6 +213,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::health::health,
+            commands::window::new_window,
             commands::autostart::get_autostart,
             commands::autostart::set_autostart,
             commands::providers::list_providers,
@@ -248,6 +262,7 @@ pub fn run() {
             commands::conversations::send_message,
             commands::conversations::edit_message,
             commands::conversations::list_messages,
+            commands::conversations::list_conversation_tool_calls,
             commands::conversations::rename_conversation,
             commands::conversations::fork_conversation,
             commands::conversations::delete_conversation,
@@ -260,13 +275,22 @@ pub fn run() {
             commands::runs::cancel_run,
             commands::runs::quit_app,
             commands::runs::steer_run,
+            commands::runs::list_steering,
+            commands::runs::update_steering,
+            commands::runs::remove_steering,
             commands::runs::revert_run,
             commands::runs::run_workspace_changes,
             commands::runs::revert_run_workspace,
+            commands::runs::revert_run_workspace_paths,
             commands::runs::resume_run,
             commands::runs::budget_extension,
             commands::runs::list_checkpoints,
             commands::runs::replay_run_events,
+            commands::runs::export_run_events_jsonl,
+            commands::runs::export_run_markdown,
+            commands::runs::import_run_events,
+            commands::runs::import_run_events_file,
+            commands::runs::search_run_events,
             commands::fs::preview_file_diff,
             commands::fs::read_attachment,
             commands::fs::open_external,
@@ -276,6 +300,14 @@ pub fn run() {
             commands::picker::pick_folder,
             commands::picker::pick_save_file,
             commands::approvals::decide_approval,
+            commands::approvals::extend_approval,
+            commands::approvals::answer_question,
+            commands::shell::run_shell_command,
+            commands::shell::start_shell_command,
+            commands::shell::poll_shell_command,
+            commands::shell::interrupt_shell_command,
+            commands::shell::send_shell_input,
+            commands::shell::shell_history,
             commands::tools::list_tools,
             commands::tools::set_permission_rule,
             commands::tools::list_permission_rules,
@@ -312,6 +344,8 @@ pub fn run() {
             commands::skills::delete_skill,
             commands::skills::list_skill_resources,
             commands::skills::read_skill_resource,
+            commands::skills::list_skill_revisions,
+            commands::skills::restore_skill_revision,
             commands::projects::list_projects,
             commands::projects::create_project,
             commands::projects::update_project,
@@ -326,6 +360,8 @@ pub fn run() {
             commands::workspace::git_diff,
             commands::workspace::git_restore,
             commands::workspace::git_stage,
+            commands::workspace::git_commit,
+            commands::workspace::git_apply_patch,
             commands::schedules::list_jobs,
             commands::schedules::create_job,
             commands::schedules::set_job_enabled,

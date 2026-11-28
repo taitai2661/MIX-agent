@@ -126,7 +126,7 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-x-0 bottom-full z-40 mb-2 flex max-h-[min(26rem,70vh)] flex-col overflow-y-auto rounded-2xl border border-line bg-surface p-1.5 shadow-pop animate-scale"
+      className="absolute inset-x-0 bottom-full z-40 mb-2 flex max-h-[min(26rem,70vh)] flex-col overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade"
       role="listbox"
       aria-label={t("クイックコマンド")}
     >

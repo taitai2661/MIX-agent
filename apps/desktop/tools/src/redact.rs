@@ -119,10 +119,33 @@ pub fn redact_arguments(value: &mut Value) {
     let Value::Object(map) = value else {
         return;
     };
-    for key in ["input", "password", "passwd", "secret", "token"] {
+    // `terminal` carries free-form shell text (and a URL for network tools).
+    // Shaped secrets are already handled by `redact_value` above, but a
+    // hand-typed credential inside a command (`mysql -pSECRET`,
+    // `curl -H 'X-Key: abc…'`) has no recognisable shape and used to be copied
+    // verbatim into approval cards and the append-only audit log. Mask these
+    // fields whole; the raw arguments still reach the Tool itself.
+    for key in [
+        "input", "password", "passwd", "secret", "token", "command", "args", "cmd_args", "url",
+    ] {
         if let Some(Value::String(text)) = map.get_mut(key) {
             if !text.is_empty() {
                 *text = MASK.to_string();
+            }
+        }
+    }
+    // `terminal` carries explicit arguments as an array under `args` (some
+    // callers/tools still use `cmd_args`). Mask every element for the same
+    // reason as `command`: a `mysql -pSECRET` must never reach an approval
+    // card, an event or the audit log in the clear.
+    for key in ["args", "cmd_args"] {
+        if let Some(Value::Array(items)) = map.get_mut(key) {
+            for item in items {
+                if let Value::String(text) = item {
+                    if !text.is_empty() {
+                        *text = MASK.to_string();
+                    }
+                }
             }
         }
     }
@@ -200,10 +223,44 @@ mod tests {
             }
         });
         redact_arguments(&mut value);
-        assert_eq!(value["command"], "login");
+        // Free-form command text is masked whole so an embedded credential
+        // cannot reach the audit log or an approval card.
+        assert_eq!(value["command"], MASK);
         assert_eq!(value["input"], MASK);
         assert_eq!(value["text"], MASK);
         assert_eq!(value["headers"]["Authorization"], MASK);
         assert_eq!(value["headers"]["Accept"], "application/json");
+    }
+
+    #[test]
+    fn free_form_command_arguments_and_urls_are_masked() {
+        let mut value = serde_json::json!({
+            "command": "mysql -pSUPERSECRET",
+            "cmd_args": ["-pSUPERSECRET", "--url", "https://user:pass@example.com"],
+            "url": "https://user:pass@example.com/secret",
+            "path": "README.md"
+        });
+        redact_arguments(&mut value);
+        assert_eq!(value["command"], MASK);
+        assert_eq!(value["url"], MASK);
+        assert_eq!(value["cmd_args"][0], MASK);
+        assert_eq!(value["cmd_args"][2], MASK);
+        // Unrelated fields stay readable so the audit trail is still useful.
+        assert_eq!(value["path"], "README.md");
+    }
+
+    #[test]
+    fn terminal_args_array_is_masked() {
+        // `terminal` uses `args`, not `cmd_args`; the old matcher only knew the
+        // latter and left `mysql -pSECRET` in the clear.
+        let mut value = serde_json::json!({
+            "action": "send",
+            "command": "mysql",
+            "args": ["-pSUPERSECRET", "db"]
+        });
+        redact_arguments(&mut value);
+        assert_eq!(value["args"][0], MASK);
+        assert_eq!(value["args"][1], MASK);
+        assert_eq!(value["action"], "send");
     }
 }

@@ -75,6 +75,12 @@ export const ApprovalBanner = memo(function ApprovalBanner({
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
+      // A dangerous command needs the warning and the acknowledgement box in
+      // the full card; the banner shortcut must not be a way around it.
+      if (dangerous) {
+        scrollToCard();
+        return;
+      }
       void decide(true);
       return;
     }
@@ -85,6 +91,7 @@ export const ApprovalBanner = memo(function ApprovalBanner({
     }
   };
 
+  const dangerous = approval.risk?.level === "dangerous";
   const isTerminal = approval.name.toLowerCase().includes("terminal");
   const isFileEdit =
     approval.name.toLowerCase().includes("edit") ||
@@ -107,7 +114,12 @@ export const ApprovalBanner = memo(function ApprovalBanner({
           className="shrink-0 text-warning animate-mix-pulse"
         />
         <span className="shrink-0 font-semibold">{t("承認待ち")}:</span>
-        <span className="inline-flex min-w-0 items-center gap-1 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-2xs text-fg shadow-2xs">
+        {dangerous && (
+          <span className="shrink-0 rounded-sm bg-danger-soft px-1.5 py-0.5 text-2xs font-semibold text-danger">
+            {t("危険")}
+          </span>
+        )}
+        <span className="inline-flex min-w-0 items-center gap-1 rounded-md bg-surface px-1.5 py-0.5 font-mono text-2xs text-fg shadow-xs">
           {isTerminal ? (
             <Terminal size={11} className="shrink-0 text-warning" />
           ) : isFileEdit ? (
@@ -129,9 +141,9 @@ export const ApprovalBanner = memo(function ApprovalBanner({
       <div className="flex shrink-0 items-center gap-1.5">
         <Button
           variant="ghost"
-          size="sm"
+          size="xs"
           onClick={scrollToCard}
-          className="h-6 gap-1 px-2 text-2xs text-warning hover:bg-warning/20 hover:text-warning"
+          className="gap-1 text-warning hover:bg-warning/20 hover:text-warning"
           title={t("詳細を確認")}
         >
           <span>{t("詳細を確認")}</span>
@@ -139,38 +151,54 @@ export const ApprovalBanner = memo(function ApprovalBanner({
         </Button>
         <Button
           variant="default"
-          size="sm"
+          size="xs"
           disabled={busy || !approval.approvalId || expired}
           onClick={() => void decide(false)}
-          className="h-6 gap-1 px-2 text-2xs border-warning/30 text-warning hover:bg-warning/20"
+          className="gap-1 border-warning/30 text-warning hover:bg-warning/20"
           title={`${t("拒否")} · Esc`}
         >
           <span>{t("拒否")}</span>
-          <Kbd className="text-[9px] px-1 py-0 opacity-70">Esc</Kbd>
+          <Kbd className="px-1 py-0 opacity-70">Esc</Kbd>
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy || !approval.approvalId || expired}
-          onClick={() => void decide(true, true)}
-          className="h-6 gap-1 px-2 text-2xs text-warning hover:bg-warning/20"
-          title={t("常に許可")}
-        >
-          <span>{t("常に許可")}</span>
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={busy || !approval.approvalId || expired}
-          onClick={() => void decide(true)}
-          className="h-6 gap-1 px-2 text-2xs shadow-xs"
-          title={`${t("今回のみ許可")} · ${chord("Mod", "Enter")}`}
-        >
-          <span>{t("今回のみ許可")}</span>
-          <Kbd className="text-[9px] px-1 py-0 border-on-solid/40 bg-transparent text-on-solid">
-            {chord("Mod", "↵")}
-          </Kbd>
-        </Button>
+        {!dangerous && (
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={busy || !approval.approvalId || expired}
+            onClick={() => void decide(true, true)}
+            className="gap-1 text-warning hover:bg-warning/20"
+            title={t("常に許可")}
+          >
+            <span>{t("常に許可")}</span>
+          </Button>
+        )}
+        {dangerous ? (
+          <Button
+            variant="primary"
+            size="xs"
+            disabled={expired}
+            onClick={scrollToCard}
+            className="gap-1 shadow-xs"
+            title={t("警告を確認してから許可してください")}
+          >
+            <span>{t("確認して許可")}</span>
+            <ChevronDown size={12} />
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            size="xs"
+            disabled={busy || !approval.approvalId || expired}
+            onClick={() => void decide(true)}
+            className="gap-1 shadow-xs"
+            title={`${t("今回のみ許可")} · ${chord("Mod", "Enter")}`}
+          >
+            <span>{t("今回のみ許可")}</span>
+            <Kbd className="px-1 py-0 border-on-solid/40 bg-transparent text-on-solid">
+              {chord("Mod", "↵")}
+            </Kbd>
+          </Button>
+        )}
       </div>
     </div>
   );

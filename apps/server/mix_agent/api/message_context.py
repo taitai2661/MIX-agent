@@ -146,7 +146,11 @@ async def _build_history_payload(
         # AGENTS.md / CLAUDE.md come from the bind-mounted folder rather than
         # the project record, so they apply even to a conversation with no
         # project attached — and they carry their own untrusted-data note.
-        system_text += project_docs.render_project_docs_block()
+        #
+        # Reading them is filesystem work on the bind-mounted project
+        # directory, so it goes to the blocking pool: a slow mount must not
+        # stall every other request on the server loop.
+        system_text += await run_in_threadpool(project_docs.render_project_docs_block)
     # Freeze the exact mode instruction with the Run.  This keeps retries and
     # resumed tool turns on the same behavioral contract even if defaults change.
     snapshot["mode_prompt"] = mode_prompt(mode)

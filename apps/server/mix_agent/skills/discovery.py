@@ -20,6 +20,8 @@ without an import.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 
 from mix_agent import config
@@ -28,6 +30,35 @@ from mix_agent.skills import package
 LOGGER = logging.getLogger(__name__)
 
 SKILL_ROOTS: tuple[str, ...] = (".mix/skills", ".claude/skills", ".agents/skills")
+
+# Discovery walks the skill directories and reads every `SKILL.md`. It used to
+# run on *every* prompt construction and on every `skill_search` /
+# `skill_resource` tool call, so one agent turn could re-read the whole
+# catalogue several times.
+#
+# The catalogue changes when a file on disk changes, so the cache is short
+# lived: a few seconds is enough to collapse the repeats inside one turn
+# while an edit still shows up almost immediately. The TTL is deliberately
+# short rather than invalidated by mtime, because the scan itself is what
+# costs the time.
+DISCOVERY_TTL_SECONDS = 5.0
+
+_DISCOVERY_CACHE: dict[tuple, tuple[float, list[dict], list[dict]]] = {}
+_DISCOVERY_LOCK = threading.Lock()
+
+
+def _cache_key(project_root: str | Path | None, home: str | Path | None) -> tuple:
+    return (
+        str(project_root) if project_root is not None else None,
+        str(home) if home is not None else None,
+        str(config.PROJECT_DIR),
+    )
+
+
+def invalidate_discovery_cache() -> None:
+    """Drop the cached catalogue (used after a skill directory changes)."""
+    with _DISCOVERY_LOCK:
+        _DISCOVERY_CACHE.clear()
 
 
 def skill_root(project_root: str | Path | None = None) -> Path | None:
@@ -85,7 +116,28 @@ def discover_all(
     project_root: str | Path | None = None,
     home: str | Path | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Project skills, then user-level skills, first name winning."""
+    """Project skills, then user-level skills, first name winning.
+
+    The result is cached for a few seconds: the scan reads every `SKILL.md`
+    on disk, and it used to run again on every prompt construction and on
+    every `skill_search` / `skill_resource` tool call.
+    """
+    key = _cache_key(project_root, home)
+    now = time.monotonic()
+    with _DISCOVERY_LOCK:
+        cached = _DISCOVERY_CACHE.get(key)
+        if cached is not None and now - cached[0] < DISCOVERY_TTL_SECONDS:
+            return cached[1], cached[2]
+    packages, failures = _discover_all_uncached(project_root, home)
+    with _DISCOVERY_LOCK:
+        _DISCOVERY_CACHE[key] = (time.monotonic(), packages, failures)
+    return packages, failures
+
+
+def _discover_all_uncached(
+    project_root: str | Path | None = None,
+    home: str | Path | None = None,
+) -> tuple[list[dict], list[dict]]:
     packages: list[dict] = []
     failures: list[dict] = []
     roots = []

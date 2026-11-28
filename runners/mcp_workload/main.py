@@ -6,14 +6,35 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 app = FastAPI(docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def authenticate(request: Request, call_next):
+    """Same bearer-token boundary as the other runners.
+
+    The workload sits on a Docker-managed internal network, but every peer on
+    that network (including other MCP workloads) could otherwise POST /call
+    with arbitrary tool arguments. The manager mounts a dedicated token file
+    and sends it on every /discover and /call request.
+    """
+    token = Path(os.getenv("TOKEN_FILE", "/tokens/mcp-workload.token")).read_text().strip()
+    provided = request.headers.get("authorization", "")
+    # compare_digest() raises TypeError for non-ASCII str (a 500 otherwise).
+    if not provided.isascii() or not secrets.compare_digest(provided, "Bearer " + token):
+        return JSONResponse({"detail": "Unauthorized"}, 401)
+    return await call_next(request)
+
+
 LOGGER = logging.getLogger(__name__)
 ROOT = Path("/data/.packages")
 LOCK = asyncio.Lock()

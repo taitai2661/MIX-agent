@@ -42,11 +42,13 @@ const buttonVariants = cva(
         link: "text-brand underline-offset-4 hover:underline px-0 h-auto",
       },
       size: {
+        xs: "h-6 px-2 text-2xs",
         sm: "h-8 px-3 text-xs",
         md: "h-control px-3.5 text-sm",
         lg: "h-10 px-5 text-sm",
         icon: "size-control shrink-0 p-0",
         "icon-sm": "size-6 shrink-0 p-0",
+        "icon-xs": "size-5 shrink-0 p-0",
       },
     },
     defaultVariants: { variant: "default", size: "md" },

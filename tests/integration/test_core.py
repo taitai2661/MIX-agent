@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from mix_agent.db.models import (
@@ -765,6 +766,49 @@ def test_memory_scope_is_a_soft_retrieval_signal(signed):
         assert {row["content"] for row in user_ranked} == {"user preference", "agent-only decision"}
         assert user_ranked[0]["content"] == "user preference"
         assert task_ranked[0]["content"] == "agent-only decision"
+
+
+def test_messages_page_returns_runs_from_the_same_newest_page(signed, monkeypatch):
+    from mix_agent.api.helpers import pagination
+
+    monkeypatch.setattr(pagination, "MESSAGE_PAGE_LIMIT", 2)
+    with SessionLocal() as db:
+        owner = db.scalar(select(User.id))
+        conversation = Conversation(owner_id=owner, data={"title": "paged"})
+        db.add(conversation)
+        db.flush()
+        base = datetime.now(UTC) - timedelta(minutes=10)
+        message_ids, run_ids = [], []
+        for index in range(4):
+            message = Message(
+                owner_id=owner,
+                conversation_id=conversation.id,
+                created_at=base + timedelta(minutes=index),
+                data={"role": "user", "content": f"m{index}"},
+            )
+            db.add(message)
+            db.flush()
+            run = Run(
+                owner_id=owner,
+                conversation_id=conversation.id,
+                request_key=uid(),
+                status="completed",
+                created_at=base + timedelta(minutes=index, seconds=1),
+                data={"status": "completed", "input_message_id": message.id},
+            )
+            db.add(run)
+            db.flush()
+            message_ids.append(message.id)
+            run_ids.append(run.id)
+        db.commit()
+        key = conversation.id
+
+    history = signed.get(f"/api/v1/conversations/{key}/messages").json()
+    # Both collections must be the newest page, paired with each other. The
+    # old query read the oldest runs and left every message_id unmatched.
+    assert [row["id"] for row in history["messages"]] == message_ids[2:]
+    assert [row["id"] for row in history["runs"]] == run_ids[2:]
+    assert [row["message_id"] for row in history["runs"]] == message_ids[2:]
 
 
 def test_message_retry_and_saved_selection(signed, monkeypatch):

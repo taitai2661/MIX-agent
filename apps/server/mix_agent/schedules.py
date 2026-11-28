@@ -4,7 +4,9 @@ The database is the source of truth: process-local polling never decides whether
 an occurrence has already been claimed.
 """
 
+import calendar
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
@@ -12,7 +14,22 @@ from sqlalchemy.exc import IntegrityError
 
 from mix_agent.db.models import Notification, ScheduledJob, ScheduledRun, now
 
+try:  # Optional fast jump for valid expressions; the bounded search is the fallback.
+    from croniter import croniter as _croniter
+except ImportError:  # pragma: no cover - not a declared dependency in this image
+    _croniter = None
+
 FIELDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))
+# Leap day needs at most 8 years to recur; an unsatisfiable expression is
+# rejected up front by _satisfiable instead of scanning minute by minute.
+NEXT_SEARCH_YEARS = 8
+
+
+@lru_cache(maxsize=64)
+def _zone(tz):
+    """ZoneInfo is expensive to construct; the old loop rebuilt it per minute."""
+    return ZoneInfo(tz)
+
 
 # Startup reconciliation bounds: never look further back than this window and
 # never create more than this many historical occurrence rows per job.
@@ -52,7 +69,7 @@ def parse(expression):
 
 def _matches(parsed, instant, tz):
     minute, hour, day, month, weekday = parsed
-    local = instant.astimezone(ZoneInfo(tz))
+    local = instant.astimezone(_zone(tz))
     # cron weekday uses Sunday=0; Python Monday=0.
     return (
         local.minute in minute
@@ -67,12 +84,67 @@ def matches(expression, instant, tz):
     return _matches(parse(expression), instant, tz)
 
 
+def _satisfiable(parsed, start_year):
+    """Whether any selected (month, day) pair can exist in the near future."""
+    minute, hour, day, month, weekday = parsed
+    if not (minute and hour and day and month and weekday):
+        return False
+    for year in range(start_year, start_year + NEXT_SEARCH_YEARS):
+        if any(
+            1 <= selected_day <= calendar.monthrange(year, selected_month)[1]
+            for selected_month in month
+            for selected_day in day
+        ):
+            return True
+    return False
+
+
+def _expression(parsed):
+    """Canonical five-field expression used for the optional croniter jump."""
+    return " ".join(",".join(str(value) for value in sorted(field)) for field in parsed)
+
+
 def _next(parsed, tz, after=None):
     candidate = (after or now()).astimezone(UTC).replace(second=0, microsecond=0) + timedelta(minutes=1)
-    for _ in range(527_040):
-        if _matches(parsed, candidate, tz):
-            return candidate
-        candidate += timedelta(minutes=1)
+    if not _satisfiable(parsed, candidate.year):
+        raise ValueError("次回実行時刻を計算できません")
+    if _croniter is not None:
+        try:
+            guess = _croniter(_expression(parsed), candidate.replace(tzinfo=None)).get_next(datetime)
+            guess = guess.replace(tzinfo=_zone(tz)).astimezone(UTC)
+            if guess >= candidate and _matches(parsed, guess, tz):
+                return guess
+        except Exception:  # noqa: BLE001, S110 - optional accelerator; bounded search follows
+            pass
+    minute, hour, day, month, weekday = parsed
+    zone = _zone(tz)
+    current = candidate.astimezone(zone).date()
+    deadline = current + timedelta(days=NEXT_SEARCH_YEARS * 366)
+    while current <= deadline:
+        if current.month in month and current.day in day and (current.weekday() + 1) % 7 in weekday:
+            for selected_hour in sorted(hour):
+                for selected_minute in sorted(minute):
+                    # ZoneInfo maps a *nonexistent* local time (spring-forward
+                    # gap, e.g. 02:30 on a DST start day) to a real UTC instant
+                    # whose local wall clock is a different hour. tick()/reconcile()
+                    # decide with `_matches`, so returning that instant here would
+                    # advertise a next run that can never fire (and reconcile
+                    # would create a bogus missed occurrence). Verify before
+                    # returning and let the loop advance to the next real match.
+                    try:
+                        value = datetime(
+                            current.year,
+                            current.month,
+                            current.day,
+                            selected_hour,
+                            selected_minute,
+                            tzinfo=zone,
+                        ).astimezone(UTC)
+                    except (ValueError, OverflowError):  # pragma: no cover - defensive
+                        continue
+                    if value >= candidate and _matches(parsed, value, tz):
+                        return value
+        current += timedelta(days=1)
     raise ValueError("次回実行時刻を計算できません")
 
 

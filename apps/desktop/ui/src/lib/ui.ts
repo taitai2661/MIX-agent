@@ -73,7 +73,9 @@ export type RightPanel =
   | "diff"
   | "changes"
   | "file"
-  | "browser";
+  | "browser"
+  | "terminal"
+  | "problems";
 
 /** How the thread side panel is presented. Codex calls these split/full view. */
 export type SidePanelMode = "split" | "full";
@@ -188,7 +190,9 @@ interface UiState {
   openDiff: (target: DiffTarget) => void;
   /** Root-relative path shown in the read-only file preview. */
   filePreviewPath: string | null;
-  openFilePreview: (path: string) => void;
+  /** One-based line to reveal when the preview opens (e.g. from Problems). */
+  filePreviewLine: number | null;
+  openFilePreview: (path: string, line?: number | null) => void;
   /** Git status entry whose diff is shown (set from the changes list). */
   gitDiffPath: string | null;
   setGitDiffPath: (path: string | null) => void;
@@ -217,7 +221,7 @@ interface UiState {
   /** Accent hue for focus, selection and primary actions. Persisted locally. */
   accent: Accent;
   setAccent: (accent: Accent) => void;
-  /** WebView zoom factor (0.8–1.5). Applied to `documentElement`. */
+  /** WebView zoom factor (0.8–2.0). Applied to `documentElement`. */
   zoom: number;
   setZoom: (zoom: number) => void;
   /** Wrap long code lines instead of scrolling horizontally. */
@@ -270,7 +274,7 @@ const CODE_WRAP_KEY = "mix-agent-code-wrap";
 const REDUCE_MOTION_KEY = "mix-agent-reduce-motion";
 
 export const MIN_ZOOM = 0.8;
-export const MAX_ZOOM = 1.5;
+export const MAX_ZOOM = 2;
 
 export const DEFAULT_RIGHT_PANEL_WIDTH = 380;
 export const WIDE_RIGHT_PANEL_WIDTH = 560;
@@ -316,7 +320,8 @@ function readRightPanel(): RightPanel {
     stored === "diff" ||
     stored === "changes" ||
     stored === "file" ||
-    stored === "browser"
+    stored === "browser" ||
+    stored === "terminal"
   ) {
     return stored;
   }
@@ -547,6 +552,7 @@ export const useUi = create<UiState>((set, get) => ({
         activityRunId: null,
         diffTarget: null,
         filePreviewPath: null,
+        filePreviewLine: null,
       };
       if (state.surface === "desktop-agent") {
         if (id) setString(AGENT_CONVERSATION_KEY, id);
@@ -579,6 +585,7 @@ export const useUi = create<UiState>((set, get) => ({
         activityRunId: null,
         diffTarget: null,
         filePreviewPath: null,
+        filePreviewLine: null,
       };
       if (state.surface === "desktop-agent") {
         removeKey(AGENT_CONVERSATION_KEY);
@@ -697,6 +704,7 @@ export const useUi = create<UiState>((set, get) => ({
         activityRunId: null,
         diffTarget: null,
         filePreviewPath: null,
+        filePreviewLine: null,
         sidePanelMode: "split",
       };
     });
@@ -811,9 +819,15 @@ export const useUi = create<UiState>((set, get) => ({
     set({ diffTarget, rightPanel: "diff", sidePanelMode: "split" });
   },
   filePreviewPath: null,
-  openFilePreview: (filePreviewPath) => {
+  filePreviewLine: null,
+  openFilePreview: (filePreviewPath, filePreviewLine = null) => {
     setString(SIDE_PANEL_MODE_KEY, "split");
-    set({ filePreviewPath, rightPanel: "file", sidePanelMode: "split" });
+    set({
+      filePreviewPath,
+      filePreviewLine,
+      rightPanel: "file",
+      sidePanelMode: "split",
+    });
   },
   gitDiffPath: null,
   setGitDiffPath: (gitDiffPath) => set({ gitDiffPath }),

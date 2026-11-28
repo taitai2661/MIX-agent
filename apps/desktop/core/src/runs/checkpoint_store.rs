@@ -15,6 +15,10 @@ impl CheckpointStore {
     }
 
     /// Persist a snapshot and return its id.
+    ///
+    /// The insert is returned as a `Result`: a checkpoint for a run with no
+    /// parent row is rejected by the foreign key, and the caller must not
+    /// announce a checkpoint that was never written.
     pub async fn save(
         &self,
         run_id: uuid::Uuid,
@@ -22,7 +26,7 @@ impl CheckpointStore {
         tool_count: u32,
         snapshot: &CheckpointSnapshot,
         storage: &Storage,
-    ) -> String {
+    ) -> anyhow::Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let data = serde_json::json!({
             "history": snapshot.messages,
@@ -41,13 +45,14 @@ impl CheckpointStore {
         .bind(tool_count as i64)
         .execute(storage.pool())
         .await;
-        if let Err(err) = &insert {
+        insert.map_err(|err| {
             // The `run_checkpoints.run_id` foreign key makes this fail whenever
-            // the parent run row is missing, and the result was discarded — so a
-            // run could silently have no resumable state and nothing would say
-            // why.
+            // the parent run row is missing. Returning it lets the caller tell
+            // the user the run has no resumable state instead of claiming a
+            // checkpoint was saved.
             tracing::warn!(?err, %run_id, step, "checkpoint insert failed");
-        }
+            anyhow::anyhow!("checkpoint insert failed for run {run_id} at step {step}: {err}")
+        })?;
 
         // Trim old snapshots.
         mixd_storage::log_write(
@@ -64,7 +69,7 @@ impl CheckpointStore {
             "trim run checkpoints",
         );
 
-        id
+        Ok(id)
     }
 
     pub async fn load(

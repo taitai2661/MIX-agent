@@ -20,6 +20,14 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 /// should start normally. Unknown arguments (including macOS' Finder `-psn_*`)
 /// are ignored so double-clicking the app still works.
 pub fn run_if_requested() -> Option<i32> {
+    // The headless runner owns the `run` subcommand; the serve bridge owns
+    // `serve`; everything below is the pre-WebView diagnostic surface.
+    if let Some(code) = crate::headless::run_if_requested() {
+        return Some(code);
+    }
+    if let Some(code) = crate::serve::serve_if_requested() {
+        return Some(code);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("MIX-agent Desktop {}", env!("CARGO_PKG_VERSION"));
@@ -28,6 +36,12 @@ pub fn run_if_requested() -> Option<i32> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Some(0);
+    }
+    if args.iter().any(|arg| arg == "--safe-mode") {
+        crate::set_safe_mode(true);
+        eprintln!(
+            "MIX-agent Desktop: safe mode — MCP, browser, schedules and local-runtime auto-start are disabled"
+        );
     }
     if args.iter().any(|arg| arg == "--doctor") {
         let json = args.iter().any(|arg| arg == "--json");
@@ -39,8 +53,9 @@ pub fn run_if_requested() -> Option<i32> {
 fn print_help() {
     println!(
         "MIX-agent Desktop {}\n\n\
-         USAGE:\n    MIX-agent Desktop [--doctor [--json]] [--version] [--help]\n\n\
+         USAGE:\n    MIX-agent Desktop [--safe-mode] [--doctor [--json]] [--version] [--help]\n    mix-agent run --workspace <DIR> [OPTIONS] <PROMPT>\n\n\
          OPTIONS:\n\
+         \x20   --safe-mode Start without MCP, the browser, schedules or local runtimes\n\
          \x20   --doctor    Check the data directory, database, keychain and log path\n\
          \x20   --json      Machine-readable doctor output\n\
          \x20   --version   Print the application version\n\
@@ -50,13 +65,63 @@ fn print_help() {
     );
 }
 
-fn data_dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("MIX_DATA_DIR") {
         return PathBuf::from(dir);
     }
     dirs::data_dir()
         .map(|base| base.join(crate::APP_IDENTIFIER))
         .unwrap_or_else(|| std::env::temp_dir().join("mix-agent-desktop"))
+}
+
+/// Resolve the one canonical data directory and fail at startup when a
+/// second, independent resolver disagrees with it.
+///
+/// `data_dir()` is the single source of truth shared by the GUI, the headless
+/// `serve` bridge and the delegate-worktree pruner. Tauri's
+/// `PathResolver::app_data_dir` used to be a *second* source of truth: with a
+/// `MIX_DATA_DIR` override the GUI opened a different database than `serve`,
+/// making `serve.lock` invisible and defeating the "live serve owns the runs"
+/// reconciliation guard. The GUI now passes its resolver result here so a
+/// divergence is a loud startup error instead of two silently split stores.
+///
+/// When `MIX_DATA_DIR` is set it is authoritative by design — that is the
+/// whole point of the override — so only the implicit (no override) path is
+/// cross-checked against Tauri's resolver.
+pub(crate) fn verify_data_dir(tauri_data_dir: Option<&Path>) -> Result<PathBuf, String> {
+    let canonical = data_dir();
+    if std::env::var_os("MIX_DATA_DIR").is_none() {
+        if let Some(tauri) = tauri_data_dir {
+            if canonical != tauri {
+                return Err(format!(
+                    "data directory mismatch: the canonical resolver selected {} but Tauri selected {}. \
+                     Refusing to start with two different databases; set MIX_DATA_DIR explicitly \
+                     to override both.",
+                    canonical.display(),
+                    tauri.display()
+                ));
+            }
+        }
+    }
+    Ok(canonical)
+}
+
+#[cfg(test)]
+mod data_dir_tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_override_is_authoritative() {
+        // `verify_data_dir` must not reject a MIX_DATA_DIR override just because
+        // a second resolver would have picked a different directory. The env
+        // var is process-global, so this test is single-threaded by convention
+        // (the suite never sets MIX_DATA_DIR elsewhere).
+        if std::env::var_os("MIX_DATA_DIR").is_some() {
+            return;
+        }
+        let canonical = data_dir();
+        assert!(verify_data_dir(Some(canonical.as_path())).is_ok());
+    }
 }
 
 fn run_doctor(json: bool) -> i32 {

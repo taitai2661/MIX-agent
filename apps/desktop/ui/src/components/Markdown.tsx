@@ -4,20 +4,29 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { ExternalLink } from "lucide-react";
 import { api } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { t, useLanguage } from "@/lib/i18n";
 import { CodeBlock } from "./CopyButton";
 
-/** Open http(s) links in the system browser (validated Rust-side). */
-function isExternalHref(href: string): boolean {
-  return href.startsWith("http://") || href.startsWith("https://");
+/** Open http(s) links in the system browser (validated Rust-side too).
+ * Control characters are rejected here: WebView/Rust URL parsers may ignore
+ * them, so `java\tscript:` must never reach `openExternal` as a safe link. */
+export function isExternalHref(href: string): boolean {
+  for (const char of href) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return /^https?:\/\//i.test(href.trim());
 }
 
 function onLinkClick(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   // Neutralize javascript:/data:/vbscript: and anything else non-http(s).
   // Always preventDefault so a hostile href can never navigate the WebView.
   event.preventDefault();
-  if (!isExternalHref(href)) return;
-  void api.openExternal(href);
+  // Validate and forward the same value: the guard checks href.trim(), so an
+  // untrimmed original would be validated but passed with stray whitespace.
+  const safe = href.trim();
+  if (!isExternalHref(safe)) return;
+  void api.openExternal(safe);
 }
 
 // Hoisted so the props are referentially stable across renders. Rebuilding
@@ -27,7 +36,7 @@ function onLinkClick(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const COMPONENTS = {
   a({ href, children }: { href?: string; children?: ReactNode }) {
-    const external = !!href && /^https?:\/\//.test(href);
+    const external = !!href && isExternalHref(href);
     // react-markdown emits an <a> for relative/mailto/file links too. Leaving
     // it with no href made a dead element that still inherited the brand link
     // colour and hover underline, so it looked clickable but did nothing.
@@ -41,9 +50,9 @@ const COMPONENTS = {
     return (
       <a
         href={href}
-        target="_blank"
         rel="noopener noreferrer"
         onClick={(e) => onLinkClick(e, href)}
+        onAuxClick={(e) => onLinkClick(e, href)}
         className="inline-flex items-center gap-0.5"
       >
         {children}
@@ -101,6 +110,10 @@ export const Markdown = memo(function Markdown({
 }: {
   children: string;
 }) {
+  // `memo` would otherwise skip this component on a language change, leaving
+  // the tooltip/table labels in the previous locale. `COMPONENTS` calls the
+  // module-level `t()` during this render, so the fresh language is picked up.
+  useLanguage();
   return (
     <div className="markdown-body">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>

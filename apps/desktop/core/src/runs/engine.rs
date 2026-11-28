@@ -78,14 +78,14 @@ pub struct RunEngine {
     /// polling it was previously the only channel, which made the answer depend
     /// on a status transition that had never been persisted.
     pub budget_decisions: Arc<tokio::sync::Mutex<HashMap<RunId, bool>>>,
-    /// Wakes [`RunEngine::await_budget_extension`] the moment `resolve_budget`
-    /// records an answer. The DB row remains the fallback (polled every
-    /// [`BUDGET_DB_POLL_INTERVAL`]) for answers written before a restart.
-    pub budget_notify: Arc<tokio::sync::Notify>,
+    /// Per-run budget waiters. A single global `Notify` woke every run waiting
+    /// on any budget answer (the thundering herd); keying by `RunId` keeps the
+    /// wake-up local, and [`RunEngine::release_run`] drops it with the run.
+    pub budget_notifies: Arc<tokio::sync::Mutex<HashMap<RunId, Arc<tokio::sync::Notify>>>>,
     /// Files the Run is about to change, captured before the first change so
     /// the whole Run can be reverted. In memory: a restart drops the undo
     /// history, which is the honest lifetime for "undo what just happened".
-    pub snapshots: Arc<tokio::sync::Mutex<HashMap<RunId, Vec<FileSnapshot>>>>,
+    pub snapshots: Arc<tokio::sync::Mutex<SnapshotLedger>>,
     /// Content fingerprints of files the Run has read, so an edit can refuse
     /// to apply to content the model never saw.
     pub read_fingerprints:
@@ -96,7 +96,22 @@ pub struct RunEngine {
     /// every step it has already taken when the user spots a wrong assumption.
     /// The queue is drained at each turn boundary rather than interrupted into
     /// a streaming completion, so a provider request is never cut mid-token.
-    pub steering: Arc<tokio::sync::Mutex<HashMap<RunId, Vec<String>>>>,
+    pub steering: Arc<tokio::sync::Mutex<HashMap<RunId, Vec<SteeredMessage>>>>,
+    /// Monotonic stamp assigned when a message is queued. `ask_user` captures
+    /// the current value when the question opens and only accepts messages
+    /// queued after it, so an interjection sent before the question cannot be
+    /// mistaken for its answer.
+    pub steering_seq: Arc<std::sync::atomic::AtomicU64>,
+    /// Per-run wake-ups for a blocked `ask_user`. `steer` notifies the waiter
+    /// instead of making it poll, and `release_run` drops the entry with the run.
+    pub steering_notifies: Arc<tokio::sync::Mutex<HashMap<RunId, Arc<tokio::sync::Notify>>>>,
+}
+
+/// One queued user message, with the sequence assigned at enqueue time.
+#[derive(Debug, Clone)]
+pub struct SteeredMessage {
+    pub seq: u64,
+    pub text: String,
 }
 
 /// Cooperative cancellation handle for an in-flight Run.
@@ -153,6 +168,90 @@ pub struct FileSnapshot {
     pub previous: Option<Vec<u8>>,
 }
 
+/// Undo snapshots for recent runs, ordered least-recently-used first.
+///
+/// A `HashMap` evicted an arbitrary entry (`keys().next()`), which could drop
+/// the run the user was about to undo while keeping an ancient one. Keeping
+/// the order in a deque makes eviction predictable and lets `release_run` age
+/// entries out after the undo window.
+#[derive(Default)]
+pub struct SnapshotLedger {
+    entries: std::collections::VecDeque<(RunId, Instant, Vec<FileSnapshot>)>,
+}
+
+impl SnapshotLedger {
+    /// The entry for `run_id`, creating it if absent and promoting it to the
+    /// most-recently-used end.
+    ///
+    /// Promotion happens *before* ageing out other entries. Dropping stale
+    /// entries first removed `run_id`'s history when its previous edit was
+    /// older than the TTL, so a run resumed after a pause silently lost its
+    /// undo data. A run that is being touched right now is by definition not
+    /// stale, so it is exempt from this round of eviction.
+    pub(crate) fn entry(&mut self, run_id: RunId) -> &mut Vec<FileSnapshot> {
+        let now = Instant::now();
+        if let Some(pos) = self.entries.iter().position(|(id, _, _)| *id == run_id) {
+            let mut entry = self.entries.remove(pos).expect("position came from iter");
+            // Refresh the stamp: a long run must not age its own undo history
+            // out of the window while it is still mutating files.
+            entry.1 = now;
+            self.entries.push_back(entry);
+        } else {
+            self.entries.push_back((run_id, now, Vec::new()));
+        }
+        // Age out stale runs other than the one we just promoted/refreshed.
+        self.entries.retain(|(id, stamp, _)| {
+            *id == run_id || now.duration_since(*stamp) < helpers::SNAPSHOT_TTL
+        });
+        while self.entries.len() > helpers::MAX_SNAPSHOT_RUNS {
+            self.entries.pop_front();
+        }
+        &mut self.entries.back_mut().expect("an entry was just pushed").2
+    }
+
+    /// A copy of the run's snapshots. The ledger keeps the originals until the
+    /// revert has actually succeeded.
+    pub(crate) fn get(&self, run_id: RunId) -> Option<Vec<FileSnapshot>> {
+        self.entries
+            .iter()
+            .find(|(id, _, _)| *id == run_id)
+            .map(|(_, _, files)| files.clone())
+    }
+
+    pub(crate) fn remove(&mut self, run_id: RunId) {
+        if let Some(pos) = self.entries.iter().position(|(id, _, _)| *id == run_id) {
+            self.entries.remove(pos);
+        }
+    }
+
+    /// Mark a run as just finished, so its undo window starts at completion
+    /// rather than at its first mutation.
+    pub(crate) fn touch(&mut self, run_id: RunId) {
+        let now = Instant::now();
+        if let Some(pos) = self.entries.iter().position(|(id, _, _)| *id == run_id) {
+            let mut entry = self.entries.remove(pos).expect("position came from iter");
+            entry.1 = now;
+            self.entries.push_back(entry);
+        }
+    }
+
+    /// Age out undo history older than the window.
+    pub(crate) fn drop_stale(&mut self, now: Instant) {
+        self.entries
+            .retain(|(_, stamp, _)| now.duration_since(*stamp) < helpers::SNAPSHOT_TTL);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    fn front_id(&self) -> Option<RunId> {
+        self.entries.front().map(|(id, _, _)| *id)
+    }
+}
+
 impl RunEngine {
     /// Build an engine bound to an existing storage handle. Used by the Tauri
     /// shell, which owns the app-data directory.
@@ -191,9 +290,11 @@ impl RunEngine {
             flush_scheduled: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
             active: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             budget_decisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            budget_notify: Arc::new(tokio::sync::Notify::new()),
+            budget_notifies: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             steering: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            snapshots: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            steering_seq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            steering_notifies: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            snapshots: Arc::new(tokio::sync::Mutex::new(SnapshotLedger::default())),
             read_fingerprints: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
@@ -415,6 +516,36 @@ pub struct HistoryMessage {
     pub native: Vec<serde_json::Value>,
 }
 
+/// The model actually serving the current turn.
+///
+/// `RunRequest` keeps the model chosen at dispatch: it is the audit record of
+/// what the caller asked for. Step routing and Auto fallback change which
+/// model answers a turn, and those changes belong here so the request (and the
+/// `model_selected` event derived from it) stays an honest record of dispatch.
+#[derive(Debug, Clone)]
+pub(super) struct ServingModel {
+    pub model_id: String,
+    pub provider_id: String,
+    pub context_window: u32,
+    pub keep_alive: Option<String>,
+}
+
+impl ServingModel {
+    pub(super) fn from_request(request: &RunRequest) -> Self {
+        Self {
+            model_id: request.model_id.clone(),
+            provider_id: request.provider_id.clone(),
+            context_window: request.context_window,
+            keep_alive: request.keep_alive.clone(),
+        }
+    }
+
+    /// The wire name, with any `<provider_id>:` prefix stripped.
+    pub(super) fn wire_model(&self) -> &str {
+        wire_model_for(&self.model_id, &self.provider_id)
+    }
+}
+
 #[derive(Debug)]
 pub struct RunRequest {
     pub run_id: RunId,
@@ -470,6 +601,16 @@ pub struct RunRequest {
     /// the Run starts (the engine has no model catalogue); the engine switches
     /// only when a provider fails before emitting any content.
     pub auto_fallbacks: Vec<AutoFallback>,
+    /// Pre-resolved cost-tier models for step routing (B9). The app classifies
+    /// the Auto candidates into [`crate::routing::StepTier`]s at dispatch; the
+    /// engine picks one tier per turn from the mode, the verification state
+    /// and live budget pressure. Empty for fixed-model runs, which keep their
+    /// model (the routing decision is still emitted for observability).
+    pub step_models: Vec<crate::routing::TierModel>,
+    /// Monthly spend vs the configured cap at dispatch, in `[0, 1+]`. Static
+    /// for the Run (a run is short next to a month); the token ceiling is
+    /// tracked live from [`Budget`]. `0.0` means no cap configured.
+    pub monthly_pressure: f32,
 }
 
 /// One candidate the engine may switch to after a pre-content provider failure.
@@ -653,6 +794,74 @@ mod execute_tests {
         }
     }
 
+    #[tokio::test]
+    async fn compression_prefers_the_cheapest_configured_tier() {
+        let dir = std::env::temp_dir().join(format!("mixd-summary-test-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(Storage::open(&dir).await.expect("open storage"));
+        let secrets = Arc::new(mixd_storage::SecretStore::new());
+        let engine = RunEngine::with_storage(storage, secrets);
+        let current = Arc::new(MockProvider {
+            id: "mock".to_string(),
+        }) as Arc<dyn mixd_providers::Provider>;
+        engine
+            .providers
+            .register(
+                "cheap-p".to_string(),
+                Arc::new(MockProvider {
+                    id: "cheap-p".to_string(),
+                }),
+            )
+            .await;
+
+        let mut request = RunRequest {
+            run_id: RunId::new_v4(),
+            conversation_id: uuid::Uuid::new_v4(),
+            workspace_id: uuid::Uuid::new_v4(),
+            root_path: None,
+            additional_paths: Vec::new(),
+            mode: Mode::Thinking,
+            model_id: "strong-model".to_string(),
+            provider_id: "mock".to_string(),
+            system: None,
+            verify_command: None,
+            format_command: None,
+            context_window: 0,
+            temperature: None,
+            reasoning: None,
+            max_tokens: None,
+            keep_alive: None,
+            temporary: true,
+            tools: Arc::new(Vec::new()),
+            history: Vec::new(),
+            user_message: "x".to_string(),
+            resume_from: None,
+            auto_fallbacks: Vec::new(),
+            step_models: vec![crate::routing::TierModel {
+                tier: crate::routing::StepTier::Cheap,
+                model_id: "cheap-model".to_string(),
+                provider_id: "cheap-p".to_string(),
+                context_window: 4096,
+                keep_alive: None,
+            }],
+            monthly_pressure: 0.0,
+        };
+        let mut serving = ServingModel::from_request(&request);
+
+        let (provider, model) = engine.summary_provider(&request, &serving, &current).await;
+        assert_eq!(provider.id(), "cheap-p");
+        assert_eq!(model, "cheap-model");
+
+        // With no tier model configured the compression falls back to the
+        // model actually serving this turn, not the dispatch-time one.
+        request.step_models.clear();
+        serving.model_id = "switched-model".to_string();
+        serving.provider_id = "mock".to_string();
+        let (provider, model) = engine.summary_provider(&request, &serving, &current).await;
+        assert_eq!(provider.id(), "mock");
+        assert_eq!(model, "switched-model");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
     /// The execute loop completes against a stub provider with no tools.
     #[tokio::test]
     async fn execute_with_mock_provider() {
@@ -692,12 +901,130 @@ mod execute_tests {
             user_message: "hi".to_string(),
             resume_from: None,
             auto_fallbacks: Vec::new(),
+            step_models: Vec::new(),
+            monthly_pressure: 0.0,
         };
         let outcome = engine.execute(request).await.expect("execute");
         assert_eq!(outcome.status, RunStatus::Completed);
         assert_eq!(outcome.text, "hello");
         assert_eq!(outcome.steps, 1);
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// An extension is persisted from the engine's `Budget`, never from a
+    /// caller-supplied JSON blob.
+    #[tokio::test]
+    async fn an_extended_budget_is_persisted_from_the_engine() {
+        let dir = std::env::temp_dir().join(format!("mixd-budget-test-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(Storage::open(&dir).await.expect("open storage"));
+        let secrets = Arc::new(mixd_storage::SecretStore::new());
+        let engine = Arc::new(RunEngine::with_storage(storage.clone(), secrets));
+        let conversation_id = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES (?, ?, '{}')")
+            .bind(conversation_id.to_string())
+            .bind(mixd_storage::records::SINGLE_USER_ID)
+            .execute(storage.pool())
+            .await
+            .expect("insert conversation");
+        let run_id = RunId::new_v4();
+        sqlx::query(
+            "INSERT INTO runs (id, owner_id, conversation_id, request_key, data) \
+             VALUES (?, ?, ?, ?, '{}')",
+        )
+        .bind(run_id.to_string())
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(conversation_id.to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(storage.pool())
+        .await
+        .expect("insert run");
+
+        let mut budget = Budget::for_mode(Mode::Agent);
+        assert!(budget.extend());
+        engine.persist_budget(run_id, &budget).await;
+
+        let (raw,): (String,) = sqlx::query_as("SELECT data FROM runs WHERE id = ?")
+            .bind(run_id.to_string())
+            .fetch_one(storage.pool())
+            .await
+            .expect("read run");
+        let data: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(data["budget"], budget.to_json());
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn an_lru_ledger_evicts_the_least_recently_used_run() {
+        let mut ledger = SnapshotLedger::default();
+        let ids: Vec<RunId> = (0..helpers::MAX_SNAPSHOT_RUNS + 2)
+            .map(|_| RunId::new_v4())
+            .collect();
+        for id in &ids {
+            ledger.entry(*id);
+        }
+        assert_eq!(ledger.len(), helpers::MAX_SNAPSHOT_RUNS);
+        assert_eq!(
+            ledger.front_id(),
+            Some(ids[2]),
+            "the two oldest were evicted"
+        );
+
+        // Touching the oldest promotes it; the next eviction must pick the
+        // new oldest, never the run that was just used.
+        ledger.entry(ids[2]);
+        assert_eq!(ledger.front_id(), Some(ids[3]));
+        assert!(ledger.get(ids[2]).is_some());
+    }
+
+    #[test]
+    fn a_reverted_run_is_removed_and_stale_snapshots_expire() {
+        let mut ledger = SnapshotLedger::default();
+        let id = RunId::new_v4();
+        ledger.entry(id).push(FileSnapshot {
+            path: std::path::PathBuf::from("a.rs"),
+            previous: Some(b"before".to_vec()),
+        });
+        assert!(ledger.get(id).is_some());
+        ledger.remove(id);
+        assert!(ledger.get(id).is_none());
+
+        let stale = RunId::new_v4();
+        ledger.entry(stale);
+        ledger.entries.back_mut().unwrap().1 =
+            Instant::now() - helpers::SNAPSHOT_TTL - Duration::from_secs(1);
+        ledger.drop_stale(Instant::now());
+        assert_eq!(ledger.len(), 0, "snapshots past the undo window must go");
+    }
+
+    #[test]
+    fn re_editing_a_run_after_the_ttl_keeps_its_undo_history() {
+        let mut ledger = SnapshotLedger::default();
+        let id = RunId::new_v4();
+        ledger.entry(id).push(FileSnapshot {
+            path: std::path::PathBuf::from("a.rs"),
+            previous: Some(b"before".to_vec()),
+        });
+        // Simulate a pause longer than the undo window between two edits.
+        ledger.entries.back_mut().unwrap().1 =
+            Instant::now() - helpers::SNAPSHOT_TTL - Duration::from_secs(1);
+
+        // `entry` used to call `drop_stale` first, which removed this run's only
+        // snapshot before it had a chance to refresh the stamp.
+        ledger.entry(id).push(FileSnapshot {
+            path: std::path::PathBuf::from("b.rs"),
+            previous: Some(b"before b".to_vec()),
+        });
+        let files = ledger
+            .get(id)
+            .expect("undo history must survive a long pause");
+        assert_eq!(files.len(), 2, "both edits must still be revertible");
+        assert!(files.iter().any(|f| f.path.ends_with("a.rs")));
+        assert!(files.iter().any(|f| f.path.ends_with("b.rs")));
     }
 }
 

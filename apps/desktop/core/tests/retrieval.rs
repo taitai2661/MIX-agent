@@ -153,6 +153,41 @@ fn ids(hits: &[mixd_core::retrieval::MemoryHit]) -> Vec<&str> {
     hits.iter().map(|hit| hit.id.as_str()).collect()
 }
 
+/// A short/CJK query cannot use the trigram index. When the store is too big
+/// for the un-indexed full scan, recall must say so instead of returning an
+/// empty block that looks like "no memories".
+#[tokio::test]
+async fn a_large_store_marks_an_unindexed_full_scan_as_degraded() {
+    let storage = temp_storage().await;
+    let updated = Utc::now().to_rfc3339();
+    let mut tx = storage.pool().begin().await.expect("begin");
+    for i in 0..2_001 {
+        let data = serde_json::json!({ "title": "T", "content": "alpha beta" });
+        sqlx::query(
+            "INSERT INTO memories (id, owner_id, data, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(format!("row-{i}"))
+        .bind(mixd_storage::records::SINGLE_USER_ID)
+        .bind(data.to_string())
+        .bind(&updated)
+        .bind(&updated)
+        .execute(&mut *tx)
+        .await
+        .expect("insert memory");
+    }
+    tx.commit().await.expect("commit");
+
+    let block = mixd_core::retrieval::retrieve_all(&storage, "改善")
+        .await
+        .expect("retrieve");
+    assert!(block.memories.is_empty(), "no row matches the query");
+    assert!(
+        block.degraded,
+        "a skipped unindexed full scan must be reported to the caller"
+    );
+}
+
 /// Spec §5.2's promise that a vector is additive: a query phrased so that it
 /// shares no word with the memory it means still returns that memory, while
 /// the lexical-only entry point — what the app served before Phase 1 —

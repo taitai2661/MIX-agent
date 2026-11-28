@@ -1,5 +1,12 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, MessagesSquare, ShieldCheck, ShieldX } from "lucide-react";
+import {
+  Activity,
+  Clock3,
+  MessagesSquare,
+  ShieldCheck,
+  ShieldX,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { t, tf } from "@/lib/i18n";
 import { relativeTime } from "@/lib/format";
@@ -18,9 +25,16 @@ import {
 } from "@/components/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import type { PendingApprovalView } from "@/lib/types";
 import { ApprovalDiffView } from "@/features/chat/ApprovalDiffView";
+import { CommandRiskNotice } from "@/features/chat/CommandRiskNotice";
 import {
   ApprovalCountdown,
   useApprovalRemaining,
@@ -72,13 +86,26 @@ function ApprovalRow({
   const setApprovalsOpen = useUi((s) => s.setApprovalsOpen);
   const remaining = useApprovalRemaining(approval.expires_at);
   const expired = remaining === 0;
+  const [acknowledged, setAcknowledged] = useState(false);
+  const dangerous = approval.risk?.level === "dangerous";
 
+  const extend = useMutation({
+    mutationFn: (seconds: number) =>
+      api.extendApproval({ id: approval.approval_id, seconds }),
+    onSuccess: () => {
+      recordUxEvent("approval_extended", { location });
+      void queryClient.invalidateQueries({
+        queryKey: PENDING_APPROVALS_QUERY_KEY,
+      });
+    },
+  });
   const decide = useMutation({
     mutationFn: (input: {
       id: string;
       grant: boolean;
       remember: boolean;
       rememberSession?: boolean;
+      acknowledgeRisk?: boolean;
     }) => api.decideApproval(input),
     onSuccess: (_result, input) => {
       recordUxEvent("approval_decided", {
@@ -143,8 +170,8 @@ function ApprovalRow({
                 from the other surface and silently selects a different one. */}
             <Button
               variant="ghost"
-              size="sm"
-              className="h-5 px-1.5 text-2xs text-brand"
+              size="xs"
+              className="px-1.5 text-brand"
               onClick={() => openThread(false)}
             >
               <MessagesSquare size={11} aria-hidden="true" />
@@ -152,8 +179,8 @@ function ApprovalRow({
             </Button>
             <Button
               variant="ghost"
-              size="sm"
-              className="h-5 px-1.5 text-2xs text-brand"
+              size="xs"
+              className="px-1.5 text-brand"
               onClick={() => openThread(true)}
             >
               <Activity size={11} aria-hidden="true" />
@@ -162,6 +189,12 @@ function ApprovalRow({
           </>
         )}
       </div>
+
+      <CommandRiskNotice
+        risk={approval.risk}
+        acknowledged={acknowledged}
+        onAcknowledgedChange={dangerous ? setAcknowledged : undefined}
+      />
 
       <div className="my-1">
         <ApprovalDiffView
@@ -179,11 +212,33 @@ function ApprovalRow({
       )}
 
       <Row align="end">
-        {decide.isError && (
+        {(decide.isError || extend.isError) && (
           <span className="mr-auto">
-            <ErrorBadge error={decide.error} />
+            <ErrorBadge error={extend.error ?? decide.error} />
           </span>
         )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              disabled={disabled || extend.isPending}
+              title={t("承認の期限を延長します")}
+            >
+              <Clock3 size={12} aria-hidden="true" /> {t("+5分")}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => extend.mutate(5 * 60)}>
+              {t("5分延長")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => extend.mutate(15 * 60)}>
+              {t("15分延長")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => extend.mutate(60 * 60)}>
+              {t("1時間延長")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           size="sm"
           disabled={disabled}
@@ -197,42 +252,47 @@ function ApprovalRow({
         >
           <ShieldX size={12} /> {t("拒否")}
         </Button>
-        <Button
-          size="sm"
-          disabled={disabled}
-          onClick={() =>
-            decide.mutate({
-              id: approval.approval_id,
-              grant: true,
-              remember: false,
-              rememberSession: true,
-            })
-          }
-        >
-          <ShieldCheck size={12} /> {t("このセッションで許可")}
-        </Button>
-        <Button
-          size="sm"
-          disabled={disabled}
-          onClick={() =>
-            decide.mutate({
-              id: approval.approval_id,
-              grant: true,
-              remember: true,
-            })
-          }
-        >
-          {t("常に許可")}
-        </Button>
+        {!dangerous && (
+          <>
+            <Button
+              size="sm"
+              disabled={disabled}
+              onClick={() =>
+                decide.mutate({
+                  id: approval.approval_id,
+                  grant: true,
+                  remember: false,
+                  rememberSession: true,
+                })
+              }
+            >
+              <ShieldCheck size={12} /> {t("このセッションで許可")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={disabled}
+              onClick={() =>
+                decide.mutate({
+                  id: approval.approval_id,
+                  grant: true,
+                  remember: true,
+                })
+              }
+            >
+              {t("常に許可")}
+            </Button>
+          </>
+        )}
         <Button
           variant="primary"
           size="sm"
-          disabled={disabled}
+          disabled={disabled || (dangerous && !acknowledged)}
           onClick={() =>
             decide.mutate({
               id: approval.approval_id,
               grant: true,
               remember: false,
+              ...(dangerous ? { acknowledgeRisk: true } : {}),
             })
           }
         >

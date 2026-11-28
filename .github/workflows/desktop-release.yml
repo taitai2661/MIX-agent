@@ -25,6 +25,10 @@ name: desktop-release
 # Windows installer is unsigned, so Gatekeeper/SmartScreen warnings remain.
 # That is independent of the updater signature above, which authenticates the
 # update payload itself.
+#
+# This is the SOLE creator of the GitHub Release on v* tags: the `release` job
+# below owns the notes body and all desktop assets. `publish-store.yml` (called
+# by `release.yml`) only uploads store assets to that existing release.
 
 on:
   push:
@@ -51,34 +55,30 @@ env:
 jobs:
   preflight:
     name: Require green CI for the tagged SHA
-    if: github.event_name == 'push'
+    # Every publishing path needs CI approval: tag pushes and an explicit
+    # manual dispatch with dry_run=false. Ungated dry-runs stay allowed.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
       contents: read
     steps:
-      - name: Check the CI conclusion
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
-            --commit "$GITHUB_SHA" --limit 1 --json conclusion,status,url)"
-          echo "$runs"
-          conclusion="$(printf '%s' "$runs" | jq -r '.[0].conclusion // ""')"
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::CI for $GITHUB_SHA is '$conclusion'. Refusing to publish installers."
-            exit 1
-          fi
+      # A green pull_request run on a feature branch must not authorize a
+      # release: require completed push-to-main runs for ci.yml and
+      # validate-release.yml on this exact tagged SHA.
+      - uses: ./.github/actions/require-green-ci
 
   bundle:
     name: ${{ matrix.target }}
     needs: [preflight]
-    # `preflight` is skipped for workflow_dispatch; that must not skip bundling.
+    # A dry-run may build without CI approval; a manual publish must not. Only
+    # accept a skipped preflight for an explicitly dry dispatch.
     if: >
       always() &&
-      (needs.preflight.result == 'success' || needs.preflight.result == 'skipped')
+      (needs.preflight.result == 'success' ||
+       (needs.preflight.result == 'skipped' &&
+        github.event_name == 'workflow_dispatch' && inputs.dry_run == true))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -104,6 +104,24 @@ jobs:
           # win-arm64, and Linux ARM64 Desktop installers.
 
     steps:
+      # A manual publish must name an exact release tag; without this check a
+      # typo (or a string with path separators) could become a checkout ref or
+      # a release name. Dry-runs may still pass a branch name such as `main`.
+      # The `desktop-` prefix is stripped before applying the strict vX.Y.Z
+      # shape used by the release notes path.
+      - name: Validate requested release tag
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version_tag="${RELEASE_TAG#desktop-}"
+          if [[ ! "$version_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::inputs.tag must be a release tag like v0.6.0 or desktop-v0.6.0; got '$RELEASE_TAG'."
+            exit 1
+          fi
+
       # workflow_dispatch builds the tag passed as `inputs.tag`; tag pushes
       # build github.ref. Without this, the `tag` input would be accepted but
       # never used.
@@ -150,6 +168,9 @@ jobs:
           # is disabled (COREPACK_ENABLE_AUTO_PIN=0). Drop `version:` once CI
           # runs `corepack enable` + `corepack install` instead.
           version: "10.11.0"
+      - uses: ./.github/actions/cache-pnpm-store
+        with:
+          lockfile: apps/desktop/pnpm-lock.yaml
 
       # Tauri/WebKitGTK needs these to build and to package .deb / .AppImage.
       # NOTE: jobs stay on ubuntu-22.04 (not 24.04): WebKitGTK/AppIndicator
@@ -177,30 +198,29 @@ jobs:
         uses: ./.github/actions/prefetch-tauri-windows-tools
 
       # Developer ID credentials are optional: without them the build keeps the
-      # ad-hoc signature used for the beta. When the secrets are present they
-      # are exported for the build step, and Tauri signs/notarizes the bundle.
-      - name: Configure optional Apple signing
+      # ad-hoc signature used for the beta. The secrets are passed directly to
+      # the steps that need them via `env:` below; never write them to
+      # $GITHUB_ENV, where every later step and debug logs can see them.
+      - name: Check optional Apple signing configuration
         if: runner.os == 'macOS'
         shell: bash
         env:
           IN_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           IN_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           IN_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          IN_APPLE_ID: ${{ secrets.APPLE_ID }}
-          IN_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          IN_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           if [ -z "${IN_APPLE_CERTIFICATE:-}" ]; then
             echo "Apple signing secrets are not configured; keeping the ad-hoc build."
             exit 0
           fi
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            value="$(printenv "IN_$name" || true)"
-            if [ -n "$value" ]; then
-              echo "$name=$value" >> "$GITHUB_ENV"
-            fi
-          done
+          # A partial setup fails deep inside `tauri build` with an opaque
+          # error; reject it here instead.
+          if [ -z "${IN_APPLE_CERTIFICATE_PASSWORD:-}" ] || [ -z "${IN_APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "::error::APPLE_CERTIFICATE is set but APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY are not; refusing a partial signing setup."
+            exit 1
+          fi
+          echo "Apple Developer ID signing credentials are configured."
 
       # `tauri build` runs beforeBuildCommand (the Vite UI build) exactly once;
       # there is no browser runtime fetch step any more.
@@ -223,6 +243,13 @@ jobs:
           # .sig files and the update would be rejected by every client.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Optional Developer ID signing: injected per step, not via GITHUB_ENV.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       # Fail closed on a missing or invalid macOS bundle signature: Apple
       # Silicon reports an unsigned copied app as damaged. The browser is a
@@ -231,6 +258,9 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: apps/desktop
         shell: bash
+        env:
+          # Mirrors the build step's optional signing configuration.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
           app="target/${{ matrix.target }}/release/bundle/macos/MIX-agent Desktop.app"
@@ -261,6 +291,43 @@ jobs:
             spctl --assess --type execute --verbose=4 "$app"
             xcrun stapler validate "$app"
           fi
+
+      # Signature/architecture checks prove the bundle is well-formed; they do
+      # not prove the binary can start. `--doctor` exits before the WebView and
+      # exercises the data directory, database and secret backend, so it is the
+      # cheapest way to catch a broken bundle before publishing it.
+      - name: Installed-binary doctor smoke test
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          MIX_DATA_DIR: ${{ runner.temp }}/mix-agent-smoke
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            macOS)
+              bin="target/${{ matrix.target }}/release/bundle/macos/MIX-agent Desktop.app/Contents/MacOS/mix-agent-desktop"
+              ;;
+            Windows)
+              bin="target/${{ matrix.target }}/release/mix-agent-desktop.exe"
+              ;;
+            *)
+              bin="target/${{ matrix.target }}/release/mix-agent-desktop"
+              ;;
+          esac
+          test -x "$bin" || test -f "$bin"
+          out="$("$bin" --doctor --json)"
+          echo "$out"
+          echo "$out" | node -e '
+          let raw = "";
+          process.stdin.on("data", (chunk) => (raw += chunk)).on("end", () => {
+            const report = JSON.parse(raw);
+            if (report.ok !== true || report.data_dir_writable !== true) {
+              console.error(report);
+              process.exit(1);
+            }
+            console.log("doctor ok:", report.version);
+          });
+          '
 
       # Stage installers *and* the updater payloads under the exact names
       # latest.json advertises. Every updater payload must have a matching
@@ -423,10 +490,19 @@ jobs:
           retention-days: 14
 
   release:
-    needs: [bundle, checksums]
+    needs: [preflight, bundle, checksums]
+    # Sole creator of the GitHub Release on v* / desktop-v* tags. Keep the
+    # notes file as `body_path` so the published body is always the reviewed
+    # docs/release-notes-<tag>.md, regardless of which workflow touches the
+    # release first. Other workflows only attach assets to what we create.
     # Tag pushes publish. Manual runs are packaging dry-runs by default; set
     # dry_run=false explicitly to create/update a manual-download GitHub Release.
-    if: startsWith(github.ref, 'refs/tags/desktop-v') || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+    # Every publishing path must clear the preflight gate.
+    if: >
+      (startsWith(github.ref, 'refs/tags/desktop-v') ||
+       startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)) &&
+      needs.preflight.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -437,6 +513,20 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
+      # Re-check the tag here as well as in `bundle`: a single-job re-run must
+      # not be able to publish an unvalidated `inputs.tag`.
+      - name: Validate requested release tag
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version_tag="${RELEASE_TAG#desktop-}"
+          if [[ ! "$version_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::inputs.tag must be a release tag like v0.6.0 or desktop-v0.6.0; got '$RELEASE_TAG'."
+            exit 1
+          fi
       # Release body comes from the checked-out notes for this tag. The
       # fallback still carries the beta warning so a missing notes file cannot
       # publish a Release that looks stable.

@@ -444,6 +444,30 @@ fn sanitize(name: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Process-global environment overrides must be restored even when a test
+    /// panics, or parallel tests in this binary inherit the value.
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn unique_folder_picks_first_available() {
         let parent = std::env::temp_dir().join(format!("mixd-unique-{}", uuid::Uuid::new_v4()));
@@ -486,10 +510,10 @@ mod tests {
 
     #[test]
     fn env_override_wins_for_the_projects_root() {
-        // Safe in edition 2021; the test process is single-purpose here.
-        std::env::set_var("MIXD_PROJECTS_ROOT", "/tmp/mixd-root-test");
+        // The guard restores (or removes) the variable on drop, including on
+        // panic, so other tests in this binary never see the override.
+        let _guard = EnvVarGuard::set("MIXD_PROJECTS_ROOT", Path::new("/tmp/mixd-root-test"));
         let root = default_projects_root(Path::new("/data"));
-        std::env::remove_var("MIXD_PROJECTS_ROOT");
         assert_eq!(root, PathBuf::from("/tmp/mixd-root-test"));
     }
 }

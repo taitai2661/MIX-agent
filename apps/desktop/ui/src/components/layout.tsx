@@ -1,4 +1,11 @@
-import type { ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useId,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { ArrowLeft, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -136,22 +143,49 @@ export function Field({
   children: ReactNode;
   className?: string;
 }) {
+  const hintId = useId();
+  // A hint next to a control is invisible to screen readers unless it is
+  // referenced from the control. Safety-related hints (sandbox, budget,
+  // approval TTL) live here, so this cannot be left to visual proximity.
+  const described = hint
+    ? Children.map(children, (child) =>
+        isValidElement(child)
+          ? cloneElement(
+              child as ReactElement<{ "aria-describedby"?: string }>,
+              {
+                "aria-describedby": [
+                  (child.props as { "aria-describedby"?: string })[
+                    "aria-describedby"
+                  ],
+                  hintId,
+                ]
+                  .filter(Boolean)
+                  .join(" "),
+              },
+            )
+          : child,
+      )
+    : children;
   const control = label ? (
     <label className="flex flex-col gap-1.5">
       <span className="text-xs font-medium text-muted select-none">
         {label}
       </span>
-      {children}
+      {described}
     </label>
   ) : (
-    children
+    described
   );
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       {control}
       {/* Hints are `text-muted` everywhere (see docs/ui-conventions.md): the
           lighter `faint` tone is reserved for meta and timestamps. */}
-      {hint && <span className="text-xs text-muted">{hint}</span>}
+      {hint && (
+        <span id={hintId} className="text-xs text-muted">
+          {hint}
+        </span>
+      )}
     </div>
   );
 }
@@ -237,7 +271,7 @@ export function Kbd({
   return (
     <kbd
       className={cn(
-        "rounded-md border border-line border-b-line-strong bg-surface px-1.5 py-px font-mono text-2xs leading-4 text-muted shadow-xs",
+        "rounded-md border border-line border-b-line-strong bg-surface px-1.5 py-px font-mono text-2xs text-muted shadow-xs",
         className,
       )}
     >
@@ -245,6 +279,14 @@ export function Kbd({
     </kbd>
   );
 }
+
+/** The one "this row is the current one" treatment.
+ *
+ *  Nav rows, list rows and the thread list all showed the same state with the
+ *  same three utilities, copied by hand. Exported so a new list cannot drift
+ *  into `bg-active` or a bare tint. */
+export const SELECTED_ROW =
+  "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset";
 
 /** Nav-style row: icon + label, with a selected state.
  *
@@ -272,8 +314,7 @@ export function NavRow({
       className={cn(
         "flex h-row w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm",
         "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg active:bg-active",
-        selected &&
-          "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset",
+        selected && SELECTED_ROW,
         className,
       )}
       {...props}
@@ -326,8 +367,7 @@ export function ListRow({
       className={cn(
         "flex h-row w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 text-start",
         "text-muted transition-colors duration-100 hover:bg-hover hover:text-fg active:bg-active",
-        selected &&
-          "bg-brand-soft font-medium text-fg ring-1 ring-brand/20 ring-inset",
+        selected && SELECTED_ROW,
         className,
       )}
       {...props}

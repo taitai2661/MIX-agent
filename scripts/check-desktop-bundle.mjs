@@ -21,13 +21,21 @@ if (!fs.existsSync(root)) {
   process.exit(2);
 }
 
-const entries = fs
+// Count every asset the WebView actually loads: JS chunks, emitted CSS and
+// static files. Source maps are build/debug artifacts, not shipped payload, so
+// they are reported separately instead of being added to the budget.
+const files = fs
   .readdirSync(root)
-  .filter((name) => name.endsWith(".js"))
-  .map((name) => ({
-    name,
-    bytes: fs.statSync(path.join(root, name)).size,
-  }));
+  .map((name) => ({ name, path: path.join(root, name) }))
+  .filter((entry) => fs.statSync(entry.path).isFile())
+  .map((entry) => ({ name: entry.name, bytes: fs.statSync(entry.path).size }));
+const sourceMaps = files.filter((entry) => entry.name.endsWith(".map"));
+const entries = files.filter((entry) => !entry.name.endsWith(".map"));
+const jsEntries = entries.filter((entry) => entry.name.endsWith(".js"));
+const cssBytes = entries.filter((entry) => entry.name.endsWith(".css")).reduce((sum, e) => sum + e.bytes, 0);
+const otherBytes = entries
+  .filter((entry) => !entry.name.endsWith(".js") && !entry.name.endsWith(".css"))
+  .reduce((sum, e) => sum + e.bytes, 0);
 const total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
 
 // Read the entry from index.html instead of matching `index-*.js`. A lazy
@@ -40,12 +48,16 @@ const entryPath =
   html.match(/<script[^>]*\btype="module"[^>]*\bsrc="([^"]+\.js)"/i)?.[1] ??
   html.match(/<script[^>]*\bsrc="([^"]+\.js)"/i)?.[1];
 const main = entryPath
-  ? entries.find((entry) => entry.name === path.basename(entryPath))
+  ? jsEntries.find((entry) => entry.name === path.basename(entryPath))
   : undefined;
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(1)} kB`;
 console.log(`bundle budget: initial ${main ? kb(main.bytes) : "missing"}`);
-console.log(`bundle budget: total ${kb(total)}`);
+console.log(
+  `bundle budget: total ${kb(total)} ` +
+    `(JS ${kb(total - cssBytes - otherBytes)}, CSS ${kb(cssBytes)}, other ${kb(otherBytes)}; ` +
+    `excluded ${sourceMaps.length} source map(s), ${kb(sourceMaps.reduce((sum, e) => sum + e.bytes, 0))})`,
+);
 
 let failed = false;
 if (!main) {
@@ -61,7 +73,7 @@ if (!main) {
 }
 if (total > TOTAL_BUDGET) {
   console.error(
-    `bundle budget: total JS ${kb(total)} exceeds ${kb(TOTAL_BUDGET)}`,
+    `bundle budget: total emitted assets ${kb(total)} exceeds ${kb(TOTAL_BUDGET)}`,
   );
   failed = true;
 }

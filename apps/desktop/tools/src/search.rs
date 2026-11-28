@@ -11,9 +11,11 @@
 //! failure modes: a bad pattern should fail loudly, whereas a search with no
 //! hits is a normal answer.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use ignore::WalkBuilder;
@@ -84,6 +86,66 @@ pub fn workspace_entries(root: &Path) -> Vec<ignore::DirEntry> {
         .flatten()
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .collect()
+}
+
+/// How long a walked file list is reused. Writes made through the agent
+/// invalidate the cache immediately (`invalidate_walk_cache`), so the TTL only
+/// bounds how long an external change (an editor, a build script) can stay
+/// invisible; five seconds is short enough that a retry sees it.
+const WALK_CACHE_TTL: Duration = Duration::from_secs(5);
+
+struct CachedWalk {
+    at: Instant,
+    entries: Arc<Vec<PathBuf>>,
+}
+
+static WALK_CACHE: OnceLock<Mutex<HashMap<(PathBuf, bool), CachedWalk>>> = OnceLock::new();
+
+fn walk_cache() -> &'static Mutex<HashMap<(PathBuf, bool), CachedWalk>> {
+    WALK_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop every cached walk. Called after `edit` / `files` / `terminal` changes
+/// something so the next `grep` or `glob` sees the new state immediately
+/// instead of waiting for the TTL.
+pub fn invalidate_walk_cache() {
+    if let Ok(mut cache) = walk_cache().lock() {
+        cache.clear();
+    }
+}
+
+/// File paths under `start`, filtered by the shared walk configuration.
+fn cached_files(start: &Path, hidden: bool) -> Arc<Vec<PathBuf>> {
+    let key = (start.to_path_buf(), hidden);
+    if let Ok(cache) = walk_cache().lock() {
+        if let Some(cached) = cache.get(&key) {
+            if cached.at.elapsed() < WALK_CACHE_TTL {
+                return cached.entries.clone();
+            }
+        }
+    }
+    let entries: Vec<PathBuf> = walker(start, hidden)
+        .build()
+        .flatten()
+        .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|entry| entry.path().to_path_buf())
+        .collect();
+    let entries = Arc::new(entries);
+    if let Ok(mut cache) = walk_cache().lock() {
+        // Bound the map: a user hopping across many subdirectories should not
+        // turn this into an unbounded path leak.
+        if cache.len() > 32 {
+            cache.clear();
+        }
+        cache.insert(
+            key,
+            CachedWalk {
+                at: Instant::now(),
+                entries: entries.clone(),
+            },
+        );
+    }
+    entries
 }
 
 /// Shared walk configuration: honour ignore files, stay inside the workspace.
@@ -204,20 +266,24 @@ impl Tool for GlobTool {
         let (hits, truncated) = tokio::task::spawn_blocking(move || {
             let mut found: Vec<GlobMatch> = Vec::new();
             let mut truncated = false;
-            for entry in walker(&start, hidden).build().flatten() {
-                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            // Reuse one walk across the several `glob` calls a Run usually
+            // makes. The cache is invalidated by every write, so this cannot
+            // hide a file the agent just created.
+            let files = cached_files(&start, hidden);
+            for path in files.iter() {
+                let name = path
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if !matcher.matches(&name) && !matcher.matches(&relative_to(&start, path)) {
                     continue;
                 }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if !matcher.matches(&name) && !matcher.matches(&relative_to(&start, entry.path())) {
-                    continue;
-                }
-                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
                 if size > MAX_FILE_BYTES {
                     continue;
                 }
                 found.push(GlobMatch {
-                    path: entry.path().to_string_lossy().to_string(),
+                    path: path.to_string_lossy().to_string(),
                     is_dir: false,
                     size,
                 });
@@ -372,12 +438,7 @@ impl Tool for GrepTool {
             let entries: Vec<PathBuf> = if start.is_file() {
                 vec![start.clone()]
             } else {
-                walker(&start, false)
-                    .build()
-                    .flatten()
-                    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                    .map(|e| e.path().to_path_buf())
-                    .collect()
+                cached_files(&start, false).as_ref().clone()
             };
             'files: for path in entries {
                 let name = path.file_name().map(|n| n.to_string_lossy().to_string());
@@ -526,6 +587,30 @@ mod tests {
         std::fs::write(dir.join("node_modules/dep.js"), "todo!();\n").unwrap();
         std::fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn a_write_is_visible_after_invalidation_not_before() {
+        let dir = fixture("cache");
+        invalidate_walk_cache();
+        let first = cached_files(&dir, false);
+        assert!(first.iter().any(|path| path.ends_with("main.rs")));
+
+        let created = dir.join("src/new.rs");
+        std::fs::write(&created, "fn new() {}\n").unwrap();
+        let cached = cached_files(&dir, false);
+        assert!(
+            !cached.iter().any(|path| path.ends_with("new.rs")),
+            "the second call should reuse the walk inside the TTL"
+        );
+
+        invalidate_walk_cache();
+        let fresh = cached_files(&dir, false);
+        assert!(
+            fresh.iter().any(|path| path.ends_with("new.rs")),
+            "an explicit invalidation must expose the new file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

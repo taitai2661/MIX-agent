@@ -22,6 +22,7 @@ import { useActiveRoot } from "@/lib/queries";
 import { describeToolCall, type ToolActivity } from "@/lib/runEvents";
 import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
+import { useConfirm } from "@/components/ui/dialog";
 import { ErrorBadge, payloadBlock } from "@/components/shared";
 import { TerminalResultView } from "./TerminalResultView";
 import { buildDiffFromArgs } from "./ApprovalDiffView";
@@ -98,6 +99,7 @@ export const InlineToolItem = memo(function InlineToolItem({
   const setGitDiffPath = useUi((s) => s.setGitDiffPath);
   const openBrowserPanel = useUi((s) => s.openBrowserPanel);
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   const handleOpenInChanges = (path: string) => {
     setGitDiffPath(path);
@@ -106,7 +108,13 @@ export const InlineToolItem = memo(function InlineToolItem({
 
   const handleDiscard = async (path: string) => {
     if (!activeRoot) return;
-    if (!window.confirm(tf("「{path}」の変更を元に戻しますか？", { path })))
+    if (
+      !(await confirm({
+        title: tf("「{path}」の変更を元に戻しますか？", { path }),
+        confirmLabel: t("元に戻す"),
+        tone: "danger",
+      }))
+    )
       return;
     setBusy(true);
     try {
@@ -140,7 +148,7 @@ export const InlineToolItem = memo(function InlineToolItem({
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="group rounded-lg border border-line bg-surface/90 text-xs shadow-xs transition-colors hover:border-line-strong"
+      className="group rounded-lg border border-line bg-surface text-xs shadow-xs transition-colors hover:border-line-strong"
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-hover">
         <Icon size={13} className="shrink-0 text-faint" aria-hidden="true" />
@@ -181,13 +189,13 @@ export const InlineToolItem = memo(function InlineToolItem({
       </summary>
 
       {hasDetail && (
-        <div className="flex flex-col gap-2 border-t border-line bg-inset/40 p-2.5">
+        <div className="flex flex-col gap-2 border-t border-line bg-inset p-2.5">
           {tool.name === "browser" && (
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => openBrowserPanel("user")}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover hover:text-fg"
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs text-muted hover:bg-hover hover:text-fg"
                 title={t("ブラウザ画面を開く")}
               >
                 <Globe size={10} />
@@ -221,7 +229,7 @@ export const InlineToolItem = memo(function InlineToolItem({
                     <button
                       type="button"
                       onClick={() => handleOpenInChanges(diffData.path!)}
-                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover hover:text-fg"
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs text-muted hover:bg-hover hover:text-fg"
                       title={t("差分パネルで開く")}
                     >
                       <ExternalLink size={10} />
@@ -231,7 +239,7 @@ export const InlineToolItem = memo(function InlineToolItem({
                       type="button"
                       disabled={busy}
                       onClick={() => handleDiscard(diffData.path!)}
-                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-danger hover:bg-danger/10 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs text-danger hover:bg-danger/10 disabled:opacity-50"
                       title={t("変更を破棄")}
                     >
                       <Undo2 size={10} />
@@ -271,6 +279,7 @@ export const InlineToolItem = memo(function InlineToolItem({
           )}
         </div>
       )}
+      {dialog}
     </details>
   );
 });

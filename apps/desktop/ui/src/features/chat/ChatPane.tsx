@@ -27,6 +27,7 @@ import { Composer, type DraftAttachment } from "./Composer";
 import { localRuntimeForModel } from "@/lib/localRuntime";
 import { recordUxEvent } from "@/lib/uxEvents";
 import { RunStatusBar } from "./RunStatusBar";
+import { SteeringQueue } from "./SteeringQueue";
 import { Transcript } from "./Transcript";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { ErrorBox } from "@/components/shared";
@@ -76,6 +77,12 @@ function ChatPaneBody() {
   const settings = useQuery({
     queryKey: SETTINGS_QUERY_KEY,
     queryFn: api.getSettings,
+    // `useSettingsForm()` edits this very cache entry in place with
+    // `staleTime: Infinity`. With the default (0) a view switch remounted this
+    // query, refetched the server row and silently discarded the user's
+    // in-flight settings draft before the autosave debounce fired.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   });
   // A temporary send that created its own conversation: once the run ends the
   // backend deletes that thread, so the composer has to let go of it too.
@@ -88,6 +95,16 @@ function ChatPaneBody() {
   // invalidations while a run settles) or by a re-render on every token.
   const recordedCompletions = useRef(new Set<string>());
   const recordedApprovals = useRef(new Set<string>());
+  // Steer's delayed refresh is tracked so unmounting cannot fire an
+  // invalidation against a conversation that is no longer on screen.
+  const steerRefreshTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (steerRefreshTimer.current !== null)
+        window.clearTimeout(steerRefreshTimer.current);
+    },
+    [],
+  );
 
   const activeModelId = modelId || "auto";
   // A new chat stays blank until its first send, even though the surface has
@@ -570,7 +587,10 @@ function ChatPaneBody() {
           if (activeConversationId) {
             // The engine folds it in at the next turn boundary and persists it
             // then; refresh once so the transcript shows the user turn.
-            window.setTimeout(() => {
+            if (steerRefreshTimer.current !== null)
+              window.clearTimeout(steerRefreshTimer.current);
+            steerRefreshTimer.current = window.setTimeout(() => {
+              steerRefreshTimer.current = null;
               void queryClient.invalidateQueries({
                 queryKey: ["messages", activeConversationId],
               });
@@ -661,6 +681,7 @@ function ChatPaneBody() {
         conversationId={liveConversationId}
         startedAt={liveRunStartedAt}
       />
+      <SteeringQueue conversationId={liveConversationId} />
       {(sendMessage.isError ||
         editMessage.isError ||
         projectError ||

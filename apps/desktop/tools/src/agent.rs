@@ -34,6 +34,16 @@ pub struct AgentProfile {
     pub model_id: Option<String>,
 }
 
+/// Token spend of one finished sub-run, reported separately from the
+/// parent's own budget. The child ran under its own limits; these numbers are
+/// aggregation-only and never deduct from the parent.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ChildUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+}
+
 /// A finished sub-run, handed back to the parent.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct DelegateResult {
@@ -43,6 +53,10 @@ pub struct DelegateResult {
     pub tool_calls: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Token spend of this sub-run alone. See [`ChildUsage`]: the parent
+    /// aggregates these for reporting, it does not share limits with them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ChildUsage>,
     /// Temporary worktree the sub-agent ran in, when the implementation keeps
     /// one. The built-in isolated delegate removes its worktree before
     /// returning, so it reports `None` and relies on `diff`/`changed_files`.
@@ -54,6 +68,21 @@ pub struct DelegateResult {
     pub diff: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changed_files: Vec<String>,
+    /// Whether the `diff` still applies cleanly on the parent workspace
+    /// (`git apply --check` at return time). `None` when there is no diff to
+    /// judge (read-only delegate, or isolation unavailable). The parent merges
+    /// deliberately — this flag is the confirmation input, not an auto-apply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mergeable: Option<bool>,
+    /// The base commit the isolated worktree was cut from, so the parent can
+    /// re-verify or cherry-pick the patch later.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_base: Option<String>,
+    /// The child's conclusion parsed as JSON when the caller supplied a
+    /// `schema`. `None` when no schema was given or the text was not valid
+    /// JSON — `text` always keeps the raw conclusion either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<serde_json::Value>,
 }
 
 /// Supplies the saved profiles. Implemented by the app shell.
@@ -169,8 +198,31 @@ impl Tool for AgentTool {
                 },
                 "tasks": {
                     "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Several independent tasks to run in parallel. Prefer this over repeated calls when the sub-tasks do not depend on each other."
+                    "items": {
+                        "anyOf": [
+                            { "type": "string" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "task": { "type": "string" },
+                                    "schema": {
+                                        "type": "object",
+                                        "description": "JSON Schema for this task's conclusion. Overrides the top-level `schema`."
+                                    }
+                                },
+                                "required": ["task"]
+                            }
+                        ]
+                    },
+                    "description": "Several independent tasks to run in parallel (at most 8 at a time). Prefer this over repeated calls when the sub-tasks do not depend on each other. A task may be a plain string or {task, schema}."
+                },
+                "schema": {
+                    "type": "object",
+                    "description": "JSON Schema for the sub-agent's conclusion. The task text asks for a single JSON value conforming to it, and a parsed copy is returned as `structured` (raw text stays in `text`). Applies to every task unless that task carries its own `schema`."
+                },
+                "auto_merge": {
+                    "type": "boolean",
+                    "description": "When true and `isolate` is on, the response adds `merge_ready` (every diff applies cleanly and no two tasks touched the same file) plus `merge_conflicts` listing overlapping files. Nothing is merged automatically either way; the parent applies the diffs deliberately."
                 },
                 "isolate": {
                     "type": "boolean",
@@ -222,15 +274,33 @@ impl Tool for AgentTool {
                 error: Some(format!("no agent profile named {name:?}")),
             });
         };
-        let mut tasks: Vec<String> = args
+        // A task is a plain string or { task, schema }. The top-level
+        // `schema` is the default for tasks that do not carry their own.
+        // Strings stay valid: older callers never sent objects.
+        let default_schema: Option<serde_json::Value> = args.get("schema").cloned();
+        let mut tasks: Vec<(String, Option<serde_json::Value>)> = args
             .get("tasks")
             .and_then(|v| v.as_array())
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|v| v.as_str())
-                    .map(|t| t.trim().to_string())
-                    .filter(|t| !t.is_empty())
+                    .filter_map(|v| {
+                        if let Some(text) = v.as_str() {
+                            let text = text.trim();
+                            if text.is_empty() {
+                                return None;
+                            }
+                            Some((text.to_string(), default_schema.clone()))
+                        } else {
+                            let text = v.get("task")?.as_str()?.trim();
+                            if text.is_empty() {
+                                return None;
+                            }
+                            let schema =
+                                v.get("schema").cloned().or_else(|| default_schema.clone());
+                            Some((text.to_string(), schema))
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -241,7 +311,7 @@ impl Tool for AgentTool {
                 .map(|t| t.trim())
                 .filter(|t| !t.is_empty())
             {
-                tasks.push(task.to_string());
+                tasks.push((task.to_string(), default_schema.clone()));
             }
         }
         if tasks.is_empty() {
@@ -249,6 +319,23 @@ impl Tool for AgentTool {
                 ok: false,
                 content: serde_json::json!({ "agent": profile.name }),
                 error: Some("task or tasks is required when delegating".to_string()),
+            });
+        }
+        // Concurrency chunking bounds how many sub-runs are *live*, but a
+        // caller could still ask for thousands of tasks and keep this Run busy
+        // (and the provider bill climbing) for hours. Cap the total too.
+        if tasks.len() > MAX_TOTAL_DELEGATES {
+            return Ok(ToolResult {
+                ok: false,
+                content: serde_json::json!({
+                    "agent": profile.name,
+                    "requested_tasks": tasks.len(),
+                    "max_tasks": MAX_TOTAL_DELEGATES,
+                }),
+                error: Some(format!(
+                    "too many tasks: {} requested, at most {MAX_TOTAL_DELEGATES} per delegation; split the work into smaller batches",
+                    tasks.len()
+                )),
             });
         }
 
@@ -260,24 +347,34 @@ impl Tool for AgentTool {
             .get("isolate")
             .and_then(|value| value.as_bool())
             .unwrap_or(tasks.len() > 1);
+        // Confirmation flow for worktree fan-out: report whether the collected
+        // diffs are safe to apply, but never apply them here.
+        let auto_merge = args
+            .get("auto_merge")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
 
         if tasks.len() == 1 {
-            let task = tasks.remove(0);
-            return Ok(self.delegate_one(&ctx, profile, task, isolate).await);
+            let (task, schema) = tasks.remove(0);
+            return Ok(self
+                .delegate_one(&ctx, profile, task, schema, isolate)
+                .await);
         }
 
         // Fan-out: independent sub-tasks run at the same time. Each one still
         // owns its own context and budget, which is the point — a big
         // exploration split three ways costs one wall-clock wait, not three.
+        // Child budgets stay separate; the parent only aggregates the totals
+        // below for reporting, it never shares limits with them.
         use futures_util::StreamExt;
         let mut results: Vec<serde_json::Value> = Vec::with_capacity(tasks.len());
         let ctx_ref = &ctx;
         for chunk in tasks.chunks(MAX_PARALLEL_DELEGATES) {
             let mut in_flight = futures_util::stream::FuturesUnordered::new();
-            for task in chunk {
+            for (task, schema) in chunk {
                 in_flight.push(async move {
                     let outcome = self
-                        .delegate_one(ctx_ref, profile, task.clone(), isolate)
+                        .delegate_one(ctx_ref, profile, task.clone(), schema.clone(), isolate)
                         .await;
                     (task.clone(), outcome)
                 });
@@ -291,11 +388,76 @@ impl Tool for AgentTool {
             }
         }
         let any_failed = results.iter().any(|item| item.get("error").is_some());
+        // Separate aggregation of the children's own budgets: steps, tool
+        // calls and tokens are summed for the transcript, while the limits
+        // that produced them belonged to each sub-run alone.
+        let mut steps_total: u64 = 0;
+        let mut tool_calls_total: u64 = 0;
+        let mut input_tokens_total: u64 = 0;
+        let mut output_tokens_total: u64 = 0;
+        for item in &results {
+            steps_total =
+                steps_total.saturating_add(item.get("steps").and_then(|v| v.as_u64()).unwrap_or(0));
+            tool_calls_total = tool_calls_total.saturating_add(
+                item.get("tool_calls")
+                    .and_then(|v| v.as_array())
+                    .map(|calls| calls.len() as u64)
+                    .unwrap_or(0),
+            );
+            if let Some(usage) = item.get("usage") {
+                input_tokens_total = input_tokens_total.saturating_add(
+                    usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                );
+                output_tokens_total = output_tokens_total.saturating_add(
+                    usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                );
+            }
+        }
+        // Overlapping `changed_files` across isolated worktrees mean the diffs
+        // cannot all apply: flag them so the parent merges deliberately.
+        let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for item in &results {
+            if let Some(files) = item.get("changed_files").and_then(|v| v.as_array()) {
+                for file in files.iter().filter_map(|f| f.as_str()) {
+                    *seen.entry(file.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut merge_conflicts: Vec<String> = seen
+            .into_iter()
+            .filter(|(_, n)| *n > 1)
+            .map(|(f, _)| f)
+            .collect();
+        merge_conflicts.sort();
+        let merge_ready = auto_merge
+            && isolate
+            && merge_conflicts.is_empty()
+            && !results.is_empty()
+            && results
+                .iter()
+                .all(|item| item.get("mergeable") != Some(&serde_json::json!(false)));
+        let task_count = results.len();
         Ok(ToolResult {
             ok: !any_failed,
             content: serde_json::json!({
                 "agent": profile.name,
                 "results": results,
+                "child_budget": {
+                    "tasks": task_count,
+                    "steps_total": steps_total,
+                    "tool_calls_total": tool_calls_total,
+                    "input_tokens_total": input_tokens_total,
+                    "output_tokens_total": output_tokens_total,
+                    "total_tokens": input_tokens_total.saturating_add(output_tokens_total),
+                },
+                "merge_conflicts": merge_conflicts,
+                "merge_ready": merge_ready,
             }),
             error: any_failed.then(|| "one or more delegated tasks failed".to_string()),
         })
@@ -308,15 +470,33 @@ impl AgentTool {
         ctx: &ToolContext,
         profile: &AgentProfile,
         task: String,
+        schema: Option<serde_json::Value>,
         isolate: bool,
     ) -> ToolResult {
+        // A schema does not change how the sub-agent runs — it only appends a
+        // response contract to the task text, so runners without structured
+        // support still work and return plain text.
+        let effective = match &schema {
+            Some(schema) => format!(
+                "{task}\n\nRespond with a single JSON value conforming to this JSON Schema. \
+                 Output only the JSON, no prose outside it:\n{schema}"
+            ),
+            None => task,
+        };
         let outcome = if isolate {
-            self.runner.delegate_isolated(ctx, profile, &task).await
+            self.runner
+                .delegate_isolated(ctx, profile, &effective)
+                .await
         } else {
-            self.runner.delegate(ctx, profile, &task).await
+            self.runner.delegate(ctx, profile, &effective).await
         };
         match outcome {
-            Ok(result) => {
+            Ok(mut result) => {
+                // Best-effort structured copy: a child that ignored the
+                // contract still reports its raw text, never a new failure.
+                if schema.is_some() && result.structured.is_none() {
+                    result.structured = parse_structured(&result.text);
+                }
                 let failed = result.error.is_some();
                 ToolResult {
                     ok: !failed,
@@ -334,10 +514,43 @@ impl AgentTool {
     }
 }
 
-/// Delegates fan out at most this many at a time. Each sub-agent is a full Run
-/// with its own Tool calls, so an unbounded fan-out multiplies provider spend
-/// and local I/O.
-const MAX_PARALLEL_DELEGATES: usize = 4;
+/// Pull a JSON value out of a child's conclusion: raw JSON first, then a
+/// single fenced code block. Returns `None` for prose, which simply means the
+/// caller reads `text` instead of `structured`.
+fn parse_structured(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Some(value);
+    }
+    for fence in ["```json", "```"] {
+        if let Some(rest) = trimmed.strip_prefix(fence) {
+            // The text ends with the closing fence, so the first `rsplit`
+            // piece is empty — the payload is the one before it. Without a
+            // closing fence at all, try whatever follows the opener.
+            let inner = rest
+                .rsplit("```")
+                .nth(1)
+                .or(Some(rest))
+                .unwrap_or("")
+                .trim();
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(inner) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+/// Delegates fan out at most this many at a time (workflow-grade fan-out:
+/// eight parallel sub-runs). Each sub-agent is a full Run with its own Tool
+/// calls, so the fan-out stays bounded even though it is wider than before —
+/// unbounded delegation would multiply provider spend and local I/O.
+const MAX_PARALLEL_DELEGATES: usize = 8;
+
+/// Hard cap on the number of tasks in a single delegation, including chunks.
+/// `MAX_PARALLEL_DELEGATES` bounds concurrency; this bounds total work so a
+/// single Tool call cannot fan out into an unbounded number of sub-runs.
+const MAX_TOTAL_DELEGATES: usize = 32;
 
 #[cfg(test)]
 mod tests {
@@ -374,6 +587,28 @@ mod tests {
     }
 
     struct FailingRunner;
+
+    /// Returns its conclusion as raw JSON, for the `schema` path.
+    struct JsonRunner;
+
+    #[async_trait]
+    impl AgentRunner for JsonRunner {
+        async fn delegate(
+            &self,
+            _parent: &ToolContext,
+            profile: &AgentProfile,
+            _task: &str,
+        ) -> anyhow::Result<DelegateResult> {
+            Ok(DelegateResult {
+                agent: profile.name.clone(),
+                text: r#"{"answer": 42}"#.to_string(),
+                steps: 1,
+                tool_calls: Vec::new(),
+                error: None,
+                ..Default::default()
+            })
+        }
+    }
 
     #[async_trait]
     impl AgentRunner for FailingRunner {
@@ -555,6 +790,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fan_out_rejects_more_than_the_total_cap() {
+        let tool = AgentTool::new(Arc::new(StaticAgents(profiles())), Arc::new(EchoRunner));
+        let tasks: Vec<String> = (0..MAX_TOTAL_DELEGATES + 1)
+            .map(|i| format!("task-{i}"))
+            .collect();
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({ "agent": "explorer", "tasks": tasks }),
+            )
+            .await
+            .expect("invoke");
+        assert!(!result.ok, "unbounded fan-out must be refused");
+        assert_eq!(result.content["requested_tasks"], MAX_TOTAL_DELEGATES + 1);
+        assert_eq!(result.content["max_tasks"], MAX_TOTAL_DELEGATES);
+        assert!(result.error.unwrap().contains("at most 32 per delegation"));
+    }
+
+    #[tokio::test]
     async fn an_empty_profile_list_is_reported_clearly() {
         let tool = AgentTool::new(Arc::new(StaticAgents(Vec::new())), Arc::new(EchoRunner));
         let result = tool
@@ -563,5 +817,84 @@ mod tests {
             .expect("invoke");
         assert!(!result.ok);
         assert!(result.error.unwrap().contains("no agent profiles"));
+    }
+
+    #[tokio::test]
+    async fn a_schema_returns_a_parsed_structured_copy_alongside_text() {
+        let tool = AgentTool::new(Arc::new(StaticAgents(profiles())), Arc::new(JsonRunner));
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({
+                    "agent": "explorer",
+                    "task": "pick a number",
+                    "schema": { "type": "object" },
+                }),
+            )
+            .await
+            .expect("invoke");
+        assert!(result.ok, "{:?}", result.error);
+        assert_eq!(result.content["structured"]["answer"], 42);
+        assert!(
+            result.content["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("42")),
+            "raw text is always kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn prose_with_a_schema_reports_text_only() {
+        // A child that ignores the response contract is not a new failure:
+        // `structured` stays absent and the parent reads `text`.
+        let tool = AgentTool::new(Arc::new(StaticAgents(profiles())), Arc::new(EchoRunner));
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({
+                    "agent": "explorer",
+                    "task": "find the auth module",
+                    "schema": { "type": "object" },
+                }),
+            )
+            .await
+            .expect("invoke");
+        assert!(result.ok, "{:?}", result.error);
+        assert!(result.content.get("structured").is_none());
+    }
+
+    #[tokio::test]
+    async fn fan_out_aggregates_child_budgets_and_merge_state() {
+        let tool = AgentTool::new(Arc::new(StaticAgents(profiles())), Arc::new(EchoRunner));
+        let result = tool
+            .invoke(
+                ctx(),
+                serde_json::json!({
+                    "agent": "explorer",
+                    "tasks": [
+                        "first",
+                        { "task": "second", "schema": { "type": "string" } }
+                    ],
+                    "isolate": true,
+                    "auto_merge": true,
+                }),
+            )
+            .await
+            .expect("invoke");
+        assert!(result.ok, "{:?}", result.error);
+        let budget = &result.content["child_budget"];
+        assert_eq!(budget["tasks"], 2);
+        // EchoRunner reports 3 steps and one tool call per child.
+        assert_eq!(budget["steps_total"], 6);
+        assert_eq!(budget["tool_calls_total"], 2);
+        assert_eq!(result.content["merge_conflicts"], serde_json::json!([]));
+        assert_eq!(result.content["merge_ready"], true);
+    }
+
+    #[test]
+    fn structured_parsing_accepts_fenced_json() {
+        let value = parse_structured("```json\n{\"a\": 1}\n```").expect("fenced");
+        assert_eq!(value["a"], 1);
+        assert!(parse_structured("just prose").is_none());
     }
 }

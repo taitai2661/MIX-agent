@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileDiff, FilePlus2 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -152,37 +152,43 @@ export const DiffLines = memo(function DiffLines({
   lines,
   split = false,
   showLineNumbers = true,
+  hunkAction,
 }: {
   lines: DiffLine[];
   split?: boolean;
   /** Approval previews show a before/after excerpt whose absolute line
    *  numbers are unknown; rendering 1,2,3 there looked like a real location. */
   showLineNumbers?: boolean;
+  /** Per-hunk control (revert a hunk) rendered beside each @@ header. */
+  hunkAction?: (index: number) => ReactNode;
 }) {
   const splitRows = useMemo(
     () => (split ? buildSplitRows(lines) : []),
     [lines, split],
   );
 
+  let hunkCounter = 0;
   if (split) {
     return (
       <div className="overflow-x-auto rounded-lg border border-line bg-surface">
         <div className="min-w-max font-mono text-xs leading-5">
           {splitRows.map((row, i) => {
             if (row.isHunk) {
+              const index = hunkCounter++;
               return (
                 <div
                   key={i}
-                  className="border-y border-line bg-brand-soft px-3 py-0.5 text-2xs text-brand font-semibold select-none"
+                  className="flex items-center justify-between gap-2 border-y border-line bg-brand-soft px-3 py-0.5 text-2xs text-brand font-semibold select-none"
                 >
-                  {row.hunkText}
+                  <span className="min-w-0 truncate">{row.hunkText}</span>
+                  {hunkAction?.(index)}
                 </div>
               );
             }
             return (
               <div
                 key={i}
-                className="grid grid-cols-2 divide-x divide-line border-b border-line/40 last:border-b-0"
+                className="grid grid-cols-2 divide-x divide-line border-b border-line last:border-b-0"
               >
                 {/* Left (Old) */}
                 <div
@@ -225,8 +231,24 @@ export const DiffLines = memo(function DiffLines({
   return (
     <div className="overflow-x-auto rounded-lg border border-line">
       <div className="min-w-max font-mono text-xs leading-5">
-        {lines.map((line, i) =>
-          line.kind === "hunk" && !showLineNumbers ? null : (
+        {lines.map((line, i) => {
+          if (line.kind === "hunk" && !showLineNumbers) return null;
+          if (line.kind === "hunk") {
+            const index = hunkCounter++;
+            return (
+              <div
+                key={i}
+                className={cn(
+                  "flex items-center justify-between gap-2 border-y border-line px-2",
+                  LINE_TONE.hunk,
+                )}
+              >
+                <span className="min-w-0 truncate">{line.text}</span>
+                {hunkAction?.(index)}
+              </div>
+            );
+          }
+          return (
             <div
               key={i}
               className={cn(
@@ -235,7 +257,6 @@ export const DiffLines = memo(function DiffLines({
                   ? "grid-cols-[2.5rem_2.5rem_1fr]"
                   : "grid-cols-[1fr]",
                 LINE_TONE[line.kind],
-                line.kind === "hunk" && "border-y border-line",
               )}
             >
               {showLineNumbers && (
@@ -252,8 +273,8 @@ export const DiffLines = memo(function DiffLines({
                 {line.text}
               </span>
             </div>
-          ),
-        )}
+          );
+        })}
       </div>
     </div>
   );

@@ -27,7 +27,7 @@ SERVER = ROOT / "apps" / "server"
 
 # Current count after fixing the `reliability.profile` annotations and the
 # nullable row accesses this script was introduced with.
-BASELINE_WARNINGS = 29
+BASELINE_WARNINGS = 23
 
 
 def _max_warnings(argv: list[str]) -> int:

@@ -4,7 +4,20 @@
 //! pruning, private-index base commits, and worktree create/diff/cleanup.
 //! All git I/O is timeout-bounded and never buffers unbounded patches.
 
-//!
+/// The single base directory for every delegate checkout.
+///
+/// Both the startup pruner (`cleanup_stale_worktrees`) and the creator
+/// (`prepare_delegate_worktree`) must agree on this path. They used to disagree
+/// (`data_dir/worktrees` vs `dirs::data_dir()/APP_IDENTIFIER/worktrees`), so with
+/// a `MIX_DATA_DIR` override the pruner watched an empty directory while the
+/// creator leaked a checkout per fan-out. Both now derive from the same app-data
+/// directory (`crate::cli::data_dir()` honours `MIX_DATA_DIR`). The GUI also
+/// refuses to start via `cli::verify_data_dir` when its own resolver disagrees
+/// with that canonical path, so the pruner and the creator cannot diverge.
+fn worktrees_dir(app_data: &std::path::Path) -> std::path::PathBuf {
+    app_data.join("worktrees")
+}
+
 /// Remove delegate worktrees left behind by a crash or a killed process.
 ///
 /// The git metadata is pruned by `prepare_delegate_worktree` in the repository
@@ -12,7 +25,7 @@
 /// entries are touched so a delegate running in another window is safe.
 pub async fn cleanup_stale_worktrees(data_dir: &std::path::Path) {
     const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
-    let base = data_dir.join("worktrees");
+    let base = worktrees_dir(data_dir);
     let Ok(mut entries) = tokio::fs::read_dir(&base).await else {
         return;
     };
@@ -37,6 +50,73 @@ pub async fn cleanup_stale_worktrees(data_dir: &std::path::Path) {
 const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Same cap the transcript uses for a delegated patch.
 const DELEGATE_DIFF_LIMIT: usize = 128 * 1024;
+
+/// Pathspecs excluded from the delegate's `git add -A`.
+///
+/// A delegate base commit stages the *untracked* workspace so the child can see
+/// newly created files. `git add -A` also picked up `.env`, private keys and
+/// credential files, which then lived in the private git object store (and in
+/// the diff a parent is asked to merge). These exclusions shrink that blast
+/// radius. They are a best-effort deny-list, not a secret scanner: secrets
+/// already committed to the repository, or stored under an unusual name, are
+/// still reachable by the delegate.
+const SENSITIVE_PATHSPECS: &[&str] = &[
+    ":(exclude).env",
+    ":(exclude)*.env",
+    ":(exclude).env.*",
+    ":(exclude)*/.env",
+    ":(exclude)*/.env.*",
+    ":(exclude)**/.env",
+    ":(exclude)**/.env.*",
+    // A bare `*.pem` only matches the repository root: git pathspecs do not
+    // cross `/` without `**`. Without these, `config/tls.pem` and
+    // `keys/id_rsa` were staged into the delegate's private object store.
+    ":(exclude)*.pem",
+    ":(exclude)**/*.pem",
+    ":(exclude)*.key",
+    ":(exclude)**/*.key",
+    ":(exclude)*.p12",
+    ":(exclude)**/*.p12",
+    ":(exclude)*.pfx",
+    ":(exclude)**/*.pfx",
+    ":(exclude)*.keystore",
+    ":(exclude)**/*.keystore",
+    ":(exclude)*.jks",
+    ":(exclude)**/*.jks",
+    ":(exclude)*.ppk",
+    ":(exclude)**/*.ppk",
+    ":(exclude)id_rsa",
+    ":(exclude)**/id_rsa",
+    ":(exclude)id_ed25519",
+    ":(exclude)**/id_ed25519",
+    ":(exclude).npmrc",
+    ":(exclude)**/.npmrc",
+    ":(exclude).yarnrc",
+    ":(exclude)**/.yarnrc",
+    ":(exclude).pypirc",
+    ":(exclude)**/.pypirc",
+    ":(exclude).netrc",
+    ":(exclude)**/.netrc",
+    ":(exclude)credentials",
+    ":(exclude)credentials.json",
+    ":(exclude)credentials.*",
+    ":(exclude)**/credentials",
+    ":(exclude)**/credentials.json",
+    ":(exclude)**/credentials.*",
+    ":(exclude)token.json",
+    ":(exclude)**/token.json",
+    ":(exclude)tokens.json",
+    ":(exclude)**/tokens.json",
+];
+
+/// `git add -A` with the sensitive-file exclusions applied. Both the private
+/// index (base commit) and the worktree (collected diff) use this so the two
+/// trees never disagree about what was staged.
+fn add_all_args() -> Vec<&'static str> {
+    let mut args = vec!["add", "-A", "--", "."];
+    args.extend_from_slice(SENSITIVE_PATHSPECS);
+    args
+}
 
 fn git_command(cwd: &std::path::Path, args: &[&str]) -> tokio::process::Command {
     let mut command = tokio::process::Command::new("git");
@@ -147,7 +227,8 @@ pub(crate) async fn delegate_base_commit(root: &std::path::Path, head: &str) -> 
         if !read.status.success() {
             return None;
         }
-        let added = run_git_env(root, &["add", "-A"], &index_env).await.ok()?;
+        let add_args = add_all_args();
+        let added = run_git_env(root, &add_args, &index_env).await.ok()?;
         if !added.status.success() {
             return None;
         }
@@ -225,9 +306,9 @@ pub(crate) async fn prepare_delegate_worktree(
         .await
         .unwrap_or(head);
 
-    let base_dir = dirs::data_dir()?
-        .join(crate::APP_IDENTIFIER)
-        .join("worktrees");
+    // Shared with the startup pruner: a `MIX_DATA_DIR` override used to leave
+    // these checkouts invisible to cleanup.
+    let base_dir = worktrees_dir(&crate::cli::data_dir());
     if let Err(err) = tokio::fs::create_dir_all(&base_dir).await {
         tracing::warn!(?err, "could not create the delegate worktree directory");
         return None;
@@ -260,8 +341,10 @@ pub(crate) async fn collect_worktree_diff(
     worktree: &std::path::Path,
     base: &str,
 ) -> (Option<String>, Vec<String>) {
-    // Stage everything first so newly created files appear in the patch.
-    let _ = run_git(worktree, &["add", "-A"]).await;
+    // Stage everything first so newly created files appear in the patch, but
+    // leave .env / key material out of the object store and the returned diff.
+    let add_args = add_all_args();
+    let _ = run_git(worktree, &add_args).await;
     let changed = run_git(worktree, &["diff", "--cached", "--name-only", base])
         .await
         .ok()
@@ -298,5 +381,133 @@ pub(crate) async fn cleanup_delegate_worktree(root: &str, worktree: &std::path::
         .unwrap_or(false)
     {
         let _ = tokio::fs::remove_dir_all(worktree).await;
+    }
+}
+
+/// Confirmation input for the parent's merge decision: does `diff` still
+/// apply cleanly on `root`?
+///
+/// Read-only (`--check`): nothing is written either way. The caller keeps the
+/// temporary worktree's diff and asks the parent to apply it deliberately —
+/// this only reports whether that application would succeed at this instant.
+pub(crate) async fn check_patch_applies(root: &str, diff: &str) -> bool {
+    use tokio::io::AsyncWriteExt as _;
+
+    if diff.trim().is_empty() {
+        return true;
+    }
+    let mut command = git_command(std::path::Path::new(root), &["apply", "--check", "-"]);
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    // Take the pipe out first so the write and the wait below do not borrow
+    // `child` at the same time.
+    let stdin = child.stdin.take();
+    let status = match tokio::time::timeout(GIT_TIMEOUT, async move {
+        if let Some(mut stdin) = stdin {
+            // A bounded write: the diff itself was already capped at
+            // `DELEGATE_DIFF_LIMIT` when it was collected.
+            stdin.write_all(diff.as_bytes()).await.ok();
+        }
+        child.wait().await
+    })
+    .await
+    {
+        Ok(Ok(status)) => status,
+        _ => return false,
+    };
+    status.success()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_repo() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mix-worktree-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(dir.join("src")).expect("create temp repo");
+        std::fs::create_dir_all(dir.join("config")).expect("create nested dir");
+        std::fs::create_dir_all(dir.join("keys")).expect("create nested keys dir");
+        std::fs::write(dir.join("src").join("main.rs"), "fn main() {}\n").expect("write source");
+        std::fs::write(dir.join(".env"), "API_TOKEN=secret\n").expect("write .env");
+        std::fs::write(dir.join("deploy.key"), "private key\n").expect("write key");
+        // Nested secret files must be excluded too: a bare `*.key` pathspec
+        // never crosses a `/`, so these used to land in the delegate index.
+        std::fs::write(dir.join("config").join("tls.pem"), "-----BEGIN KEY-----\n")
+            .expect("write nested pem");
+        std::fs::write(dir.join("keys").join("id_rsa"), "private key\n").expect("write nested key");
+        std::fs::write(dir.join("config").join(".env"), "NESTED=secret\n")
+            .expect("write nested .env");
+        let init = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .expect("run git init");
+        assert!(init.success());
+        dir
+    }
+
+    #[test]
+    fn add_all_args_carry_the_sensitive_exclusions() {
+        let args = add_all_args();
+        assert_eq!(&args[..4], &["add", "-A", "--", "."]);
+        for needle in [".env", ".pem", ".key", ".npmrc", "credentials"] {
+            assert!(
+                args.iter().any(|arg| arg.contains(needle)),
+                "no exclusion for {needle}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn staging_a_delegate_base_skips_dotenv_and_private_keys() {
+        if std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            // git is a runtime dependency of delegation, not of the test host.
+            return;
+        }
+        let dir = temp_repo();
+        let staged = run_git(&dir, &add_all_args()).await.expect("git add");
+        assert!(staged.status.success());
+        let names = run_git(&dir, &["diff", "--cached", "--name-only"])
+            .await
+            .expect("git diff");
+        let names = String::from_utf8_lossy(&names.stdout);
+        assert!(
+            names.contains("src/main.rs"),
+            "normal files are staged: {names}"
+        );
+        assert!(
+            !names.contains(".env"),
+            ".env leaked into the index: {names}"
+        );
+        assert!(
+            !names.contains("deploy.key"),
+            "private key leaked into the index: {names}"
+        );
+        assert!(
+            !names.contains("config/tls.pem"),
+            "nested PEM leaked into the index: {names}"
+        );
+        assert!(
+            !names.contains("keys/id_rsa"),
+            "nested private key leaked into the index: {names}"
+        );
+        assert!(
+            !names.contains("config/.env"),
+            "nested .env leaked into the index: {names}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

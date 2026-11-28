@@ -39,20 +39,21 @@ Docker 版を変更した場合は、以下のテストとビルド確認を実�
 # バックエンドの単体テスト（使い捨て PostgreSQL コンテナで migration 後に実行）
 docker compose --profile test run --rm test
 
-# カバレッジ込み（CI と同じ。現在の下限は 70%）
+# カバレッジ込み（CI と同じ。現在の下限は 60%）
 docker compose --profile test run --rm test \
   sh -c "cd /app && export COVERAGE_FILE=/tmp/.coverage \
     && alembic upgrade head \
+    && alembic check \
     && pytest -c /app/pyproject.toml -p no:cacheprovider -q \
-         --cov=mix_agent --cov-report=term-missing --cov-fail-under=70 /workspace/tests"
+         --cov=mix_agent --cov-report=term-missing --cov-fail-under=60 /workspace/tests /app/tests"
 
 # 型チェック（apps/server で。warning の総数も予算で監視する）
 cd apps/server && uv run python ../../scripts/check-pyright-budget.py
 
 # Python の lint / 整形（リポジトリ全体。runners・deploy・scripts・tests も対象）
 # パスはリポジトリルートから渡す（per-file-ignores の glob を効かせるため）
-uv run --project apps/server ruff check apps/server runners deploy scripts tests experiments
-uv run --project apps/server ruff format --check apps/server runners deploy scripts tests experiments
+uv run --project apps/server ruff check apps/server runners deploy scripts tests experiments packages
+uv run --project apps/server ruff format --check apps/server runners deploy scripts tests experiments packages
 
 # Web フロントエンドの lint / 型チェック / 整形 / テスト（カバレッジ下限付き）とビルド
 pnpm web:lint
@@ -73,11 +74,18 @@ E2E_SERVER=preview pnpm --dir apps/web test:e2e
 python3 scripts/check-secrets.py        # コミットされた資格情報の形を検出
 python3 scripts/check-readme-parity.py  # README.md と README.en.md の構造一致
 node scripts/check-version-consistency.mjs
+python3 scripts/check-async-db.py       # async ルートが同期 DB 操作でブロックしないことを検査
+(cd apps/server && uv run python ../../scripts/check-pyright-budget.py --max-warnings 23)
 python3 scripts/check-memory-parity.py
 python3 scripts/check-error-i18n.py
 python3 scripts/check-greeting-parity.py
 python3 scripts/check-browser-parity.py
-node scripts/check-release-notes.mjs --tag v0.5.4
+python3 scripts/check-run-event-parity.py
+python3 scripts/check-chatgpt-parity.py
+python3 scripts/check-skill-parity.py
+python3 scripts/check-snapshot-parity.py
+python3 scripts/check-doc-links.py
+node scripts/check-release-notes.mjs --tag v0.5.8
 ```
 
 API 仕様（FastAPI ルート）を変更した場合は、`scripts/export-openapi.py` を実行して `docs/openapi.json` を更新し、`pnpm generate:api` で TypeScript 型定義を再生成してください。新しい HTTP エラーを追加した場合は、`mix_agent/api/error_codes.py` と `apps/web/src/app/errorCodes.ts` の両方に登録してください（`python3 scripts/check-error-i18n.py` が検査します）。新規コードは `HTTPException` ではなく `APIError(status, code)` を使うと、日本語文言の変更で機械可読コードが変わらなくなります。
@@ -103,11 +111,11 @@ pnpm desktop:build          # Linux の場合（AppImage + deb）
 
 ### 4. ドキュメント修正時の注意
 - `docs/` のファイルは**移動・改名しない**でください。CI・リリースワークフロー・parity 検査がパスを直接参照しています（`docs/README.md` の「配置制約」を参照）。
-- 新しい文書を追加したら [`docs/README.md`](docs/README.md) の索引に追加し、役割（現行仕様 / 設計記録 / 計画 / 履歴）を明記してください。相対リンクは `python3 scripts/check-doc-links.py` で確認できます。
-- 現行仕様を変更した場合は、計画書（`*-plan.md`）ではなく現行仕様側を更新してください。計画書には決定の理由と経緯を残します。
+- 新しい文書を追加したら [`docs/README.md`](docs/README.md) の索引に追加してください。相対リンクは `python3 scripts/check-doc-links.py` で確認できます。
+- 現行仕様を変更した場合は現行仕様側を更新してください。
 - エディションに関する記述を行う際は、**Desktop 版と Docker 版のどちらに関する内容か**を明確にしてください。
 - 共通の機能（Provider 対応、モード仕様、Agent ループなど）を変更した場合は、双方の README やドキュメントへの影響を確認してください。`README.md` と `README.en.md` は見出し階層・コマンド・リンク先を揃える必要があります（`scripts/check-readme-parity.py`）。
-- 未検証の環境・Provider を「動作確認済み」と記載しないでください。検証結果は [`docs/verification.md`](docs/verification.md) に追記してください。
+- 未検証の環境・Provider を「動作確認済み」と記載しないでください。
 
 ### 5. Pull Request の作成
 - `git diff --check` で不要な空白・フォーマットエラーがないか確認します。

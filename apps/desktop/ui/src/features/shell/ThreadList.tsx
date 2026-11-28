@@ -12,7 +12,7 @@ import type { ConversationSummary } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SectionLabel } from "@/components/layout";
+import { SectionLabel, SELECTED_ROW } from "@/components/layout";
 import { SearchEmptyState } from "@/components/common";
 import { EmptyState, ErrorBox, ListSkeleton } from "@/components/shared";
 import { Spinner } from "@/components/ui/spinner";
@@ -50,6 +50,9 @@ export interface ThreadListProps {
   isAgent: boolean;
   searching: boolean;
   serverSearchPending: boolean;
+  /** A status filter (running / approval) is active. */
+  filtering?: boolean;
+  onClearFilter?: () => void;
   filteredCount: number;
   showThreadList: boolean;
   hasMore: boolean;
@@ -83,6 +86,8 @@ export function ThreadList(props: ThreadListProps) {
     isAgent,
     searching,
     serverSearchPending,
+    filtering = false,
+    onClearFilter,
     filteredCount,
     showThreadList,
     hasMore,
@@ -162,8 +167,7 @@ export function ThreadList(props: ThreadListProps) {
                         className={cn(
                           "group relative flex flex-col gap-1 rounded-lg py-2 pe-9 ps-2.5",
                           "transition-colors duration-100 hover:bg-hover",
-                          selectedId === thread.id &&
-                            "bg-brand-soft ring-1 ring-brand/20 ring-inset",
+                          selectedId === thread.id && SELECTED_ROW,
                         )}
                       >
                         {renamingId === thread.id ? (
@@ -326,15 +330,21 @@ export function ThreadList(props: ThreadListProps) {
           )}
           {filteredCount === 0 &&
             (!searching || !serverSearchPending) &&
-            (!hasMore || searching) && (
+            (!hasMore || searching || filtering) && (
               <SearchEmptyState
                 compact
                 title={
-                  isAgent
-                    ? t("一致するコーディングがありません")
-                    : t("一致するチャットがありません")
+                  filtering && !searching
+                    ? t("該当するスレッドがありません")
+                    : isAgent
+                      ? t("一致するコーディングがありません")
+                      : t("一致するチャットがありません")
                 }
-                onClear={onClearSearch}
+                onClear={
+                  filtering && !searching
+                    ? (onClearFilter ?? onClearSearch)
+                    : onClearSearch
+                }
               />
             )}
           {hasMore && !searching && (

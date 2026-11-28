@@ -1,4 +1,5 @@
 import { t } from "@/app/i18n";
+import { isSafeHttpUrl } from "@/lib/safeLinks";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -10,7 +11,13 @@ import {
   RotateCcw,
   ShieldCheck,
 } from "lucide-react";
-import type { Approval, ApprovalDecision, ToolCallHistory } from "./types";
+import {
+  isElevatedRisk,
+  type Approval,
+  type ApprovalDecision,
+  type ApprovalDecisionHandler,
+  type ToolCallHistory,
+} from "./types";
 import { useRef, useState } from "react";
 import { ActivityIcon } from "./ToolActivity";
 
@@ -161,19 +168,38 @@ function RunActivityCall({
 }: {
   call: ToolCallHistory;
   approvals?: Approval[];
-  onApproval: (id: string, decision: ApprovalDecision) => void | Promise<void>;
+  onApproval: ApprovalDecisionHandler;
 }) {
   const state = presentation[call.status];
   const [pendingDecision, setPendingDecision] =
     useState<ApprovalDecision | null>(null);
   const submitting = useRef(false);
   const approval = approvals?.find((item) => item.id === call.approval?.id);
+  const approvalId = call.approval?.id;
+  const elevated = isElevatedRisk(approval?.data?.risk);
+  // A single run can request several approvals while this call stays mounted.
+  // Pair the acknowledgement with the exact prompt (id + payload) and derive it
+  // during render; a passive effect reset leaves a frame where the previous
+  // acknowledgement could authorise the next destructive command.
+  const approvalKey = `${approvalId ?? ""}:${JSON.stringify(approval?.data ?? null)}`;
+  const [ack, setAck] = useState<{ key: string; value: boolean }>({
+    key: "",
+    value: false,
+  });
+  const acknowledged = ack.key === approvalKey && ack.value;
+  const setAcknowledged = (value: boolean) =>
+    setAck({ key: approvalKey, value });
   async function decide(decision: ApprovalDecision) {
+    if (elevated && decision !== "denied" && !acknowledged) return;
     if (!call.approval || submitting.current) return;
     submitting.current = true;
     setPendingDecision(decision);
     try {
-      await onApproval(call.approval.id, decision);
+      // Only a risky *grant* carries the acknowledgement the server requires.
+      // Deny and non-risky decisions keep the plain `{ decision }` payload.
+      const acknowledgeRisk =
+        elevated && decision !== "denied" && acknowledged ? true : undefined;
+      await onApproval(call.approval.id, decision, acknowledgeRisk);
     } finally {
       submitting.current = false;
       setPendingDecision(null);
@@ -223,19 +249,40 @@ function RunActivityCall({
               <ShieldCheck size={14} /> {t("承認が必要です")}
             </span>
             {approval && <ApprovalPayload data={approval.data} />}
+            {elevated && (
+              <p className="run-step-approval-warning">
+                {t(
+                  "変更を伴う操作は「常に許可」に保存できません。実行のたびに確認します。",
+                )}
+              </p>
+            )}
+            {elevated && (
+              <label className="run-step-approval-ack">
+                <input
+                  type="checkbox"
+                  checked={acknowledged}
+                  onChange={(event) => setAcknowledged(event.target.checked)}
+                />
+                {t("内容を理解しました。この操作を実行します。")}
+              </label>
+            )}
             <span className="run-step-approval-actions">
               <button
-                disabled={pendingDecision !== null}
+                disabled={
+                  pendingDecision !== null || (elevated && !acknowledged)
+                }
                 onClick={() => void decide("once")}
               >
                 {t("今回のみ")}
               </button>
-              <button
-                disabled={pendingDecision !== null}
-                onClick={() => void decide("always")}
-              >
-                {t("この操作を常に許可")}
-              </button>
+              {!elevated && (
+                <button
+                  disabled={pendingDecision !== null}
+                  onClick={() => void decide("always")}
+                >
+                  {t("この操作を常に許可")}
+                </button>
+              )}
               <button
                 disabled={pendingDecision !== null}
                 onClick={() => void decide("denied")}
@@ -257,8 +304,7 @@ function RunActivityCall({
               {sources.length > 0 && (
                 <div className="run-step-sources">
                   {sources.map((source) =>
-                    typeof source.url === "string" &&
-                    /^https?:\/\//i.test(source.url) ? (
+                    isSafeHttpUrl(source.url) ? (
                       <a
                         key={source.url}
                         href={source.url}
@@ -313,7 +359,7 @@ export function RunActivity({
   calls: ToolCallHistory[];
   approvals?: Approval[];
   running?: boolean;
-  onApproval: (id: string, decision: ApprovalDecision) => void | Promise<void>;
+  onApproval: ApprovalDecisionHandler;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   if (!calls.length) return null;

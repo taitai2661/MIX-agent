@@ -24,9 +24,7 @@ from mix_agent.api.schemas import (
     ResumeInput,
     RunView,
 )
-from mix_agent.auth.security import (
-    authenticate,
-)
+from mix_agent.auth.security import authenticate
 from mix_agent.db.models import (
     Approval,
     Artifact,
@@ -518,6 +516,7 @@ def decide(key: str, body: DecisionInput, ctx=Depends(context)):
     tool = registry(db, s.owner_id).get(call.data["tool_id"])
     if not tool or fingerprint(tool) != approval.data["tool_version"]:
         raise HTTPException(409, "Tool定義が変更されています")
+    body.ensure_risk_acknowledged(approval.data.get("risk"))
     approval.status = body.decision
     if body.decision == "always":
         db.add(

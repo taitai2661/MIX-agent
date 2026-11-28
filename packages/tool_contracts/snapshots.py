@@ -54,11 +54,11 @@ def validate_snapshot(payload):
 def capture(root):
     files, total = {}, 0
     for current, directories, names in os.walk(root, followlinks=False):
+        # Drop staging/rollback trees first: a symlink inside a directory that
+        # is never captured must not abort the whole backup.
+        directories[:] = [d for d in directories if not d.startswith(EXCLUDE_PREFIXES)]
         if any(Path(current, d).is_symlink() for d in directories):
             raise ValueError("Remove symlinks before backup")
-        directories[:] = [
-            d for d in directories if not Path(current, d).is_symlink() and not d.startswith(EXCLUDE_PREFIXES)
-        ]
         for name in names:
             file = Path(current, name)
             if file.is_symlink() or not file.is_file():

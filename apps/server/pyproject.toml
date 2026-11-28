@@ -1,6 +1,6 @@
 [project]
 name = "mix-agent"
-version = "0.5.7"
+version = "0.5.8"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 
@@ -22,5 +22,5 @@ build-backend = "hatchling.build"
 # `pytest -c /app/pyproject.toml` because the checkout is mounted at /workspace,
 # so the root config is not discoverable from /app; keep both in sync.
 asyncio_mode = "auto"
-testpaths = ["../../tests"]
+testpaths = ["../../tests", "tests"]
 

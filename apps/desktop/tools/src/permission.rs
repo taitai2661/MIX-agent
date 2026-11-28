@@ -18,6 +18,31 @@ pub fn is_valid_pattern(pattern: &str) -> bool {
     glob::Pattern::new(pattern).is_ok()
 }
 
+/// Stable digest for a *remembered* call target.
+///
+/// "Always Allow" used to persist the raw target — for `terminal` that is the
+/// whole shell command, including any credential typed into it. A rule only
+/// needs to know whether a later call has the same target, so we store this
+/// non-reversible digest instead and keep a redacted copy for display. Two
+/// independent FNV-1a passes give 128 bits without pulling in a hash crate;
+/// this is a matching key, not a cryptographic secret store.
+pub fn pattern_digest(value: &str) -> String {
+    fn fnv(bytes: &[u8], seed: u64) -> u64 {
+        let mut hash = seed;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash
+    }
+    let bytes = value.as_bytes();
+    format!(
+        "{:016x}{:016x}",
+        fnv(bytes, 0xcbf2_9ce4_8422_2325),
+        fnv(bytes, 0x8422_2325_cbf2_9ce4)
+    )
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
@@ -73,6 +98,10 @@ pub struct PermissionRule {
     pub decision: PermissionDecision,
     #[serde(default)]
     pub pattern: Option<String>,
+    /// When present, matching uses this digest of the raw target rather than
+    /// the (redacted, display-only) `pattern` glob.
+    #[serde(default)]
+    pub pattern_digest: Option<String>,
     #[serde(default)]
     pub workspace_id: Option<String>,
     #[serde(default)]
@@ -86,7 +115,12 @@ impl PermissionRule {
     /// path), and `Global + None` is the most general. Within a bucket the
     /// caller falls back to `updated_at` / id order.
     pub fn precedence_bucket(&self) -> u8 {
-        match (self.scope, self.pattern.is_some()) {
+        // Approval-driven rules keep a digest of the raw target and only a
+        // redacted (possibly empty) glob for display. Such a rule is still
+        // target-scoped, so it must not fall into the generic bucket where a
+        // broader rule could override it.
+        let targeted = self.pattern.is_some() || self.pattern_digest.is_some();
+        match (self.scope, targeted) {
             (RuleScope::Session, true) => 0,
             (RuleScope::Session, false) => 1,
             (RuleScope::Workspace, true) => 2,
@@ -94,5 +128,32 @@ impl PermissionRule {
             (RuleScope::Global, true) => 4,
             (RuleScope::Global, false) => 5,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(scope: RuleScope, pattern: Option<&str>, digest: Option<&str>) -> PermissionRule {
+        PermissionRule {
+            tool_id: "terminal".into(),
+            scope,
+            decision: PermissionDecision::Deny,
+            pattern: pattern.map(str::to_string),
+            pattern_digest: digest.map(str::to_string),
+            workspace_id: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn digest_without_display_pattern_keeps_its_specificity() {
+        // A redacted command can leave no display glob at all. The rule still
+        // targets one remembered call, so it must outrank a generic rule.
+        let specific = rule(RuleScope::Workspace, None, Some("digest"));
+        let generic = rule(RuleScope::Workspace, None, None);
+        assert!(specific.precedence_bucket() < generic.precedence_bucket());
+        assert_eq!(specific.precedence_bucket(), 2);
     }
 }

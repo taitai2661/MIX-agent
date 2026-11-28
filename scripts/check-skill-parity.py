@@ -45,10 +45,41 @@ def read(path: Path) -> str:
         fail(f"cannot read {path.relative_to(ROOT)}: {exc}")
 
 
+def arithmetic_int(expression: str) -> int:
+    """Integer arithmetic from repo sources, without ``eval``.
+
+    Only integer literals, ``+ - * //`` and unary ``+ -`` are accepted; names,
+    calls, attributes and every other Python construct are rejected.
+    """
+    try:
+        node = ast.parse(expression, mode="eval").body
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f"invalid arithmetic expression {expression!r}") from exc
+
+    def visit(item: ast.AST) -> int:
+        if isinstance(item, ast.Constant) and type(item.value) is int:
+            return item.value
+        if isinstance(item, ast.BinOp) and isinstance(item.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)):
+            left, right = visit(item.left), visit(item.right)
+            if isinstance(item.op, ast.Add):
+                return left + right
+            if isinstance(item.op, ast.Sub):
+                return left - right
+            if isinstance(item.op, ast.Mult):
+                return left * right
+            return left // right
+        if isinstance(item, ast.UnaryOp) and isinstance(item.op, (ast.UAdd, ast.USub)):
+            operand = visit(item.operand)
+            return operand if isinstance(item.op, ast.UAdd) else -operand
+        raise ValueError(f"disallowed expression node: {type(item).__name__}")
+
+    return visit(node)
+
+
 def evaluate(value: str, source: str) -> int:
     expression = value.replace("_", "").strip()
     try:
-        return int(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307
+        return arithmetic_int(expression)
     except Exception:  # noqa: BLE001 - an unparseable constant is itself drift
         fail(f"cannot evaluate {source} value {value!r}")
 
@@ -71,13 +102,7 @@ def main() -> None:
             and node.targets[0].id in INT_CONSTS
         ):
             try:
-                python_ints[node.targets[0].id] = int(
-                    eval(  # noqa: S307 - constants from this repository
-                        compile(ast.Expression(node.value), str(PYTHON), "eval"),
-                        {"__builtins__": {}},
-                        {},
-                    )
-                )
+                python_ints[node.targets[0].id] = arithmetic_int(ast.unparse(node.value))
             except (ValueError, SyntaxError, TypeError):
                 fail(f"Python {node.targets[0].id} is not an integer expression")
 

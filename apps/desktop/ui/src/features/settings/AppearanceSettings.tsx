@@ -88,7 +88,7 @@ export function AppearanceSettings() {
             <Button
               size="sm"
               onClick={() => setZoom(zoom + 0.1)}
-              disabled={zoom >= 1.5}
+              disabled={zoom >= 2}
               aria-label={t("拡大")}
               title={t("拡大")}
             >

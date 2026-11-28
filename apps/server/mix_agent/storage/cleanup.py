@@ -284,15 +284,23 @@ def purge_old_run_history(db, retention_days: int = 30) -> int:
 def purge_expired_conversations(db):
     cutoff = now() - timedelta(days=30)
     expired_ids = []
-    for conversation in db.scalars(select(Conversation)):
-        deleted_at = conversation.data.get("deleted_at")
+    # The trash marker lives in the JSONB `data` column, so it can be pushed
+    # into SQL instead of loading every conversation of every owner into
+    # Python. This runs on every scheduler tick (every 60s), so the full scan
+    # was the most expensive query in the maintenance pass.
+    rows = db.execute(
+        select(Conversation.id, Conversation.data["deleted_at"].astext).where(
+            Conversation.data["deleted_at"].astext.is_not(None)
+        )
+    ).all()
+    for conversation_id, deleted_at in rows:
         if not deleted_at:
             continue
         try:
             from datetime import datetime
 
             if datetime.fromisoformat(deleted_at) <= cutoff:
-                expired_ids.append(conversation.id)
+                expired_ids.append(conversation_id)
         except ValueError:
             continue
     # Purge in bounded batches so a large cleanup never holds one huge transaction.

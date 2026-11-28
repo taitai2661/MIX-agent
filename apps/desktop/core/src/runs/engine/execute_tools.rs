@@ -16,7 +16,8 @@ impl RunEngine {
             return;
         }
         let batch = std::mem::take(pending);
-        for chunk in batch.chunks(MAX_CONCURRENT_READS) {
+        // `.max(1)` keeps a corrupt/zero policy value from panicking `chunks`.
+        for chunk in batch.chunks(self.policy.max_concurrent_reads.max(1)) {
             if cancellation.is_cancelled() {
                 break;
             }
@@ -106,7 +107,7 @@ impl RunEngine {
         // in the lookup: a workspace-scoped deny beats a global allow, and a
         // pattern-scoped rule only matches when the tool exposes a matching
         // target.
-        let decision = self
+        let mut decision = self
             .executor
             .resolve_permission(&tool_name, &permission_ctx, default_decision)
             .await;
@@ -114,6 +115,21 @@ impl RunEngine {
             return self
                 .deny_tool(run_id, record, "permission denied by rule")
                 .await;
+        }
+
+        // Grade the command, not the Tool. A dangerous shell command must
+        // never be silently covered by "Always Allow terminal": the rule was
+        // written for `cargo test`, not for `rm -rf ~`. Upgrading an Allow to
+        // Ask here is the enforcement point; the approval command separately
+        // refuses to *create* a durable rule for a dangerous command.
+        let risk = mixd_tools::risk::assess_tool_call(&tool_name, &arguments);
+        if risk.is_dangerous() && decision == mixd_tools::permission::PermissionDecision::Allow {
+            tracing::warn!(
+                tool = %tool_name,
+                reasons = ?risk.reasons.iter().map(|r| r.code.as_str()).collect::<Vec<_>>(),
+                "dangerous command upgraded from allow to explicit approval"
+            );
+            decision = mixd_tools::permission::PermissionDecision::Ask;
         }
 
         let mut approval_token: Option<String> = None;
@@ -134,19 +150,19 @@ impl RunEngine {
                 .await;
             let prompt = self
                 .executor
-                .request_approval(
+                .request_approval_graded(
                     run_id,
                     &tool_call_id,
                     &tool_name,
                     display_arguments.clone(),
                     Some(request.workspace_id),
                     pattern_target.clone(),
+                    risk.clone(),
                 )
                 .await;
-            let Ok((rx, expires_at)) = prompt else {
-                return self
-                    .deny_tool(run_id, record, "could not open approval prompt")
-                    .await;
+            let Ok((mut rx, mut deadline)) = prompt else {
+                let reason = format!("could not open approval prompt: {:?}", prompt.err());
+                return self.deny_tool(run_id, record, &reason).await;
             };
             let approval = self
                 .executor
@@ -176,24 +192,50 @@ impl RunEngine {
                     // The prompt auto-denies at this instant. Without the
                     // deadline the card looked answerable forever and the run
                     // silently continued as "denied" while the user was away.
-                    "expires_at": expires_at.to_rfc3339(),
+                    "expires_at": deadline.to_rfc3339(),
+                    // Command-level grading so the card can show *why* this is
+                    // different from the usual `terminal` prompt.
+                    "risk": risk,
                 }),
             )
             .await;
 
             // Wait for the user's answer, the prompt TTL, or cancellation.
+            // The deadline is re-read when it fires: an extension granted
+            // while this task slept must move the wait, not deny the call.
             let cancellation = self.cancellation_of(run_id).await;
-            let ttl = (expires_at - chrono::Utc::now())
-                .to_std()
-                .unwrap_or(std::time::Duration::from_secs(0));
-            let outcome = tokio::select! {
-                biased;
-                _ = cancellation.cancelled_signal() => ApprovalOutcome::Deny,
-                Ok(outcome) = rx => outcome,
-                _ = tokio::time::sleep(ttl) => ApprovalOutcome::Deny,
+            let outcome = loop {
+                let ttl = (deadline - chrono::Utc::now())
+                    .to_std()
+                    .unwrap_or(std::time::Duration::from_secs(0));
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled_signal() => break ApprovalOutcome::Deny,
+                    Ok(outcome) = &mut rx => break outcome,
+                    _ = tokio::time::sleep(ttl) => {
+                        let extended = match approval_token.as_deref() {
+                            Some(id) => self.executor.approval_expiry(id).await,
+                            None => None,
+                        };
+                        match extended {
+                            Some(next) if next > chrono::Utc::now() => deadline = next,
+                            _ => break ApprovalOutcome::Deny,
+                        }
+                    }
+                }
             };
-            self.set_run_state(run_id, RunStatus::Running, serde_json::json!({}))
-                .await;
+            // A cancellation may have written a terminal status while the
+            // card was open. Only resume when the row is still in the state
+            // this prompt put it in, otherwise the unconditional write would
+            // turn a Deny/cancel back into `running` (the `ask_user` path
+            // below already uses the guarded variant).
+            self.set_run_state_if(
+                run_id,
+                RunStatus::WaitingApproval,
+                RunStatus::Running,
+                serde_json::json!({}),
+            )
+            .await;
 
             // Every outcome has to retire the card: the reducer only clears
             // `timeline.approval` on this event, so a denial that emitted
@@ -236,7 +278,11 @@ impl RunEngine {
         // Mask credentials before the result reaches the transcript, the model
         // or the event log: one `cat .env` would otherwise copy a live key into
         // all three.
-        let outcome = registry
+        // S2: `ask_user` blocks for the user's card answer. The tool itself only
+        // validates and returns the card; the wait lives here so cancellation,
+        // TTL, and `question_requested` / `question_resolved` events stay in one
+        // place alongside the approval flow above.
+        let mut outcome = registry
             .dispatch(ctx, &tool_name, arguments.clone())
             .await
             .map(|mut result| {
@@ -246,6 +292,144 @@ impl RunEngine {
                 }
                 result
             });
+
+        if tool_name == "ask_user" {
+            if let Ok(result) = &outcome {
+                if result.ok {
+                    let question_id = result
+                        .content
+                        .get("question_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if question_id.is_empty() {
+                        // Never open a card the UI cannot resolve: an empty id
+                        // would make `question_resolved` ambiguous and leave
+                        // the run waiting on an answer nobody can route.
+                        outcome = Ok(mixd_tools::ToolResult {
+                            ok: false,
+                            content: serde_json::Value::Null,
+                            error: Some("ask_user returned no question id".to_string()),
+                        });
+                    } else {
+                        // Reserve the next stamp atomically instead of `load`ing
+                        // it. Every message queued from here on gets a seq
+                        // strictly greater than this one, so an interjection
+                        // sent in the gap before the card was announced cannot
+                        // be mistaken for its answer.
+                        let question_seq = self
+                            .steering_seq
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        self.set_run_state(
+                            run_id,
+                            RunStatus::WaitingApproval,
+                            serde_json::json!({ "questionId": question_id }),
+                        )
+                        .await;
+                        self.emit(
+                            run_id,
+                            "question_requested",
+                            serde_json::json!({
+                                "tool_call_id": tool_call_id,
+                                "question_id": question_id,
+                                "question": result.content.get("question"),
+                                "options": result.content.get("options"),
+                                "multi_select": result.content.get("multi_select"),
+                                "recommended": result.content.get("recommended"),
+                                "timeout_secs": self.policy.ask_user_timeout_secs,
+                            }),
+                        )
+                        .await;
+
+                        // Wait on a per-run Notify rather than polling. Arm the
+                        // waiter before reading the queue: `notify_waiters`
+                        // only wakes registered waiters, so answering in the
+                        // gap would otherwise stall until the timeout.
+                        let cancellation = self.cancellation_of(run_id).await;
+                        let notify = self.steering_notify(run_id).await;
+                        let timeout =
+                            std::time::Duration::from_secs(self.policy.ask_user_timeout_secs);
+                        let mut answer: Option<String> = None;
+                        loop {
+                            if cancellation.is_cancelled() {
+                                break;
+                            }
+                            let notified = notify.notified();
+                            tokio::pin!(notified);
+                            notified.as_mut().enable();
+                            let mut pending = self.take_steering_after(run_id, question_seq).await;
+                            if !pending.is_empty() {
+                                answer = Some(pending.remove(0).text);
+                                // Preserve any extra steering for the next turn.
+                                self.requeue_steering(run_id, pending).await;
+                                break;
+                            }
+                            tokio::select! {
+                                biased;
+                                _ = cancellation.cancelled_signal() => break,
+                                _ = notified.as_mut() => continue,
+                                _ = tokio::time::sleep(timeout) => break,
+                            }
+                        }
+                        // A cancellation may have written a terminal status
+                        // while the card was open. Only resume when the row is
+                        // still in the state this question put it in.
+                        self.set_run_state_if(
+                            run_id,
+                            RunStatus::WaitingApproval,
+                            RunStatus::Running,
+                            serde_json::json!({}),
+                        )
+                        .await;
+                        match answer {
+                            Some(text) => {
+                                self.emit(
+                                    run_id,
+                                    "question_resolved",
+                                    serde_json::json!({
+                                        "tool_call_id": tool_call_id,
+                                        "question_id": question_id,
+                                        "accepted": true,
+                                    }),
+                                )
+                                .await;
+                                outcome = Ok(mixd_tools::ToolResult {
+                                    ok: true,
+                                    content: serde_json::json!({
+                                        "kind": "ask_user_answer",
+                                        "question_id": question_id,
+                                        "answer": text,
+                                    }),
+                                    error: None,
+                                });
+                            }
+                            None => {
+                                let cancelled = cancellation.is_cancelled();
+                                self.emit(
+                                    run_id,
+                                    "question_resolved",
+                                    serde_json::json!({
+                                        "tool_call_id": tool_call_id,
+                                        "question_id": question_id,
+                                        "accepted": false,
+                                    }),
+                                )
+                                .await;
+                                outcome = Ok(mixd_tools::ToolResult {
+                                    ok: false,
+                                    content: serde_json::Value::Null,
+                                    error: Some(if cancelled {
+                                        "question cancelled".to_string()
+                                    } else {
+                                        "question timed out waiting for an answer".to_string()
+                                    }),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         match outcome {
             Ok(result) => {
@@ -259,7 +443,11 @@ impl RunEngine {
                         run_id,
                         &tool_call_id,
                         &tool_name,
-                        arguments,
+                        // Persist the same masked arguments the UI and the
+                        // event log see. The raw object above is still what
+                        // reaches the Tool itself; only the transcript, the
+                        // backup and the history API get the redacted copy.
+                        display_arguments.clone(),
                         status,
                         Some(result),
                         err_text.as_deref(),
@@ -267,17 +455,18 @@ impl RunEngine {
                     .await;
             }
             Err(err) => {
-                record.error = Some(err.to_string());
+                let message = mixd_tools::redact::redact_text(&err.to_string());
+                record.error = Some(message.clone());
                 let _ = self
                     .executor
                     .record_tool_call(
                         run_id,
                         &tool_call_id,
                         &tool_name,
-                        arguments,
+                        display_arguments.clone(),
                         "failed",
                         None,
-                        Some(&err.to_string()),
+                        Some(&message),
                     )
                     .await;
             }

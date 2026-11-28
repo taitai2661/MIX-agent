@@ -20,6 +20,14 @@ except ImportError:  # Source-tree tests.
     from mix_agent.mcp.protocol import call as modern_call
     from mix_agent.mcp.protocol import discover as modern_discover
 
+# This runner is internal-only: Compose gives it HTTPS_PROXY, but the shared
+# network helper deliberately reads only the explicit MIX_EGRESS_PROXY. Opt in
+# here so the runner's outbound calls use the authoritative egress proxy while
+# the app server (which has a direct internet route) stays unaffected by any
+# ambient HTTPS_PROXY its operator may set.
+if not os.getenv("MIX_EGRESS_PROXY") and os.getenv("HTTPS_PROXY"):
+    os.environ["MIX_EGRESS_PROXY"] = os.environ["HTTPS_PROXY"]
+
 app = FastAPI(docs_url=None, redoc_url=None)
 CONNECTIONS = {}
 RUN_TASKS = {}
@@ -29,7 +37,9 @@ SHARED = Path(os.getenv("MCP_SHARED", "/shared"))
 @app.middleware("http")
 async def auth(request: Request, call_next):
     token = Path(os.getenv("TOKEN_FILE", "/tokens/mcp.token")).read_text().strip()
-    if not secrets.compare_digest(request.headers.get("authorization", ""), "Bearer " + token):
+    provided = request.headers.get("authorization", "")
+    # compare_digest() raises TypeError for non-ASCII str (a 500 otherwise).
+    if not provided.isascii() or not secrets.compare_digest(provided, "Bearer " + token):
         return JSONResponse({"detail": "Unauthorized"}, 401)
     return await call_next(request)
 

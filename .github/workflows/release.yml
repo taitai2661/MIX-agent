@@ -2,6 +2,10 @@ name: Release MIX-agent
 
 # Docker images and ZimaOS store. Desktop releases (.dmg, installers) are
 # built in parallel by `desktop-release.yml` for unified distribution on GitHub Releases.
+#
+# This workflow no longer creates the GitHub Release. `desktop-release.yml` is
+# the sole creator (it owns the release notes body); the store publisher only
+# uploads assets to the release that already exists.
 on:
   push:
     tags:
@@ -17,20 +21,16 @@ jobs:
     name: Require green CI for this commit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # This job only reads workflow runs. Do not inherit the workflow-wide
+    # contents/packages write scope (desktop-release.yml scopes per job too).
+    permissions:
+      actions: read
+      contents: read
     steps:
-      - name: Check the CI conclusion for the tagged SHA
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
-            --commit "$GITHUB_SHA" --limit 1 --json conclusion,status,url)"
-          echo "$runs"
-          conclusion="$(printf '%s' "$runs" | jq -r '.[0].conclusion // ""')"
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::CI for $GITHUB_SHA is '$conclusion'. Refusing to publish a release."
-            exit 1
-          fi
+      # ci.yml alone is not enough: `gh run list --commit` also matches PR runs
+      # on feature branches. The shared gate requires a completed push-to-main
+      # run for both ci.yml and validate-release.yml on this exact SHA.
+      - uses: ./.github/actions/require-green-ci
 
   images:
     needs: preflight

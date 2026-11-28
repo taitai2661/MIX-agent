@@ -11,7 +11,7 @@ export const Switch = forwardRef<
       ref={ref}
       className={cn(
         "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center",
-        "rounded-full border border-line-strong/50 bg-faint/40 p-0.5",
+        "rounded-full border border-line-strong bg-faint/40 p-0.5",
         "transition-colors duration-150 ease-out",
         "disabled:cursor-not-allowed disabled:opacity-45",
         "data-[state=checked]:border-transparent data-[state=checked]:bg-brand",

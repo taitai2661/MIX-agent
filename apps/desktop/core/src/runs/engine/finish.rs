@@ -9,6 +9,15 @@ impl RunEngine {
         // A message typed as the Run finished has no turn left to reach.
         self.steering.lock().await.remove(&run_id);
         self.read_fingerprints.lock().await.remove(&run_id);
+        // Per-run budget waiters and `ask_user` answer channels cannot outlive
+        // their run.
+        self.budget_notifies.lock().await.remove(&run_id);
+        self.steering_notifies.lock().await.remove(&run_id);
+        // Undo snapshots survive the Run (the user can revert after it ends),
+        // but only for the window after it finished.
+        let mut snapshots = self.snapshots.lock().await;
+        snapshots.touch(run_id);
+        snapshots.drop_stale(Instant::now());
     }
 
     /// Record a Run's terminal state and return its outcome.

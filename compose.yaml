@@ -38,6 +38,7 @@ services:
       - execution-token:/execution-token
       - mcp-token:/mcp-token
       - manager-token:/manager-token
+      - mcp-workload-token:/mcp-workload-token
       - browser-token:/browser-token
       - browser-provisioner-token:/browser-provisioner-token
       - browser-data:/browser-data
@@ -249,10 +250,19 @@ services:
     pids_limit: 64
     mem_limit: 128m
     environment:
-      # CONTAINERS+POST stay enabled only for `docker create` of isolated MCP
-      # workloads (the manager's job). POST is the broad switch: it cannot be
-      # scoped to create-only, so every granular ALLOW_* below stays denied to
-      # keep start/stop/restart/exec unreachable.
+      # CONTAINERS+POST are enabled for `docker create` of isolated MCP
+      # workloads. POST is the broad switch and cannot be scoped to
+      # create-only, so the granular ALLOW_* flags re-guard the state-changing
+      # verbs we actually need. START is required by install() and the volume
+      # snapshot/copy helpers; STOP and RESTARTS back the manager's lifecycle
+      # actions. Tradeoff: a caller that reaches this proxy can start, stop and
+      # restart *any* container the proxy can see, not just MCP workloads. EXEC,
+      # BUILD and the system/swarm/secret endpoints stay denied, so this is the
+      # smallest set that keeps the manager functional. Because POST cannot be
+      # narrowed to create-only, the proxy is isolated on a dedicated
+      # `docker-proxy` network with *only* mcp-manager as a peer: mcp-runner and
+      # egress-proxy stay on `mcp` and can no longer reach it. The raw host
+      # socket is never mounted into the manager.
       CONTAINERS: 1
       VOLUMES: 1
       NETWORKS: 1
@@ -268,31 +278,42 @@ services:
       INFO: 0
       VERSION: 0
       PING: 0
-      ALLOW_START: 0
-      ALLOW_STOP: 0
-      ALLOW_RESTARTS: 0
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks: [mcp]
+    networks: [docker-proxy]
   mcp-manager:
     <<: *restricted
     image: mix-agent-mcp-runtime:local
+    # Both `image` and `build` are intentional (a prebuilt tag is used when
+    # present), so pin the pull behaviour: Compose must build locally rather
+    # than try to pull the unpublished `local` tag on a fresh checkout.
+    pull_policy: build
     user: "1000:1000"
     build: {context: ., dockerfile: deploy/docker/Dockerfile, target: mcp-runtime}
     environment:
       TOKEN_FILE: /tokens/manager.token
+      # Dedicated low-privilege token for /discover and /call on generated
+      # workloads. It is NOT the manager's admin token.
+      MCP_WORKLOAD_TOKEN_FILE: /workload-token/mcp-workload.token
+      MCP_WORKLOAD_TOKEN_VOLUME: mix-agent_mcp-workload-token
       POLICY_FILE: /policy/mcp-policy.json
       DOCKER_HOST: http://docker-socket-proxy:2375
       MCP_RUNTIME_IMAGE: mix-agent-mcp-runtime:local
       MCP_EGRESS_CONTAINER: mix-agent-egress-proxy-1
     volumes:
       - manager-token:/tokens:ro
+      - mcp-workload-token:/workload-token:ro
       # The manager owns mcp-policy.json: install/discover/uninstall rewrite it
       # to register per-runtime egress rules. This must stay writable; only the
       # egress proxy below gets a read-only view.
       - policy:/policy
     command: ["uvicorn", "mcp_manager:app", "--host", "0.0.0.0", "--port", "8003"]
-    networks: [mcp]
+    # `mcp` carries workload traffic; `docker-proxy` is the isolated path to
+    # the Docker API. No other service joins `docker-proxy`.
+    networks: [mcp, docker-proxy]
     mem_limit: 384m
     cpus: 0.5
     depends_on:
@@ -355,7 +376,7 @@ services:
       MIX_DATA: /tmp/mix-tests
       MIX_KEYS: /tmp/mix-tests/keys
       PUBLIC_ORIGIN: http://testserver
-    command: [sh, -c, "cd /app && alembic upgrade head && pytest -c /app/pyproject.toml -p no:cacheprovider -q /workspace/tests"]
+    command: [sh, -c, "cd /app && alembic upgrade head && pytest -c /app/pyproject.toml -p no:cacheprovider -q /workspace/tests /app/tests"]
     tmpfs:
       - /tmp:size=256m,mode=1777
     networks: [database]
@@ -398,6 +419,10 @@ networks:
   database: {internal: true}
   execution: {internal: true}
   mcp: {internal: true}
+  # Isolated Docker API path. Only mcp-manager and docker-socket-proxy join it,
+  # so the broad ALLOW_START/STOP/RESTARTS permissions cannot be abused by
+  # mcp-runner or egress-proxy peers from the shared `mcp` network.
+  docker-proxy: {internal: true}
   internet: {}
 
 volumes:
@@ -408,6 +433,7 @@ volumes:
   execution-token:
   mcp-token:
   manager-token:
+  mcp-workload-token:
   data:
   policy:
   workspace:

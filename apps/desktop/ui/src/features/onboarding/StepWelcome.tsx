@@ -88,7 +88,7 @@ export function StepWelcome({
         ))}
       </ul>
 
-      <div className="flex items-start gap-3 rounded-xl border border-line bg-surface/60 p-4">
+      <div className="flex items-start gap-3 rounded-xl border border-line bg-surface p-4">
         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-success-soft text-success">
           <ShieldCheck size={15} aria-hidden="true" />
         </span>
@@ -105,7 +105,7 @@ export function StepWelcome({
       </div>
 
       <div className="flex flex-col gap-2">
-        <span className="text-2xs font-semibold uppercase tracking-[0.12em] text-faint">
+        <span className="text-2xs font-semibold uppercase tracking-[0.16em] text-faint">
           {t("表示言語")}
         </span>
         <Row>

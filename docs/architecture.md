@@ -109,7 +109,7 @@ Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ�
 | **通信契約** | FastAPI REST API (`/runs/...`) + SSE | Tauri IPC (`#[tauri::command]`) + Window イベント (`run_event`) |
 | **ストレージ** | PostgreSQL + Alembic | SQLite (WAL モード) + sqlx マイグレーション |
 | **秘密情報** | DB 内 AES-GCM 暗号化 | AES-GCM 暗号化ファイル + OS 安全ストレージ（macOS は `.master_seed`、Windows は Credential Manager） |
-| **ブラウザ自動化** | コンテナ内 Playwright Chromium | 子プロセス実 Chromium (chromiumoxide) |
+| **ブラウザ自動化** | コンテナ内 Playwright Chromium | Tauri ネイティブ子 WebView（OS 標準の WKWebView / WebView2 / WebKitGTK） |
 | **ターミナル** | コンテナ内の一時的シェル | ホスト OS の **永続 PTY シェル** |
 | **マルチユーザー** | 管理者アカウント・セッション認証あり | 完全ローカル・単一ユーザー前提（認証不要） |
 
@@ -122,4 +122,3 @@ Run Engine も同様に `runs/engine.py`（起動・駆動・スケジューラ�
 - [`memory-spec.md`](memory-spec.md) — 両エディション共通の Memory 契約
 - [`agent-skills.md`](agent-skills.md) — Agent Skills の対応範囲
 - [`operations.md`](operations.md) — Docker 版の運用
-- [`verification.md`](verification.md) — 実機・Provider の検証記録

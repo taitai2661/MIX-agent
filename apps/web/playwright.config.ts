@@ -3,12 +3,17 @@ import { defineConfig, devices } from "@playwright/test";
 /**
  * Browser smoke tests for the Docker edition.
  *
- * The suite mocks `/api/v1/*` per test, so it needs no database or backend:
- * `pnpm test:e2e` starts the Vite dev server and exercises the real React
- * bundle. Set `E2E_BASE_URL` to point at an already-running stack (for example
- * `http://localhost:8080`) when you want the same flows against the real API.
- * Set `E2E_SERVER=preview` to exercise the production build instead of the
- * dev server (CI does this after `pnpm build`).
+ * By default the suite mocks `/api/v1/*` per test, so it needs no database or
+ * backend: `pnpm test:e2e` starts the Vite dev server and exercises the real
+ * React bundle. Set `E2E_SERVER=preview` to exercise the production build
+ * instead of the dev server (CI does this after `pnpm build`).
+ *
+ * `E2E_BASE_URL` only points the browser at an already-running stack (for
+ * example `http://localhost:8080`) — it changes which assets are served, NOT
+ * how API calls are answered. To run the flows against that stack's real API,
+ * also set `E2E_REAL_API=1`; the specs then skip their route mocks entirely.
+ * Tests whose assertions need mock-observed state (e.g. captured POST bodies)
+ * report a clear skip in that mode.
  */
 const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:4173";
 const preview = process.env.E2E_SERVER === "preview";

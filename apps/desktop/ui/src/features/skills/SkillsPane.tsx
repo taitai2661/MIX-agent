@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Download,
   FileCode,
+  History,
   Sparkles,
   Upload,
 } from "lucide-react";
@@ -50,6 +51,7 @@ export function SkillsPane() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -272,6 +274,14 @@ export function SkillsPane() {
                   <FileCode size={12} /> {t("リソース")}
                 </Button>
                 <Button
+                  size="sm"
+                  onClick={() =>
+                    setHistoryFor(historyFor === s.name ? null : s.name)
+                  }
+                >
+                  <History size={12} /> {t("履歴")}
+                </Button>
+                <Button
                   size="icon-sm"
                   title={t("エクスポート")}
                   aria-label={t("エクスポート")}
@@ -309,10 +319,85 @@ export function SkillsPane() {
             )}
             <pre className={`${payloadBlock} max-h-60`}>{s.body_markdown}</pre>
             {selected === s.name && <ResourceList name={s.name} />}
+            {historyFor === s.name && <SkillHistory name={s.name} />}
           </Card>
         ))
       )}
     </Section>
+  );
+}
+
+/** Prior versions written on overwrite or delete, with one-click restore. */
+function SkillHistory({ name }: { name: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const revisions = useQuery({
+    queryKey: ["skill_revisions", name],
+    queryFn: () => api.skillRevisions(name),
+  });
+  const restore = useMutation({
+    mutationFn: (revisionId: string) =>
+      api.restoreSkillRevision(name, revisionId),
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["skill_revisions", name],
+      });
+    },
+    onError: (e) => setError(errorMessage(e)),
+  });
+
+  return (
+    <div className="mt-1 rounded-lg border border-line bg-inset p-2.5">
+      <p className="m-0 mb-1.5 text-2xs font-medium text-faint">
+        {t("この Skill の履歴")}
+      </p>
+      {error && <ErrorBox error={error} />}
+      {revisions.isPending ? (
+        <Spinner />
+      ) : revisions.isError ? (
+        <ErrorBox error={revisions.error} />
+      ) : (revisions.data ?? []).length === 0 ? (
+        <p className="m-0 text-2xs text-muted">
+          {t("履歴はまだありません。上書きや削除の前に自動で保存されます。")}
+        </p>
+      ) : (
+        <div className="flex flex-col">
+          {(revisions.data ?? []).map((revision) => (
+            <div
+              key={revision.id}
+              className="flex flex-wrap items-center gap-2 border-b border-line py-1.5 text-2xs last:border-b-0"
+            >
+              <span
+                className="font-mono text-fg"
+                title={tf("保存時: {date}", {
+                  date: new Date(revision.updated_at).toLocaleString(),
+                })}
+              >
+                {new Date(revision.created_at).toLocaleString()}
+              </span>
+              {revision.description && (
+                <span className="min-w-0 max-w-56 truncate text-muted">
+                  {revision.description}
+                </span>
+              )}
+              <span className="text-muted">
+                {tf("{n} 文字", { n: revision.body_chars })}
+              </span>
+              <Button
+                size="sm"
+                className="ms-auto"
+                disabled={restore.isPending}
+                onClick={() => restore.mutate(revision.id)}
+              >
+                {t("復元")}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

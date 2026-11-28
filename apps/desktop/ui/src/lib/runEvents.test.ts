@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   applyRunEvent,
+  buildTrajectory,
   createTimeline,
   describeToolCall,
   isBusy,
   isFileWrite,
   isTerminal,
   reduceRunEvents,
+  summarizeRunEvent,
   TERMINAL_STATUSES,
 } from "./runEvents";
 import type { RunEventPayload } from "./api";
@@ -170,6 +172,138 @@ describe("applyRunEvent", () => {
       event("tool_approval_resolved", { granted: true }, "run-1", 2),
     );
     expect(timeline.approval).toBeNull();
+  });
+
+  it("moves the pending approval's deadline when it is extended", () => {
+    let timeline = applyRunEvent(
+      createTimeline("run-1"),
+      event("tool_approval_requested", {
+        tool_call_id: "tc-1",
+        approval_id: "ap-1",
+        name: "terminal",
+        arguments: { command: "npm test" },
+        expires_at: "2026-01-01T00:10:00Z",
+      }),
+    );
+    timeline = applyRunEvent(
+      timeline,
+      event(
+        "tool_approval_extended",
+        {
+          approval_id: "ap-1",
+          expires_at: "2026-01-01T00:15:00Z",
+        },
+        "run-1",
+        2,
+      ),
+    );
+    expect(timeline.approval?.expiresAt).toBe("2026-01-01T00:15:00Z");
+    // An extension for another prompt must not move this one.
+    timeline = applyRunEvent(
+      timeline,
+      event(
+        "tool_approval_extended",
+        {
+          approval_id: "ap-2",
+          expires_at: "2026-01-01T01:00:00Z",
+        },
+        "run-1",
+        3,
+      ),
+    );
+    expect(timeline.approval?.expiresAt).toBe("2026-01-01T00:15:00Z");
+  });
+
+  it("carries the command risk so the card can warn before approval", () => {
+    let timeline = createTimeline("run-1");
+    timeline = applyRunEvent(
+      timeline,
+      event("tool_approval_requested", {
+        tool_call_id: "tc-1",
+        approval_id: "ap-1",
+        name: "terminal",
+        arguments: { command: "rm -rf /" },
+        risk: {
+          level: "dangerous",
+          reasons: [{ code: "recursive_delete", detail: "rm -rf /" }],
+        },
+      }),
+    );
+    expect(timeline.approval?.risk).toEqual({
+      level: "dangerous",
+      reasons: [{ code: "recursive_delete", detail: "rm -rf /" }],
+    });
+  });
+
+  it("tracks a structured question until it is resolved", () => {
+    let timeline = createTimeline("run-1");
+    timeline = applyRunEvent(
+      timeline,
+      event("question_requested", {
+        question_id: "q-1",
+        question: "どれを使いますか?",
+        options: [
+          { label: "A", description: "first" },
+          { label: "B", description: "" },
+        ],
+        multi_select: false,
+        recommended: "A",
+      }),
+    );
+    expect(timeline.question).toEqual({
+      questionId: "q-1",
+      question: "どれを使いますか?",
+      options: [
+        { label: "A", description: "first" },
+        { label: "B", description: "" },
+      ],
+      multiSelect: false,
+      recommended: "A",
+    });
+
+    timeline = applyRunEvent(
+      timeline,
+      event("question_resolved", { question_id: "q-1" }, "run-1", 2),
+    );
+    expect(timeline.question).toBeNull();
+  });
+
+  it("drops malformed question cards rather than rendering blanks", () => {
+    let timeline = createTimeline("run-1");
+    timeline = applyRunEvent(
+      timeline,
+      event("question_requested", {
+        question_id: "q-bad",
+        question: "  ",
+        options: [{ label: "A" }],
+      }),
+    );
+    expect(timeline.question).toBeNull();
+
+    timeline = applyRunEvent(
+      timeline,
+      event("question_requested", {
+        question_id: "q-bad-2",
+        question: "選んでください",
+        options: [{ label: "  " }, "not-an-object"],
+      }),
+    );
+    expect(timeline.question).toBeNull();
+  });
+
+  it("drops a recommended label that matches no option", () => {
+    const timeline = applyRunEvent(
+      createTimeline("run-1"),
+      event("question_requested", {
+        question: "選んでください",
+        options: [{ label: "A" }],
+        recommended: "Z",
+      }),
+    );
+    expect(timeline.question?.recommended).toBeUndefined();
+    expect(timeline.question?.options).toEqual([
+      { label: "A", description: "" },
+    ]);
   });
 
   it("handles budget request lifecycle", () => {
@@ -518,5 +652,57 @@ describe("isFileWrite", () => {
         status: "done",
       }),
     ).toBe(false);
+  });
+});
+
+describe("summarizeRunEvent", () => {
+  it("covers the common kinds", () => {
+    expect(summarizeRunEvent("text", { delta: "hello" })).toEqual({
+      label: "text",
+      detail: "hello",
+    });
+    expect(
+      summarizeRunEvent("tool_started", {
+        name: "terminal",
+        tool_call_id: "t1",
+      }),
+    ).toEqual({ label: "tool_started:terminal", detail: "t1" });
+    expect(summarizeRunEvent("status", { status: "completed" })).toEqual({
+      label: "status",
+      detail: "completed",
+    });
+    // Unknown kinds stay visible, never dropped.
+    expect(summarizeRunEvent("future_kind", {})).toEqual({
+      label: "future_kind",
+      detail: "",
+    });
+    // Malformed payloads do not throw.
+    expect(summarizeRunEvent("text", null)).toEqual({
+      label: "text",
+      detail: "",
+    });
+  });
+
+  it("truncates long deltas", () => {
+    const { detail } = summarizeRunEvent("text", {
+      delta: "あ".repeat(200),
+    });
+    expect(detail.endsWith("…")).toBe(true);
+    expect([...detail].length).toBe(161);
+  });
+});
+
+describe("buildTrajectory", () => {
+  it("sorts by sequence", () => {
+    const points = buildTrajectory([
+      event("status", { status: "completed" }, "run-1", 3),
+      event("text", { delta: "hi" }, "run-1", 1),
+      event("tool_started", { name: "terminal" }, "run-1", 2),
+    ]);
+    expect(points.map((p) => p.sequence)).toEqual([1, 2, 3]);
+    expect(points[1]).toMatchObject({
+      kind: "tool_started",
+      label: "tool_started:terminal",
+    });
   });
 });

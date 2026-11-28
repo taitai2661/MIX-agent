@@ -6,11 +6,14 @@
 //! given, otherwise the app's current directory, and every path is checked
 //! against traversal.
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::commands::access::{ensure_access, ensure_root};
 use crate::diff;
+use crate::path_grants::PathGrants;
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -46,6 +49,28 @@ pub struct FileDiffView {
 /// shown as a whole-file replacement instead of loading them into memory.
 const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 
+/// Resolve the on-disk path a diff preview will read.
+///
+/// With `root_path = None` the root is the process CWD, which for a
+/// double-clicked GUI app can be `/`. `safe_join` then happily resolves a
+/// relative path like `etc/some/file` to a real system file, so the resolved
+/// target — not just the root — must go through the grant check below.
+fn resolve_diff_target(root_path: Option<&str>, path: &str) -> Result<std::path::PathBuf, String> {
+    let root = mixd_tools::files::FilesTool::resolve_context_root(root_path)
+        .map_err(crate::error::cmd_err)?;
+    mixd_tools::files::FilesTool::safe_join(&root, path).map_err(crate::error::cmd_err)
+}
+
+/// True when the resolved target needs a fresh confirmation.
+///
+/// A grant on a *folder root* covers its children, so the common
+/// `root_path = Some(project)` flow stays a single prompt. A relative path that
+/// lands outside every granted root (including the implicit CWD root) is not
+/// covered and must be confirmed before any bytes are read.
+fn diff_target_needs_confirmation(grants: &PathGrants, target: &Path) -> bool {
+    !grants.is_granted(target)
+}
+
 /// Preview what a `files` write would change, without touching the file.
 #[tauri::command]
 pub async fn preview_file_diff(
@@ -67,10 +92,14 @@ pub async fn preview_file_diff(
         let canonical = requested.canonicalize().map_err(crate::error::cmd_err)?;
         ensure_root(&app, &state, &canonical).await?;
     }
-    let root = mixd_tools::files::FilesTool::resolve_context_root(input.root_path.as_deref())
-        .map_err(crate::error::cmd_err)?;
-    let target =
-        mixd_tools::files::FilesTool::safe_join(&root, path).map_err(crate::error::cmd_err)?;
+    let target = resolve_diff_target(input.root_path.as_deref(), path)?;
+    // Always gate the resolved target. The root check above grants the project
+    // folder, but with `root_path = None` there is no root check at all and a
+    // relative path could point at any file below the process CWD. When the
+    // target is already covered by a grant this is a no-op.
+    if diff_target_needs_confirmation(&state.grants, &target) {
+        ensure_access(&app, &state, &target, "読み込む").await?;
+    }
 
     let meta = tokio::fs::metadata(&target).await.ok();
     let exists = meta.is_some();
@@ -314,4 +343,43 @@ pub async fn save_base64_file(
         .await
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_relative_path_outside_an_explicitly_granted_root_needs_confirmation() {
+        let base =
+            std::env::temp_dir().join(format!("mix-diff-access-{}", uuid::Uuid::new_v4().simple()));
+        let root = base.join("project");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).expect("create project");
+        std::fs::write(nested.join("ok.txt"), "inside").expect("write inside");
+        // This is where `root_path = None` would land when the process CWD is
+        // the parent of the granted project: a sibling, not a child.
+        std::fs::write(base.join("secret.txt"), "outside").expect("write outside");
+
+        let grants = PathGrants::default();
+        grants.grant_permanent(&root);
+
+        let inside = resolve_diff_target(Some(root.to_str().unwrap()), "nested/ok.txt")
+            .expect("resolve inside");
+        assert!(!diff_target_needs_confirmation(&grants, &inside));
+
+        let outside = resolve_diff_target(Some(root.to_str().unwrap()), "../secret.txt");
+        // safe_join itself refuses to escape an explicit root; the important
+        // assertion below is that a resolved path outside the grant is not
+        // silently trusted (the implicit-CWD case).
+        assert!(
+            outside.is_err() || diff_target_needs_confirmation(&grants, &base.join("secret.txt"))
+        );
+        assert!(diff_target_needs_confirmation(
+            &grants,
+            &base.join("secret.txt")
+        ));
+
+        std::fs::remove_dir_all(&base).ok();
+    }
 }

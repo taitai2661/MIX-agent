@@ -1,6 +1,6 @@
 # MIX-agent Desktop — Architecture
 
-> Desktop 版の**現行仕様**をまとめた文書です。設計判断の経緯と代替案は各 `*-plan.md` にあります。
+> Desktop 版の**現行仕様**をまとめた文書です。
 > Docker 版の全体構成は [`../architecture.md`](../architecture.md) を参照してください。
 
 ## 目的
@@ -185,9 +185,11 @@ Auto は `models.data.auto` が真のモデルだけを候補にし、ターン�
   失敗は重複を避けるため再試行しません。月次予算が尽きている場合は
   ローカルからクラウドへは切り替えません。実際の切り替えは
   `runs.data.autoFallbacks` と `RunOutcome.auto_fallbacks` に残ります。
-- **未実装**: 選択理由の UI 表示、暗黙フィードバック、プロバイダ呼び出し前の
-  共有回路遮断器、ローカルランタイムの起動待ち。計画は
-  [`auto-routing-plan.md`](auto-routing-plan.md)。
+- **表示済み**: 選択理由は `autoSelection.reason` を `MessageView` に通し、
+  モデル名の隣の `Auto` バッジ（ツールチップ／読み上げ名）に表示します
+  （`ui/src/features/chat/MessageItem.tsx`）。
+- **未実装**: 暗黙フィードバック、プロバイダ呼び出し前の共有回路遮断器、
+  ローカルランタイムの起動待ち。
 
 ## Browser Operator（Desktop: ネイティブ子 WebView）
 
@@ -330,12 +332,12 @@ no-op になる。
   バイナリを最小 `.app` に包んで実行する。
 - **設定**: macOS のみ「設定 ▸ Spotlight」タブ。有効化 / 本文索引 /
   索引済み・未処理件数 / 最終同期 / 最終エラー / 再構築 / 索引から削除。
-- **設計経緯**: [`spotlight-plan.md`](spotlight-plan.md)。
+- **設計経緯**: 削除済み（現行仕様に集約）。
 
 ## セキュリティ
 
 - **Secret store**: AES-256-GCM の暗号文は `secrets.enc.json`（0600）に保存します。macOS は **マスター seed をデータディレクトリ内の `.master_seed`（0600）** に置きます。Desktop 版は ad-hoc 署名で配布しており、ログイン Keychain は再ビルドごとに別アプリと認識してパスワードダイアログを出すため、通常起動では Keychain を読みません。旧版で Keychain に seed がある場合は初回だけ読み取り、`.master_seed` へコピーして以後はアクセスしません（旧ファイル seed は `.master_seed_backup` として残し、復号のフォールバックに使います）。Windows は従来どおり **Credential Manager にマスター seed** を置きます（同一ユーザーではプロンプトが出ないため）。Linux は Secret Service が常にあるとは限らないためファイル方式です。`MIX_SECRET_BACKEND=file|keychain|keychain-seed` で明示的に切り替えられます。
-- **DB 暗号化設定 (Codex 互換)**: 標準は **OFF（平文 SQLite）** で動作し、所有者のみ読み書き可（0600）のアクセス権で保護されます（Codex parity）。設定（GeneralSettings）から保存時の暗号化を **ON / OFF** 切り替え可能で、ON に設定された場合は OS Keychain にマスター暗号化鍵（`db.master`）が生成・保管されます。診断画面（Diagnostics）でも暗号化状態が確認できます。
+- **DB 暗号化設定 (Codex 互換)**: 標準は **OFF（平文 SQLite）** で動作し、所有者のみ読み書き可（0600）のアクセス権で保護されます（Codex parity）。`db.master` の生成経路は用意されていますが、**SQLCipher は接続に配線されていません**。設定（GeneralSettings）と診断画面（Diagnostics）はこの状態を「このビルドでは未対応 / 未対応」と明示し、`db_encrypted` は常に `false` です。保存時の暗号化が入るまでは、OS のディスク暗号化（FileVault / BitLocker / LUKS）に依存します。
 - **Egress allowlist + private IP deny**: `tools::network` が reqwest 実行前に検査。allowlist が空なら公開ホストのみ許可し、private IP は常に拒否します。保存済みルールは `*.example.com` のようなワイルドカードに対応します。
 - **WebView CSP**: `app/tauri.conf.json` の `app.security.csp` で `connect-src 'self' ipc: http://ipc.localhost` に限定。
 - **window 設定**: `app.macosPrivateApi = true` は `titleBarStyle: Overlay` +
@@ -415,12 +417,12 @@ UI は cron 式を入力中に `preview_cron` で次回5回を表示し、誤記
 | 5 | Memory / Knowledge / Skills / Projects / Schedules / Agents | ✅ |
 | 6 | tray / menu / notification / backup / 署名付き自動更新 + macOS・Windows・Linux リリースCI | ✅ |
 | 7 | macOS 完成 + Windows x64 + Linux 配布 | ✅（v0.5.1 で Windows x64 追加、v0.5.2 で Linux 追加・アプリ内更新） |
-| 8 | コーディングエージェント化（編集・検証・探索・git・UI 証跡） | ✅（8.1〜8.4。詳細は [`coding-agent-plan.md`](coding-agent-plan.md)） |
-| 9 | 洗練 & パリティ（Server ツール parity / `@` 補完 / モノレポ整備） | 未着手（着手時点の計画は [`coding-agent-plan.md`](coding-agent-plan.md)） |
-| 10 | コーディングエージェントの信頼性（ツール契約・評価・計画承認・ロールバック） | 10.0 完了。10.1 以降は計画（詳細は [`coding-agent-plan.md`](coding-agent-plan.md)） |
+| 8 | コーディングエージェント化（編集・検証・探索・git・UI 証跡） | ✅（8.1〜8.4） |
+| 9 | 洗練 & パリティ（Server ツール parity / `@` 補完 / モノレポ整備） | 未着手 |
+| 10 | コーディングエージェントの信頼性（ツール契約・評価・計画承認・ロールバック） | 10.0 完了 |
 
 Phase 6 で Tauri updater を再有効化しました。`desktop-release.yml` は Apple Silicon／Intel macOS の ad-hoc 署名済み DMG、Windows x64 の未署名 NSIS/MSI、Linux x64 の AppImage/deb に加え、署名済みアップデータ（`.app.tar.gz` / `-setup.exe` / `.AppImage` と各 `.sig`）と `latest.json` を Release へ添付します。秘密鍵は GitHub Actions の Repository Secrets のみに置きます。
-Phase 7 は v0.5.1 / v0.5.2 で配布まで到達しました。各 OS 実機での更新適用確認は [`verification.md`](../verification.md) に記録します。
+Phase 7 は v0.5.1 / v0.5.2 で配布まで到達しました。
 
 ## 空チャットの挨拶（2026-10-01）
 
@@ -440,7 +442,7 @@ Phase 7 は v0.5.1 / v0.5.2 で配布まで到達しました。各 OS 実機で
 直接書けないためここが単一の情報源です。日本語は間なしで、英語は空白区切りで連結し、
 `t()` は文単位で適用します。言語辞書の件数は `pnpm ui:test`（`i18n.keys.test.ts` の孤立キー検査）の出力で確認してください。
 
-Docker 版（[`docs/verification.md`](../verification.md) の 2026-10-01 節）と同じ方式ですが、
+Docker 版と同じ方式ですが、
 冒頭の方針どおりコードは共有していません。Desktop 版は
 `スレッド` / プロジェクト / 差分 / Browser など自分の語彙で書き下し、提案も
 Desktop が実際に持つ機能（差分・テスト・ブラウザ・プロジェクト）に寄せています。
@@ -512,7 +514,7 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 
 ## 軽量化・起動・常駐リソース（2026-11）
 
-計画と経緯は [`performance-plan.md`](performance-plan.md) を参照。現行挙動は次のとおり。
+現行挙動は次のとおり。
 
 - **起動時のバックアップ**（`storage/src/db.rs`）。`VACUUM INTO` は
   **マイグレーションが必要なときだけ** pool を開く前に実行します。通常起動では
@@ -611,12 +613,9 @@ Phase 3〜5 の実装に対する、コード監査で確定した欠陥の修�
 ## 既知の残タスク
 
 - Knowledge は FTS5（trigram）の lexical 検索に対応。embedding 検索は未実装。
-- Memory の自動生成（Run 後の抽出）は Phase 2 で実装済みだが、抽出品質の改善は継続課題（[`../memory-roadmap.md`](../memory-roadmap.md) Phase 2 参照）。
-- 対話 terminal は `action: "send"` まで実装済み。専用のターミナル UI とシグナル送出は未実装。
+- Memory の自動生成（Run 後の抽出）は Phase 2 で実装済みだが、抽出品質の改善は継続課題。
 - Windows のサンドボックスは Job Object によるプロセスツリー隔離まで。ファイルシステムの
   書き込み隔離（AppContainer / restricted token）は portable-pty の制約で未対応。
-- LSP は `lsp` ツールとして実装済み。対応言語は Rust / TypeScript / Python / Go で、
-  サーバーは PATH または `MIX_LSP_*` で指定する。
 - Database at-rest encryption（SQLCipher）は未配線。設定に互換用の
   `database_encryption` キーは残るが、常に `false` として読み書きし、UI でも
   「未対応」と表示する。実データは平文 SQLite + 所有者限定パーミッションのみ
@@ -641,12 +640,5 @@ Desktop 側も `apps/desktop/LICENSE` と `apps/desktop/Cargo.toml` の `license
 - [`api-mapping.md`](api-mapping.md) — Docker 版 REST と Tauri コマンドの対応表
 - [`ui-conventions.md`](ui-conventions.md) — UI プリミティブと表記の基準
 - [`update-signing.md`](update-signing.md) — アップデート署名鍵の運用
-- [`coding-agent-plan.md`](coding-agent-plan.md) — コーディングエージェント化の経緯と残計画
 - [`coding-eval.md`](coding-eval.md) — コーディングエージェントの評価ハーネス
-- [`local-runtime-plan.md`](local-runtime-plan.md) — ローカル LLM 連携の設計記録
-- [`webview-browser-plan.md`](webview-browser-plan.md) — ネイティブ子 WebView 方式の設計と移行記録
-- [`chromium-on-demand-plan.md`](chromium-on-demand-plan.md) — 旧 Chromium 初回インストール方式（廃止）
-- [`performance-plan.md`](performance-plan.md) — 起動・描画・常駐リソースの軽量化計画
-- [`agent-speed-plan.md`](agent-speed-plan.md) — エージェント 1 ターンの高速化計画
-- [`../verification.md`](../verification.md) — 実機・Provider の検証記録
 - [`../../apps/desktop/README.md`](../../apps/desktop/README.md) — Desktop 版の入口・セットアップ・開発手順

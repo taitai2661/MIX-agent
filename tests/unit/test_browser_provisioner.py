@@ -8,10 +8,22 @@ from runners.browser_provisioner import main as installer
 
 
 @pytest.fixture(autouse=True)
-def isolated_state(tmp_path, monkeypatch):
+async def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(installer, "ROOT", tmp_path)
     monkeypatch.setattr(installer, "STATE", tmp_path / "install-state.json")
     monkeypatch.setattr(installer, "TASK", None)
+    yield
+    # `start_install` spawns a background task. Always drain it, including
+    # when an assertion in the test failed, so it cannot leak into the next
+    # test (or keep writing state after the fixture's tmp_path is gone).
+    task = installer.TASK
+    if task is not None:
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def test_progress_and_verified_completion(monkeypatch):
@@ -111,11 +123,14 @@ async def test_update_downloads_even_when_ready(monkeypatch):
 
 
 async def test_timeout_kills_install_process(monkeypatch):
+    read_started = asyncio.Event()
+
     class Output:
         async def read(self, _size):
-            # Block well past the timeout so the kill path is taken even on a
-            # heavily loaded CI runner; the old 1s read vs 0.01s timeout raced.
-            await asyncio.sleep(30)
+            # Never resolves on its own: the timeout is the only thing that can
+            # end this read, so there is no duration to race against.
+            read_started.set()
+            await asyncio.Event().wait()
 
     class Process:
         stdout = Output()
@@ -135,10 +150,11 @@ async def test_timeout_kills_install_process(monkeypatch):
         return process
 
     monkeypatch.setattr(installer.asyncio, "create_subprocess_exec", launch)
-    # 0.5s: long enough to be reachable under load, short enough to keep the
-    # suite fast; the 30s read above guarantees the timeout fires first.
-    monkeypatch.setattr(installer, "INSTALL_TIMEOUT", 0.5)
+    # Small but finite: the read above cannot finish first, so this reliably
+    # exercises the timeout/kill path without a long fixed sleep.
+    monkeypatch.setattr(installer, "INSTALL_TIMEOUT", 0.05)
     await installer.start_install()
     await installer.TASK
+    assert read_started.is_set(), "the install never reached the blocking read"
     assert process.killed
     assert installer.current()["failure"] == "install_timeout"

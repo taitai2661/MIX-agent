@@ -29,6 +29,12 @@ vi.mock("@/lib/queries", () => ({
     error: null,
     refetch: vi.fn(),
   }),
+  usePendingApprovals: () => ({
+    data: [],
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
   useProjects: () => ({ data: [], isPending: false, isError: false }),
 }));
 
@@ -101,6 +107,21 @@ describe("Sidebar", () => {
     expect(
       screen.getByText("新しいコーディングを始めましょう"),
     ).toBeInTheDocument();
+  });
+
+  it("filters the history by run state", () => {
+    renderSidebar();
+
+    const running = screen.getByRole("button", { name: "実行中" });
+    const approval = screen.getByRole("button", { name: "承認待ち" });
+    expect(running).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(approval);
+    expect(approval).toHaveAttribute("aria-pressed", "true");
+    expect(running).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.getByRole("button", { name: "すべて" }),
+    ).toHaveAttribute("aria-pressed", "false");
   });
 
   it("navigates to projects and agent settings from the grouped nav", () => {

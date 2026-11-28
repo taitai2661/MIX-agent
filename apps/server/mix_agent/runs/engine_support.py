@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import json
 import re
 from collections import defaultdict, deque
@@ -27,7 +28,7 @@ SAME_TOOL_ARGUMENT_LIMIT = 3
 STREAM_TEXT_FLUSH_SECONDS = 0.075
 _PROVIDER_RATE_LOCK = asyncio.Lock()
 _PROVIDER_REQUESTS = defaultdict(deque)
-_LAUNCH_SEQUENCE = 0
+_LAUNCH_SEQUENCE = itertools.count(1)
 
 
 def _collect_memory_observations(db, run, final_answer: str) -> list[dict]:
@@ -63,9 +64,19 @@ def _collect_memory_observations(db, run, final_answer: str) -> list[dict]:
 
 
 def _next_launch_epoch():
-    global _LAUNCH_SEQUENCE
-    _LAUNCH_SEQUENCE += 1
-    return _LAUNCH_SEQUENCE
+    """Hand out the next launch epoch.
+
+    The epoch is what stops a stale drive task from overwriting a newer run
+    (see ``engine.launch``). It is allocated from more than one thread — the
+    scheduler runs its maintenance pass through ``asyncio.to_thread`` and the
+    sync FastAPI routes call ``launch()`` from the threadpool — so a
+    read-modify-write on a plain global could hand two launches the *same*
+    epoch, which silently disables the guard.
+
+    ``itertools.count`` is used because ``next()`` on it is atomic: the C
+    implementation holds the GIL for the whole increment.
+    """
+    return next(_LAUNCH_SEQUENCE)
 
 
 def _current_launch_epoch():

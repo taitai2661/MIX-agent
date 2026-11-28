@@ -103,15 +103,24 @@ impl SpotlightService {
 
     pub fn set_route_error(&self, reason: String) {
         tracing::warn!(%reason, "Spotlight click routing is unavailable");
-        *self.route_error.lock().unwrap() = Some(reason);
+        *self
+            .route_error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(reason);
     }
 
     fn flags(&self) -> Flags {
-        *self.flags.lock().unwrap()
+        *self
+            .flags
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn set_flags(&self, enabled: bool, body: bool) {
-        *self.flags.lock().unwrap() = Flags { enabled, body };
+        *self
+            .flags
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Flags { enabled, body };
     }
 
     /// Start the background worker. Safe to call more than once; only the
@@ -561,7 +570,11 @@ impl SpotlightService {
             .await
             .unwrap_or_default();
         let availability = self.sink.available();
-        let route_error = self.route_error.lock().unwrap().clone();
+        let route_error = self
+            .route_error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let supported = availability.is_ok() && route_error.is_none();
         let reason = availability
             .err()
@@ -593,7 +606,10 @@ impl SpotlightService {
     }
 
     pub fn take_pending(&self) -> Option<SpotlightTarget> {
-        self.pending.lock().unwrap().take()
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 
     /// Resolve a clicked Spotlight identifier. A stale identifier (the thread
@@ -657,7 +673,10 @@ impl SpotlightService {
             return;
         };
 
-        *self.pending.lock().unwrap() = Some(target.clone());
+        *self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(target.clone());
         #[cfg(target_os = "macos")]
         route::show_main_window(app);
         #[cfg(not(target_os = "macos"))]
@@ -765,12 +784,18 @@ mod queue_tests {
         }
 
         fn index(&self, items: &[IndexItem]) -> anyhow::Result<()> {
-            self.indexed.lock().unwrap().push(items.to_vec());
+            self.indexed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(items.to_vec());
             Ok(())
         }
 
         fn delete(&self, item_ids: &[String]) -> anyhow::Result<()> {
-            self.deleted.lock().unwrap().push(item_ids.to_vec());
+            self.deleted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(item_ids.to_vec());
             Ok(())
         }
 
@@ -836,7 +861,13 @@ mod queue_tests {
 
         service.reconcile().await.expect("reconcile");
         service.process_pending().await.expect("index pass");
-        assert_eq!(sink.indexed.lock().unwrap().len(), 1);
+        assert_eq!(
+            sink.indexed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            1
+        );
 
         sqlx::query("DELETE FROM messages WHERE conversation_id = 'c1'")
             .execute(service.storage.pool())
@@ -850,7 +881,10 @@ mod queue_tests {
         service.reconcile().await.expect("reconcile delete");
         service.process_pending().await.expect("delete pass");
         assert_eq!(
-            *sink.deleted.lock().unwrap(),
+            *sink
+                .deleted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
             vec![vec!["conversation:c1".to_string()]]
         );
     }
@@ -864,7 +898,10 @@ mod queue_tests {
         service.process_pending().await.expect("index pass");
 
         {
-            let indexed = sink.indexed.lock().unwrap();
+            let indexed = sink
+                .indexed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             assert_eq!(indexed.len(), 1);
             assert_eq!(indexed[0][0].item_id, "conversation:c1");
             assert_eq!(indexed[0][0].title, "Spotlight queue test");
@@ -881,7 +918,10 @@ mod queue_tests {
             .await;
         service.process_pending().await.expect("delete pass");
         {
-            let deleted = sink.deleted.lock().unwrap();
+            let deleted = sink
+                .deleted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             assert_eq!(*deleted, vec![vec!["conversation:c1".to_string()]]);
         }
         let remaining: Option<(String,)> =

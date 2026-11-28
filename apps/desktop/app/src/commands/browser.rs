@@ -44,6 +44,9 @@ pub async fn browser_invoke(
     state: State<'_, AppState>,
     input: BrowserInvokeInput,
 ) -> Result<BrowserInvokeOutput, String> {
+    if crate::safe_mode() {
+        return Err("the browser is disabled in safe mode".to_string());
+    }
     let workspace_id = input
         .workspace_id
         .as_deref()

@@ -172,7 +172,9 @@ describe("RightPanel on the chat surface", () => {
       "アクティビティ",
       "使用状況",
       "変更",
+      "問題",
       "ブラウザ",
+      "ターミナル",
     ]);
     expect(screen.getByRole("tab", { name: "ブラウザ" })).toHaveAttribute(
       "aria-selected",

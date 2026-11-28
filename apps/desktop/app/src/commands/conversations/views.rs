@@ -17,6 +17,13 @@ pub struct MessageView {
     pub attachments: Vec<MessageAttachmentView>,
     /// SQLite rowid. Stable across edits and used as the "older than" cursor.
     pub seq: i64,
+    /// True when this assistant answer came from Auto routing. Feedback only
+    /// applies to those rows (the backend rejects ratings on manual answers).
+    pub auto_selection: bool,
+    /// Human-readable reason Auto picked this model (e.g. profile + fit).
+    pub auto_reason: Option<String>,
+    /// `"up"` / `"down"` from `message_feedback`, or `None` when unrated.
+    pub feedback: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,17 +73,22 @@ pub async fn fetch_messages_before(
 ) -> Result<Vec<MessageView>, String> {
     let limit = limit.clamp(1, limits::MAX_MESSAGE_LIMIT);
     let rows: Vec<MessageRow> = sqlx::query_as(
-        "SELECT rowid, id, role, content, \
-                json_extract(data, '$.reasoning') AS reasoning, \
-                json_extract(data, '$.modelId') AS model_id, \
-                json_extract(data, '$.runId') AS run_id, \
-                json_extract(data, '$.kind') AS kind, \
-                created_at, \
-                json_extract(data, '$.attachments') AS attachments \
-         FROM messages WHERE conversation_id = ? \
-           AND role IN ('user', 'assistant') \
-           AND (? IS NULL OR rowid < ?) \
-         ORDER BY rowid DESC LIMIT ?",
+        "SELECT m.rowid, m.id, m.role, m.content, \
+                json_extract(m.data, '$.reasoning') AS reasoning, \
+                json_extract(m.data, '$.modelId') AS model_id, \
+                json_extract(m.data, '$.runId') AS run_id, \
+                json_extract(m.data, '$.kind') AS kind, \
+                m.created_at, \
+                json_extract(m.data, '$.attachments') AS attachments, \
+                (COALESCE(json_type(m.data, '$.autoSelection'), 'null') <> 'null') AS auto_selection, \
+                json_extract(m.data, '$.autoSelection.reason') AS auto_reason, \
+                json_extract(mf.data, '$.value') AS feedback \
+         FROM messages m \
+           LEFT JOIN message_feedback mf ON mf.message_id = m.id \
+         WHERE m.conversation_id = ? \
+           AND m.role IN ('user', 'assistant') \
+           AND (? IS NULL OR m.rowid < ?) \
+         ORDER BY m.rowid DESC LIMIT ?",
     )
     .bind(conversation_id)
     .bind(before)
@@ -102,6 +114,9 @@ pub async fn fetch_messages_before(
                 kind,
                 created_at,
                 attachments,
+                auto_selection,
+                auto_reason,
+                feedback,
             )| {
                 MessageView {
                     id,
@@ -114,6 +129,9 @@ pub async fn fetch_messages_before(
                     created_at: normalize_ts(&created_at),
                     attachments: parse_attachments(attachments.as_deref()),
                     seq,
+                    auto_selection: auto_selection.unwrap_or(0) != 0,
+                    auto_reason,
+                    feedback,
                 }
             },
         )
@@ -130,6 +148,9 @@ pub type MessageRow = (
     Option<String>,
     Option<String>,
     String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
     Option<String>,
 );
 

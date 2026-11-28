@@ -1164,7 +1164,12 @@ export const en: Record<string, string> = {
   "変更前": "Before",
   "変更後": "After",
   "内容": "Content",
+  "以前のメッセージを表示": "Show earlier messages",
   "常に許可の範囲": "Scope remembered by “Always allow”",
+  "内容を理解しました。この操作を実行します。":
+    "I understand. Run this operation.",
+  "変更を伴う操作は「常に許可」に保存できません。実行のたびに確認します。":
+    "State-changing operations cannot be remembered with “Always allow”. You will be asked every time.",
   "プロジェクトはまだありません。": "No projects yet.",
   "設定を保存しました": "Settings saved",
   "設定を保存できませんでした": "Could not save settings",

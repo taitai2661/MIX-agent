@@ -10,7 +10,7 @@
 //! for `b.rs` too. A confirming read now clears only the targets it actually
 //! covers.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,14 @@ pub struct VerificationLedger {
     /// Outstanding effects, each mapped to the human-readable reason the effect
     /// is destructive. Keyed by target so unrelated paths stay independent.
     outstanding: HashMap<String, String>,
+    /// Targets that have actually been read back. Kept as a set so a mutation
+    /// can re-arm a previously confirmed target: clearing is always the
+    /// intersection `outstanding ∩ confirmed`, never `outstanding.clear()`.
+    confirmed: HashSet<String>,
+    /// Workspace root, when the caller has one. Used only to make absolute and
+    /// relative spellings of the same file produce one ledger key; the ledger
+    /// itself never touches the filesystem, so it stays unit-testable.
+    root: Option<std::path::PathBuf>,
     last_reason: Option<String>,
     /// The project's own check (`cargo test`, `pnpm test`, …). `None` disables
     /// the second gate entirely: with nothing configured there is nothing to
@@ -69,6 +77,53 @@ impl VerificationLedger {
         self.verify_command.as_deref()
     }
 
+    /// Bind a workspace root so absolute/relative spellings of one file share a
+    /// key. Called by the engine at construction; tests can leave it unset.
+    pub fn with_root(mut self, root: Option<&str>) -> Self {
+        self.root = root
+            .map(std::path::PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty());
+        self
+    }
+
+    /// Lexically normalise a path into a stable ledger key.
+    ///
+    /// The fingerprint and snapshot paths use `normalize_tool_path`; the ledger
+    /// used to compare raw strings, so `edit ./a.rs` followed by
+    /// `files read a.rs` left `path:./a.rs` outstanding forever and the run
+    /// concluded unverified. `lexical_clean` is already used for shell write
+    /// targets, so the two spellings now agree without any I/O.
+    fn key_path(&self, path: &str) -> String {
+        let normalised = lexical_clean(std::path::Path::new(&path.replace('\\', "/")));
+        let key = if normalised.is_absolute() {
+            match self.root.as_deref().map(lexical_clean) {
+                Some(root) => normalised
+                    .strip_prefix(&root)
+                    .unwrap_or(&normalised)
+                    .to_path_buf(),
+                None => normalised,
+            }
+        } else {
+            normalised
+        };
+        key.to_string_lossy().replace('\\', "/")
+    }
+
+    /// The normalised `path:` key of a call's path argument, if it has one.
+    fn path_key(&self, args: &serde_json::Value) -> Option<String> {
+        path_arg(args).map(|path| format!("path:{}", self.key_path(path)))
+    }
+
+    /// The normalised effect key for a destructive call.
+    fn effect_key_for(&self, tool: &str, args: &serde_json::Value) -> String {
+        match tool {
+            "terminal" => format!("cmd:{}", terminal_input(args).trim()),
+            _ => self
+                .path_key(args)
+                .unwrap_or_else(|| effect_key(tool, args)),
+        }
+    }
+
     /// Record that a file was changed, which re-arms the check gate.
     ///
     /// Called only for changes the agent made deliberately through `edit` or
@@ -80,19 +135,27 @@ impl VerificationLedger {
         if self.verify_command.is_none() || path.is_empty() {
             return;
         }
-        self.unverified.insert(path.to_string());
+        self.unverified.insert(self.key_path(path));
     }
 
     /// Record a shell command the agent ran.
     ///
-    /// A successful run clears the gate only when it *is* the configured check —
-    /// otherwise any successful command (`ls`, `echo`) would count as
+    /// A successful run clears the check gate only when it *is* the configured
+    /// check — otherwise any successful command (`ls`, `echo`) would count as
     /// verification, which is how a gate like this usually fails open in
     /// practice.
+    ///
+    /// It also confirms a destructive effect keyed by that very command: an
+    /// un-scoped `grep` used to clear *every* outstanding `cmd:` effect, which
+    /// let a run conclude after an unrelated read. Only re-running the exact
+    /// command is accepted as its read-back.
     pub fn note_command(&mut self, command: &str, exit_ok: bool) {
         if !exit_ok {
             return;
         }
+        let key = format!("cmd:{}", command.trim());
+        self.confirmed.insert(key.clone());
+        self.outstanding.remove(&key);
         let Some(configured) = self.verify_command.as_deref() else {
             return;
         };
@@ -123,47 +186,56 @@ impl VerificationLedger {
         // verification no matter how correct the edit was. Arm every target so
         // a confirming read clears exactly what it covers.
         let targets = mutated_paths(tool, args);
-        if targets.is_empty() {
-            self.outstanding
-                .insert(effect_key(tool, args), reason.clone());
+        let keys: Vec<String> = if targets.is_empty() {
+            vec![self.effect_key_for(tool, args)]
         } else {
-            for path in targets {
-                self.outstanding
-                    .insert(format!("path:{path}"), reason.clone());
-            }
+            targets
+                .into_iter()
+                .map(|path| format!("path:{}", self.key_path(&path)))
+                .collect()
+        };
+        for key in keys {
+            self.outstanding.insert(key.clone(), reason.clone());
+            // Re-arming a target invalidates any earlier read of it. Without
+            // this, `read a.rs` → `edit a.rs` would inherit the first read's
+            // confirmation and let the run conclude unverified.
+            self.confirmed.remove(&key);
         }
         self.last_reason = Some(reason);
         true
     }
 
-    /// A confirming read clears the target(s) it actually covers.
+    /// A confirming read clears only the target(s) it actually covers.
+    ///
+    /// A read that names a path covers exactly that path — mirroring
+    /// [`mutated_paths`] / [`path_arg`]. An un-scoped read (a bare `grep`, a
+    /// fetch, a search) cannot pin a file, so it must never clear a path
+    /// target. It must not clear command-keyed shell effects either: that used
+    /// to confirm every outstanding destructive command with one unrelated
+    /// read. Those are confirmed only by re-running the exact command via
+    /// [`Self::note_command`].
     pub fn confirm(&mut self, tool: &str, args: &serde_json::Value) {
-        match tool {
-            "files" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                if action == "read" || action == "list" {
-                    match path_arg(args) {
-                        Some(path) => {
-                            self.outstanding.remove(&format!("path:{path}"));
-                        }
-                        // A bare listing confirms the whole tree.
-                        None => self.outstanding.clear(),
-                    }
-                }
-            }
-            // Broad searches and fetches are not path-specific; treat them as
-            // confirming the outstanding set rather than pinning the agent.
-            "glob" | "grep" | "lsp" | "web_fetch" | "web_fetch_pdf" | "web_search" | "network"
-            | "image_vision" | "workspace_check" => {
-                self.outstanding.clear();
-            }
-            // A search over knowledge confirms the outstanding set; any other
-            // knowledge action (ingest / delete) is path-specific and must not.
-            "knowledge" if args.get("action").and_then(|v| v.as_str()) == Some("search") => {
-                self.outstanding.clear();
-            }
-            _ => {}
+        if !is_read_tool(tool) {
+            return;
         }
+        if tool == "files"
+            && !matches!(
+                args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+                "read" | "list"
+            )
+        {
+            return;
+        }
+        if tool == "knowledge" && args.get("action").and_then(|v| v.as_str()) != Some("search") {
+            return;
+        }
+        let Some(key) = self.path_key(args) else {
+            return;
+        };
+        self.confirmed.insert(key);
+        // Intersection, not a wholesale clear.
+        self.outstanding
+            .retain(|key, _| !self.confirmed.contains(key));
     }
 
     pub fn is_blocked(&self) -> bool {
@@ -193,7 +265,7 @@ fn command_arg(args: &serde_json::Value) -> Option<&str> {
 ///
 /// `action: "send"` types `input` into the live shell, so permission patterns
 /// and destructive detection must look at it instead of the absent `command`.
-fn terminal_input(args: &serde_json::Value) -> &str {
+pub fn terminal_input(args: &serde_json::Value) -> &str {
     if args.get("action").and_then(|v| v.as_str()) == Some("send") {
         args.get("input").and_then(|v| v.as_str()).unwrap_or("")
     } else {
@@ -209,13 +281,19 @@ fn effect_key(tool: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// A character that separates a shell command from its surroundings.
+fn is_command_boundary(c: char) -> bool {
+    c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '"' | '\'')
+}
+
 /// `true` when `command` runs `configured`, with or without extra arguments.
 ///
 /// Substring matching alone would let `pnpm test:unit` satisfy a configured
-/// `pnpm test`, so the match has to end at a command boundary — whitespace, a
-/// shell separator, or the end of the string. A prefix like `cd x && ` and a
-/// suffix like ` -- --nocapture` both still count, which is what makes this
-/// usable at all: the model rarely retypes the command character for character.
+/// `pnpm test`, so the match has to sit on command boundaries on *both* sides:
+/// `latest` must not satisfy `test` just because `test` is a suffix of it. A
+/// prefix like `cd x && ` and a suffix like ` -- --nocapture` both still count,
+/// which is what makes this usable at all: the model rarely retypes the command
+/// character for character.
 fn command_matches_variant(command: &str, configured: &str) -> bool {
     let configured = configured.trim();
     if configured.is_empty() {
@@ -226,11 +304,16 @@ fn command_matches_variant(command: &str, configured: &str) -> bool {
     while let Some(offset) = command[from..].find(configured) {
         let start = from + offset;
         let end = start + configured.len();
-        let boundary = command[end..]
+        let left_ok = start == 0
+            || command[..start]
+                .chars()
+                .last()
+                .is_none_or(is_command_boundary);
+        let right_ok = command[end..]
             .chars()
             .next()
-            .is_none_or(|c| c.is_whitespace() || matches!(c, ';' | '|' | '&' | ')' | '"' | '\''));
-        if boundary {
+            .is_none_or(is_command_boundary);
+        if left_ok && right_ok {
             return true;
         }
         from = end;
@@ -594,6 +677,84 @@ mod tests {
     }
 
     #[test]
+    fn a_broad_read_does_not_confirm_an_unrelated_path() {
+        let mut ledger = VerificationLedger::default();
+        ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
+        assert!(ledger.is_blocked());
+
+        // A grep (or any un-scoped read) used to clear the *whole* outstanding
+        // set, so an edit could be "confirmed" by an unrelated search.
+        ledger.confirm("grep", &args(serde_json::json!({"pattern": "fn main"})));
+        assert_eq!(
+            ledger.outstanding(),
+            vec!["path:a.rs".to_string()],
+            "an unrelated grep must not confirm the edit"
+        );
+
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "a.rs"})),
+        );
+        assert!(!ledger.is_blocked(), "reading the target clears it");
+    }
+
+    #[test]
+    fn path_spellings_are_normalised_before_matching() {
+        let mut ledger = VerificationLedger::default().with_root(Some("/workspace"));
+        ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "./src/../a.rs"})));
+        assert_eq!(ledger.outstanding(), vec!["path:a.rs".to_string()]);
+
+        // A different spelling of the same file must close the same gate.
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "/workspace/a.rs"})),
+        );
+        assert!(
+            !ledger.is_blocked(),
+            "an absolute read of the same file must confirm the edit"
+        );
+    }
+
+    #[test]
+    fn an_unscoped_read_does_not_confirm_a_command_effect() {
+        let mut ledger = VerificationLedger::default();
+        ledger.requires_confirmation(
+            "terminal",
+            &args(serde_json::json!({"command": "rm -f old.txt"})),
+        );
+        assert_eq!(ledger.outstanding(), vec!["cmd:rm -f old.txt".to_string()]);
+
+        // A grep / web fetch used to expand `covered` to every `cmd:` key and
+        // clear all outstanding destructive commands at once.
+        ledger.confirm("grep", &args(serde_json::json!({"pattern": "old"})));
+        assert!(
+            ledger.is_blocked(),
+            "an unrelated read must not confirm a destructive command"
+        );
+
+        // Only re-running the exact command is accepted as its read-back.
+        ledger.note_command("rm -f old.txt", true);
+        assert!(!ledger.is_blocked());
+    }
+
+    #[test]
+    fn a_mutation_rearms_a_previously_confirmed_target() {
+        let mut ledger = VerificationLedger::default();
+        ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
+        ledger.confirm(
+            "files",
+            &args(serde_json::json!({"action": "read", "path": "a.rs"})),
+        );
+        assert!(!ledger.is_blocked());
+
+        ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
+        assert!(
+            ledger.is_blocked(),
+            "a new edit must invalidate the earlier read-back"
+        );
+    }
+
+    #[test]
     fn a_write_does_not_clear_the_gate() {
         let mut ledger = VerificationLedger::default();
         ledger.requires_confirmation("edit", &args(serde_json::json!({"path": "a.rs"})));
@@ -670,6 +831,20 @@ mod tests {
             ledger.needs_verification(),
             "`pnpm test:unit` is not the configured `pnpm test`"
         );
+    }
+
+    #[test]
+    fn a_configured_command_must_match_on_its_left_boundary_too() {
+        let mut ledger = VerificationLedger::new(Some("test".into()));
+        ledger.note_mutation("src/lib.rs");
+        // `latest` ends in `test`, but it is a different command.
+        ledger.note_command("cargo latest", true);
+        assert!(
+            ledger.needs_verification(),
+            "`latest` must not satisfy a configured `test`"
+        );
+        ledger.note_command("cargo test", true);
+        assert!(!ledger.needs_verification());
     }
 
     #[test]

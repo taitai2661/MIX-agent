@@ -8,6 +8,16 @@ use super::*;
 // only the integration tests that exercise a real persistent PTY.
 static PTY_INTEGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// A platform without a usable sandbox/PTY must not turn a security test into
+/// a silent pass. Print the skip, and fail loudly when CI sets
+/// `MIXD_REQUIRE_SANDBOX=1` (the release jobs do).
+fn skip_sandbox(reason: &str) {
+    eprintln!("SKIP sandbox test: {reason}");
+    if std::env::var_os("MIXD_REQUIRE_SANDBOX").is_some() {
+        panic!("sandbox test skipped but MIXD_REQUIRE_SANDBOX is set: {reason}");
+    }
+}
+
 /// Restore `MIX_SHELL` when a Windows fallback test ends, including on
 /// panic. The environment is process-global and the PTY tests are
 /// serialized, so this is the only test that may mutate it.
@@ -123,6 +133,58 @@ fn the_char_boundary_walk_is_shared_with_the_workspace_preview() {
     assert_eq!(truncate_to_char_boundary("hello", 3), "hel");
     assert_eq!(truncate_to_char_boundary("あいう", 4), "あ");
     assert_eq!(truncate_to_char_boundary("あいう", 0), "");
+}
+
+#[test]
+fn streamed_posix_commands_keep_their_own_status_query() {
+    assert_eq!(user_command_line("cargo test", true), "cargo test\n");
+    assert_eq!(user_command_line("echo hi\n", true), "echo hi\n");
+    let query = user_status_query("CWD", "EXIT", true);
+    assert!(query.contains("__mixd_rc=$?"));
+    assert!(query.contains("\"$PWD\""));
+    let transcript = "build output\nCWD/Users/dev/project\nEXIT7\n";
+    assert_eq!(
+        parse_user_status(transcript, "CWD", "EXIT"),
+        Some(("/Users/dev/project".to_string(), 7))
+    );
+}
+
+#[test]
+fn streamed_powershell_commands_capture_the_exit_status_for_the_query() {
+    let line = user_command_line("Get-ChildItem", false);
+    assert!(line.starts_with("Get-ChildItem\n"));
+    assert!(line.contains(
+        "$global:__mixd_rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }"
+    ), "the pane path never runs the blocking protocol, so it must set the variable itself: {line:?}");
+    let query = user_status_query("__MIXD_CWD_X__", "__MIXD_EXIT_X__", false);
+    assert!(query.contains("$global:__mixd_rc"));
+    assert!(query.contains("__MIXD_CWD_X__"));
+    assert!(query.contains("__MIXD_EXIT_X__"));
+    let transcript = "output\r\n__MIXD_CWD_X__C:\\Users\\dev\r\n__MIXD_EXIT_X__3\r\n";
+    assert_eq!(
+        parse_user_status(transcript, "__MIXD_CWD_X__", "__MIXD_EXIT_X__"),
+        Some(("C:\\Users\\dev".to_string(), 3))
+    );
+}
+
+#[test]
+fn prompt_hook_detection_watches_for_appended_lines() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!(
+        "mixd-hook-test-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let mut file = std::fs::File::create(&path).expect("create hook file");
+    file.write_all(b"first\n").expect("write");
+    file.flush().expect("flush");
+    let offset = std::fs::metadata(&path).expect("meta").len();
+    assert!(!prompt_hook_fired(&path, offset));
+    file.write_all(b"second\n").expect("append");
+    file.flush().expect("flush");
+    assert!(prompt_hook_fired(&path, offset));
+    drop(file);
+    std::fs::remove_file(&path).ok();
 }
 
 #[test]
@@ -314,6 +376,153 @@ async fn the_shell_state_persists_between_calls() {
 }
 
 #[tokio::test]
+async fn a_streamed_user_command_reports_output_and_exit() {
+    let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+    let tool = TerminalTool::default();
+    let (_context, dir) = ctx_for("stream");
+    let root = dir.to_string_lossy().to_string();
+
+    tool.start_user_command(&root, "echo streamed-output", 10_000)
+        .await
+        .expect("start");
+
+    let mut output = String::new();
+    let mut done = false;
+    let mut exit_code = None;
+    for _ in 0..200 {
+        let poll = tool.poll_user_command(&root).await.expect("poll");
+        output = poll.output;
+        if poll.done {
+            done = true;
+            exit_code = poll.exit_code;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(done, "the streamed command did not finish");
+    assert!(
+        output.contains("streamed-output"),
+        "expected command output, got {output:?}"
+    );
+    assert_eq!(exit_code, Some(0));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_timed_out_streamed_command_is_removed_and_its_shell_reset() {
+    let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+    let tool = TerminalTool::default();
+    let (_context, dir) = ctx_for("stream-timeout");
+    let root = dir.to_string_lossy().to_string();
+
+    tool.start_user_command(&root, "sleep 30", 1_000)
+        .await
+        .expect("start");
+    assert_eq!(tool.user_runs.lock().await.len(), 1);
+
+    let mut last = None;
+    for _ in 0..120 {
+        let poll = tool.poll_user_command(&root).await.expect("poll");
+        if poll.done {
+            last = Some(poll);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let poll = last.expect("the timed-out command must eventually be done");
+    assert!(!poll.idle, "a timed-out command is not an idle shell");
+    assert!(
+        poll.error
+            .as_deref()
+            .is_some_and(|e| e.contains("timed out") && e.contains("shell was reset")),
+        "expected a timeout error, got {:?}",
+        poll.error
+    );
+    assert!(
+        tool.user_runs.lock().await.is_empty(),
+        "timeout must remove the in-flight command"
+    );
+    let session_key = format!("user|{root}");
+    assert!(
+        !tool.sessions.lock().await.contains_key(&session_key),
+        "timeout must kill and evict the shell so the next command starts clean"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn streamed_input_reaches_a_running_process_and_ctrl_c_ends_it() {
+    let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+    let tool = TerminalTool::default();
+    let (_context, dir) = ctx_for("stream-input");
+    let root = dir.to_string_lossy().to_string();
+
+    tool.start_user_command(&root, "cat", 10_000)
+        .await
+        .expect("start");
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    tool.send_user_input(&root, "hello-from-pane", 0)
+        .await
+        .expect("send input");
+
+    let mut saw_input = false;
+    for _ in 0..80 {
+        let poll = tool.poll_user_command(&root).await.expect("poll");
+        if poll.output.contains("hello-from-pane") {
+            saw_input = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(saw_input, "the running process did not receive the input");
+
+    tool.interrupt_user_command(&root).await.expect("interrupt");
+    let mut done = false;
+    for _ in 0..120 {
+        let poll = tool.poll_user_command(&root).await.expect("poll");
+        if poll.done {
+            done = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(done, "Ctrl-C did not end the streamed command");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn the_user_terminal_keeps_its_own_cwd() {
+    let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
+    let tool = TerminalTool::default();
+    let (_context, dir) = ctx_for("user-terminal");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let root = dir.to_string_lossy().to_string();
+
+    let first = tool
+        .run_user_command(&root, "cd sub", PTY_TEST_TIMEOUT_MS)
+        .await
+        .expect("user command");
+    if first.persistent {
+        let second = tool
+            .run_user_command(&root, "pwd", PTY_TEST_TIMEOUT_MS)
+            .await
+            .expect("second user command");
+        assert!(
+            second.stdout.contains("sub"),
+            "the terminal pane must keep `cd` between commands, got {:?}",
+            second.stdout
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
 async fn two_runs_in_one_workspace_do_not_share_a_shell() {
     let _serial = PTY_INTEGRATION_TEST_LOCK.lock().await;
     let tool = TerminalTool::default();
@@ -329,7 +538,8 @@ async fn two_runs_in_one_workspace_do_not_share_a_shell() {
         .expect("first call");
     if first.content["persistent"] != true {
         std::fs::remove_dir_all(&dir).ok();
-        return; // no PTY on this platform
+        skip_sandbox("no persistent shell on this platform");
+        return;
     }
 
     // A second Run in the same workspace must start in the root, not
@@ -384,7 +594,8 @@ async fn send_input_writes_to_the_live_shell_and_returns_new_output() {
         .expect("start shell");
     if first.content["persistent"] != true {
         std::fs::remove_dir_all(&dir).ok();
-        return; // no PTY on this platform
+        skip_sandbox("no persistent shell on this platform");
+        return;
     }
 
     let sent = tool
@@ -450,6 +661,7 @@ async fn the_sandbox_confines_writes_to_the_workspace() {
     // A platform without a usable sandbox returns a non-persistent error
     // rather than silently running unsandboxed; skip in that case.
     if inside.content["persistent"] != true {
+        skip_sandbox("no persistent shell on this platform");
         std::fs::remove_dir_all(&dir).ok();
         return;
     }
@@ -458,7 +670,10 @@ async fn the_sandbox_confines_writes_to_the_workspace() {
 
     let home = match std::env::var("HOME") {
         Ok(home) => PathBuf::from(home),
-        Err(_) => return,
+        Err(_) => {
+            skip_sandbox("HOME is not set");
+            return;
+        }
     };
     let outside = home.join(format!(
         "mixd-sandbox-escape-{}-{}.txt",
@@ -500,7 +715,8 @@ async fn a_directory_escape_does_not_persist_into_the_next_call() {
         .expect("first call");
     if first.content["persistent"] != true {
         std::fs::remove_dir_all(&dir).ok();
-        return; // no PTY on this platform
+        skip_sandbox("no persistent shell on this platform");
+        return;
     }
     let second = tool
         .invoke(
@@ -598,7 +814,8 @@ async fn a_shell_that_exits_is_replaced_on_the_next_call() {
         .expect("first call");
     if first.content["persistent"] != true {
         std::fs::remove_dir_all(&dir).ok();
-        return; // no PTY on this platform
+        skip_sandbox("no persistent shell on this platform");
+        return;
     }
     // The session is now dead; the next call must not reuse it.
     let second = tool

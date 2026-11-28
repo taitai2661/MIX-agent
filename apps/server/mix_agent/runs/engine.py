@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -60,6 +61,45 @@ LOGGER = logging.getLogger(__name__)
 
 TASKS = {}
 
+# Runs whose task has been requested but not yet created on the engine loop.
+# A launch that comes from a worker thread is handed to the loop and starts
+# on the next loop pass, so it is not in `TASKS` yet; without this set two
+# concurrent launches of the same run would both start a driver for it.
+_PENDING: set = set()
+_LAUNCH_LOCK = threading.Lock()
+
+# The loop the engine drives its runs on. Bound once by the application
+# lifespan; `launch()` uses it to hand a run back to the loop when it is
+# called from a worker thread.
+_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def bind_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Remember the event loop that owns the engine's run tasks.
+
+    `launch()` creates an asyncio task, and `asyncio.create_task` needs a
+    *running* loop in the calling thread. FastAPI runs a `def` route in a
+    worker thread, where no loop is running, so `launch()` raised
+    `RuntimeError: no running event loop` and every approval, resume and
+    scheduled-run action answered 500 — after the database had already been
+    committed, so the run really was queued but the UI showed a failure.
+
+    Binding the loop here lets `launch()` stay synchronous (the routes keep
+    their sync SQLAlchemy work in the threadpool, where it belongs) while the
+    task itself is still created on the loop, so `TASKS` keeps holding real
+    `asyncio.Task` objects that `cancel()` and the shutdown `gather` can use.
+    """
+    global _LOOP
+    _LOOP = loop
+
+
+def _bound_loop() -> asyncio.AbstractEventLoop | None:
+    """The bound engine loop, or the running loop of this thread."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return _LOOP
+
 
 def launch(run_id):
     from mix_agent.storage import backup as backup_module
@@ -73,17 +113,85 @@ def launch(run_id):
     done = [rid for rid, task in list(TASKS.items()) if task.done()]
     for rid in done:
         TASKS.pop(rid, None)
-    if run_id in TASKS and not TASKS[run_id].done():
+    if not _reserve(run_id):
         return
-    epoch = _next_launch_epoch()
-    # Persist the epoch so a stale task can detect that it no longer owns the
-    # run.  Without this, a cancelled drive's finish() can kill a run that was
-    # immediately resumed (cancel -> resume redraws a non-terminal status).
-    with SessionLocal() as db:
-        run = db.get(Run, run_id)
-        if run:
-            update(run, launch_epoch=epoch)
-            db.commit()
+    try:
+        epoch = _next_launch_epoch()
+        # Persist the epoch so a stale task can detect that it no longer owns
+        # the run.  Without this, a cancelled drive's finish() can kill a run
+        # that was immediately resumed (cancel -> resume redraws a non-terminal
+        # status).
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if run:
+                update(run, launch_epoch=epoch)
+                db.commit()
+    except Exception:
+        _release(run_id)
+        raise
+    _spawn(run_id, epoch)
+
+
+def _reserve(run_id) -> bool:
+    """Claim the right to start a driver for `run_id`.
+
+    A launch that has been handed to the loop is not in `TASKS` yet, so the
+    reservation covers the window between "a caller asked for a driver" and
+    "the driver exists". Without it two concurrent launches of the same run
+    would both start a driver for it, and the two would fight over the run's
+    status.
+
+    Returns False when the run is already being driven.
+    """
+    with _LAUNCH_LOCK:
+        if run_id in TASKS and not TASKS[run_id].done():
+            return False
+        if run_id in _PENDING:
+            return False
+        _PENDING.add(run_id)
+        return True
+
+
+def _release(run_id) -> None:
+    """Give up a reservation taken by `_reserve`."""
+    with _LAUNCH_LOCK:
+        _PENDING.discard(run_id)
+
+
+def _spawn(run_id, epoch) -> None:
+    """Create the drive task for `run_id` on the engine loop.
+
+    The caller must already hold the `_PENDING` reservation for `run_id`.
+
+    Called on the loop, this is a plain `create_task`. Called from a worker
+    thread (FastAPI's threadpool, where a `def` route runs), the spawn is
+    handed to the bound loop instead: `asyncio.create_task` has no loop to
+    attach to there. The task is still created *on the loop*, so `TASKS` keeps
+    holding real `asyncio.Task` objects — `cancel()` and the shutdown
+    `gather` in the lifespan both depend on that.
+    """
+    loop = _bound_loop()
+    if loop is None or loop.is_closed():
+        _release(run_id)
+        # Nothing can start the run right now. Leave it queued: the scheduler
+        # tick picks it up and launches it on the next pass.
+        LOGGER.warning("no event loop available to launch run %s", run_id)
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        _spawn_on_loop(run_id, epoch)
+        return
+    # Worker thread. The hand-off is deliberately *not* awaited: the loop can
+    # be waiting on this very thread (`asyncio.to_thread`), and blocking here
+    # would deadlock the two against each other.
+    loop.call_soon_threadsafe(_spawn_on_loop, run_id, epoch)
+
+
+def _spawn_on_loop(run_id, epoch) -> None:
+    """Create and register the drive task. Runs on the engine loop."""
     task = asyncio.create_task(drive(run_id))
     task.launch_epoch = epoch
 
@@ -94,7 +202,9 @@ def launch(run_id):
             TASKS.pop(run_id, None)
 
     task.add_done_callback(_forget)
-    TASKS[run_id] = task
+    with _LAUNCH_LOCK:
+        _PENDING.discard(run_id)
+        TASKS[run_id] = task
 
 
 async def drive(run_id):
@@ -624,7 +734,7 @@ def _scheduler_maintenance(launch) -> float:
     """
     delay = 30.0
     with SessionLocal() as db:
-        from mix_agent.auth.security import purge_expired_sessions
+        from mix_agent.auth.security import purge_expired_attempts, purge_expired_sessions
         from mix_agent.schedules import tick
         from mix_agent.storage.cleanup import (
             purge_expired_conversations,
@@ -632,6 +742,8 @@ def _scheduler_maintenance(launch) -> float:
         )
 
         if purge_expired_sessions(db):
+            db.commit()
+        if purge_expired_attempts(db):
             db.commit()
         purge_old_run_history(db)
         purge_expired_conversations(db)

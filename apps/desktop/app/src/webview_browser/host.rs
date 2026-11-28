@@ -224,6 +224,10 @@ impl WebviewBrowserHost {
         let _ = tokio::fs::create_dir_all(&profile_dir).await;
 
         let parsed = url::Url::parse(url).with_context(|| format!("invalid browser URL: {url}"))?;
+        // The JS guard is best-effort only: wry has no subresource request
+        // hook, so `on_navigation` below is authoritative solely for top-level
+        // documents. A page can bypass patched JS sinks; do not treat this as
+        // a network security boundary.
         let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(parsed))
             .data_directory(profile_dir)
             .initialization_script(js::egress_guard(allow_local.load(Ordering::Relaxed)))
@@ -435,7 +439,23 @@ impl WebviewBrowserHost {
         if let Some(parent) = self.artifacts_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&self.artifacts_path, serialized).await?;
+        // Atomic index write: a crash (or two save_artifact calls racing after
+        // a relaunch) used to leave a truncated index.json that discarded every
+        // screenshot on the next start. Write a sibling temp file, then rename
+        // it over the index in one step. The temp file is in the same directory
+        // so rename stays on one filesystem.
+        let temp_path = self
+            .artifacts_path
+            .with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4().simple()));
+        tokio::fs::write(&temp_path, &serialized).await?;
+        // Windows rename refuses to replace an existing file; remove the old
+        // index first there. Unix rename replaces atomically.
+        #[cfg(windows)]
+        let _ = tokio::fs::remove_file(&self.artifacts_path).await;
+        if let Err(err) = tokio::fs::rename(&temp_path, &self.artifacts_path).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(err.into());
+        }
         let _ = full_page;
         Ok(id)
     }
@@ -670,9 +690,21 @@ impl WebviewBrowserHost {
                     .save_artifact(workspace_id, &png, full_page)
                     .await
                     .map_err(|err| anyhow!("saving screenshot failed: {err:#}"))?;
+                // P0 honesty: only a viewport is captured today. Echoing
+                // `full_page: true` would lie to the caller; report the
+                // fallback explicitly so the UI can show "viewport only".
+                let (reported_full_page, fallback) = if full_page {
+                    (false, Some("viewport"))
+                } else {
+                    (false, None)
+                };
                 Ok(BrowserResponse {
                     ok: true,
-                    payload: json!({ "bytes": png.len(), "full_page": full_page }),
+                    payload: json!({
+                        "bytes": png.len(),
+                        "full_page": reported_full_page,
+                        "full_page_fallback": fallback,
+                    }),
                     artifact_id: Some(id),
                     error: None,
                 })

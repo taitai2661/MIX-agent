@@ -6,11 +6,12 @@ impl RunEngine {
         run_id: RunId,
         provider: &dyn Provider,
         request: &RunRequest,
+        serving: &ServingModel,
         messages: Vec<Message>,
         system: &str,
     ) -> anyhow::Result<TurnResult> {
         let req = ProviderRequest {
-            model: request.wire_model().to_string(),
+            model: serving.wire_model().to_string(),
             messages,
             system: if system.trim().is_empty() {
                 None
@@ -24,14 +25,14 @@ impl RunEngine {
             reasoning: request.reasoning,
             stream: true,
             session_id: Some(request.conversation_id.to_string()),
-            context_window: Some(request.context_window).filter(|value| *value > 0),
-            keep_alive: request.keep_alive.clone(),
+            context_window: Some(serving.context_window).filter(|value| *value > 0),
+            keep_alive: serving.keep_alive.clone(),
         };
 
         self.emit(
             run_id,
             "model_started",
-            serde_json::json!({ "model_id": request.model_id }),
+            serde_json::json!({ "model_id": serving.model_id }),
         )
         .await;
 
@@ -56,8 +57,8 @@ impl RunEngine {
                     finish_reason: None,
                     error: Some(err.to_string()),
                     perf: TurnPerformance {
-                        model_id: request.model_id.clone(),
-                        provider_id: request.provider_id.clone(),
+                        model_id: serving.model_id.clone(),
+                        provider_id: serving.provider_id.clone(),
                         ttft_ms: None,
                         duration_ms: started.elapsed().as_millis() as u64,
                         input_tokens: None,
@@ -218,8 +219,8 @@ impl RunEngine {
             usage,
             finish_reason,
             perf: TurnPerformance {
-                model_id: request.model_id.clone(),
-                provider_id: request.provider_id.clone(),
+                model_id: serving.model_id.clone(),
+                provider_id: serving.provider_id.clone(),
                 ttft_ms: ttft.map(|d| d.as_millis() as u64),
                 duration_ms: started.elapsed().as_millis() as u64,
                 input_tokens,

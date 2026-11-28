@@ -852,10 +852,21 @@ async def test_running_stream_can_be_cancelled(signed, monkeypatch, mode):
     monkeypatch.setattr(engine, "runner_request", cancel_runner)
     task = asyncio.create_task(engine.drive(run_id))
     try:
-        await asyncio.wait_for(started.wait(), 3)
+        try:
+            # A loaded CI runner can take far longer than 3s to reach the
+            # adapter, and the old timeout failed without saying what stalled.
+            await asyncio.wait_for(started.wait(), 30)
+        except TimeoutError as exc:
+            raise AssertionError(
+                f"the driver for run {run_id} (mode={mode}) never started "
+                "streaming; check the adapter wiring and the run status"
+            ) from exc
     finally:
         task.cancel()
-        await task
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     assert cancels == [
         ("execution", "/cancel"),
         ("mcp", "/cancel"),

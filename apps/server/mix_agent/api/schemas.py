@@ -1,6 +1,7 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from fastapi import HTTPException
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class Input(BaseModel):
@@ -535,8 +536,45 @@ class MessageInput(Input):
         return self
 
 
+# Mirrors the web client's `ELEVATED_RISKS` and the desktop risk classifier: a
+# grant for one of these levels must carry an explicit acknowledgement.
+RISKY_APPROVAL_LEVELS = frozenset({"write", "external", "dangerous"})
+
+
 class DecisionInput(Input):
     decision: Literal["once", "always", "denied"]
+    # Clients use camelCase (desktop/UI) or snake_case (serve HTTP bridge).
+    # `extra="forbid"` stays intact because both spellings are declared aliases.
+    acknowledge_risk: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("acknowledge_risk", "acknowledgeRisk"),
+    )
+
+    def needs_risk_acknowledgement(self, risk) -> bool:
+        """Whether this decision is a grant for a risky approval."""
+        return (
+            isinstance(risk, str)
+            and risk.strip().lower() in RISKY_APPROVAL_LEVELS
+            and self.decision in ("once", "always")
+        )
+
+    def ensure_risk_acknowledged(self, risk) -> None:
+        """Reject risky grants that lack acknowledgement or would be permanent.
+
+        The web/desktop clients hide "always allow" for elevated risks, but a
+        direct API caller must not be able to create the persistent Permission
+        row behind that UI guard.
+        """
+        if not self.needs_risk_acknowledgement(risk):
+            return
+        if not self.acknowledge_risk:
+            raise HTTPException(
+                422, "危険な操作の許可にはリスクの確認が必要です (risk acknowledgement required)"
+            )
+        if self.decision == "always":
+            raise HTTPException(
+                422, "危険な操作は常時許可できません (persistent grants are not allowed for elevated risks)"
+            )
 
 
 class MemoryInput(Input):
@@ -681,6 +719,10 @@ class SettingsInput(Input):
     searxng_url: str | None = None
     web_search_backend: Literal["ddgs", "brave", "tavily", "exa", "serper", "searxng"] = "ddgs"
     allowed_domains: list[str] = Field(default_factory=list, max_length=100)
+    # Explicit global egress mode. When omitted, the existing behaviour is kept
+    # (empty allow-list = public_web, any entry = restricted). ``none`` denies
+    # every egress request, matching the proxy's policy modes.
+    network_mode: Literal["public_web", "restricted", "none"] | None = None
     browser_enabled: bool = True
     browser_install_requested: bool = False
     browser_install_status: Literal["not_installed", "installing", "ready", "failed"] = "not_installed"

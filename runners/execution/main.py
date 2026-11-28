@@ -4,9 +4,12 @@ import asyncio
 import ast
 import base64
 import io
+import logging
 import os
 import secrets
 import signal
+import time as _time
+from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -15,7 +18,23 @@ from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-app = FastAPI(docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app):
+    """Sweep idle browser pages for the lifetime of the runner."""
+    sweeper = asyncio.create_task(sweep_idle_pages())
+    try:
+        yield
+    finally:
+        sweeper.cancel()
+        await asyncio.gather(sweeper, return_exceptions=True)
+        async with LOCK:
+            for entry in list(PAGES.values()):
+                await close_page_entry(entry)
+
+
+app = FastAPI(docs_url=None, redoc_url=None, lifespan=lifespan)
+LOGGER = logging.getLogger(__name__)
 ROOT = Path(os.getenv("WORKSPACE", "/workspace"))
 PROCESSES = {}
 BROWSER = None
@@ -24,13 +43,48 @@ PAGES = {}
 LOCK = asyncio.Lock()
 PAGE_LOCKS = {}
 PAGE_IDLE_TIMEOUT = int(os.getenv("BROWSER_PAGE_IDLE_TIMEOUT", "1800"))  # 30 minutes
+
+
+async def close_page_entry(entry):
+    """Close one browser context, tolerating a page that is already gone."""
+    try:
+        await entry["context"].close()
+    except Exception:  # noqa: BLE001 - best-effort cleanup of an idle page
+        LOGGER.debug("closing an idle browser page failed", exc_info=True)
+
+
+async def prune_idle_pages(now=None):
+    """Drop pages unused for ``PAGE_IDLE_TIMEOUT``. Caller holds ``LOCK``."""
+    now = _time.monotonic() if now is None else now
+    cutoff = now - PAGE_IDLE_TIMEOUT
+    for run_id, entry in list(PAGES.items()):
+        if entry.get("last_used", now) <= cutoff:
+            PAGES.pop(run_id, None)
+            await close_page_entry(entry)
+
+
+async def sweep_idle_pages():
+    """Periodically reclaim browser contexts left behind by finished runs."""
+    interval = max(1, min(60, PAGE_IDLE_TIMEOUT // 4))
+    while True:
+        await asyncio.sleep(interval)
+        async with LOCK:
+            await prune_idle_pages()
+
+
+# Terminal process entries stay queryable briefly, then are pruned so a
+# long-lived runner does not keep every command's buffered output forever.
+PROCESS_HISTORY_LIMIT = 100
+PROCESS_TTL_SECONDS = 300
 BROWSER_LAUNCH_ARGS = os.getenv("BROWSER_LAUNCH_ARGS", "").split() if os.getenv("BROWSER_LAUNCH_ARGS") else []
 
 
 @app.middleware("http")
 async def auth(request: Request, call_next):
     expected = "Bearer " + Path(os.getenv("TOKEN_FILE", "/tokens/execution.token")).read_text().strip()
-    if not secrets.compare_digest(request.headers.get("authorization", ""), expected):
+    provided = request.headers.get("authorization", "")
+    # compare_digest() raises TypeError for non-ASCII str (a 500 otherwise).
+    if not provided.isascii() or not secrets.compare_digest(provided, expected):
         return __import__("fastapi").responses.JSONResponse({"detail": "Unauthorized"}, 401)
     return await call_next(request)
 
@@ -177,10 +231,31 @@ async def workspace_check(args):
     }
 
 
+def prune_processes():
+    """Drop aged-out terminal entries, then cap the remaining history."""
+    now = _time.monotonic()
+    for key in list(PROCESSES):
+        entry = PROCESSES[key]
+        if entry["exit_code"] is None:
+            continue
+        if now - entry.get("finished_at", now) > PROCESS_TTL_SECONDS:
+            PROCESSES.pop(key, None)
+    while len(PROCESSES) > PROCESS_HISTORY_LIMIT:
+        oldest = next(
+            (key for key, value in PROCESSES.items() if value["exit_code"] is not None),
+            None,
+        )
+        if oldest is None:
+            break
+        PROCESSES.pop(oldest)
+
+
 async def drain(proc, entry):
     while block := await proc.stdout.read(4096):
         entry["output"] = (entry["output"] + block.decode(errors="replace"))[-64000:]
     entry["exit_code"] = await proc.wait()
+    entry["finished_at"] = _time.monotonic()
+    prune_processes()
 
 
 def stop(entry):
@@ -193,13 +268,17 @@ def stop(entry):
 
 def browser_config(values):
     values = values or {}
+    # A key explicitly set to None used to become the literal string "None",
+    # which Playwright rejected as a locale / user agent. Treat it as unset.
+    locale = values.get("browser_locale") or "ja-JP"
+    user_agent = values.get("browser_user_agent") or ""
     return {
-        "timeout": max(3000, min(60000, int(values.get("browser_timeout_ms", 15000)))),
-        "locale": str(values.get("browser_locale", "ja-JP"))[:35] or "ja-JP",
-        "user_agent": str(values.get("browser_user_agent", ""))[:500],
+        "timeout": max(3000, min(60000, int(values.get("browser_timeout_ms") or 15000))),
+        "locale": str(locale)[:35] or "ja-JP",
+        "user_agent": str(user_agent)[:500],
         "viewport": {
-            "width": max(320, min(2560, int(values.get("browser_viewport_width", 1280)))),
-            "height": max(320, min(2560, int(values.get("browser_viewport_height", 720)))),
+            "width": max(320, min(2560, int(values.get("browser_viewport_width") or 1280))),
+            "height": max(320, min(2560, int(values.get("browser_viewport_height") or 720))),
         },
         "block_images": bool(values.get("browser_block_images", False)),
     }
@@ -207,6 +286,8 @@ def browser_config(values):
 
 async def page(run_id, values=None):
     global PLAYWRIGHT, BROWSER
+    # Callers hold LOCK, so this is safe against the idle sweeper.
+    await prune_idle_pages()
     config = browser_config(values)
     if BROWSER is None:
         try:
@@ -225,7 +306,7 @@ async def page(run_id, values=None):
     entry = PAGES.get(run_id)
     if entry is None or entry["config"] != config:
         if entry is not None:
-            await entry["context"].close()
+            await close_page_entry(entry)
         context_args = {
             "accept_downloads": False,
             "service_workers": "block",
@@ -253,7 +334,14 @@ async def page(run_id, values=None):
         await context.route("**/*", block_images)
         current_page = await context.new_page()
         current_page.set_default_timeout(config["timeout"])
-        PAGES[run_id] = {"context": context, "page": current_page, "config": config}
+        PAGES[run_id] = {
+            "context": context,
+            "page": current_page,
+            "config": config,
+            "last_used": _time.monotonic(),
+        }
+    else:
+        entry["last_used"] = _time.monotonic()
     return PAGES[run_id]["page"]
 
 
@@ -349,6 +437,7 @@ async def execute(body: Execute):
                     "exit_code": None,
                     "run_id": body.run_id,
                 }
+                prune_processes()
                 PROCESSES[key] = entry
                 entry["reader"] = asyncio.create_task(drain(proc, entry))
                 if not args.get("background"):
@@ -412,7 +501,7 @@ async def execute(body: Execute):
                 elif name == "browser_close":
                     entry = PAGES.pop(body.run_id, None)
                     if entry is not None:
-                        await entry["context"].close()
+                        await close_page_entry(entry)
                     return {"ok": True}
                 elif name == "browser_extract":
                     limit = max(1, min(100, int(args.get("limit", 20) or 20)))
@@ -434,9 +523,12 @@ async def execute(body: Execute):
                     return {**await browser_frame(p), "ready": True}
                 elif name == "browser_screenshot":
                     shot = await browser_frame(p)
-                    # Reuse the single capture for both the UI frame and the model-visible image.
+                    # One capture serves two consumers: the UI live view reads
+                    # `frame_base64` and the tool result keeps `image_base64`
+                    # for the saved artifact. Keep both keys; `pop()` here
+                    # looked like a rename but never removed the original.
                     if "frame_base64" in shot:
-                        return {**shot, "image_base64": shot.pop("frame_base64")}
+                        return {**shot, "image_base64": shot["frame_base64"]}
                     return {**shot, "error": "Screen capture unavailable"}
                 elif name != "browser_read":
                     raise ValueError("Unknown browser tool")
@@ -464,6 +556,7 @@ async def browser_manual(body: dict):
     async with LOCK:
         if run_id not in PAGES:
             raise HTTPException(404, "Browser page unavailable")
+        PAGES[run_id]["last_used"] = _time.monotonic()
         p = PAGES[run_id]["page"]
         try:
             if action == "click":
@@ -488,7 +581,7 @@ async def browser_close(body: dict):
     async with LOCK:
         entry = PAGES.pop(str(body.get("run_id", "")), None)
         if entry:
-            await entry["context"].close()
+            await close_page_entry(entry)
     return {"ok": True}
 
 

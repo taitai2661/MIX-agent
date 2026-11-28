@@ -369,17 +369,17 @@ def set_message_feedback(key: str, body: FeedbackInput, ctx=Depends(context)):
 
 
 @router.post("/models/{key}/verify-tools")
-def verify_model_tools(key: str, ctx=Depends(context)):
+async def verify_model_tools(key: str, ctx=Depends(context)):
     db, s = ctx
     model = own(db, Model, key, s.owner_id)
     provider = own(db, Provider, model.data["provider_id"], s.owner_id)
     # A manual re-check always re-confirms Tool Calling and additionally covers
     # any other capability that is still unknown or stale.
     targets = list(dict.fromkeys(["tools", *capability_targets(model.data, provider.data.get("kind"))]))
-    # `def` keeps the synchronous SQLAlchemy work on the threadpool. The probe
-    # itself is async, so it gets a loop scoped to this worker thread rather
-    # than blocking the server loop with synchronous DB calls.
-    asyncio.run(verify_model_capabilities(db, s.owner_id, model, provider, "manual", targets))
+    # Awaited on the server's own loop. It used to run through `asyncio.run`
+    # from a sync route, which FastAPI runs in a worker thread: that spun up a
+    # *second* event loop, so the shared rate limiter was touched twice.
+    await verify_model_capabilities(db, s.owner_id, model, provider, "manual", targets)
     audit(db, s.owner_id, "model.verify_tools", key)
     db.commit()
     return public(model)

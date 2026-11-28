@@ -1,4 +1,5 @@
 import { t } from "@/app/i18n";
+import { isSafeHttpUrl } from "@/lib/safeLinks";
 import {
   Brain,
   FileText,
@@ -59,17 +60,24 @@ export function ToolActivity({
       </div>
       {!running && !!activity.sources?.length && (
         <div className="tool-activity-sources">
-          {activity.sources.map((source) => (
-            <a
-              key={source.url}
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Globe2 aria-hidden="true" size={14} />
-              {source.host}
-            </a>
-          ))}
+          {activity.sources.map((source) =>
+            isSafeHttpUrl(source.url) ? (
+              <a
+                key={source.url}
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Globe2 aria-hidden="true" size={14} />
+                {source.host}
+              </a>
+            ) : (
+              <span key={source.url}>
+                <Globe2 aria-hidden="true" size={14} />
+                {source.host}
+              </span>
+            ),
+          )}
           {!!activity.remaining && (
             <span>
               {t("あと")} {activity.remaining} {t("件")}

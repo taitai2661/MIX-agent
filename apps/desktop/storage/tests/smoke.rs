@@ -1,10 +1,52 @@
 use mixd_storage::Storage;
 use std::env;
+use std::path::Path;
+
+/// `Storage::open` reads `MIXD_PROJECTS_ROOT` while running migrations, and the
+/// environment is process-global: a test that overrides it must not run in
+/// parallel with another open in this binary.
+static PROJECTS_ROOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// RAII override for `MIXD_PROJECTS_ROOT`: restores the previous value (or
+/// removes it) even when the test panics, and holds the lock for as long as the
+/// override is in effect.
+struct ProjectsRootGuard {
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl ProjectsRootGuard {
+    async fn set(path: &Path) -> Self {
+        let lock = PROJECTS_ROOT_LOCK.lock().await;
+        let previous = env::var_os("MIXD_PROJECTS_ROOT");
+        env::set_var("MIXD_PROJECTS_ROOT", path);
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for ProjectsRootGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => env::set_var("MIXD_PROJECTS_ROOT", value),
+            None => env::remove_var("MIXD_PROJECTS_ROOT"),
+        }
+    }
+}
+
+/// Every open in this binary takes the same lock, so the migration test's
+/// environment override can never redirect an unrelated test's `Storage::open`.
+async fn open_storage(dir: &Path) -> Storage {
+    let _lock = PROJECTS_ROOT_LOCK.lock().await;
+    Storage::open(dir).await.expect("open")
+}
 
 #[tokio::test]
 async fn smoke_storage_open() {
     let dir = env::temp_dir().join(format!("mixd-storage-test-{}", uuid::Uuid::new_v4()));
-    let storage = Storage::open(&dir).await.expect("open");
+    let storage = open_storage(&dir).await;
     let pool = storage.pool();
     let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
@@ -20,13 +62,13 @@ async fn smoke_storage_open() {
 async fn reopening_does_not_take_a_database_snapshot() {
     let dir = env::temp_dir().join(format!("mixd-snapshot-test-{}", uuid::Uuid::new_v4()));
     {
-        let storage = Storage::open(&dir).await.expect("open");
+        let storage = open_storage(&dir).await;
         sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES ('c1','local','{}')")
             .execute(storage.pool())
             .await
             .expect("conversation");
     }
-    let storage = Storage::open(&dir).await.expect("reopen");
+    let storage = open_storage(&dir).await;
     let mut entries = tokio::fs::read_dir(&dir).await.expect("read dir");
     let mut backups = 0;
     while let Some(entry) = entries.next_entry().await.expect("entry") {
@@ -63,7 +105,7 @@ async fn reopening_does_not_take_a_database_snapshot() {
 #[tokio::test]
 async fn maintenance_prunes_only_old_terminal_run_detail() {
     let dir = env::temp_dir().join(format!("mixd-prune-test-{}", uuid::Uuid::new_v4()));
-    let storage = Storage::open(&dir).await.expect("open");
+    let storage = open_storage(&dir).await;
     let pool = storage.pool();
     sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES ('c1','local','{}')")
         .execute(pool)
@@ -125,11 +167,11 @@ async fn maintenance_prunes_only_old_terminal_run_detail() {
 async fn smoke_storage_reopen_migrations_idempotent() {
     let dir = env::temp_dir().join(format!("mixd-storage-test-{}", uuid::Uuid::new_v4()));
     {
-        let _ = Storage::open(&dir).await.expect("open");
+        let _ = open_storage(&dir).await;
     }
     // Re-open should not error even though the migrations would have been
     // already applied.
-    let _ = Storage::open(&dir).await.expect("reopen");
+    let _ = open_storage(&dir).await;
 }
 
 /// Transcript rows are mirrored into FTS5 and respond to Japanese substring
@@ -137,7 +179,7 @@ async fn smoke_storage_reopen_migrations_idempotent() {
 #[tokio::test]
 async fn message_search_is_populated_and_kept_current() {
     let dir = env::temp_dir().join(format!("mixd-fts-test-{}", uuid::Uuid::new_v4()));
-    let storage = Storage::open(&dir).await.expect("open");
+    let storage = open_storage(&dir).await;
     let pool = storage.pool();
     sqlx::query("INSERT INTO conversations (id, owner_id, data) VALUES ('c1','local','{}')")
         .execute(pool)
@@ -200,7 +242,7 @@ async fn message_search_is_populated_and_kept_current() {
 #[tokio::test]
 async fn knowledge_search_is_populated_and_kept_current() {
     let dir = env::temp_dir().join(format!("mixd-fts-knowledge-{}", uuid::Uuid::new_v4()));
-    let storage = Storage::open(&dir).await.expect("open");
+    let storage = open_storage(&dir).await;
     let pool = storage.pool();
     sqlx::query("INSERT INTO knowledge (id, owner_id, data) VALUES ('k1','local',?)")
         .bind(r#"{"docId":"d1","filename":"notes.md","text":"ローカルエージェントの設計メモ"}"#)
@@ -228,9 +270,12 @@ async fn a_legacy_project_without_root_gets_a_generated_folder() {
     let dir = env::temp_dir().join(format!("mixd-migrate-test-{}", uuid::Uuid::new_v4()));
     let projects_root = env::temp_dir().join(format!("mixd-migrate-root-{}", uuid::Uuid::new_v4()));
     // Keep the generated folder inside the test sandbox instead of the real
-    // `~/Documents`.
-    env::set_var("MIXD_PROJECTS_ROOT", &projects_root);
+    // `~/Documents`. The guard restores the environment (and releases the
+    // lock) even if an assertion below panics. This test holds the lock for
+    // its whole lifetime, so no parallel test can be redirected.
+    let _guard = ProjectsRootGuard::set(&projects_root).await;
 
+    // Called directly: `_guard` already holds the shared lock.
     let storage = Storage::open(&dir).await.expect("open");
     sqlx::query("INSERT INTO projects (id, owner_id, data) VALUES (?, ?, ?)")
         .bind("legacy-1")
@@ -274,7 +319,7 @@ async fn a_legacy_project_without_root_gets_a_generated_folder() {
     .expect("read rootPath");
     assert_eq!(again.0, row.0, "the assignment must be stable");
 
-    env::remove_var("MIXD_PROJECTS_ROOT");
+    drop(storage);
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&projects_root);
 }

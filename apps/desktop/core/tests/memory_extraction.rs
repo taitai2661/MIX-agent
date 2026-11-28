@@ -953,6 +953,8 @@ async fn run_request(
         user_message: "remember this turn".to_string(),
         resume_from: None,
         auto_fallbacks: Vec::new(),
+        step_models: Vec::new(),
+        monthly_pressure: 0.0,
     }
 }
 
@@ -970,6 +972,29 @@ async fn wait_for_jobs(storage: &Storage, run_id: &str, expected: i64) -> bool {
         }
         if tokio::time::Instant::now() > deadline {
             return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// A negative assertion still needs to give asynchronous work a chance to
+/// happen. Poll up to `window`: fail immediately if a job appears, and only
+/// conclude "none" after the deadline has actually elapsed.
+async fn assert_no_jobs_until(storage: &Storage, run_id: &str, window: Duration) {
+    let deadline = tokio::time::Instant::now() + window;
+    loop {
+        let found: i64 = count_for(
+            storage,
+            "SELECT count(*) FROM memory_processing_jobs WHERE run_id = ?",
+            run_id,
+        )
+        .await;
+        assert_eq!(
+            found, 0,
+            "a temporary turn must not queue an extraction: found {found} job(s) for run {run_id}"
+        );
+        if tokio::time::Instant::now() >= deadline {
+            return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -1040,12 +1065,10 @@ async fn a_finished_run_queues_a_job_and_a_temporary_run_does_not() {
     let outcome = engine.execute(request).await.expect("temporary run");
     assert_eq!(outcome.status, RunStatus::Completed);
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let jobs: i64 = count_for(
+    assert_no_jobs_until(
         &store.storage,
-        "SELECT count(*) FROM memory_processing_jobs WHERE run_id = ?",
         &temp_run_id.to_string(),
+        Duration::from_millis(500),
     )
     .await;
-    assert_eq!(jobs, 0, "a temporary turn must not queue an extraction");
 }

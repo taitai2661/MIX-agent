@@ -19,6 +19,11 @@ on:
     paths:
       - "apps/**"
       - "build/**"
+      - "deploy/**"
+      - "compose.yaml"
+      - "scripts/render_zimaos_compose.py"
+      - "scripts/stage-store-source.sh"
+      - "scripts/check-release-notes.mjs"
       - "category-list.json"
       - "featured-apps.json"
       - "recommend-list.json"
@@ -30,9 +35,22 @@ permissions:
   contents: write
   packages: read
 
+# Never cancel in flight: an interrupted push can leave the store branch
+# half-updated. The group is deliberately NOT keyed on github.ref — a push to
+# main and a tag-triggered workflow_call both push to the same gh-pages branch,
+# so they must queue against each other, not just against other runs of the
+# same ref.
+concurrency:
+  group: publish-store
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      ready: ${{ steps.images.outputs.ready }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -179,12 +197,20 @@ jobs:
           publish_branch: gh-pages
           publish_dir: ./dist
 
-      - name: Refresh jsDelivr store paths
+      - name: Validate jsDelivr purge inputs
         if: steps.images.outputs.ready == 'true'
-        continue-on-error: true
         shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # A malformed owner/repo or an unsafe path would build a purge URL
+          # for something other than this store. Reject those hard, before the
+          # best-effort refresh step below.
+          if [[ ! "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Malformed repository '$REPOSITORY'; refusing to build a jsDelivr purge URL."
+            exit 1
+          fi
           for path in \
             index.json \
             store.json \
@@ -192,41 +218,112 @@ jobs:
             apps/io.github.taitai2661.mix-agent/docker-compose.yml \
             apps/io.github.taitai2661.mix-agent/meta.json
           do
-            curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@gh-pages/${path}" >/dev/null || true
+            if [[ "$path" == /* || "$path" == *..* || "$path" == *[[:space:]]* ]]; then
+              echo "::error::Unsafe jsDelivr purge path '$path'."
+              exit 1
+            fi
+            url="https://purge.jsdelivr.net/gh/${REPOSITORY}@gh-pages/${path}"
+            if [[ ! "$url" =~ ^https://purge\.jsdelivr\.net/gh/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@gh-pages/[A-Za-z0-9_./-]+$ ]]; then
+              echo "::error::Malformed jsDelivr purge URL '$url'."
+              exit 1
+            fi
           done
-
-      - name: Update GitHub Release store assets
+      - name: Refresh jsDelivr store paths
         if: steps.images.outputs.ready == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          REQUESTED_TAG: ${{ inputs.tag }}
+        # Best effort: the gh-pages content is already live. A failed purge is
+        # surfaced as a step annotation, never hidden behind `|| true`.
+        continue-on-error: true
+        shell: bash
         run: |
           set -euo pipefail
-          bundle="mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz"
-          legacy="mix-agent-zimaos-legacy-${RELEASE_TAG}.zip"
-          tar -czf "$bundle" -C dist .
-          cp dist/store/main.zip "$legacy"
-          notes_file="docs/release-notes-${RELEASE_TAG}.md"
-          node scripts/check-release-notes.mjs --tag "$RELEASE_TAG"
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$bundle" "$legacy" --clobber
-          elif [[ -n "${REQUESTED_TAG:-}" ]]; then
-            if [[ -f "$notes_file" ]]; then
-              gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --notes-file "$notes_file"
-            else
-              gh release create "$RELEASE_TAG" "$bundle" "$legacy" --verify-tag --title "MIX-agent $RELEASE_TAG" --generate-notes
+          echo "::notice::jsDelivr purge is best-effort; failed paths are reported as warnings and do not fail the publish."
+          failed=0
+          for path in \
+            index.json \
+            store.json \
+            store/main.zip \
+            apps/io.github.taitai2661.mix-agent/docker-compose.yml \
+            apps/io.github.taitai2661.mix-agent/meta.json
+          do
+            if ! curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@gh-pages/${path}" >/dev/null; then
+              echo "::warning::jsDelivr purge failed for $path; the CDN may serve stale content until its cache expires."
+              failed=1
             fi
-          else
-            echo "Release $RELEASE_TAG does not exist yet; store is published but release assets are skipped."
+          done
+          exit "$failed"
+
+      - name: Stage store release assets
+        if: steps.images.outputs.ready == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Build the two archives here, where `dist/` exists, and hand them to
+          # the detached job below. Waiting for the Release here used to fail
+          # the whole publish job *after* gh-pages had already been updated.
+          node scripts/check-release-notes.mjs --tag "$RELEASE_TAG"
+          mkdir -p out/release-assets
+          tar -czf "out/release-assets/mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz" -C dist .
+          cp dist/store/main.zip "out/release-assets/mix-agent-zimaos-legacy-${RELEASE_TAG}.zip"
+
+      - name: Upload store release assets
+        if: steps.images.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: store-release-assets
+          path: out/release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Detached from `publish` on purpose: the store branch is already live here.
+  # desktop-release.yml is the SOLE Release creator and its installer build can
+  # still be running, so wait (bounded) for the Release and only attach our two
+  # archives. Never create the Release here and never rewrite its notes: two
+  # creators raced before and whichever wrote last won. A late/missing Release
+  # is a warning with a manual retry command, not a red build over a store that
+  # was published successfully.
+  attach-release-assets:
+    name: Attach store assets to GitHub Release
+    needs: publish
+    if: needs.publish.result == 'success' && needs.publish.outputs.ready == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: store-release-assets
+          path: release-assets
+      - name: Upload store assets to the existing GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.publish.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bundle="release-assets/mix-agent-zimaos-store-${RELEASE_TAG}.tar.gz"
+          legacy="release-assets/mix-agent-zimaos-legacy-${RELEASE_TAG}.zip"
+          for asset in "$bundle" "$legacy"; do
+            if [[ ! -s "$asset" ]]; then
+              echo "::warning::Missing staged asset $asset; store is published, attach it manually."
+              exit 0
+            fi
+          done
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG not found yet; waiting for desktop-release.yml to create it."
+            for attempt in $(seq 1 40); do
+              sleep 30
+              if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+                break
+              fi
+              echo "Still waiting for release $RELEASE_TAG ($attempt/40)."
+            done
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::warning::Release $RELEASE_TAG does not exist after 20m. Store is published; attach manually with: gh release upload $RELEASE_TAG $(basename "$bundle") $(basename "$legacy") --clobber"
             exit 0
           fi
 
-          # The desktop-release workflow creates the same GitHub Release in
-          # parallel and passes no body, so whichever workflow got there first
-          # decides the notes. Re-apply the release notes file here so the
-          # published body always matches docs/release-notes-<tag>.md.
-          if [[ -f "$notes_file" ]]; then
-            gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
-          fi
+          gh release upload "$RELEASE_TAG" "$bundle" "$legacy" --clobber

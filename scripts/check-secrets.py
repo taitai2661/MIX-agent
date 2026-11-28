@@ -2,20 +2,28 @@
 """Fail when a credential-shaped string is committed.
 
 This is a deliberately small, dependency-free substitute for gitleaks: it scans
-tracked files with a handful of high-signal patterns (provider key prefixes,
-private-key headers, JWTs) instead of payload entropy. That keeps it
+all tracked files with a handful of high-signal patterns (provider key
+prefixes, private-key headers, JWTs) instead of payload entropy. That keeps it
 deterministic and fast enough to run on every pull request, and it cannot be
 disabled by a corrupted allowlist file.
 
+CI scans every tracked text file under the size limit by default: a credential
+under tests/ or docs/ is still a real credential. Binary and oversized files are
+skipped and reported as a count on stderr. For a fast local iteration loop, opt
+out explicitly with ``--skip-fixtures`` (CI never does).
+
 Usage:
     python3 scripts/check-secrets.py
-    python3 scripts/check-secrets.py --all      # include test fixtures/docs
+    python3 scripts/check-secrets.py --skip-fixtures   # local speed only
+
+``--all`` is accepted as a deprecated no-op so older commands keep working.
 
 Exit code 1 lists every finding as `path:line: rule`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import sys
@@ -34,8 +42,10 @@ RULES = (
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
     (
         "hardcoded-credential",
+        # Named group so the allowlist keys on the credential *value*, not on
+        # the surrounding `access_token="..."` formatting.
         re.compile(
-            r"""(?i)(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*["'][^"'${}<>\s]{12,}["']"""
+            r"""(?i)(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*["'](?P<value>[^"'${}<>\s]{12,})["']"""
         ),
     ),
 )
@@ -56,8 +66,53 @@ PLACEHOLDERS = {
     "dummy",
 }
 
-# Paths whose *content* is intentionally credential-shaped: tests build
-# fake tokens, docs show examples, and this file contains the patterns.
+# Versioned allowlist for the deliberate fixture values that still look like
+# credentials. Entries are keyed on (path, rule, sha256(captured value)) — never
+# on a whole file, line range, or the surrounding assignment syntax — so:
+#   * reformatting a fixture (`access_token = 'x'` vs `access_token="x"`) does
+#     not break the allowlist, and
+#   * a newly added *different* credential in one of these files still fails.
+# Bump ALLOWLIST_VERSION when reviewing an entry and keep the list as small as
+# possible; every item needs a concrete fixture reason.
+ALLOWLIST_VERSION = 2
+# Kept as fragments so this script's own source does not match the rules below
+# when the full scan reads it.
+_GITHUB_FIXTURE = "ghp_" + "abcdefghijklmnopqrstuvwxyz" + "0123456789"
+_ALLOWLIST_ENTRIES = (
+    (
+        "apps/desktop/tools/src/redact.rs",
+        "github-token",
+        _GITHUB_FIXTURE,
+        "redactor tests assert that a real-shaped GitHub token is masked",
+    ),
+    (
+        "tests/integration/test_providers.py",
+        "hardcoded-credential",
+        "access-token",
+        "synthetic ChatGPT credential fixture, never used against a provider",
+    ),
+    (
+        "tests/unit/test_chatgpt.py",
+        "hardcoded-credential",
+        "final-access",
+        "synthetic ChatGPT refresh fixture, never used against a provider",
+    ),
+)
+
+
+def value_fingerprint(value: str) -> str:
+    """Stable, formatting-independent key for a deliberately allowed value."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+ALLOWLIST = {
+    (path, rule, value_fingerprint(value)): reason for path, rule, value, reason in _ALLOWLIST_ENTRIES
+}
+
+# Paths whose *content* is intentionally credential-shaped: tests build fake
+# tokens, docs show examples, and this file contains the patterns. The full
+# scan still reads these files; --skip-fixtures is an explicit local-only opt
+# out. The allowlist above covers the handful of matches that are deliberate.
 SKIP_PREFIXES = (
     "tests/",
     "docs/",
@@ -84,47 +139,79 @@ def skipped(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in SKIP_PREFIXES)
 
 
-def scan(path: str, text: str) -> list[str]:
+def is_placeholder(value: str) -> bool:
+    """Exact-token match, never a substring match.
+
+    Substring matching let a real credential through whenever its value merely
+    contained the word "dummy" or "placeholder" (e.g. a key leaked into a test
+    fixture). Only a value that *is* a known placeholder is ignored.
+    """
+    return value.strip().casefold() in PLACEHOLDERS
+
+
+def scan(path: str, text: str) -> list[tuple[str, int, str, str]]:
     findings = []
     for number, line in enumerate(text.splitlines(), start=1):
-        if len(line) > 4096:
-            continue
+        # Long lines used to be skipped wholesale; minified assets and lockfiles
+        # are tracked files too, so scan every line regardless of its length.
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
-                value = match.group(0).lower()
-                if any(placeholder in value for placeholder in PLACEHOLDERS):
+                value = match.groupdict().get("value") or match.group(0)
+                if is_placeholder(value):
                     continue
-                findings.append(f"{path}:{number}: {rule}")
+                findings.append((path, number, rule, value))
     return findings
 
 
 def main() -> int:
-    include_skipped = "--all" in sys.argv[1:]
-    if not include_skipped:
-        # SKIP_PREFIXES (tests/docs/examples) are NOT scanned by default.
-        # That allowlist is out of scope for this run, but a credential added
-        # under tests/ or docs/ is still a credential — re-run with --all
-        # before committing fixtures or examples containing token-like text.
+    args = sys.argv[1:]
+    skip_fixtures = "--skip-fixtures" in args
+    if "--all" in args:
         print(
-            "note: skipping credential-shaped content under "
+            "note: --all is deprecated (the full scan is now the default); ignoring it.",
+            file=sys.stderr,
+        )
+    if skip_fixtures:
+        print(
+            "note: --skip-fixtures omits credential-shaped content under "
             + ", ".join(SKIP_PREFIXES)
-            + " (re-run with --all to include it)",
+            + "; CI always runs the full scan.",
             file=sys.stderr,
         )
     findings = []
+    allowed = 0
+    unscanned: list[str] = []
     for path in tracked_files():
-        if not include_skipped and skipped(path):
+        if skip_fixtures and skipped(path):
             continue
         file = ROOT / path
         try:
             if file.stat().st_size > MAX_BYTES:
+                unscanned.append(f"{path} (> {MAX_BYTES} bytes)")
                 continue
             data = file.read_bytes()
         except OSError:
             continue
         if b"\0" in data:
+            unscanned.append(f"{path} (binary)")
             continue
-        findings.extend(scan(path, data.decode("utf-8", "replace")))
+        for found_path, number, rule, value in scan(path, data.decode("utf-8", "replace")):
+            if (found_path, rule, value_fingerprint(value)) in ALLOWLIST:
+                allowed += 1
+                continue
+            findings.append(f"{found_path}:{number}: {rule}")
+    if allowed:
+        print(
+            f"note: {allowed} deliberate fixture match(es) covered by the "
+            f"versioned allowlist (v{ALLOWLIST_VERSION}).",
+            file=sys.stderr,
+        )
+    if unscanned:
+        print(
+            f"note: {len(unscanned)} binary/oversized file(s) were not scanned "
+            "(text content under the size limit only).",
+            file=sys.stderr,
+        )
     for finding in findings:
         print(finding)
     if findings:

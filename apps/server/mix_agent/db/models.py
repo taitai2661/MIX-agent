@@ -56,6 +56,17 @@ class Session(Base):
     __table_args__ = (Index("sessions_expires", "expires"),)
 
 
+class AttemptCounter(Base):
+    """DB-backed authoritative brute-force counter (survives restarts/workers)."""
+
+    __tablename__ = "attempt_counters"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
 class LoginEvent(Base):
     __tablename__ = "login_events"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -189,7 +200,7 @@ class Memory(Record, Base):
     leaves to each edition: ``pinned`` / ``source`` / ``source_run`` /
     ``strength`` / ``activation_count`` / ``embedding``.
 
-    Judgment change (recorded in ``docs/memory-roadmap.md`` §2.2, decision B):
+    Judgment change:
     migration 0022 dropped the whole taxonomy *and* the four graph tables.
     Spec §1 is the contract for both editions, so migration 0024 restores the
     eight columns it needs — ``lifecycle_state``, ``superseded_by_id``,

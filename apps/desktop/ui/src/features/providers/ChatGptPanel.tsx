@@ -326,6 +326,13 @@ export function ChatGptLoginCard({
   completeRef.current = onComplete;
   failedRef.current = onFailed;
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (login.status !== "pending") return;
@@ -364,7 +371,8 @@ export function ChatGptLoginCard({
     try {
       await navigator.clipboard.writeText(login.user_code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
     }

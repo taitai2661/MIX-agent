@@ -1,5 +1,5 @@
 use crate::AppState;
-use mixd_core::skills::{Skill, SkillResource, SkillService};
+use mixd_core::skills::{Skill, SkillResource, SkillRevision, SkillService};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -198,6 +198,55 @@ pub async fn export_skill(
         .map_err(crate::error::cmd_err)?;
     use base64::Engine;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[derive(Serialize)]
+pub struct SkillRevisionView {
+    pub id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub name: String,
+    pub description: String,
+    /// Body size, so the list can show how much changed without shipping every
+    /// historical SKILL.md to the WebView.
+    pub body_chars: usize,
+}
+
+impl From<SkillRevision> for SkillRevisionView {
+    fn from(revision: SkillRevision) -> Self {
+        Self {
+            id: revision.id,
+            created_at: revision.created_at.to_rfc3339(),
+            updated_at: revision.skill.updated_at.to_rfc3339(),
+            name: revision.skill.name,
+            description: revision.skill.description,
+            body_chars: revision.skill.body_markdown.chars().count(),
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn list_skill_revisions(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<SkillRevisionView>, String> {
+    let revisions = SkillService::list_revisions(state.storage.as_ref(), &name)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    Ok(revisions.into_iter().map(SkillRevisionView::from).collect())
+}
+
+#[tauri::command]
+pub async fn restore_skill_revision(
+    state: State<'_, AppState>,
+    name: String,
+    revision_id: String,
+) -> Result<SkillView, String> {
+    let skill = SkillService::restore_revision(state.storage.as_ref(), &name, &revision_id)
+        .await
+        .map_err(crate::error::cmd_err)?;
+    state.engine.invalidate_catalogues().await;
+    Ok(SkillView::from(skill))
 }
 
 #[tauri::command]

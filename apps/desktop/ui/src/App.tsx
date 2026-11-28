@@ -1,20 +1,15 @@
-import {
-  Suspense,
-  lazy,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useState } from "react";
 import {
   Activity,
   Check,
+  CircleAlert,
   Download,
   Folder,
   FolderTree,
   Gauge,
   GitCompareArrows,
   Globe,
+  Keyboard,
   PanelLeft,
   PanelRight,
   Search,
@@ -23,7 +18,7 @@ import {
 import { useUi, type View } from "./lib/ui";
 import { canFullView } from "./lib/panelTabs";
 import { cn } from "./lib/cn";
-import { t, tf } from "./lib/i18n";
+import { t, tf, useLanguage } from "./lib/i18n";
 import { chord, detectPlatformFromUa } from "./lib/platform";
 import { normalizeTheme, storedTheme } from "./lib/theme";
 import {
@@ -33,7 +28,7 @@ import {
   usePendingApprovals,
 } from "./lib/queries";
 import { useHealth } from "./lib/health";
-import { useSettingsDirtyGuard, useSettingsForm } from "./lib/settings";
+import { useSettingsAutosave, useSettingsForm } from "./lib/settings";
 import {
   useUpdateBootstrap,
   useUpdateCheck,
@@ -111,7 +106,6 @@ import {
   useShellEvents,
 } from "./features/shell/useShellEvents";
 import { Button } from "./components/ui/button";
-import { useConfirm } from "./components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -124,6 +118,7 @@ import { Kbd } from "./components/layout";
 import { PaneErrorBoundary } from "./components/PaneErrorBoundary";
 import { Spinner } from "./components/ui/spinner";
 import { StatusDot } from "./components/ui/status";
+import { Toaster } from "./components/ui/toast";
 
 /** Fallback while a code-split pane loads (see the `lazy` imports above). */
 function PaneFallback() {
@@ -148,6 +143,7 @@ const VIEW_TITLES: Record<View, string> = {
 
 function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
   const openSettings = useUi((s) => s.openSettings);
+  const setShortcutsOpen = useUi((s) => s.setShortcutsOpen);
   const health = useHealth();
   const check = useUpdateCheck(autoCheck);
   const pending = useUpdateStore((s) => s.pending);
@@ -226,6 +222,10 @@ function StatusMenu({ autoCheck }: { autoCheck: boolean }) {
           <ShieldAlert size={13} className="text-muted" aria-hidden="true" />
           <span className="flex-1">{t("診断を開く")}</span>
         </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setShortcutsOpen(true)}>
+          <Keyboard size={13} className="text-muted" aria-hidden="true" />
+          <span className="flex-1">{t("ショートカット一覧")}</span>
+        </DropdownMenuItem>
         {hasUpdate && (
           <>
             <DropdownMenuSeparator />
@@ -266,6 +266,10 @@ function ApprovalIndicator() {
 }
 
 export function App() {
+  // `t()` is a module-level lookup; subscribing here re-renders the whole tree
+  // when the user changes the display language in Settings (previously only
+  // components that happened to select `s.locale` from the UI store updated).
+  useLanguage();
   const view = useUi((s) => s.view);
   const setView = useUi((s) => s.setView);
   const sidebarOpen = useUi((s) => s.sidebarOpen);
@@ -311,32 +315,14 @@ export function App() {
   }, []);
 
   // Sync persisted settings (language/theme) once at boot. Later changes go
-  // through `useApplySettings`, which writes both sides at once, so this can
-  // no longer fight a language the user just picked in the sidebar.
+  // through the autosave/`useApplySettings`, which write both sides at once, so
+  // this can no longer fight a language the user just picked in the sidebar.
   const settings = useSettingsForm();
-  // Keep the unsaved-settings warning alive while the Settings pane is not
-  // mounted (e.g. after navigating to Chat).
-  const settingsDirty = useSettingsDirtyGuard();
-  const { confirm: confirmLeaveSettings, dialog: settingsLeaveDialog } =
-    useConfirm();
-  const previousView = useRef(view);
-  useEffect(() => {
-    const previous = previousView.current;
-    previousView.current = view;
-    if (previous !== "settings" || view === "settings" || !settingsDirty)
-      return;
-    void confirmLeaveSettings({
-      title: t("設定の変更が保存されていません"),
-      description: t(
-        "変更は保持されますが、保存するまで反映されません。終了する前に設定画面で保存してください。",
-      ),
-      confirmLabel: t("移動する"),
-      cancelLabel: t("設定に戻る"),
-      tone: "danger",
-    }).then((leave) => {
-      if (!leave) setView("settings");
-    });
-  }, [confirmLeaveSettings, setView, settingsDirty, view]);
+  // One writer for every Settings control: changes save automatically after a
+  // short debounce and offer an Undo toast. There is no header Save button,
+  // unsaved dot, ⌘S, or leave-confirmation anymore — nothing can be left
+  // unsaved by navigating away.
+  useSettingsAutosave();
   useEffect(() => {
     const data = settings.data;
     if (!data) return;
@@ -493,7 +479,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setView("projects")}
-                className="ms-2 hidden max-w-48 truncate align-middle text-xs font-normal text-faint hover:text-fg hover:bg-hover px-1.5 py-0.5 rounded transition-colors sm:inline-flex items-center gap-1"
+                className="ms-2 hidden max-w-48 truncate align-middle text-xs font-normal text-faint hover:text-fg hover:bg-hover px-1.5 py-0.5 rounded-md transition-colors sm:inline-flex items-center gap-1"
                 title={`${t("プロジェクトを変更")}: ${activeProject.rootPath ?? activeProject.name}`}
               >
                 <span className="text-line">·</span>
@@ -504,7 +490,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setView("projects")}
-                className="ms-2 hidden truncate align-middle text-2xs font-normal text-warning hover:text-warning/80 hover:bg-warning-soft px-1.5 py-0.5 rounded border border-warning/30 transition-colors sm:inline-flex items-center gap-1"
+                className="ms-2 hidden truncate align-middle text-2xs font-normal text-warning hover:text-warning/80 hover:bg-warning-soft px-1.5 py-0.5 rounded-md border border-warning/30 transition-colors sm:inline-flex items-center gap-1"
                 title={t("プロジェクトを選択")}
               >
                 <span className="text-line">·</span>
@@ -564,7 +550,7 @@ export function App() {
                     {agentSurface && changedFiles > 0 && (
                       <span
                         aria-hidden="true"
-                        className="absolute -top-0.5 -right-0.5 grid min-w-3.5 place-items-center rounded-full bg-brand px-0.5 font-mono text-[9px] leading-3.5 text-on-solid"
+                        className="absolute -top-0.5 -right-0.5 grid min-w-3.5 place-items-center rounded-full bg-brand px-0.5 font-mono text-3xs leading-none text-on-solid"
                       >
                         {changedFiles > 99 ? "99+" : changedFiles}
                       </span>
@@ -593,6 +579,29 @@ export function App() {
                         </span>
                       )}
                       {rightPanel === "changes" && (
+                        <Check
+                          size={13}
+                          className="text-brand"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </DropdownMenuItem>
+                  )}
+                  {agentSurface && (
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        setRightPanel(
+                          rightPanel === "problems" ? "none" : "problems",
+                        )
+                      }
+                    >
+                      <CircleAlert
+                        size={13}
+                        className="text-muted"
+                        aria-hidden="true"
+                      />
+                      <span className="flex-1">{t("問題")}</span>
+                      {rightPanel === "problems" && (
                         <Check
                           size={13}
                           className="text-brand"
@@ -691,7 +700,6 @@ export function App() {
       <HealthBanner />
       <RecoveryBanner />
       <QuitGuard />
-      {settingsLeaveDialog}
 
       <div ref={setShellRow} className="relative flex min-h-0 min-w-0 flex-1">
         <Sidebar cap={panelBounds.cap} />
@@ -766,6 +774,7 @@ export function App() {
           <ShortcutHelp />
         </Suspense>
       )}
+      <Toaster />
     </div>
   );
 }

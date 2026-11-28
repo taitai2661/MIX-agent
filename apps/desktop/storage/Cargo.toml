@@ -11,6 +11,7 @@ description = "MIX-agent Desktop — SQLite + Keychain storage"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+futures = "0.3"
 tokio.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
@@ -22,6 +23,10 @@ dirs.workspace = true
 sqlx.workspace = true
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "linux-native"] }
 aes-gcm = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+toml = "0.8"
+glob = "0.3"
 rand.workspace = true
 argon2 = "0.5"
 base64.workspace = true

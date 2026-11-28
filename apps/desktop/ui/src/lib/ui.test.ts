@@ -418,10 +418,10 @@ describe("useUi surface state", () => {
   });
 
   it("persists display preferences and clamps zoom", () => {
-    useUi.getState().setZoom(2);
-    expect(useUi.getState().zoom).toBe(1.5);
-    expect(localStorage.getItem("mix-agent-zoom")).toBe("1.5");
-    expect(document.documentElement.style.zoom).toBe("1.5");
+    useUi.getState().setZoom(3);
+    expect(useUi.getState().zoom).toBe(2);
+    expect(localStorage.getItem("mix-agent-zoom")).toBe("2");
+    expect(document.documentElement.style.zoom).toBe("2");
 
     useUi.getState().setZoom(0.1);
     expect(useUi.getState().zoom).toBe(0.8);

@@ -20,6 +20,7 @@ Every lucide icon size in the app is one of these, chosen by the icon's role:
 | `Spinner` standalone (component default) | 13 |
 | Icon inside a `Badge` / status chip | 10 |
 | Micro glyph next to a `text-2xs` label | 11 |
+| Glyph inside `Button size="icon-xs"` / tab-close | 10 |
 | `EmptyState` icon | 22 |
 
 ## Typography roles
@@ -37,17 +38,39 @@ Every lucide icon size in the app is one of these, chosen by the icon's role:
 Never open-code `tracking-[…]` for an uppercase label: use `SectionLabel`.
 `Field`'s hint and `ToggleRow`'s hint are both `text-xs text-muted`.
 
+### Micro typography
+
+`text-2xs` (12px) is the floor for Japanese text. `text-3xs` (10px) exists only
+for numeric counters and single-letter avatars — never for a label, hint or
+body copy. There is no 8/9px size: `text-[8px]`/`text-[9px]` are banned.
+
+Hero display sizes come from `text-display-sm` / `text-display`; do not write
+`text-[22px]` or `text-[28px]` again.
+
 ## Surfaces, borders, radius
 
 * A card is `rounded-xl border border-line bg-surface shadow-xs` — always via `Card`.
   Chips, inline code and payload blocks nested inside a card are `rounded-md`.
+* Radius is role-based, never the bare `rounded` utility (which is Tailwind's
+  4px default and outside this scale):
+
+  | Role | Class |
+  | --- | --- |
+  | Card, table, page-level surface | `rounded-xl` (17) |
+  | Inline block inside a message (tool call, live block, terminal) | `rounded-lg` (13) |
+  | Control, chip, payload / `pre` block, menu item | `rounded-md` (10) |
+  | Micro tag, segmented-option highlight, focus ring | `rounded-sm` (7) |
+  | Avatar, dot, pill | `rounded-full` |
+
 * Dividers are plain `border-line`. Do not use `border-line/60`, `border-line/70`
   or a full-opacity `border-warning` on a card (`Alert` keeps its own `/25` tone border).
+  Translucent `border-line/…` is banned; `border-line-strong` is the only emphasis.
 * Panel headers are `PanelHeader` (h-titlebar, `px-3`, close `X` 14). No padding or
   `titleClass` overrides.
 * A right panel's scroll body is the exported `PANEL_BODY` constant
   (`p-3 gap-3` + `stable-scroll` so content does not shift when a scrollbar appears).
 * Popover/dialog overlay is `bg-scrim` (a token), not a literal `bg-black/…`.
+* Popover shells are `rounded-xl`; only dialogs and chat bubbles use `rounded-2xl`.
 
 ## Read-state ladder
 
@@ -72,6 +95,12 @@ Every list or pane reads top to bottom: **pending → error → empty → conten
 * Create / import (the pane's primary action): `Button variant="primary"` (default md size).
 * Export: `Button size="sm"` + `Download` 12.
 * Icon-only buttons are always `size="icon-sm"` with a 13px glyph — not `size="sm"`.
+  Micro affordances inside a dense row (tab close, address-bar action) use
+  `size="icon-xs"` with a 10px glyph.
+* Dense toolbars use `size="xs"` (`h-6 px-2 text-2xs`) rather than overriding
+  height/padding/font on a `size="sm"` button.
+* The selected row is `SELECTED_ROW` from `components/layout.tsx`; never retype
+  `bg-brand-soft ring-1 ring-brand/20 ring-inset`.
 
 ## Payload / pre blocks
 
@@ -89,8 +118,18 @@ falls back to the `.markdown-body pre` rule in `tokens.css`.
 * Never restate the focus ring (`focus-visible:outline-…`): the global `:focus-visible`
   rule in `tokens.css` is the only focus ring in the app.
 * Never hardcode a colour literal (`bg-white`, `bg-black/…`); every colour is a token,
-  including the `Switch` thumb (`bg-on-solid`).
+  including the `Switch` thumb (`bg-on-solid`). Terminal ANSI magenta/cyan are
+  `text-ansi-magenta` / `text-ansi-cyan`; browser-tab avatars use `bg-avatar-1…6`
+  with `text-avatar-fg`; the Windows close button uses `bg-close-hover` /
+  `text-close-fg`.
 * Fixed panel widths come from a single module constant (see `SIDEBAR_WIDTH`,
   `RIGHT_PANEL_WIDTH`) — do not also state the width in a Tailwind class.
 * Arbitrary values (`text-[14px]`, `rounded-[20px]`, `min-h-[64px]`) are banned where a
   token exists (`text-base`, `rounded-2xl`, `min-h-16`).
+
+## Enforcement
+
+`src/lib/designTokens.test.ts` scans every `.ts`/`.tsx` file and fails when a
+colour utility names a token that does not exist, a bare `rounded` appears, a
+translucent `border-line/…` is used, or text drops below the 10px floor. Add a
+token instead of working around the test.

@@ -632,10 +632,12 @@ async def execute(db, run, tool, args):
         stored = skills.search(db, run.owner_id, args.get("query", ""), run.data["snapshot"].get("skill_ids"))
         # The same project skills the prompt advertises, so the model can read
         # one back after seeing it in the catalogue.
+        #
+        # The discovery scan reads the skill directories on disk, so it runs on
+        # the blocking pool instead of stalling the server loop.
         seen = {row.get("id") for row in stored}
-        merged = stored + [
-            row for row in discovery.search(args.get("query", "")) if row.get("id") not in seen
-        ]
+        discovered = await asyncio.to_thread(discovery.search, args.get("query", ""))
+        merged = stored + [row for row in discovered if row.get("id") not in seen]
         result = {"skills": merged}
     elif name == "skill_add":
         result = skills.change(
@@ -663,10 +665,12 @@ async def execute(db, run, tool, args):
         else:
             from mix_agent.skills import discovery
 
-            pkg = discovery.find(args.get("skill", ""))
+            # The discovery scan and the resource read both touch the
+            # filesystem, so they run on the blocking pool.
+            pkg = await asyncio.to_thread(discovery.find, args.get("skill", ""))
             if not pkg:
                 raise ValueError("Skill was not found")
-            result = discovery.read_resource(pkg, args.get("path", ""))
+            result = await asyncio.to_thread(discovery.read_resource, pkg, args.get("path", ""))
     elif name == "update_plan":
         result = {key: args[key] for key in ("steps", "pending", "verification") if key in args}
     elif name == "schedule_list":

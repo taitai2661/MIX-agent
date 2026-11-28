@@ -22,6 +22,36 @@ const FLUSH_MS = 60;
 export interface LiveRunEntry {
   runId: string;
   timeline: RunTimeline;
+  /** Raw events in arrival order, backing the Trajectory timeline view.
+   *
+   *  The reduced `timeline` cannot reconstruct chronology (text is folded,
+   *  tool order is by start). This buffer is bounded (see `MAX_STORED_EVENTS`)
+   *  so a long token stream cannot grow memory without limit; over the cap
+   *  the head and the tail are kept, mirroring the backend replay window.
+   *  Optional so test fixtures and older persisted shapes without it keep
+   *  compiling; readers fall back to an empty list.
+   */
+  events?: RunEventPayload[];
+}
+
+/** Upper bound on raw events kept per live run for the trajectory view. */
+export const MAX_STORED_EVENTS = 2000;
+
+/** Append events, keeping the head and the tail once over the cap. */
+export function appendBounded(
+  current: RunEventPayload[],
+  incoming: RunEventPayload[],
+  max: number = MAX_STORED_EVENTS,
+): RunEventPayload[] {
+  const merged =
+    current.length === 0 ? [...incoming] : [...current, ...incoming];
+  if (merged.length <= max) return merged;
+  const tailKeep = Math.max(1, Math.floor(max / 2));
+  const headKeep = max - tailKeep;
+  return [
+    ...merged.slice(0, headKeep),
+    ...merged.slice(merged.length - tailKeep),
+  ];
 }
 
 interface RunStoreState {
@@ -81,18 +111,33 @@ function scheduleFlush() {
     if (!state.liveRunId && Object.keys(state.byConversation).length === 0)
       return;
     let next: Record<string, LiveRunEntry> | null = null;
+    const pending = new Map<string, RunEventPayload[]>();
     for (const event of events) {
       const key = keyByRun.get(event.run_id);
       if (key === undefined) continue;
       const current = (next ?? state.byConversation)[key];
       if (!current || current.runId !== event.run_id) continue;
       if (!next) next = { ...state.byConversation };
+      // Group before writing so one flush appends one slice per run.
+      let group = pending.get(key);
+      if (!group) {
+        group = [];
+        pending.set(key, group);
+      }
+      group.push(event);
       next[key] = {
         ...current,
         timeline: applyRunEvent(current.timeline, event),
       };
     }
     if (!next) return;
+    for (const [key, group] of pending) {
+      const entry = next[key];
+      next[key] = {
+        ...entry,
+        events: appendBounded(entry.events ?? [], group),
+      };
+    }
     const active = state.liveRunId
       ? next[keyByRun.get(state.liveRunId) ?? ""]
       : null;
@@ -147,10 +192,11 @@ export const useRunEvents = create<RunStoreState>((set) => ({
     for (const event of queued) {
       timeline = applyRunEvent(timeline, event);
     }
+    const stored = appendBounded([], queued);
     set((state) => {
       const byConversation = {
         ...state.byConversation,
-        [key]: { runId, timeline },
+        [key]: { runId, timeline, events: stored },
       };
       return {
         liveRunId: runId,

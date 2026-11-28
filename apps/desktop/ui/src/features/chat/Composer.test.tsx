@@ -702,4 +702,42 @@ describe("Composer", () => {
       screen.queryByRole("option", { name: /\/plan/ }),
     ).not.toBeInTheDocument();
   });
+
+  it("prevents a pasted image synchronously before reading it", async () => {
+    const file = new File(["img"], "clip.png", { type: "image/png" });
+    const clipboardData = {
+      files: [file],
+      items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+    };
+    render(
+      <Composer
+        mode="chat"
+        setMode={() => {}}
+        models={models}
+        modelId="p:vision"
+        setModelId={() => {}}
+        busy={false}
+        onSend={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    const box = screen.getByPlaceholderText(
+      "MIX-agent に話しかける…",
+    ) as HTMLTextAreaElement;
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: clipboardData });
+
+    act(() => {
+      box.dispatchEvent(event);
+    });
+
+    // The default action must be cancelled in the same tick as the event:
+    // deferring preventDefault() until FileReader resolves lets the browser
+    // insert the clipboard's text/plain representation into the textarea.
+    expect(event.defaultPrevented).toBe(true);
+    expect(box.value).toBe("");
+    await waitFor(() =>
+      expect(screen.getByText("clip.png")).toBeInTheDocument(),
+    );
+  });
 });

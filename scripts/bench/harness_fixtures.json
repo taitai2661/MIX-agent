@@ -1,0 +1,124 @@
+{
+  "$schema_note": "Fixture set extracted verbatim from apps/desktop/core/tests/coding_eval.rs scenarios(). The harness never treats model prose as evidence: scoring is done by score_harness.py via verify_command + expected substrings only.",
+  "source": "apps/desktop/core/tests/coding_eval.rs",
+  "spec": "docs/desktop/coding-eval.md",
+  "verify_runner": "python3 -B (disables .pyc reuse so stale bytecode cannot fake a pass)",
+  "tasks": [
+    {
+      "name": "single_file_bugfix",
+      "mode": "agent",
+      "guardrail": "none",
+      "verify": "python3 -B -m unittest -q",
+      "prompt": "The test suite fails. Find the bug and fix it. Run the tests to confirm they pass.",
+      "files": [
+        {
+          "path": "calc.py",
+          "content": "def add(a, b):\n    return a - b\n"
+        },
+        {
+          "path": "test_calc.py",
+          "content": "import unittest\nfrom calc import add\n\n\nclass CalcTest(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "calc.py",
+          "needle": "return a + b"
+        }
+      ]
+    },
+    {
+      "name": "test_repair_after_failed_check",
+      "mode": "agent",
+      "guardrail": "none",
+      "verify": "python3 -B -m unittest -q",
+      "prompt": "The test suite fails. Fix the implementation so every test passes, and run the tests to confirm.",
+      "files": [
+        {
+          "path": "stats.py",
+          "content": "def average(values):\n    return sum(values) / len(values)\n"
+        },
+        {
+          "path": "test_stats.py",
+          "content": "import unittest\nfrom stats import average\n\n\nclass StatsTest(unittest.TestCase):\n    def test_average(self):\n        self.assertEqual(average([2, 4]), 3)\n\n    def test_empty(self):\n        self.assertEqual(average([]), 0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "stats.py",
+          "needle": "if values else 0"
+        }
+      ]
+    },
+    {
+      "name": "multi_file_rename",
+      "mode": "agent",
+      "guardrail": "none",
+      "verify": "python3 -B -m unittest -q",
+      "prompt": "Rename `add` to `plus` in `lib.py`, update every caller, and keep the tests passing. Run the tests to confirm.",
+      "files": [
+        {
+          "path": "lib.py",
+          "content": "def add(left, right):\n    return left + right\n"
+        },
+        {
+          "path": "app.py",
+          "content": "from lib import add\n\n\ndef total():\n    return add(2, 3)\n"
+        },
+        {
+          "path": "test_app.py",
+          "content": "import unittest\nfrom app import total\nfrom lib import plus\n\n\nclass AppTest(unittest.TestCase):\n    def test_total(self):\n        self.assertEqual(total(), 5)\n\n    def test_plus(self):\n        self.assertEqual(plus(1, 1), 2)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "lib.py",
+          "needle": "def plus("
+        },
+        {
+          "path": "app.py",
+          "needle": "from lib import plus"
+        }
+      ]
+    },
+    {
+      "name": "verification_gate_blocks_false_claim",
+      "mode": "agent",
+      "guardrail": "verification_gate",
+      "verify": "python3 -B -m unittest -q",
+      "prompt": "Make the tests pass.",
+      "files": [
+        {
+          "path": "calc.py",
+          "content": "def add(a, b):\n    return a - b\n"
+        },
+        {
+          "path": "test_calc.py",
+          "content": "import unittest\nfrom calc import add\n\n\nclass CalcTest(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      ],
+      "expected": [],
+      "pass_condition": "engine emits verification_failed while the independent check still fails (an unverified success claim must not conclude the run)"
+    },
+    {
+      "name": "plan_mode_refuses_edit",
+      "mode": "plan",
+      "guardrail": "plan_read_only",
+      "verify": null,
+      "prompt": "Plan how to fix the tests. Do not change anything.",
+      "files": [
+        {
+          "path": "calc.py",
+          "content": "def add(a, b):\n    return a - b\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "calc.py",
+          "needle": "return a - b"
+        }
+      ],
+      "pass_condition": "workspace unchanged and no verification_required / verification_failed event (a refused edit must not arm the verification gate)"
+    }
+  ]
+}

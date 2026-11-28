@@ -1,5 +1,7 @@
+from typing import Any, cast
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 
 from mix_agent import pricing
@@ -28,6 +30,7 @@ from mix_agent.db.models import (
     Project,
     Provider,
     Run,
+    Secret,
     Skill,
     now,
 )
@@ -76,7 +79,11 @@ def validate_entity(collection, value, db, owner):
     elif collection == "agents":
         if value["model_id"] and value["model_id"] != "auto":
             own(db, Model, value["model_id"], owner)
-        if any(t not in registry(db, owner) for t in value["tool_ids"]):
+        # `registry()` runs a SELECT, so it has to be resolved once. Writing it
+        # inside the generator expression re-queried the whole tool table for
+        # every id in `tool_ids`.
+        available = registry(db, owner)
+        if any(t not in available for t in value["tool_ids"]):
             raise HTTPException(422, "未登録Toolがあります")
         if any(
             not db.get(Skill, skill_id) or db.get(Skill, skill_id).owner_id != owner
@@ -187,6 +194,15 @@ def delete_entity(collection: str, key: str, ctx=Depends(context)):
             for model in db.scalars(select(Model).where(Model.owner_id == s.owner_id))
         ):
             raise HTTPException(409, "先に関連モデルを削除してください")
+        # The explicit /providers/{key} route is registered first, so this is
+        # normally unreachable. Keep the same anti-orphan guarantee anyway:
+        # deleting a Provider must never leave its encrypted Secret behind.
+        if collection == "providers":
+            secret_id = row.data.get("secret_id")
+            if secret_id:
+                secret = db.get(Secret, secret_id)
+                if secret and secret.owner_id == s.owner_id:
+                    db.delete(secret)
         db.delete(row)
     else:
         raise HTTPException(404)
@@ -196,7 +212,7 @@ def delete_entity(collection: str, key: str, ctx=Depends(context)):
 
 
 # Concrete routes expose request/response schemas to generated TypeScript clients.
-def register_collection(name, schema, view_schema=RecordView, include_list=True):
+def register_collection(name, schema, view_schema: type[BaseModel] = RecordView, include_list=True):
     def listing(ctx=Depends(context)):
         return list_collection(name, ctx)
 
@@ -216,11 +232,12 @@ def register_collection(name, schema, view_schema=RecordView, include_list=True)
     )
     from pydantic import create_model
 
-    partial = create_model(
-        schema.__name__ + "Patch",
-        __base__=Input,
-        **{k: (v.annotation | None, None) for k, v in schema.model_fields.items()},
+    # Pydantic's `**field_definitions` is `Any`; an inferred tuple-only dict
+    # otherwise looks like a bad match for every named create_model parameter.
+    patch_fields = cast(
+        dict[str, Any], {k: (v.annotation | None, None) for k, v in schema.model_fields.items()}
     )
+    partial = create_model(schema.__name__ + "Patch", __base__=Input, **patch_fields)
 
     def editing(key: str, body, ctx=Depends(context)):
         return edit_entity(name, key, body.model_dump(exclude_unset=True), ctx)

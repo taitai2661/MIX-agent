@@ -79,7 +79,7 @@ function readStoreCompose(relativePath) {
 const storeCompose = readStoreCompose("apps/MIX-agent/docker-compose.yml");
 const storeMetaKeys = [
   ...readFileSync(join(root, "scripts/render_zimaos_compose.py"), "utf8").matchAll(
-    /^\s{4}"v(\d+\.\d+\.\d+)":\s*\{/gm,
+    /^[ \t]*"v(\d+\.\d+\.\d+)"[ \t]*:[ \t]*\{/gm,
   ),
 ].map((match) => match[1]);
 

@@ -34,4 +34,26 @@ describe("ToolActivity", () => {
     expect(html).toContain('href="https://example.com/news"');
     expect(html).toContain("あと 1 件");
   });
+
+  // A hostile tool result must never turn a source label into a clickable
+  // javascript:/data: URL (or one hidden behind an ignored control byte).
+  it.each([
+    ["javascript", "javascript:alert(1)"],
+    ["data", "data:text/html,<script>alert(1)</script>"],
+    ["control char in scheme", "java\tscript:alert(1)"],
+    ["control char in host", "https://exa\nmple.com"],
+    ["mailto", "mailto:someone@example.com"],
+    ["relative", "/local/path"],
+  ])("renders %s sources as inert text", (_label, url) => {
+    const html = renderToStaticMarkup(
+      <ToolActivity
+        activity={{
+          label: "検索結果",
+          sources: [{ host: "example.com", url }],
+        }}
+      />,
+    );
+    expect(html).toContain("example.com");
+    expect(html).not.toContain("href=");
+  });
 });

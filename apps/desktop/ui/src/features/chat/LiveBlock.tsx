@@ -35,6 +35,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { CopyButton } from "@/components/CopyButton";
 import { ErrorBadge } from "@/components/shared";
 import { ApprovalCard } from "./ApprovalCard";
+import { QuestionCard } from "./QuestionCard";
 import { ContextCompactionNotice } from "./ContextCompaction";
 import { useThrottledValue } from "@/lib/useThrottledValue";
 
@@ -54,7 +55,7 @@ export const Reasoning = memo(function Reasoning({
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="group rounded-lg border border-line bg-inset/60 shadow-xs"
+      className="group rounded-lg border border-line bg-inset shadow-xs"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-fg">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -133,7 +134,7 @@ const InlineTodoList = memo(function InlineTodoList({
     todos.find((i) => i.status === "pending");
 
   return (
-    <details className="group overflow-hidden rounded-lg border border-line bg-surface/80 text-xs shadow-xs">
+    <details className="group overflow-hidden rounded-lg border border-line bg-surface text-xs shadow-xs">
       <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-1.5 transition-colors hover:bg-hover">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <ListChecks size={13} className="shrink-0 text-brand" />
@@ -154,10 +155,7 @@ const InlineTodoList = memo(function InlineTodoList({
       </summary>
       <ul className="flex flex-col gap-1 border-t border-line p-2">
         {todos.map((item) => (
-          <li
-            key={item.id}
-            className="flex items-start gap-1.5 text-2xs leading-4"
-          >
+          <li key={item.id} className="flex items-start gap-1.5 text-2xs">
             <span className="mt-0.5 shrink-0">
               {item.status === "completed" ? (
                 <CheckCircle2 size={11} className="text-success" />
@@ -239,6 +237,7 @@ export const LiveBlock = memo(function LiveBlock({
         )}
         {live.budgetRequest && <BudgetBanner live={live} />}
         {live.approval && <ApprovalCard live={live} />}
+        {live.question && <QuestionCard live={live} />}
         {live.reasoning && (
           <Reasoning text={live.reasoning} streaming={busy && !live.text} />
         )}

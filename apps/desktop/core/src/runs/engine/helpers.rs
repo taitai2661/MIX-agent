@@ -5,6 +5,11 @@ pub(super) const MAX_SNAPSHOT_FILES: usize = 128;
 /// How many Runs keep their undo history in memory.
 pub(super) const MAX_SNAPSHOT_RUNS: usize = 24;
 
+/// How long a finished Run's undo history stays available. Older snapshots are
+/// dropped on the next release/touch so a long-lived process cannot pin every
+/// file it has ever edited.
+pub(super) const SNAPSHOT_TTL: Duration = Duration::from_secs(30 * 60);
+
 /// Resolve a Tool's path argument to an absolute key for the read fingerprint
 /// map. `std::path::absolute` folds `.` and makes relative/absolute spellings
 /// of the same file compare equal.
@@ -46,11 +51,12 @@ pub(super) fn resolve_snapshot_path(
     }
 }
 
-/// How many read-only Tool calls may be in flight at once.
-///
-/// Bounded rather than unbounded: a model that emits twenty greps should not
-/// spawn twenty directory walks that compete for the same disk.
-pub(super) const MAX_CONCURRENT_READS: usize = 4;
+// The read fan-out cap now lives in `AgentModePolicy::max_concurrent_reads`
+// so it can be tuned per deployment. The default is deliberately back at 4:
+// an earlier bump to 8 assumed NVMe-backed local storage, which is not true on
+// HDDs, network mounts or container volumes, where eight directory walks can
+// be slower than four. The turn waits for the slowest read, so raising this is
+// a measured decision, not a free speed-up.
 
 /// Whether a call is safe to dispatch alongside another one in the same turn.
 ///

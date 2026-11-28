@@ -23,6 +23,8 @@ export type UxEventName =
   | "surface_switched"
   | "approval_shown"
   | "approval_decided"
+  | "approval_extended"
+  | "question_answered"
   | "settings_opened"
   | "settings_saved"
   | "settings_save_failed"

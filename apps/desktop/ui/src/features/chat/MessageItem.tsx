@@ -42,6 +42,7 @@ import {
 import type { MessageView, ModelView, RunView } from "@/lib/types";
 import { Reasoning } from "./LiveBlock";
 import { InlineToolItem } from "./InlineToolItem";
+import { MessageFeedback } from "./MessageFeedback";
 import { useUi } from "@/lib/ui";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -126,6 +127,16 @@ export const MessageItem = memo(function MessageItem({
           >
             {displayModelName(message.model_id, models)}
           </span>
+          {message.auto_selection && (
+            <Badge
+              tone="info"
+              size="sm"
+              title={message.auto_reason ?? undefined}
+              aria-label={message.auto_reason ?? "Auto"}
+            >
+              Auto
+            </Badge>
+          )}
           <span aria-hidden="true">·</span>
           <time
             className="shrink-0 tabular-nums"
@@ -163,6 +174,13 @@ export const MessageItem = memo(function MessageItem({
             </Badge>
           )}
           <span className="actions">
+            {message.auto_selection && (
+              <MessageFeedback
+                key={message.id}
+                messageId={message.id}
+                initial={message.feedback ?? null}
+              />
+            )}
             {showRunError &&
               onRetry &&
               run &&
@@ -286,7 +304,7 @@ function MessageToolsAccordion({
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="group mt-1 rounded-lg border border-line bg-surface/80 text-xs shadow-xs"
+      className="group mt-1 rounded-lg border border-line bg-surface text-xs shadow-xs"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between px-2.5 py-1.5 transition-colors hover:bg-hover">
         <div className="flex items-center gap-1.5 text-muted">
@@ -327,7 +345,7 @@ function MessageToolsAccordion({
           </div>
         )}
         {timeline?.replayTruncated && (
-          <div className="rounded-md border border-line bg-inset/50 p-2 text-2xs text-muted">
+          <div className="rounded-md border border-line bg-inset p-2 text-2xs text-muted">
             {timeline.replayOmitted
               ? tf("{count}件のイベントを省略しました", {
                   count: timeline.replayOmitted.toLocaleString(),
@@ -338,7 +356,7 @@ function MessageToolsAccordion({
           </div>
         )}
         {todos.length > 0 && (
-          <div className="flex flex-col gap-1 rounded-md border border-line/60 bg-inset/50 p-2">
+          <div className="flex flex-col gap-1 rounded-md border border-line bg-inset p-2">
             <div className="flex items-center gap-1.5 font-medium text-fg">
               <ListChecks size={13} className="text-brand" />
               <span>{t("計画")}</span>
@@ -348,10 +366,7 @@ function MessageToolsAccordion({
             </div>
             <ul className="m-0 flex flex-col gap-1 p-0 list-none">
               {todos.map((item) => (
-                <li
-                  key={item.id}
-                  className="flex items-start gap-1.5 text-2xs leading-4"
-                >
+                <li key={item.id} className="flex items-start gap-1.5 text-2xs">
                   <span className="mt-0.5 shrink-0">
                     {item.status === "completed" ? (
                       <CheckCircle2 size={11} className="text-success" />

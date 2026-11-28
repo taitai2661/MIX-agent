@@ -2,6 +2,7 @@ import {
   memo,
   useDeferredValue,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -12,15 +13,16 @@ import {
   Check,
   Eye,
   EyeOff,
+  Plus,
   Search,
-  Settings2,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Wrench,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { t, tf } from "@/lib/i18n";
-import { formatContext, shortModelId } from "@/lib/format";
+import { t } from "@/lib/i18n";
 import { useUi } from "@/lib/ui";
 import type { ModelView, ProviderView } from "@/lib/types";
 import {
@@ -30,23 +32,25 @@ import {
   subscribeModelPrefs,
   toggleFavoriteModel,
 } from "@/lib/modelPrefs";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ListboxSkeleton } from "@/components/common";
 import { EmptyState } from "@/components/shared";
 import { SectionLabel } from "@/components/layout";
 import { Switch } from "@/components/ui/switch";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { SearchField } from "@/components/ui/input";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { DropdownMenuTriggerButton } from "@/components/ui/dropdown-menu";
 
 /** Capability icons for a model, with accessible names.
  *
  * A model's three booleans are the reason to pick one over another, but three
- * text badges do not fit beside a long label in a 20rem popover. Icons do, so
+ * text badges do not fit beside a long label in a compact row. Icons do, so
  * each carries its name in an `aria-label` and a `title` for the pointer. */
 const Capabilities = memo(function Capabilities({
   model,
@@ -68,10 +72,8 @@ const Capabilities = memo(function Capabilities({
   ].filter(Boolean) as { key: string; Icon: typeof Eye; label: string }[];
 
   if (caps.length === 0) return null;
-  // Always rendered: the trigger width is capped with truncation, so the
-  // icons never appear/disappear with the column width (no container query).
   return (
-    <span className="flex shrink-0 items-center gap-1.5 text-muted">
+    <span className="flex shrink-0 items-center gap-1.5 text-faint">
       {caps.map(({ key, Icon, label }) => (
         <span key={key} title={label} aria-label={label} role="img">
           <Icon size={13} aria-hidden="true" />
@@ -84,32 +86,32 @@ const Capabilities = memo(function Capabilities({
 type Row =
   | { kind: "header"; key: string; label: string }
   | { kind: "auto"; key: string }
-  | { kind: "model"; key: string; model: ModelView; provider: string };
+  | {
+      kind: "model";
+      key: string;
+      model: ModelView;
+      provider: string;
+      /** True in the mixed Recent/Favourites sections, where the provider is
+       *  not already implied by a group header. */
+      showProvider: boolean;
+    };
 
 /** The Docker-edition Auto entry: one pseudo-model that resolves per request. */
 export const AUTO_MODEL_ID = "auto";
 
-function AutoRowLabel() {
-  return (
-    <span className="min-w-0 flex-1">
-      <span className="flex items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
-          {t("Auto")}
-        </span>
-        <span className="flex shrink-0 items-center gap-1 text-faint">
-          <Sparkles size={12} aria-hidden="true" />
-        </span>
-      </span>
-      <span className="mt-0.5 flex items-center gap-2 text-2xs text-faint">
-        <span className="min-w-0 truncate">
-          {t("リクエストごとに最適なモデルを選択")}
-        </span>
-      </span>
-    </span>
-  );
-}
+const LOCAL_PROVIDER_KINDS = new Set(["ollama", "lmstudio"]);
 
-const AutoRowLabelMemo = memo(AutoRowLabel);
+/** A best-effort "this costs nothing" hint.
+ *
+ * The backend does not model pricing per row, so only two cases are certain:
+ * a locally hosted runtime, and a model whose own name says it is free. The
+ * badge is advisory — it never changes routing or selection. */
+function isFreeModel(model: ModelView, provider: ProviderView | undefined) {
+  if (provider && LOCAL_PROVIDER_KINDS.has(provider.kind.toLocaleLowerCase())) {
+    return true;
+  }
+  return /free|無料/i.test(model.id) || /free|無料/i.test(model.label);
+}
 
 function providerLabel(model: ModelView, providers: ProviderView[]): string {
   return (
@@ -156,9 +158,15 @@ export function ModelPicker({
   // Defer filtering so keystrokes stay responsive with hundreds of models.
   const deferredQuery = useDeferredValue(query);
   const [active, setActive] = useState(0);
+  // The list opens on the current selection without painting a highlight on it:
+  // a filled row would compete with the check mark and make the panel look like
+  // it has two selections. The highlight appears once the keyboard is used.
+  const [keyboardNavigating, setKeyboardNavigating] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recents, setRecents] = useState<string[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const listboxId = useId();
 
   const selected =
     value === AUTO_MODEL_ID
@@ -166,7 +174,7 @@ export function ModelPicker({
       : (models.find((m) => m.id === value) ?? null);
   const isAutoSelected = value === AUTO_MODEL_ID;
 
-  // Preferences live in `localStorage`; refresh them whenever the popover opens
+  // Preferences live in `localStorage`; refresh them whenever the dialog opens
   // or another picker toggles a favourite while this one is mounted.
   useEffect(() => {
     const refresh = () => {
@@ -185,6 +193,11 @@ export function ModelPicker({
       setQuery("");
     }
   }, [open]);
+
+  const providerById = useMemo(
+    () => new Map(providers.map((provider) => [provider.id, provider])),
+    [providers],
+  );
 
   const rows = useMemo<Row[]>(() => {
     const needle = deferredQuery.trim().toLocaleLowerCase();
@@ -210,7 +223,13 @@ export function ModelPicker({
           out.push({ kind: "header", key: `h:${provider}`, label: provider });
           lastProvider = provider;
         }
-        out.push({ kind: "model", key: model.id, model, provider });
+        out.push({
+          kind: "model",
+          key: model.id,
+          model,
+          provider,
+          showProvider: false,
+        });
       }
       return out;
     }
@@ -219,7 +238,7 @@ export function ModelPicker({
     const seen = new Set<string>();
     // Auto always leads: it is the default pick, not just another provider row.
     const out: Row[] = [{ kind: "auto", key: "auto" }];
-    const pushModel = (model: ModelView) => {
+    const pushModel = (model: ModelView, showProvider: boolean) => {
       if (seen.has(model.id)) return;
       seen.add(model.id);
       out.push({
@@ -227,6 +246,7 @@ export function ModelPicker({
         key: model.id,
         model,
         provider: providerLabel(model, providers),
+        showProvider,
       });
     };
 
@@ -235,7 +255,7 @@ export function ModelPicker({
       .filter((m): m is ModelView => m != null);
     if (favoriteModels.length > 0) {
       out.push({ kind: "header", key: "h:favorites", label: t("お気に入り") });
-      favoriteModels.forEach(pushModel);
+      favoriteModels.forEach((model) => pushModel(model, true));
     }
 
     const recentModels = recents
@@ -247,7 +267,7 @@ export function ModelPicker({
         key: "h:recents",
         label: t("最近使ったモデル"),
       });
-      recentModels.forEach(pushModel);
+      recentModels.forEach((model) => pushModel(model, true));
     }
 
     // Everything left, grouped by provider in list order.
@@ -261,7 +281,7 @@ export function ModelPicker({
     }
     for (const [provider, group] of groups) {
       out.push({ kind: "header", key: `h:${provider}`, label: provider });
-      group.forEach(pushModel);
+      group.forEach((model) => pushModel(model, false));
     }
     return out;
   }, [deferredQuery, favorites, models, providers, recents]);
@@ -278,6 +298,7 @@ export function ModelPicker({
 
   useEffect(() => {
     setActive(0);
+    setKeyboardNavigating(false);
   }, [query, open]);
 
   useEffect(() => {
@@ -318,15 +339,19 @@ export function ModelPicker({
     }
     if (event.key === "ArrowDown") {
       event.preventDefault();
+      setKeyboardNavigating(true);
       setActive((index) => Math.min(index + 1, optionRows.length - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
+      setKeyboardNavigating(true);
       setActive((index) => Math.max(index - 1, 0));
     } else if (event.key === "Home") {
       event.preventDefault();
+      setKeyboardNavigating(true);
       setActive(0);
     } else if (event.key === "End") {
       event.preventDefault();
+      setKeyboardNavigating(true);
       setActive(Math.max(0, optionRows.length - 1));
     } else if (event.key === "Enter") {
       const row = optionRows[active];
@@ -349,8 +374,8 @@ export function ModelPicker({
   let optionIndex = -1;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild disabled={disabled}>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild disabled={disabled}>
         <DropdownMenuTriggerButton
           aria-label={t("モデルを選択")}
           aria-expanded={open}
@@ -383,42 +408,99 @@ export function ModelPicker({
           )}
           {selected && <Capabilities model={selected} />}
         </DropdownMenuTriggerButton>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
+      </DialogTrigger>
+      <DialogContent
         aria-label={t("モデルを選択")}
-        className="flex w-[22rem] max-w-[calc(100vw-1rem)] flex-col"
+        showClose={false}
+        onOpenAutoFocus={(event) => {
+          // Radix would focus the content container; the search field is where
+          // the user is about to type, and focusing it also keeps the keyboard
+          // list navigation live from the first keystroke.
+          event.preventDefault();
+          searchRef.current?.focus();
+        }}
+        className={cn(
+          "top-[8vh] flex max-h-[84vh] w-[calc(100vw-2rem)] max-w-3xl translate-y-0 flex-col",
+          "gap-0 overflow-hidden p-0",
+        )}
       >
-        <div className="shrink-0 border-b border-line p-1.5">
-          <SearchField
-            // APG menu pattern: focus enters the popover on open so keyboard
-            // users land in the search, not behind the overlay.
-            // eslint-disable-next-line jsx-a11y/no-autofocus
-            autoFocus
-            icon={<Search size={13} />}
+        <DialogTitle className="sr-only">{t("モデルを選択")}</DialogTitle>
+        <DialogDescription className="sr-only">
+          {t("モデルを検索")}
+        </DialogDescription>
+
+        <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2.5">
+          <Search
+            size={18}
+            className="shrink-0 text-faint"
+            aria-hidden="true"
+          />
+          <input
+            ref={searchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            onClear={query ? () => setQuery("") : undefined}
-            clearLabel={t("クリア")}
             role="combobox"
             aria-expanded="true"
-            aria-controls="model-picker-listbox"
+            aria-controls={listboxId}
             aria-activedescendant={
-              optionRows.length > 0 ? `model-option-${active}` : undefined
+              optionRows.length > 0
+                ? `${listboxId}-option-${active}`
+                : undefined
             }
             aria-autocomplete="list"
             aria-label={t("モデルを検索")}
             placeholder={t("モデルを検索")}
+            className="min-w-0 flex-1 bg-transparent py-1 text-base text-fg outline-none placeholder:text-faint"
           />
+          {query && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setQuery("")}
+              aria-label={t("クリア")}
+              title={t("クリア")}
+            >
+              <X size={14} />
+            </Button>
+          )}
+          {/* With no models the empty state already offers "add provider";
+              a second button with the same accessible name would make the
+              action ambiguous to screen readers and tests alike. */}
+          {models.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => {
+                setOpen(false);
+                openSettings("providers");
+              }}
+              aria-label={t("プロバイダーを追加")}
+              title={t("プロバイダーを追加")}
+            >
+              <Plus size={17} />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => {
+              setOpen(false);
+              openSettings("models");
+            }}
+            aria-label={t("モデルを管理")}
+            title={t("モデルを管理")}
+          >
+            <SlidersHorizontal size={16} />
+          </Button>
         </div>
 
         <div
-          id="model-picker-listbox"
+          id={listboxId}
           ref={listRef}
           role="listbox"
           aria-label={t("モデル")}
-          className="flex max-h-80 min-h-0 flex-col overflow-y-auto p-1.5"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto p-1.5"
         >
           {pending && models.length === 0 ? (
             <ListboxSkeleton />
@@ -446,7 +528,10 @@ export function ModelPicker({
             rows.map((row) => {
               if (row.kind === "header") {
                 return (
-                  <SectionLabel key={row.key} className="px-2 pt-2 pb-1">
+                  <SectionLabel
+                    key={row.key}
+                    className="px-3 pt-3 pb-1 ps-10 text-xs font-medium tracking-normal text-muted normal-case"
+                  >
                     {row.label}
                   </SectionLabel>
                 );
@@ -460,29 +545,44 @@ export function ModelPicker({
                   <button
                     key={row.key}
                     type="button"
-                    id={`model-option-${index}`}
+                    id={`${listboxId}-option-${index}`}
                     data-index={index}
                     role="option"
                     aria-selected={isSelected}
-                    onMouseEnter={() => setActive(index)}
+                    onMouseEnter={() => {
+                      setKeyboardNavigating(false);
+                      setActive(index);
+                    }}
                     onFocus={() => setActive(index)}
                     onClick={() => choose(AUTO_MODEL_ID)}
                     className={cn(
-                      "group flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-start",
+                      "group flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-start",
                       "transition-colors duration-75",
-                      isActive ? "bg-active" : "hover:bg-hover",
+                      isActive && keyboardNavigating
+                        ? "bg-active"
+                        : "hover:bg-hover",
                     )}
                   >
-                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+                    <span className="flex size-4 shrink-0 items-center justify-center">
                       {isSelected && (
                         <Check
-                          size={13}
-                          className="text-brand"
+                          size={15}
+                          className="text-fg"
                           aria-hidden="true"
                         />
                       )}
                     </span>
-                    <AutoRowLabelMemo />
+                    <span className="shrink-0 text-sm font-medium text-fg">
+                      {t("Auto")}
+                    </span>
+                    <span className="min-w-0 truncate text-sm text-muted">
+                      {t("リクエストごとに最適なモデルを選択")}
+                    </span>
+                    <Sparkles
+                      size={13}
+                      className="ms-auto shrink-0 text-brand"
+                      aria-hidden="true"
+                    />
                   </button>
                 );
               }
@@ -491,6 +591,8 @@ export function ModelPicker({
               const isActive = index === active;
               const isSelected = row.model.id === value;
               const isFavorite = favorites.includes(row.model.id);
+              const provider = providerById.get(row.model.provider_id);
+              const free = isFreeModel(row.model, provider);
               return (
                 // Wrapper carries the highlight; the option itself is a native
                 // button (keyboard handling comes free) and the favourite star
@@ -498,49 +600,51 @@ export function ModelPicker({
                 <div
                   key={row.key}
                   data-index={index}
-                  onMouseEnter={() => setActive(index)}
+                  onMouseEnter={() => {
+                    setKeyboardNavigating(false);
+                    setActive(index);
+                  }}
                   className={cn(
-                    "group flex items-start gap-1 rounded-md px-1 py-0.5",
+                    "group flex items-center gap-1 rounded-md px-1",
                     "transition-colors duration-75",
-                    isActive ? "bg-active" : "hover:bg-hover",
+                    isActive && keyboardNavigating
+                      ? "bg-active"
+                      : "hover:bg-hover",
                   )}
                 >
                   <button
                     type="button"
-                    id={`model-option-${index}`}
+                    id={`${listboxId}-option-${index}`}
                     role="option"
                     aria-selected={isSelected}
                     onFocus={() => setActive(index)}
                     onClick={() => choose(row.model.id)}
-                    className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md px-1 py-1 text-start outline-none"
+                    title={`${row.model.label} · ${row.provider}`}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-start outline-none"
                   >
-                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+                    <span className="flex size-4 shrink-0 items-center justify-center">
                       {isSelected && (
                         <Check
-                          size={13}
-                          className="text-brand"
+                          size={15}
+                          className="text-fg"
                           aria-hidden="true"
                         />
                       )}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
-                          {row.model.label}
-                        </span>
-                        <Capabilities model={row.model} />
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="truncate text-sm font-medium text-fg">
+                        {row.model.label}
                       </span>
-                      <span className="mt-0.5 flex items-center gap-2 text-2xs text-faint">
-                        <span
-                          className="min-w-0 truncate font-mono"
-                          title={row.model.id}
-                        >
-                          {shortModelId(row.model.id)}
+                      {row.showProvider && (
+                        <span className="shrink-0 text-sm text-muted">
+                          {row.provider}
                         </span>
-                        <span className="ms-auto shrink-0 font-mono">
-                          {formatContext(row.model.context_window)}
-                        </span>
-                      </span>
+                      )}
+                      {free && (
+                        <Badge size="sm" className="shrink-0 rounded-sm">
+                          {t("無料")}
+                        </Badge>
+                      )}
                     </span>
                   </button>
                   <Button
@@ -561,7 +665,11 @@ export function ModelPicker({
                         : t("お気に入りに追加")
                     }
                     selected={isFavorite}
-                    className="-me-0.5 mt-0.5 text-faint"
+                    className={cn(
+                      "-me-0.5 shrink-0 text-faint opacity-0 transition-opacity",
+                      "group-hover:opacity-100 focus-visible:opacity-100",
+                      isFavorite && "opacity-100",
+                    )}
                   >
                     <Star
                       size={13}
@@ -575,76 +683,67 @@ export function ModelPicker({
           )}
         </div>
 
-        {onTemporaryChange && (
-          <div className="shrink-0 border-t border-line px-2.5 py-2">
-            <label className="flex items-center justify-between gap-2 text-xs text-fg">
-              <span className="inline-flex items-center gap-1.5">
-                <EyeOff size={12} className="text-muted" aria-hidden="true" />
-                {t("一時モード")}
-              </span>
-              <Switch
-                checked={!!temporary}
-                onCheckedChange={(checked) => {
-                  onTemporaryChange(checked);
-                  if (!checked) onAllowToolsChange?.(false);
-                }}
-                aria-label={t("一時モード")}
-              />
-            </label>
-            {temporary && (
+        {(onTemporaryChange || runtimeStatus) && (
+          <div className="shrink-0 border-t border-line px-4 py-3">
+            {onTemporaryChange && (
               <>
-                <p className="mt-1 text-2xs text-faint">
-                  {t(
-                    "この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します。",
-                  )}
-                </p>
-                <label className="mt-2 flex items-center justify-between gap-2 text-xs text-fg">
+                <label className="flex items-center justify-between gap-2 text-xs text-fg">
                   <span className="inline-flex items-center gap-1.5">
-                    <Wrench
+                    <EyeOff
                       size={12}
                       className="text-muted"
                       aria-hidden="true"
                     />
-                    {t("Toolを許可")}
+                    {t("一時モード")}
                   </span>
                   <Switch
-                    checked={!!allowTools}
-                    onCheckedChange={onAllowToolsChange}
-                    aria-label={t("Toolを許可")}
+                    checked={!!temporary}
+                    onCheckedChange={(checked) => {
+                      onTemporaryChange(checked);
+                      if (!checked) onAllowToolsChange?.(false);
+                    }}
+                    aria-label={t("一時モード")}
                   />
                 </label>
-                {allowTools && (
-                  <p className="mt-1 text-2xs text-faint">
-                    {t("Toolの外部送信や副作用は残る場合があります。")}
-                  </p>
+                {temporary && (
+                  <>
+                    <p className="mt-1 text-2xs text-faint">
+                      {t(
+                        "この送信ではMemoryを使いません。Run終了後に会話・回答・送信した添付を削除します。",
+                      )}
+                    </p>
+                    <label className="mt-2 flex items-center justify-between gap-2 text-xs text-fg">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Wrench
+                          size={12}
+                          className="text-muted"
+                          aria-hidden="true"
+                        />
+                        {t("Toolを許可")}
+                      </span>
+                      <Switch
+                        checked={!!allowTools}
+                        onCheckedChange={onAllowToolsChange}
+                        aria-label={t("Toolを許可")}
+                      />
+                    </label>
+                    {allowTools && (
+                      <p className="mt-1 text-2xs text-faint">
+                        {t("Toolの外部送信や副作用は残る場合があります。")}
+                      </p>
+                    )}
+                  </>
                 )}
               </>
             )}
+            {runtimeStatus && (
+              <div className="mt-2 flex items-center gap-2">
+                {runtimeStatus}
+              </div>
+            )}
           </div>
         )}
-
-        {runtimeStatus && (
-          <div className="flex shrink-0 items-center gap-2 border-t border-line px-2.5 py-1.5">
-            {runtimeStatus}
-          </div>
-        )}
-
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line px-2 py-1.5">
-          <span className="text-2xs text-faint">
-            {tf("{n} モデル", { n: models.length })}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setOpen(false);
-              openSettings("models");
-            }}
-          >
-            <Settings2 size={12} /> {t("モデルを管理")}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -8,7 +8,9 @@ use mix_agent_desktop::commands::conversations::{
     purge_temporary_run, search_conversation_summaries, search_messages_with,
     truncate_messages_from,
 };
-use mix_agent_desktop::commands::runs::fetch_run_events;
+use mix_agent_desktop::commands::runs::{
+    fetch_run_events, import_run_events_rows, render_run_markdown, search_run_events_with,
+};
 use mixd_storage::records::SINGLE_USER_ID;
 use mixd_storage::Storage;
 use sqlx::Row;
@@ -49,6 +51,107 @@ async fn insert_message(
         .execute(pool)
         .await
         .expect("insert message");
+}
+
+#[tokio::test]
+async fn list_messages_surfaces_auto_selection_and_feedback() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-fb", "Feedback").await;
+
+    insert_message(
+        pool,
+        "m-auto",
+        "conv-fb",
+        serde_json::json!({
+            "role": "assistant",
+            "content": "auto answer",
+            "modelId": "prov:model-x",
+            "runId": "run-auto",
+            "kind": "assistant",
+            "autoSelection": {
+                "selected_id": "prov:model-x",
+                "profile": "balanced",
+                "reason": "Auto: balanced の実績から選択",
+            },
+        }),
+    )
+    .await;
+    insert_message(
+        pool,
+        "m-manual",
+        "conv-fb",
+        serde_json::json!({
+            "role": "assistant",
+            "content": "manual answer",
+            "modelId": "prov:model-x",
+            "runId": "run-manual",
+            "kind": "assistant",
+        }),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO message_feedback (id, owner_id, data, message_id) VALUES (?, ?, ?, ?)",
+    )
+    .bind("fb-1")
+    .bind(SINGLE_USER_ID)
+    .bind(
+        serde_json::json!({
+            "modelId": "prov:model-x",
+            "profile": "balanced",
+            "value": "up",
+        })
+        .to_string(),
+    )
+    .bind("m-auto")
+    .execute(pool)
+    .await
+    .expect("insert feedback");
+
+    let messages = fetch_messages(pool, "conv-fb", 100).await.expect("fetch");
+    assert_eq!(messages.len(), 2);
+    // The Auto-routed answer is rateable and carries the stored rating.
+    assert!(messages[0].auto_selection);
+    assert_eq!(messages[0].feedback.as_deref(), Some("up"));
+    assert_eq!(
+        messages[0].auto_reason.as_deref(),
+        Some("Auto: balanced の実績から選択")
+    );
+    // A manually-routed answer has no selection, so the UI must not offer
+    // thumbs (the backend would reject the write).
+    assert!(!messages[1].auto_selection);
+    assert_eq!(messages[1].feedback, None);
+}
+
+#[tokio::test]
+async fn a_json_null_auto_selection_is_not_treated_as_auto() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-null-auto", "Null auto").await;
+    insert_message(
+        pool,
+        "m-null-auto",
+        "conv-null-auto",
+        serde_json::json!({
+            "role": "assistant",
+            "content": "answer",
+            "modelId": "prov:model-x",
+            "runId": "run-null-auto",
+            "kind": "assistant",
+            "autoSelection": null,
+        }),
+    )
+    .await;
+
+    let messages = fetch_messages(pool, "conv-null-auto", 10)
+        .await
+        .expect("fetch");
+    assert_eq!(messages.len(), 1);
+    assert!(
+        !messages[0].auto_selection,
+        "JSON null is not a selection object"
+    );
+    assert_eq!(messages[0].auto_reason, None);
 }
 
 #[tokio::test]
@@ -220,7 +323,7 @@ async fn message_search_returns_the_conversation_and_a_snippet() {
     )
     .await;
 
-    let hits = search_messages_with(pool, "trigram", Some(10))
+    let hits = search_messages_with(pool, "trigram", Some(10), None, None)
         .await
         .expect("search");
     assert_eq!(hits.len(), 1);
@@ -235,7 +338,7 @@ async fn message_search_returns_the_conversation_and_a_snippet() {
 
     // A 1–2 character query cannot use trigram; it must return cleanly rather
     // than letting FTS surface a syntax error to the palette.
-    let short = search_messages_with(pool, "a", Some(10))
+    let short = search_messages_with(pool, "a", Some(10), None, None)
         .await
         .expect("short query");
     assert!(short.is_empty());
@@ -411,6 +514,108 @@ async fn run_events_are_returned_in_sequence_order() {
     // Unknown run yields an empty list, not an error.
     let empty = fetch_run_events(pool, "run-missing").await.expect("fetch");
     assert!(empty.is_empty());
+}
+
+/// A JSONL dump round-trips through export-shaped rows and import: rows land
+/// back in `run_events`, re-importing is a no-op, and another run's rows are
+/// rejected instead of being re-homed.
+#[tokio::test]
+async fn run_event_jsonl_import_round_trips() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-io", "Import test").await;
+    for run in ["run-io", "run-other"] {
+        sqlx::query(
+            "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+             VALUES (?, ?, '{}', 'conv-io', 'completed', ?)",
+        )
+        .bind(run)
+        .bind(SINGLE_USER_ID)
+        .bind(format!("rk-{run}"))
+        .execute(pool)
+        .await
+        .expect("insert run");
+    }
+
+    let jsonl = "{\"run_id\":\"run-io\",\"sequence\":1,\"kind\":\"text\",\
+                 \"data\":{\"delta\":\"hello\"},\"created_at\":\"2026-01-02T03:04:05Z\"}\n\
+                 {\"run_id\":\"run-io\",\"sequence\":2,\"kind\":\"status\",\
+                 \"data\":{\"status\":\"completed\"},\"created_at\":\"2026-01-02T03:04:06Z\"}\n";
+    let inserted = import_run_events_rows(pool, "run-io", jsonl)
+        .await
+        .expect("import");
+    assert_eq!(inserted, 2);
+    // Importing the same dump twice inserts nothing.
+    let again = import_run_events_rows(pool, "run-io", jsonl)
+        .await
+        .expect("re-import");
+    assert_eq!(again, 0);
+
+    let markdown = render_run_markdown(
+        "run-io",
+        &fetch_run_events(pool, "run-io").await.expect("fetch"),
+    );
+    assert!(
+        markdown.contains("hello"),
+        "streamed text lands in markdown"
+    );
+    assert!(markdown.contains("completed"), "status lands in markdown");
+
+    // Another run's row must not be importable into this run.
+    let foreign = jsonl.replace("run-io", "run-other");
+    let err = import_run_events_rows(pool, "run-io", &foreign)
+        .await
+        .expect_err("foreign run_id");
+    assert!(err.contains("does not match"), "unexpected error: {err}");
+
+    // Malformed lines fail loudly with a line number.
+    let bad = import_run_events_rows(pool, "run-io", "not json\n")
+        .await
+        .expect_err("malformed");
+    assert!(bad.contains("line 1"), "unexpected error: {bad}");
+}
+
+/// The run-event FTS index finds tool arguments and streamed text that
+/// transcript search never sees.
+#[tokio::test]
+async fn run_event_search_finds_tool_arguments() {
+    let storage = temp_storage().await;
+    let pool = storage.pool();
+    insert_conversation(pool, "conv-se", "Search events").await;
+    sqlx::query(
+        "INSERT INTO runs (id, owner_id, data, conversation_id, status, request_key) \
+         VALUES ('run-se', ?, '{}', 'conv-se', 'completed', 'rk-se')",
+    )
+    .bind(SINGLE_USER_ID)
+    .execute(pool)
+    .await
+    .expect("insert run");
+    sqlx::query(
+        "INSERT INTO run_events (id, run_id, sequence, kind, data) \
+         VALUES ('e-se-1', 'run-se', 1, 'tool_started', \
+                 '{\"name\":\"terminal\",\"arguments\":{\"command\":\"cargo nextest\"}}')",
+    )
+    .execute(pool)
+    .await
+    .expect("insert event");
+
+    let hits = search_run_events_with(pool, "nextest", Some(10))
+        .await
+        .expect("search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].run_id, "run-se");
+    assert_eq!(hits[0].kind, "tool_started");
+    assert_eq!(hits[0].conversation_id.as_deref(), Some("conv-se"));
+
+    // Scoped transcript search still works alongside the new filters.
+    let scoped = search_messages_with(pool, "pipeline", Some(10), Some("nope"), None)
+        .await
+        .expect("scoped search");
+    assert!(scoped.is_empty());
+    let short = search_run_events_with(pool, "ab", Some(10))
+        .await
+        .expect("short query");
+    assert!(short.is_empty());
 }
 
 #[tokio::test]

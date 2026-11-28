@@ -1,5 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   BookOpen,
@@ -8,7 +7,6 @@ import {
   Layers,
   Palette,
   RefreshCw,
-  Save,
   Search,
   Settings2,
   ShieldCheck,
@@ -17,17 +15,12 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
-import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { useSettingsForm } from "@/lib/settings";
-import { SPOTLIGHT_STATUS_QUERY_KEY } from "@/lib/queries";
+import { useSettingsForm, useSettingsSaveStatus } from "@/lib/settings";
 import { useUi, type SettingsTab } from "@/lib/ui";
-import { recordUxEvent } from "@/lib/uxEvents";
-import type { SettingsView } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { ErrorAlert } from "@/components/shared";
 import { NavRow, SectionLabel } from "@/components/layout";
-import { Button } from "@/components/ui/button";
 import { SearchField, Select } from "@/components/ui/input";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { GeneralSettings } from "./GeneralSettings";
@@ -41,7 +34,11 @@ import { MemoryPane } from "@/features/memory/MemoryPane";
 import { KnowledgePane } from "@/features/knowledge/KnowledgePane";
 import { SkillsPane } from "@/features/skills/SkillsPane";
 import { BrowserPane } from "@/features/browser/BrowserPane";
-import { chord, isMacPlatform } from "@/lib/platform";
+import { isMacPlatform } from "@/lib/platform";
+import {
+  matchSettingsAnchors,
+  type SettingsAnchor,
+} from "@/lib/settingsAnchors";
 import { DiagnosticsPane } from "@/features/system/DiagnosticsPane";
 import { SpotlightSettings } from "./SpotlightSettings";
 
@@ -211,54 +208,61 @@ const SETTINGS_NAV: { title: string; tabs: SettingsTabEntry[] }[] = [
   },
 ];
 
-/** Tabs that edit the persisted SettingsView and share the header Save button. */
-const SAVE_TABS: ReadonlySet<SettingsTab> = new Set([
-  "appearance",
-  "general",
-  "updates",
-  "backup",
-  "spotlight",
-]);
-
-/** Tabs whose controls write as soon as they change (no header Save). Naming
- *  them in the header is what stops "did I save?" from turning into a guess. */
-const AUTO_SAVE_TABS: ReadonlySet<SettingsTab> = new Set([
-  "providers",
-  "models",
-  "tools",
-  "mcp",
-  "memory",
-  "knowledge",
-  "skills",
-  "browser",
-]);
-
 const ALL_TABS = SETTINGS_NAV.flatMap((s) => s.tabs);
+
+/** "予算" etc. → the exact tab and card, instead of only filtering the nav. */
+function AnchorMatches({
+  matches,
+  onSelect,
+}: {
+  matches: readonly SettingsAnchor[];
+  onSelect: (anchor: SettingsAnchor) => void;
+}) {
+  if (matches.length === 0) return null;
+  return (
+    <nav className="flex flex-col gap-0.5" aria-label={t("設定項目")}>
+      <SectionLabel>{t("設定項目")}</SectionLabel>
+      {matches.map((anchor) => {
+        const tab = ALL_TABS.find((entry) => entry.id === anchor.tab);
+        return (
+          <button
+            key={anchor.id}
+            type="button"
+            onClick={() => onSelect(anchor)}
+            className="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-start transition-colors hover:bg-hover focus-visible:bg-hover"
+            title={tab ? `${t(tab.label)} › ${t(anchor.label)}` : undefined}
+          >
+            <span className="min-w-0 flex-1 truncate text-xs text-fg">
+              {t(anchor.label)}
+            </span>
+            <span className="shrink-0 text-2xs text-faint">
+              {tab ? t(tab.label) : ""}
+            </span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
 
 export function SettingsPane() {
   const activeTab = useUi((s) => s.settingsTab);
   const setSettingsTab = useUi((s) => s.setSettingsTab);
-  const queryClient = useQueryClient();
-  const {
-    data,
-    loaded,
-    dirty,
-    setBaseline,
-    query: settings,
-  } = useSettingsForm();
-  const update = useMutation({
-    mutationFn: (input: SettingsView) => api.updateSettings(input),
-    onSuccess: (saved, input) => {
-      recordUxEvent("settings_saved", { tab: activeTab });
-      queryClient.invalidateQueries({ queryKey: ["settings"] });
-      queryClient.invalidateQueries({ queryKey: SPOTLIGHT_STATUS_QUERY_KEY });
-      setBaseline(JSON.stringify(saved ?? input));
-    },
-    onError: () => recordUxEvent("settings_save_failed", { tab: activeTab }),
-  });
-  const showSave = SAVE_TABS.has(activeTab);
+  // Every tab writes through `useSettingsAutosave` (mounted at the app root).
+  // This pane only shows the writer's status and a load failure.
+  const { query: settings } = useSettingsForm();
+  const saveStatus = useSettingsSaveStatus((s) => s.status);
   const [filter, setFilter] = useState("");
+  const [focusTarget, setFocusTarget] = useState<{
+    tab: SettingsTab;
+    phrase: string;
+    /** Allows re-selecting the same result to scroll again. */
+    nonce: number;
+  } | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const flashTimer = useRef<number | null>(null);
   const query = filter.trim().toLowerCase();
+  const anchorMatches = matchSettingsAnchors(filter, t);
   const matchesTab = (tab: SettingsTabEntry) =>
     !query ||
     t(tab.label).toLowerCase().includes(query) ||
@@ -276,20 +280,67 @@ export function SettingsPane() {
   const platformTabs = ALL_TABS.filter(
     (tab) => tab.id !== "spotlight" || isMacPlatform(),
   );
-  // Saving before `get_settings` resolves would replace the stored row with
-  // the defaults rendered in the form.
-  const canSave = loaded && !settings.isError && !update.isPending;
-  // ⌘S / Ctrl+S saves the draft without reaching for the header button.
+
+  const goToAnchor = (anchor: SettingsAnchor) => {
+    setSettingsTab(anchor.tab);
+    setFilter("");
+    setFocusTarget({
+      tab: anchor.tab,
+      phrase: t(anchor.label),
+      nonce: Date.now(),
+    });
+  };
+
+  // Scroll after the target tab has rendered. Two frames: the first lets the
+  // tab switch commit, the second lets its cards lay out before measuring.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s")
-        return;
-      event.preventDefault();
-      if (canSave && dirty && !update.isPending) update.mutate(data);
+    if (!focusTarget || activeTab !== focusTarget.tab) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        const root = contentRef.current;
+        if (!root) return;
+        const phrase = focusTarget.phrase.toLowerCase();
+        // Prefer the shortest matching text node: a section's own textContent
+        // contains every child, so the naive first match would always be the
+        // outer page and scroll nowhere useful.
+        const candidates = Array.from(
+          root.querySelectorAll<HTMLElement>("h3,label,span,p,button"),
+        ).filter((el) => {
+          const text = (el.textContent ?? "").toLowerCase();
+          return text.includes(phrase) && text.length <= phrase.length + 80;
+        });
+        const target = candidates.sort(
+          (a, b) =>
+            (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0),
+        )[0];
+        const section = target?.closest("section") ?? target;
+        if (!section) return;
+        section.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        section.classList.remove("settings-flash");
+        void section.offsetWidth;
+        section.classList.add("settings-flash");
+        if (flashTimer.current !== null) {
+          window.clearTimeout(flashTimer.current);
+        }
+        flashTimer.current = window.setTimeout(() => {
+          section.classList.remove("settings-flash");
+          flashTimer.current = null;
+        }, 1800);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      if (second) cancelAnimationFrame(second);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [canSave, data, dirty, update]);
+  }, [focusTarget, activeTab]);
+
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -311,7 +362,8 @@ export function SettingsPane() {
             ? { onClear: () => setFilter(""), clearLabel: t("クリア") }
             : {})}
         />
-        {visibleSections.length === 0 && (
+        <AnchorMatches matches={anchorMatches} onSelect={goToAnchor} />
+        {visibleSections.length === 0 && anchorMatches.length === 0 && (
           <p className="px-1.5 py-2 text-xs text-faint">
             {t("一致する設定がありません")}
           </p>
@@ -351,26 +403,17 @@ export function SettingsPane() {
               </h1>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {!showSave && AUTO_SAVE_TABS.has(activeTab) && (
-                <span className="hidden text-2xs text-faint sm:inline">
-                  {t("変更は自動保存されます")}
-                </span>
+              <span className="hidden text-2xs text-faint sm:inline">
+                {t("変更は自動保存されます")}
+              </span>
+              {saveStatus === "saving" && (
+                <Badge tone="warning">{t("保存中…")}</Badge>
               )}
-              {showSave && update.isSuccess && !update.isError && !dirty && (
+              {saveStatus === "saved" && (
                 <Badge tone="success">{t("保存しました")}</Badge>
               )}
-              {showSave && dirty && !update.isPending && (
-                <Badge tone="warning">{t("未保存の変更")}</Badge>
-              )}
-              {showSave && (
-                <Button
-                  variant="primary"
-                  disabled={!canSave || !dirty}
-                  onClick={() => update.mutate(data)}
-                  title={`${t("保存")} · ${chord("Mod", "S")}`}
-                >
-                  <Save size={12} /> {t("保存")}
-                </Button>
+              {saveStatus === "error" && (
+                <Badge tone="danger">{t("保存できませんでした")}</Badge>
               )}
             </div>
           </div>
@@ -388,6 +431,7 @@ export function SettingsPane() {
                 ? { onClear: () => setFilter(""), clearLabel: t("クリア") }
                 : {})}
             />
+            <AnchorMatches matches={anchorMatches} onSelect={goToAnchor} />
             <Select
               aria-label={t("設定セクションを選択")}
               value={activeTab}
@@ -407,12 +451,14 @@ export function SettingsPane() {
         {/* Same content measure as every other top-level pane. This body used
             to be full-bleed, so settings cards were the only thing in the app
             that stretched to the window edges. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div
+          ref={contentRef}
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        >
           <div className="mx-auto flex w-full max-w-content flex-col gap-4 px-6 py-6">
             {/* A failed `get_settings` used to leave every control silently on
                 its default while Save stayed disabled with no explanation. */}
             {settings.isError && <ErrorAlert error={settings.error} />}
-            {showSave && update.isError && <ErrorAlert error={update.error} />}
 
             {activeTab === "appearance" && <AppearanceSettings />}
             {activeTab === "general" && <GeneralSettings />}

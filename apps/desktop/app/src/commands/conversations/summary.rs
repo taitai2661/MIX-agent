@@ -17,26 +17,43 @@ pub struct MessageSearchHit {
 /// This is what makes the command palette a real search surface rather than a
 /// title filter. Queries shorter than three characters (and queries with no
 /// FTS5-safe run) return an empty list; the palette still filters titles
-/// client-side for those.
+/// client-side for those. `conversation_id` scopes the search to one thread
+/// (used by the Trajectory view's in-thread search) and `role` to
+/// `"user"`/`"assistant"`; both are optional so older clients calling with
+/// only `query`/`limit` keep working.
 #[tauri::command]
 pub async fn search_messages(
     state: State<'_, AppState>,
     query: String,
     limit: Option<u32>,
+    conversation_id: Option<String>,
+    role: Option<String>,
 ) -> Result<Vec<MessageSearchHit>, String> {
-    search_messages_with(state.storage.pool(), &query, limit).await
+    search_messages_with(
+        state.storage.pool(),
+        &query,
+        limit,
+        conversation_id.as_deref(),
+        role.as_deref(),
+    )
+    .await
 }
 
 pub async fn search_messages_with(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     query: &str,
     limit: Option<u32>,
+    conversation_id: Option<&str>,
+    role: Option<&str>,
 ) -> Result<Vec<MessageSearchHit>, String> {
     let Some(match_query) = mixd_core::retrieval::fts_match_query(query) else {
         return Ok(Vec::new());
     };
     let limit = limit.unwrap_or(20).clamp(1, 100);
-    let rows: Vec<(String, String, String, String, String, String, String)> = sqlx::query_as(
+    // Numbered placeholders (`?2`) do not mix reliably with bare `?` in one
+    // statement, so the filters are appended only when set and every
+    // placeholder stays a bare `?` bound in call order.
+    let mut sql = String::from(
         "SELECT s.message_id, s.conversation_id, s.role, \
                 snippet(message_search, 0, '', '', '…', 12), \
                 m.created_at, COALESCE(json_extract(c.data, '$.title'), ''), \
@@ -44,14 +61,29 @@ pub async fn search_messages_with(
          FROM message_search s \
          JOIN messages m ON m.id = s.message_id \
          JOIN conversations c ON c.id = s.conversation_id \
-         WHERE message_search MATCH ? \
-         ORDER BY bm25(message_search) LIMIT ?",
-    )
-    .bind(match_query)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(crate::error::cmd_err)?;
+         WHERE message_search MATCH ?",
+    );
+    if conversation_id.is_some() {
+        sql.push_str(" AND s.conversation_id = ?");
+    }
+    if role.is_some() {
+        sql.push_str(" AND s.role = ?");
+    }
+    sql.push_str(" ORDER BY bm25(message_search) LIMIT ?");
+    let mut query =
+        sqlx::query_as::<_, (String, String, String, String, String, String, String)>(&sql)
+            .bind(match_query);
+    if let Some(conversation) = conversation_id {
+        query = query.bind(conversation);
+    }
+    if let Some(role) = role {
+        query = query.bind(role);
+    }
+    let rows = query
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(crate::error::cmd_err)?;
     Ok(rows
         .into_iter()
         .map(
@@ -235,7 +267,39 @@ pub async fn search_conversation_summaries(
         .fetch_all(pool)
         .await
         .map_err(crate::error::cmd_err)?;
-    Ok(rows.into_iter().map(summary_from_row).collect())
+    let mut summaries: Vec<ConversationSummary> = rows.into_iter().map(summary_from_row).collect();
+    // Title matching misses threads whose title never mentions the query but
+    // whose transcript does. Fill the remaining budget with FTS content
+    // matches (newest first), skipping threads already in the title results.
+    if summaries.len() < limit as usize {
+        if let Some(match_query) = mixd_core::retrieval::fts_match_query(query) {
+            let remaining = limit - summaries.len() as i64;
+            let content_ids: Vec<(String,)> = sqlx::query_as(
+                "SELECT DISTINCT s.conversation_id FROM message_search s \
+                 WHERE message_search MATCH ? \
+                 ORDER BY rowid DESC LIMIT ?",
+            )
+            .bind(match_query)
+            .bind(remaining * 2)
+            .fetch_all(pool)
+            .await
+            .map_err(crate::error::cmd_err)?;
+            let seen: std::collections::HashSet<String> =
+                summaries.iter().map(|s| s.id.clone()).collect();
+            for (id,) in content_ids {
+                if seen.contains(&id) {
+                    continue;
+                }
+                if let Some(summary) = fetch_conversation_summary(pool, &id).await? {
+                    summaries.push(summary);
+                    if summaries.len() >= limit as usize {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    Ok(summaries)
 }
 
 /// Total threads/messages and the most recent update, in one query.

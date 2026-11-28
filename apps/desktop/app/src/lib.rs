@@ -7,6 +7,7 @@ pub mod deep_link;
 pub mod diff;
 pub mod embedding;
 pub mod error;
+pub mod headless;
 pub mod http;
 pub mod local_runtime;
 pub mod menu;
@@ -14,9 +15,11 @@ pub mod path_grants;
 pub mod push;
 pub mod run_events;
 pub mod scheduler;
+pub mod serve;
 pub mod spotlight;
 pub mod tray;
 pub mod webview_browser;
+pub mod window;
 pub mod workspace_baseline;
 pub mod worktree;
 
@@ -41,6 +44,18 @@ pub const EVT_QUIT_BLOCKED: &str = "app://quit-blocked";
 /// requested by the updater/relaunch path). Without it every `app.exit`
 /// would re-enter the same guard.
 static ALLOW_EXIT: AtomicBool = AtomicBool::new(false);
+/// `--safe-mode`: start without MCP servers, the browser Tool, scheduled jobs,
+/// Spotlight indexing or local-runtime auto-start. Recovery path for a bad
+/// server/config that would otherwise make the app unusable at launch.
+static SAFE_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_safe_mode(enabled: bool) {
+    SAFE_MODE.store(enabled, Ordering::SeqCst);
+}
+
+pub fn safe_mode() -> bool {
+    SAFE_MODE.load(Ordering::SeqCst)
+}
 
 async fn count_active_runs(pool: &sqlx::SqlitePool) -> i64 {
     sqlx::query_scalar(
@@ -97,7 +112,10 @@ mod async_trait_impl {
 }
 
 pub use worktree::cleanup_stale_worktrees;
-use worktree::{cleanup_delegate_worktree, collect_worktree_diff, prepare_delegate_worktree};
+use worktree::{
+    check_patch_applies, cleanup_delegate_worktree, collect_worktree_diff,
+    prepare_delegate_worktree,
+};
 
 pub(crate) use adapters::*;
 pub(crate) use providers::*;

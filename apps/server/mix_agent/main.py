@@ -47,6 +47,12 @@ async def lifespan(app):
     run_events.bind()
     scheduler_wakeup.bind()
     memory_jobs.bind()
+    # The engine creates run tasks, and `launch()` is reached from FastAPI's
+    # threadpool (sync routes). Bind the loop so those callers can hand the
+    # run back here instead of failing with "no running event loop".
+    from mix_agent.runs.engine import bind_loop
+
+    bind_loop(asyncio.get_running_loop())
     try:
         await recover_interrupted()
     except Exception:
@@ -85,7 +91,7 @@ async def lifespan(app):
 # formatter when MIX_LOG_FORMAT=json is set.
 configure_logging()
 
-app = FastAPI(title="MIX agent", version="0.5.7", lifespan=lifespan)
+app = FastAPI(title="MIX agent", version="0.5.8", lifespan=lifespan)
 LOGGER = logging.getLogger("mix_agent.http")
 
 
@@ -407,7 +413,9 @@ def prometheus_metrics(request: Request):
     token = os.getenv("METRICS_TOKEN", "").strip()
     if token:
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if not secrets.compare_digest(supplied, token):
+        # compare_digest() raises TypeError for non-ASCII str; reject it as a
+        # normal 401 instead of turning the auth boundary into a 500.
+        if not supplied.isascii() or not secrets.compare_digest(supplied, token):
             raise APIError(401, "auth.login_required")
     elif not _metrics_client_allowed(request):
         raise APIError(404, "common.not_found")

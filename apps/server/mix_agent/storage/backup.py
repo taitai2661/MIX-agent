@@ -11,7 +11,7 @@ from uuid import uuid4
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.exceptions import InvalidTag
-from sqlalchemy import DateTime, select
+from sqlalchemy import DateTime, func, select
 
 from mix_agent import config, egress_policy
 from mix_agent.auth.security import decrypt, encrypt
@@ -63,8 +63,21 @@ async def create(db, password):
         else {"volumes": {}}
     )
     tables = {}
+    # AESGCM needs the whole plaintext in memory, so a database bigger than
+    # the cap would be an out-of-memory crash rather than a readable error.
+    # Count first and refuse early: twenty cheap counts are a far better
+    # trade than materialising a multi-gigabyte dump.
+    row_total = 0
     for table in Base.metadata.sorted_tables:
-        rows = [dict(row) for row in db.execute(select(table)).mappings()]
+        row_total += db.scalar(select(func.count()).select_from(table)) or 0
+    # ~512 bytes per row is a deliberately generous estimate; a row holds a
+    # JSONB document, so the real average is larger.
+    if row_total * 512 > MAX_SIZE * 3 // 4:
+        raise ValueError("初期版のバックアップ上限は256MBです")
+    for table in Base.metadata.sorted_tables:
+        # `yield_per` lets the driver fetch rows in batches instead of
+        # materialising the whole table in one result set.
+        rows = [dict(row) for row in db.execute(select(table).execution_options(yield_per=1000)).mappings()]
         if table.name in ("secrets", "mcp_auth_states", "sessions"):
             rows = []
         for row in rows:
@@ -269,11 +282,13 @@ async def restore(db, raw, password, recovering=False):
         raise
     # Keep previous artifacts for operator recovery. Do not erase automatically.
     setting = payload["tables"]["app_settings"]
-    domains = setting[0]["data"].get("allowed_domains", []) if setting else []
+    setting_data = setting[0]["data"] if setting else {}
+    domains = setting_data.get("allowed_domains", [])
+    mode = setting_data.get("network_mode")
     # The database swap is durable now. A policy-file failure must not leave
     # the recovery journal behind (the next boot would re-apply the rollback);
     # startup reconciles the file from the restored settings.
-    egress_policy.write_policy_best_effort(domains)
+    egress_policy.write_policy_best_effort(domains, mode)
     journal.unlink(missing_ok=True)
     recovery_key.unlink(missing_ok=True)
     return {"ok": True, "relogin_required": True}
