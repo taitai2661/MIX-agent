@@ -30,6 +30,8 @@ jobs:
       # ci.yml alone is not enough: `gh run list --commit` also matches PR runs
       # on feature branches. The shared gate requires a completed push-to-main
       # run for both ci.yml and validate-release.yml on this exact SHA.
+      # The gate is a local composite action, so the checkout must precede it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/require-green-ci
 
   images:
