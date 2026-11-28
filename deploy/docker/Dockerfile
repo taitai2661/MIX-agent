@@ -52,6 +52,9 @@ COPY experiments/ /workspace/experiments/
 COPY pytest.ini ruff.toml compose.yaml /workspace/
 COPY apps/server/pyproject.toml /workspace/apps/server/pyproject.toml
 COPY .github/workflows/ci.yml /workspace/.github/workflows/ci.yml
+# tests/unit/test_gate_scripts.py imports scripts/check-async-db.py through
+# importlib; without the gate scripts in the image pytest fails at collection.
+COPY scripts/ /workspace/scripts/
 WORKDIR /workspace
 ENV PYTHONPATH=/app:/workspace
 USER 1000:1000
