@@ -13,7 +13,10 @@ const dist = path.resolve(
   "apps/desktop/ui/dist",
 );
 const root = path.join(dist, "assets");
-const MAIN_BUDGET = 500 * 1024;
+// Ratcheted to 520 kB for v0.5.8: the shell now ships notification
+// navigation, palette recency, the surface switcher and the approval drawer
+// trigger on the startup path (~511 kB measured). Panels remain lazy-loaded.
+const MAIN_BUDGET = 520 * 1024;
 const TOTAL_BUDGET = 1_500 * 1024;
 
 if (!fs.existsSync(root)) {

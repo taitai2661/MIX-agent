@@ -36,7 +36,9 @@ export default defineConfig({
     // everything else into named async chunks (see the `lazy` panes in
     // App.tsx, including ChatPane itself). Warn at 600 kB per chunk; the main
     // shell chunk is ~480 kB (radix + tauri plugins + lucide icons + shell
-    // code), ChatPane ~156 kB and markdown ~158 kB load as needed.
+    // code), ChatPane ~176 kB and markdown ~158 kB load as needed. The v0.5.8
+    // shell (notifications, palette recency, surface switcher) measures
+    // ~511 kB; the CI budget is 520 kB.
     // `reportCompressedSize` reports gzip sizes (the honest number for
     // update-payload cost). `chunkSizeWarningLimit` is a warning, not a hard
     // CI failure; do not raise it without moving the weight into a lazy chunk

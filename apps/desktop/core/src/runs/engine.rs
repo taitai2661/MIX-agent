@@ -995,9 +995,11 @@ mod snapshot_tests {
 
         let stale = RunId::new_v4();
         ledger.entry(stale);
-        ledger.entries.back_mut().unwrap().1 =
-            Instant::now() - helpers::SNAPSHOT_TTL - Duration::from_secs(1);
-        ledger.drop_stale(Instant::now());
+        // Windows `Instant`s cannot go before boot, so anchor the simulated
+        // pause in the future instead of subtracting from `Instant::now()`.
+        let now = Instant::now() + helpers::SNAPSHOT_TTL + Duration::from_secs(2);
+        ledger.entries.back_mut().unwrap().1 = now - helpers::SNAPSHOT_TTL - Duration::from_secs(1);
+        ledger.drop_stale(now);
         assert_eq!(ledger.len(), 0, "snapshots past the undo window must go");
     }
 
@@ -1010,8 +1012,11 @@ mod snapshot_tests {
             previous: Some(b"before".to_vec()),
         });
         // Simulate a pause longer than the undo window between two edits.
+        // Anchor in the future: subtracting the TTL from `Instant::now()`
+        // overflows on Windows, where Instants start at boot time.
+        let future = Instant::now() + helpers::SNAPSHOT_TTL + Duration::from_secs(2);
         ledger.entries.back_mut().unwrap().1 =
-            Instant::now() - helpers::SNAPSHOT_TTL - Duration::from_secs(1);
+            future - helpers::SNAPSHOT_TTL - Duration::from_secs(1);
 
         // `entry` used to call `drop_stale` first, which removed this run's only
         // snapshot before it had a chance to refresh the stamp.

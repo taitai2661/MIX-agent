@@ -95,7 +95,11 @@ impl VerificationLedger {
     /// targets, so the two spellings now agree without any I/O.
     fn key_path(&self, path: &str) -> String {
         let normalised = lexical_clean(std::path::Path::new(&path.replace('\\', "/")));
-        let key = if normalised.is_absolute() {
+        // On Windows a slash-prefixed path such as `/workspace/a.rs` is
+        // *rooted* but `Path::is_absolute()` is false without a drive prefix.
+        // Treat both spellings as absolute so they share one ledger key.
+        let rooted = path.starts_with('/') || path.starts_with('\\') || normalised.is_absolute();
+        let key = if rooted {
             match self.root.as_deref().map(lexical_clean) {
                 Some(root) => normalised
                     .strip_prefix(&root)
