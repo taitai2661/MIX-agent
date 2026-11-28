@@ -223,6 +223,7 @@ jobs:
             exit 1
           fi
           echo "Apple Developer ID signing credentials are configured."
+          echo "configured" > "$RUNNER_TEMP/apple-signing-configured"
 
       # `tauri build` runs beforeBuildCommand (the Vite UI build) exactly once;
       # there is no browser runtime fetch step any more.
@@ -238,6 +239,13 @@ jobs:
             fi
           elif [ "${{ runner.os }}" = "Windows" ]; then
             echo "::warning::The Windows installer is unsigned; SmartScreen may warn or block launch."
+          fi
+          if [ "${{ runner.os }}" = "macOS" ] && [ ! -f "$RUNNER_TEMP/apple-signing-configured" ]; then
+            # GitHub injects empty strings for missing secrets, but Tauri
+            # treats an empty APPLE_CERTIFICATE as configured and fails the
+            # keychain import. Drop them so the ad-hoc path is really used.
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
           fi
           pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
