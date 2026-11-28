@@ -32,7 +32,7 @@
 - `latest.json`の4プラットフォーム（`darwin-aarch64` / `darwin-x86_64` / `windows-x86_64` / `linux-x86_64`）すべてにURLと`.sig`の内容が入っていることを確認する。1つでも欠けるとTauriはマニフェスト全体を無効とみなす。
 - `desktop-release`の`Verify tag matches app version`が成功し、タグと各manifestのバージョンが一致している。
 - `Release notes are present and publishable`（`scripts/check-release-notes.mjs`）が成功している。`docs/release-notes-vX.Y.Z.md` が無い、または「未公開ドラフト」と書かれたままのタグは公開できません。
-- `desktop-rust (windows-latest)`と`desktop-package-windows`が成功し、NSIS/MSIのビルドが通っている。WindowsのPTYテスト2件は既知のConPTY制約として`#[cfg_attr(windows, ignore)]`でスキップされるため、Windows実機で手動確認する。
+- `desktop-rust (windows-latest)`と`desktop-package-windows`が成功し、NSIS/MSIのビルドが通っている。WindowsのPTYテストの一部は既知のConPTY制約として`#[cfg_attr(windows, ignore)]`でスキップされるため、Windows実機で手動確認する。
 - ブラウザはTauriのネイティブ子WebViewを使用する。`apps/desktop/browser/src/chromium-manifest.json`、`pnpm chromium:pin`、`desktop-release` の `verify-chromium-pin` は廃止済みで、リリース前に確認する固定ピンやダウンロード手順は存在しない（存在しないステップをチェックしないこと）。
 - 各プラットフォームでOS標準のWebViewランタイムが利用可能であることを確認する（WindowsはWebView2、macOSはWKWebView、LinuxはWebKitGTK）。Chromiumの初回インストールやシステムChromeへのフォールバック手順は不要。
 
